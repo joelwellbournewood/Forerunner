@@ -237,7 +237,8 @@ import {
 import {
   type BudgetStopSyncResult,
   syncBudgetStopAnswers,
-  wakeBudgetWaits,
+  wakeBudgetWaitsDetailed,
+  wokenLine,
 } from "../session/budget-card.ts";
 import { type CannotRunSyncResult, syncCannotRunAnswers } from "../session/cannot-run-card.ts";
 import {
@@ -304,6 +305,7 @@ import {
   type PrepareDeps,
   type PreparedContext,
   type PrepareRequest,
+  type PrepareResult,
   preparedContextOf,
   prepareWork,
   previewWork,
@@ -938,6 +940,15 @@ export interface RuntimeApp {
    * when a card is shown, so an option that prepares work says what pressing it does.
    */
   preparedContext(projectId: string): Promise<PreparedContext>;
+  /**
+   * l4-starts-sessions (L4-money-204): make ready the tasks paused at a limit that changed and
+   * has room now (as the scheduler's tick does), before a start check reads the tasks. Never
+   * throws; starts nothing (the hands-off setting as built aside).
+   */
+  wakeLimitWaits(): Promise<{
+    wentOn: number;
+    prepared: { projectId: string; taskIds: string[]; result: PrepareResult | null }[];
+  }>;
   /**
    * d1109-run-visible (V-1): the run indicator. `views` is `GET /running` (what runs now, in the
    * daemon's words); `poke` asks for a fresh `run.changed` frame (debounced to one a second, sent
@@ -4017,32 +4028,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // budget-resume: a task paused at this month's cap, the project's budget or the
       // subscription's share goes on by itself once that limit changed (raised in Settings, a
       // new month) and has room; room alone never wakes it (the review of budget-resume).
-      await wakeBudgetWaits({
-        store,
-        clock,
-        humanId: human.id,
-        agentId: agent.id,
-        limitNow: async (source, projectId) => {
-          const usdMicro =
-            source === "project"
-              ? (await store.project.get(projectId))?.budget_usd_micro
-              : (await store.human.get(human.id))?.monthly_cap_usd_micro;
-          // An unset or zero cap is no limit (`DynamicCaps`).
-          return usdMicro && usdMicro > 0 ? usdMicro : Number.POSITIVE_INFINITY;
-        },
-        roomFor: async (projectId) => {
-          caps.forget({ humanId: human.id, projectId });
-          return (
-            (await caps.check({ humanId: human.id, projectId }, 1, { phase: "work" })).decision ===
-            "allow"
-          );
-        },
-        // S-3 (ADR 0118 amending 0112): the work made ready again is prepared; a raised or
-        // reset limit starts no session by itself.
-        prepare: (req) => prepareWorkPort(req),
-      }).catch((e: unknown) =>
-        logger.warn("paused work at a limit not made ready again", { error: errorMessage(e) }),
-      );
+      // l4-starts-sessions (L4-money-204): the write itself wakes them (`wakeLimitWaits` from
+      // budget.set and the start check); this tick stays the fallback (a new month, a share).
+      await wakeLimitWaits();
       // S-5: a hands-off start that could not start (quiet hours, another session) is kept on
       // its project and asked again here once nothing holds it, after a restart too.
       await sweepStartPending().catch((e: unknown) =>
@@ -4070,6 +4058,54 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     now: () => clock.nowIso(),
   };
   const prepareWorkPort = (req: PrepareRequest) => prepareWork(prepareDeps, req);
+  /**
+   * budget-resume, S-3 and l4-starts-sessions (L4-money-204): the tasks paused at this month's
+   * cap, the project's budget or the subscription's share whose limit changed and has room are
+   * made ready again and prepared (they join the running session if they fit, else wait for the
+   * person's next Start; the hands-off setting may start one as built). Called by the scheduler's
+   * tick, by budget.set right after it writes a limit (CommandPorts.limitChanged) and by the
+   * start check before it reads the tasks, so the Start dialog never reads a card the raise
+   * already answered. Never throws.
+   */
+  const wakeLimitWaits = () =>
+    wakeBudgetWaitsDetailed({
+      store,
+      clock,
+      humanId: human.id,
+      agentId: agent.id,
+      limitNow: async (source, projectId) => {
+        const usdMicro =
+          source === "project"
+            ? (await store.project.get(projectId))?.budget_usd_micro
+            : (await store.human.get(human.id))?.monthly_cap_usd_micro;
+        // An unset or zero cap is no limit (`DynamicCaps`).
+        return usdMicro && usdMicro > 0 ? usdMicro : Number.POSITIVE_INFINITY;
+      },
+      roomFor: async (projectId) => {
+        caps.forget({ humanId: human.id, projectId });
+        return (
+          (await caps.check({ humanId: human.id, projectId }, 1, { phase: "work" })).decision ===
+          "allow"
+        );
+      },
+      // S-3 (ADR 0118 amending 0112): the work made ready again is prepared; a raised or
+      // reset limit starts no session by itself.
+      prepare: (req) => prepareWorkPort(req),
+    })
+      .then((woken) => {
+        if (woken.wentOn > 0) {
+          events.emit("inbox", {});
+          for (const p of woken.prepared) events.emit("project", { id: p.projectId });
+        }
+        return woken;
+      })
+      .catch((e: unknown) => {
+        logger.warn("paused work at a limit not made ready again", { error: errorMessage(e) });
+        return {
+          wentOn: 0,
+          prepared: [] as Awaited<ReturnType<typeof wakeBudgetWaitsDetailed>>["prepared"],
+        };
+      });
   /** S-9: what prepared work of a project meets now, as `prepareWork` would meet it. */
   const preparedContext = (projectId: string) =>
     preparedContextOf(
@@ -4985,8 +5021,20 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       },
       // l4-chat-answers (L4-chat-103): chat's "summary" reads the last result as it holds now.
       resultNow: (projectId, since, text) => resultAfterWait(store, projectId, since, text),
+      // l4-starts-sessions (L4-money-204): a raised limit wakes its paused tasks at the write; the
+      // change's sentence says how many and when they run.
+      limitChanged: async (projectId) => {
+        const woken = await wakeLimitWaits();
+        const mine = projectId
+          ? woken.prepared.filter((p) => p.projectId === projectId)
+          : woken.prepared;
+        const count = mine.reduce((n, p) => n + p.taskIds.length, 0);
+        return wokenLine(count, mine.length === 1 ? mine[0]?.result : null);
+      },
       // session.start refuses in words what the Start dialog refuses (design §3.6, §3.9).
       startBlocked: async (projectId, budgetUsdMicro) => {
+        // L4-money-204: a raised limit's paused tasks are ready before the check reads them.
+        await wakeLimitWaits();
         const project = await store.project.mustGet(projectId);
         // W15B-02: the chat says at once that a removed project starts nothing (the start
         // itself is refused in `startSession`, whatever asks for it).
@@ -6227,6 +6275,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     quietHours,
     continuations,
     preparedContext,
+    wakeLimitWaits,
     running,
     conversation,
     gitHost,

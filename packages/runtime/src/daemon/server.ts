@@ -231,6 +231,7 @@ import {
   agentView,
   commandDefView,
   costView,
+  crashContinueOf,
   effortCapsOf,
   eventView,
   eventViews,
@@ -299,6 +300,13 @@ function closedProjectAnswer(project: ProjectRow) {
       projectId: project.id,
     },
   };
+}
+
+/** The session a session goes on with (S-10, `plan.startedBy.continues`), or null. */
+function continuesOf(s: Pick<SessionRow, "plan">): string | null {
+  const continues = (s.plan as { startedBy?: { continues?: unknown } } | null)?.startedBy
+    ?.continues;
+  return typeof continues === "string" ? continues : null;
 }
 
 /** The schema sync gate as `/health` reports it (spec M); the refusal counter stays internal. */
@@ -980,6 +988,16 @@ export function createDaemonApp(
    */
   /** Where the subscription's allowance is raised (Settings), as the share's wait links it. */
   const ALLOWANCE_TO = "/settings#plan-allowance";
+  /** L4-money-209: the person's start (or their session going on) of a project waiting in line. */
+  const personStartInLine = (projectId: string) =>
+    rt.scheduler
+      .pendingStarts(rt.agent.id)
+      .find(
+        (e) =>
+          e.result === "queued" &&
+          e.req.projectId === projectId &&
+          (startByOf(e.req) === "person" || startByOf(e.req) === "continuation"),
+      );
   const startsWaitOf = async (projectId: string): Promise<StartsWait | null> => {
     const now = () => rt.billing.waits.now(projectId).catch(() => null);
     if (await keptContinuationOf(rt.store, projectId)) {
@@ -1069,6 +1087,10 @@ export function createDaemonApp(
       sharesRepositoryWith: (project) => sharesRepositoryWith(rt.joinDeps, project),
       // d1109-run-visible (V-3): what waits to start, said with when.
       startsWait: startsWaitOf,
+      // l4-starts-sessions (L4-money-208): the working line in the run indicator's words.
+      workingWhat: async (sessionId) =>
+        (await rt.running.views()).find((v) => v.sessionId === sessionId && v.state !== "waiting")
+          ?.what ?? null,
     });
   app.get("/projects", async (c) => {
     const rows = await rt.store.project.active({ limit: 100 });
@@ -1714,6 +1736,9 @@ export function createDaemonApp(
 
   app.get("/projects/:id/start-check", async (c) => {
     const budget = intQuery(c, "budgetUsdMicro", 0, Number.MAX_SAFE_INTEGER);
+    // L4-money-204: a task paused at a limit the person raised is ready before the check reads
+    // it (before, its card was read as "needs your answer" until the scheduler's next tick).
+    await rt.wakeLimitWaits();
     // d1116-budget-all (BA-7): a task closed outside a session (the Inbox, chat, the merge
     // watcher) is learned before the Start dialog prices, as the fold after a restart learns it.
     await refreshEstimates();
@@ -1892,11 +1917,19 @@ export function createDaemonApp(
   app.post("/projects/:id/continuation/cancel", async (c) => {
     const project = await rt.store.project.mustGet(c.req.param("id"));
     const cancelled = await rt.continuations.cancel(project.id);
+    // l4-starts-sessions (L4-money-209): else the person's start (or their session going on)
+    // that waits in line behind another project's session: dropped, nothing runs for it.
+    const inLine = cancelled ? undefined : personStartInLine(project.id);
+    const dropped = inLine
+      ? !!rt.scheduler.cancelPending(rt.agent.id, "cancelled by you", inLine.id)
+      : false;
     const view: ContinuationCancelView = {
-      cancelled,
+      cancelled: cancelled || dropped,
       sentence: cancelled
         ? "Cancelled: nothing goes on by itself; its tasks run at your next Start."
-        : "Nothing waits to go on for this project.",
+        : dropped
+          ? `Cancelled: the session of ${project.name} does not start; its tasks wait for your Start.`
+          : "Nothing waits to go on for this project.",
     };
     rt.events.emit("project", { id: project.id });
     return c.json(view);
@@ -1910,11 +1943,22 @@ export function createDaemonApp(
   const START_REFUSED = "start_refused";
   app.post("/sessions", async (c) => {
     const body = await parse(c, StartSessionBody);
+    // L4-money-204: a raised limit's paused tasks are ready before the start is checked.
+    await rt.wakeLimitWaits();
     // S-10: a session's Continue goes on with the ended session: the rest of its promise and of
     // its budget (its cap less its booked spend), never more; refused when nothing is left.
     if (body.continues) {
       const earlier = await rt.store.session.mustGet(body.continues);
-      const left = earlier.budget_cap_usd_micro - earlier.spent_usd_micro;
+      // l4-starts-sessions (the review of run L4g): a session that already went on with this one
+      // took its rest (its cap was that rest): its spend, or its whole cap while it works, is
+      // no longer left, so a second Continue of the same session (a Start dialog left open, the
+      // phone) never goes on with all of it again.
+      const taken = earlier.project_id
+        ? (await rt.store.session.forProject(earlier.project_id))
+            .filter((s) => s.id !== earlier.id && continuesOf(s) === earlier.id)
+            .reduce((n, s) => n + (s.ended_at ? s.spent_usd_micro : s.budget_cap_usd_micro), 0)
+        : 0;
+      const left = earlier.budget_cap_usd_micro - earlier.spent_usd_micro - taken;
       if (left <= 0)
         throw new ForerunnerError(
           "validation",
@@ -2066,6 +2110,36 @@ export function createDaemonApp(
           return c.json(view, 202);
         }
       }
+    }
+    // l4-starts-sessions (L4-money-209): a start of this project already waits in line behind
+    // another project's session: a second press keeps that one start (before, each press queued
+    // one more), said in one sentence.
+    // Only behind another project's session: starts behind the project's own session keep
+    // their order, one after the other (U-043).
+    const behindId = rt.scheduler.activeStart(body.agentId)?.req.projectId;
+    const already =
+      body.projectId &&
+      !body.continues &&
+      body.agentId === rt.agent.id &&
+      behindId &&
+      behindId !== body.projectId
+        ? personStartInLine(body.projectId)
+        : undefined;
+    if (already && body.projectId) {
+      const name = (await rt.store.project.get(body.projectId))?.name ?? "This project";
+      const behind = behindId
+        ? (await rt.store.project.get(behindId).catch(() => undefined))?.name
+        : undefined;
+      const view: StartSessionView = {
+        result: "queued",
+        startId: already.id,
+        session: null,
+        ahead: rt.scheduler.waitingAhead(body.agentId, already.id) ?? 0,
+        sentence: behind
+          ? `A session of ${name} already starts after the session on "${shortTitle(behind, 40)}".`
+          : `A session of ${name} already waits to start.`,
+      };
+      return c.json(view, 202);
     }
     // "Use API key": every refusal has passed; the yes for this stop, then the start.
     if (yesForStop) await writeYes(yesForStop);
@@ -2614,7 +2688,16 @@ export function createDaemonApp(
       const body = await resultAfterWait(rt.store, m.project_id, m.created_at, m.body).catch(
         () => m.body,
       );
-      msgViews.push(messageView({ ...m, body }, names.get(m.from_agent_id) ?? m.from_agent_id));
+      // L4-money-207: a restart's Update about an interrupted session offers Continue.
+      const action = await crashContinueOf(rt.store, m, {
+        chfPerUsd: chf(),
+        projectWorks: async (projectId) =>
+          (await rt.store.session.active(rt.agent.id)).some((s) => s.project_id === projectId),
+      }).catch(() => undefined);
+      msgViews.push({
+        ...messageView({ ...m, body }, names.get(m.from_agent_id) ?? m.from_agent_id),
+        ...(action ? { action } : {}),
+      });
     }
     return c.json({
       requests: reqViews,

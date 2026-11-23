@@ -209,3 +209,73 @@ left, else your next Start." while a session of the project runs), read-only; on
 runnable is prepared as any move that makes a task ready (it joins the running session if it fits,
 else "It runs at your next Start."). The Tasks drawer's **Change what it waits for** runs the same
 command, so it says the same. A paused, draft or done task gets no line.
+
+## Amendment 2026-11-23 (l4-starts-sessions, run L4, L4-money-203): a task too large for the session
+
+The admit of a running session (option C) has a fourth answer, `too_large`: a task whose
+estimate alone is more than the session's whole work budget never joins it (D4: it runs in its
+turn at the person's next Start), so its line never says it may join. Before, it got the same
+`no_room` as a task that only lacked room now, and Make ready on a CHF 1.10 draft during a CHF
+1.00 session said "It joins this session if budget is left after its own tasks, else your next
+Start." (live check 4, LC-C18). Now: '"X" is ready. It is larger than this session's budget, so
+it runs at your next Start.' (`preparedLine('too_large')`); an answer's Done line says the same,
+and its Start offer shows once no session of the project runs. Several tasks answered at once
+read `too_large` only when none of them joined or may join.
+
+## Amendment 2026-11-23 (l4-starts-sessions, run L4, L4-money-204): a raised limit wakes at the write
+
+A task paused at the project's budget or this month's cap goes on once the person raised that
+limit (S-3, ADR 0112): until now only the scheduler's refresh before each tick (up to 30 s)
+woke it, so ten seconds after a raise the Start dialog still said 'Nothing can run: "Write the
+club motto in motto.txt" needs your answer.' (live check 4, L3-run-10), and Settings' line named
+only the new amount. Now `budget.set` asks the daemon to wake such tasks right after it writes
+the limit (`CommandPorts.limitChanged`), and the start check, `POST /sessions` and chat's start
+check wake first; the tick stays the fallback (a new month, the subscription's share). The wake
+prepares the work (it joins a running session if it fits, else waits for the person's next
+Start; the hands-off setting starts one as built): it never starts a session by itself. The
+change's sentence says what became of the tasks ("1 paused task is ready again: it runs at your
+next Start.").
+
+## Amendment 2026-11-23 (l4-starts-sessions, run L4, L4-money-207): the crash Update's Continue
+
+Design §5's crash example ends with [Continue]; live check 4 (LC-C6) showed the Update with only
+Mark read. The Update now offers **Continue** while it can do something (a task the interrupted
+session released is still ready, its budget has something left, no session of the project
+works). Continue is the person's own Start that goes on with the interrupted session (point S-10's
+`continues`): it opens the Start dialog with what is left of that session's budget, never more,
+and starts nothing by itself. It is derived from the rows (the Update names its project; the
+interrupted session is that project's newest one the restart ended), so no migration was needed.
+
+Added the same day (the review of run L4g, bench walk 7): Continue, then Stop now on the
+continuation, and the Update offered the same Continue with all of the interrupted session's
+budget again, and a second Continue started another session with it. Now the Update offers
+Continue only until a later session of the project began (the session page's wait block does the
+same), the press marks the Update read, and `POST /sessions` with `continues` takes from what is
+left what a session that already went on with that one spent (or its whole cap while it works),
+so two Continues of one session never have more than its rest between them.
+
+
+## Amendment 2026-11-23 (l4-starts-sessions, run L4, L4-money-208): a running or waiting session is said once beside the bar
+
+D8 made the run indicator the one source of what runs now ("it should at least be very clear to
+a user when a run is ongoing"); design §5 rule 10 says one place per fact. Live check 4 showed
+one wait three times with three Cancels on the Overview (the bar, Working now and the project's
+line), 'Working on "X"' on the header beside the bar's 'the coder works on "X"', "Choosing the
+next task…" on the session page while the bar said the critic checks, and "Last result: No
+session yet." during the first session. Now the wait's Cancel, with its line in view, is on the
+bar and Working now only; the project's line says the wait without a button ("Waiting until
+15:40 (your subscription's limit), then it goes on"; a refused credential's line keeps Save a
+new key, which is what lets it go on; a Start kept for the reset keeps its Cancel, since the bar
+does not show it). A working project's line is the bar's `what` with the count ('The coder works
+on "Create index.html" (0 of 7 done)'); the session page's Current task reads the bar's entry
+while no task's run is in flight; the Overview's Last result during the first session reads
+"Running now: Open the session". The engine does nothing new: the words come from the bar.
+
+## Amendment 2026-11-23 (l4-starts-sessions, run L4, L4-money-209): one start waits in line, with Cancel
+
+A person's Start of a project while another project's session runs waits in line ('Starts after
+the session on "Quote page"'). Its project's header no longer offers a second Start session, the
+line offers Cancel (it drops that start; nothing runs for it), and a second press from another
+place keeps the one start and says so ('A session of Bird notes already starts after the session
+on "Quote page".'). Starts behind the project's own session keep their order (U-043).
+

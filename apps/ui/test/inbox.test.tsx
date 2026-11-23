@@ -1059,7 +1059,8 @@ describe("Inbox", () => {
       const options = within(request).getAllByTestId("option");
       expect(options.map((b) => b.textContent)).toEqual(["Go ahead without", "Cancel task"]);
       expect(within(request).getAllByTestId("option-explain")[0]).toHaveTextContent(
-        "The specialist decides and says what it assumed.",
+        // L4-money-202 (S-9 extended): it says what pressing it does now.
+        "The specialist decides and says what it assumed; it runs at your next Start.",
       );
       await user.click(options[0] as HTMLElement);
       await waitFor(() =>
@@ -2301,5 +2302,182 @@ describe("l4-money-pause, run L4: a card whose review waits says the work is don
     // The title comes before the body.
     expect(title.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(card).not.toHaveTextContent(/paused at its budget/);
+  });
+});
+
+describe("l4-starts-sessions, run L4: the questions card says what Send answers does now (L4-money-202)", () => {
+  // Live check 4 (LC-C18, LC-C19): Send answers had no line, and Go ahead without a fixed one,
+  // while a session ran and while the hands-off setting was on alike.
+  const specialistCard = () => ({
+    id: "req_asks",
+    projectId: "proj_atlas",
+    projectName: "Atlas",
+    taskId: "task_1",
+    taskTitle: "Index the documentation pages",
+    sessionId: "sess_1",
+    kind: "decision",
+    why: '"Index the documentation pages": the specialist asks you',
+    steps: ["Which pages count as documentation?"],
+    options: ["Go ahead without", "Cancel the task"],
+    blocking: true,
+    risk: "low" as const,
+    changeCard: {
+      key: `${ANSWER_CARD_KEYS.personQuestionsPrefix}task_1`,
+      task_id: "task_1",
+      task_title: "Index the documentation pages",
+      questions: ["Which pages count as documentation?"],
+      source: "specialist",
+      on_answer: "ready",
+      context: "I need to know which pages to index.",
+      applied_at: null,
+    },
+    status: "open",
+    answer: null,
+    createdAt: "2026-11-17T06:18:00.000Z",
+    version: 1,
+  });
+  const setUp = (byItself: boolean) => {
+    const harness = createHarness();
+    harness.daemon.state.requests.unshift(specialistCard());
+    const t1 = harness.daemon.state.tasks.find((t) => t.id === "task_1");
+    if (t1) t1.status = "needs_human";
+    if (byItself) harness.daemon.state.settingValues["start_by_itself:proj_atlas"] = true;
+    return harness;
+  };
+
+  it("nothing runs: Send answers and Go ahead without each say it runs at your next Start; the press sends the answers", async () => {
+    const user = userEvent.setup();
+    const harness = setUp(false);
+    renderApp("/inbox", harness);
+    const form = await screen.findByTestId("person-questions");
+    const card = form.closest('[data-testid="request"]') as HTMLElement;
+    expect(within(form).getByTestId("send-answers")).toHaveTextContent("Send answers");
+    expect(within(form).getByTestId("send-answers-explain")).toHaveTextContent(
+      "The task goes on with your answers; it runs at your next Start.",
+    );
+    const without = within(card)
+      .getAllByTestId("option")
+      .find((o) => o.textContent === "Go ahead without");
+    expect(without?.parentElement).toHaveTextContent(
+      "The specialist decides and says what it assumed; it runs at your next Start.",
+    );
+    await user.type(within(form).getByTestId("person-answer"), "The guides and the API pages");
+    await user.click(within(form).getByTestId("send-answers"));
+    await waitFor(() => expect(postedCalls(harness, "/requests/req_asks/answer")).toHaveLength(1));
+    expect(postedCalls(harness, "/requests/req_asks/answer")[0]?.body).toEqual({
+      version: 1,
+      answer: {
+        answers: [
+          {
+            question: "Which pages count as documentation?",
+            answer: "The guides and the API pages",
+          },
+        ],
+      },
+    });
+  });
+
+  it("with 'Start a session by itself' on, both say a session starts for it by itself", async () => {
+    renderApp("/inbox", setUp(true));
+    const form = await screen.findByTestId("person-questions");
+    expect(within(form).getByTestId("send-answers-explain")).toHaveTextContent(
+      "The task goes on with your answers; a session starts for it by itself.",
+    );
+    const card = form.closest('[data-testid="request"]') as HTMLElement;
+    expect(card).toHaveTextContent(
+      "The specialist decides and says what it assumed; a session starts for it by itself.",
+    );
+  });
+});
+
+describe("l4-starts-sessions, run L4: the crash Update offers Continue (L4-money-207)", () => {
+  // Live check 4 (LC-C6): 'Your last session was interrupted when Forerunner closed. "Write a
+  // two-sentence welcome note for the bakery in welcome.md" is ready again.' with only Mark read;
+  // design §5's example ends with [Continue].
+  const setUp = () => {
+    const harness = createHarness();
+    const s = harness.daemon.state.sessions[0];
+    if (s) {
+      s.status = "stopped";
+      s.stopReason = "interrupted";
+      s.projectId = "proj_atlas";
+      s.endedAt = "2026-11-17T08:36:56.000Z";
+      // What is left of its budget: CHF 4.20.
+      s.spent = { usdMicro: 1_000_000, chfMicro: s.budgetCap.chfMicro - 4_200_000 };
+    }
+    const t1 = harness.daemon.state.tasks.find((t) => t.id === "task_1");
+    if (t1) t1.status = "ready";
+    harness.daemon.state.messages.unshift({
+      id: "msg_crash",
+      fromAgentId: "agent_alice",
+      fromAgentName: "Alice",
+      toAgentId: null,
+      toHumanId: "human_1",
+      projectId: "proj_atlas",
+      taskId: null,
+      type: "info",
+      body: 'Your last session was interrupted when Forerunner closed. "Index the documentation pages" is ready again.',
+      requiresAck: false,
+      deliveredAt: null,
+      readAt: null,
+      actedAt: null,
+      createdAt: "2026-11-17T08:36:56.000Z",
+    });
+    return { harness, sessionId: s?.id ?? "" };
+  };
+
+  it("the Update shows Continue with what it does; the press opens Start, which goes on with the interrupted session", async () => {
+    const user = userEvent.setup();
+    const { harness, sessionId } = setUp();
+    renderApp("/inbox", harness);
+    const row = (await screen.findAllByTestId("message")).find((m) =>
+      m.textContent?.includes("Your last session was interrupted"),
+    ) as HTMLElement;
+    const button = within(row).getByTestId("message-continue");
+    expect(button).toHaveTextContent("Continue");
+    expect(within(row).getByTestId("message-continue-explain")).toHaveTextContent(
+      "Opens Start with the rest of your last session and the CHF 4.20 left of its budget.",
+    );
+    await user.click(button);
+    // The press marks the Update read (the review of run L4g: it stayed unread after the press).
+    await waitFor(() => expect(postedCalls(harness, "/messages/msg_crash/read")).toHaveLength(1));
+    const dialog = await screen.findByTestId("start-session-dialog");
+    await user.click(within(dialog).getByTestId("confirm-start-session"));
+    await waitFor(() => expect(postedCalls(harness, "/sessions")).toHaveLength(1));
+    expect(postedCalls(harness, "/sessions")[0]?.body).toMatchObject({
+      projectId: "proj_atlas",
+      continues: sessionId,
+    });
+  });
+
+  it("once a later session of the project began the Update offers no Continue, only Mark read (the review of run L4g)", async () => {
+    // Bench walk 7: Continue, Stop now on the continuation, and the same Continue came back with
+    // all of the interrupted session's budget again.
+    const { harness, sessionId } = setUp();
+    const later = structuredClone(harness.daemon.state.sessions[0]);
+    if (later) {
+      later.id = "sess_later";
+      later.stopReason = "you";
+      later.startedAt = "2026-11-17T08:40:00.000Z";
+      later.endedAt = "2026-11-17T08:41:00.000Z";
+      harness.daemon.state.sessions.push(later);
+    }
+    expect(sessionId).not.toBe("sess_later");
+    renderApp("/inbox", harness);
+    const row = (await screen.findAllByTestId("message")).find((m) =>
+      m.textContent?.includes("Your last session was interrupted"),
+    ) as HTMLElement;
+    expect(within(row).queryByTestId("message-continue")).toBeNull();
+    expect(within(row).getByTestId("mark-read")).toHaveTextContent("Mark read");
+  });
+
+  it("with nothing ready any more the Update offers no Continue", async () => {
+    const { harness } = setUp();
+    for (const t of harness.daemon.state.tasks) if (t.projectId === "proj_atlas") t.status = "done";
+    renderApp("/inbox", harness);
+    const row = (await screen.findAllByTestId("message")).find((m) =>
+      m.textContent?.includes("Your last session was interrupted"),
+    ) as HTMLElement;
+    expect(within(row).queryByTestId("message-continue")).toBeNull();
   });
 });

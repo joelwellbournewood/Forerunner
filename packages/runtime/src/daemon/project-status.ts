@@ -109,6 +109,13 @@ export interface ProjectStatusInput {
   stopped?: boolean | null;
   /** The session working on the project now, if one runs. */
   working: ProjectWorking | null;
+  /**
+   * l4-starts-sessions (L4-money-208, D8): what that session does now in the run indicator's
+   * words (`RunningView.what` of its entry: 'the coder works on "Create index.html"', 'the critic
+   * checks "X"', 'picks the next task'), so the line says the bar's fact in the bar's words. None
+   * (an older daemon, a read before the bar has it): 'Working on "X"'.
+   */
+  workingWhat?: string | null;
   /** The project's folder (its workspace, or the linked folder or repository checkout). */
   folder: string | null;
   /**
@@ -140,6 +147,9 @@ export type StartsWait =
 
 /** Cancel on a wait that goes on or starts by itself (POST /projects/:id/continuation/cancel). */
 const CANCEL_WAIT = { kind: "cancel", label: "Cancel", to: null } as const;
+/** l4-starts-sessions (L4-money-209): Cancel on a person's start that waits in line. */
+export const QUEUED_CANCEL_EXPLAIN =
+  "Cancel: it does not start after that session; its tasks wait for your Start.";
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -192,6 +202,23 @@ function cardKindsWords(cards: readonly { change_card?: unknown }[]): string {
 
 /** Status sentence length (design §5 rule 1). */
 const STATUS_MAX = 80;
+
+/**
+ * The run indicator's `what` as a status sentence with the count after it: its first letter up
+ * ('The coder works on "Create index.html" (0 of 7 done)'); a quoted title too long for the
+ * line is shortened at a word inside its quotes, so the count and the closing quote stay.
+ */
+function withProgress(what: string, progress: string): string {
+  const head = `${what.charAt(0).toUpperCase()}${what.slice(1)}`;
+  if (head.length + progress.length <= STATUS_MAX) return `${head}${progress}`;
+  const quoted = /"([^"]+)"/.exec(head);
+  if (quoted?.[1]) {
+    const room = STATUS_MAX - progress.length - (head.length - quoted[1].length);
+    if (room >= 12)
+      return `${head.replace(quoted[0], `"${shortTitle(quoted[1], room)}"`)}${progress}`;
+  }
+  return `${fitStatus(head.slice(0, STATUS_MAX - progress.length))}${progress}`;
+}
 
 /** A status sentence within `STATUS_MAX`, cut at a word (a long project or task name). */
 function fitStatus(text: string): string {
@@ -339,14 +366,18 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
         : { kind: "link", label: "Answer", to: "/inbox" },
     };
 
-  // 2. A session works on it now.
+  // 2. A session works on it now: the bar's words with the count (L4-money-208; live check 4
+  // read 'Working on "X"' beside the bar's 'the coder works on "X"').
   if (input.working) {
     const progress = total > 0 ? ` (${done} of ${total} done)` : "";
+    const what = input.workingWhat?.trim();
     return {
       kind: "working",
-      text: input.working.taskTitle
-        ? `Working on "${shortTitle(input.working.taskTitle)}"${progress}`
-        : `Working${progress}`,
+      text: what
+        ? withProgress(what, progress)
+        : input.working.taskTitle
+          ? `Working on "${shortTitle(input.working.taskTitle)}"${progress}`
+          : `Working${progress}`,
       action: {
         kind: "link",
         label: "Open running session",
@@ -365,7 +396,10 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
       // A refusal needs the person (a new key); a limit needs nothing but time.
       kind: sw.save ? "waiting" : "paused",
       text: fitStatus(`${sw.head}, then it goes on`),
-      action: sw.save ? { kind: "link", label: sw.save.label, to: sw.save.to } : { ...CANCEL_WAIT },
+      // l4-starts-sessions (L4-money-208, D8: one place per fact): the run indicator's entry
+      // (the bar on every page, Working now) carries the wait's Cancel with its explanation;
+      // the line keeps the fact only (live check 4 showed one wait three times, three Cancels).
+      action: sw.save ? { kind: "link", label: sw.save.label, to: sw.save.to } : null,
     };
   if (sw?.kind === "kept_start")
     return { kind: "paused", text: fitStatus(sw.head), action: { ...CANCEL_WAIT } };
@@ -375,7 +409,9 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
       text: fitStatus(
         `${sw.goesOn ? "Goes on" : "Starts"} after the session on "${shortTitle(sw.behind, 40)}"`,
       ),
-      action: null,
+      // l4-starts-sessions (L4-money-209): the start that waits in line is the person's own;
+      // Cancel drops it (the bar names it only as ' · then <project>').
+      action: { ...CANCEL_WAIT, explain: QUEUED_CANCEL_EXPLAIN },
     };
   if (sw?.kind === "held")
     return { kind: "paused", text: "Starts after your quiet hours", action: null };

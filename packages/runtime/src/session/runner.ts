@@ -2090,7 +2090,10 @@ export class SessionRunner {
                 // at the next Start).
                 if (est > workBudgetUsdMicro || est > room) {
                   asked.set(row.id, { title: row.title, estimateUsdMicro: est });
-                  out.set(row.id, "no_room");
+                  // L4-money-203: a task above the whole work budget never fits here, so its
+                  // line never says it may join (live check 4's "It joins this session if
+                  // budget is left ..." for a CHF 1.10 task in a CHF 1.00 session).
+                  out.set(row.id, est > workBudgetUsdMicro ? "too_large" : "no_room");
                   // D7: a step added before a promised task that does not fit takes that task
                   // out of the promise with it; both wait for the next Start.
                   const next = context?.before;
@@ -3988,6 +3991,10 @@ export class SessionRunner {
       waitingForDocker: waitingForSandbox
         .filter((t) => endState.readyNow.some((r) => r.id === t.id))
         .map((t) => ({ id: t.id, title: t.title })),
+      // L4-money-214: what the person paused while it ran (Pause or Stop), still paused by them.
+      ...(uniq(needsHuman).some(pausedByYou)
+        ? { pausedByYou: uniq(needsHuman).filter(pausedByYou).map(named) }
+        : {}),
       // W15-59: what the person cancelled while it ran or was reviewed, still cancelled now.
       ...(uniq(cancelled).some((id) => endState.rows.get(id)?.status === "cancelled")
         ? {
@@ -4132,7 +4139,9 @@ export class SessionRunner {
         // How it ended, as the Sessions list says it (the handoff's blocked and paused), never
         // the raw stop reason (L3-github-6: "Note: stop reason completed; spent CHF 0.09").
         const pausedIds = new Set((outcome.paused ?? []).map((t) => t.id));
-        const waits = uniq([...needsHuman, ...failed]);
+        // L4-money-214: a task the person paused waits on nobody (as `needsYouNow` reads it);
+        // before, the note said "Ended: 1 task needs you." for their own Stop.
+        const waits = uniq([...needsHuman, ...failed]).filter((id) => !pausedByYou(id));
         const endedNote = `${endedStatusText(status, stopReason, {
           needYou: waits.filter((id) => !pausedIds.has(id)).length,
           paused: waits.filter((id) => pausedIds.has(id)).length,

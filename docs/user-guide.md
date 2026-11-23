@@ -65,7 +65,8 @@ Home shows, top to bottom:
   session that works until nothing more can run), **Set up Docker** or **Open Tasks**.
 
 The sentence says, first match first: "Waiting for you: approve the plan" or "Waiting for you:
-2 questions"; 'Working on "Style the page" (3 of 7 done)'; 'Stuck: "Style the page" failed; 2
+2 questions"; 'The coder works on "Style the page" (3 of 7 done)', in the words of the bar at the
+top; 'Stuck: "Style the page" failed; 2
 tasks wait on it' or "Waiting for Docker: 1 task"; "Ready to continue: 3 tasks ready" (without
 a Claude key "Ready: 3 tasks. Claude is not connected." with **Connect Claude**, and while
 sessions are stopped "Ready: 3 tasks. Sessions are stopped.", the bar at the top having
@@ -315,7 +316,8 @@ them as you left them; an open file or task stays on its own tab.
   specialist says so and the task asks you in the Inbox. The rows follow a running session
   by themselves. Each task offers what fits its status, each with a line saying what it does:
   **Make ready** (a draft), **Pause** / **Resume**, **Stop** (a running task: its run stops now
-  and it is paused; the session goes on with the rest), **Try again** (a failed task), **Answer**
+  and it is paused; the session goes on with the rest, and if nothing else ran its result says
+  'You paused "X"; nothing else ran.' with no Inbox line about your own click), **Try again** (a failed task), **Answer**
   (opens its card in the Inbox) or **Go ahead without** (the specialist decides and says what it
   assumed; not offered on a task only you can do), **Redo** (a done task: say what is wrong),
   **Take this work out** (a task whose pull request is merged; see below),
@@ -916,10 +918,15 @@ count ("14 sessions"); the Costs tab has the totals. A session working now sits 
 it does ('Working on "Style the page" (3 of 7 done)') and what it has cost so far. Below it, one
 row per session, newest first: what it did in one sentence ('Did 2 tasks: "Create index.html" and
 "Style the page".', '"Long report" paused at its budget of CHF 0.40.', "Nothing finished."), then
-when it started, how long it worked, its task counts ("1 done, 1 failed"), how it ended ("Done",
+when it started, how long it worked, its task counts ("1 done, 1 failed"; "2 needed you" with
+"1 still needs you" while one of them still waits), how it ended ("Done",
 "Stopped by you", "Interrupted: Forerunner closed") and what it cost, with the credential that
 paid ("CHF 0.80 on your API key", "CHF 0.80 of your Claude subscription's allowance"); a session
-you did not start says how it started ("started on its schedule"). Drafting the plan from your
+you did not start says how it started ("started on its schedule"). Every session you started is
+listed, also one that stopped at once to wait for Claude before anything ran ("Nothing finished."
+· "Stopped to wait for a Claude credential"), and the session that goes on with it later says so
+("goes on with your session of 09:00"). A session that started by itself and found nothing to do
+is not listed. Drafting the plan from your
 brief is a row too ("Drafted a plan of 5 tasks; you approved it.", or "Planning failed: …" with
 the words the project page showed). A session Forerunner closed during counts only the time it
 worked, not the time Forerunner was closed. **Show older sessions** shows 20 more; the rows you
@@ -957,7 +964,12 @@ your phone, is Stop now; "stop after this task" in Chat is Stop after this task.
 Quitting Forerunner while a session runs reads "Stopped: Forerunner was closed". If Forerunner
 crashed while a session ran, the next start of Forerunner ends that session ("Interrupted:
 Forerunner closed"), puts its task back to Ready ("Forerunner closed while it ran") and posts one
-line in the Inbox; the next Start works at once. Its page still says what it finished and what it
+line in the Inbox ('Your last session was interrupted when Forerunner closed. "X" is ready
+again.') with **Continue** ("Opens Start with the rest of your last session and the CHF 4.20 left
+of its budget."): it opens the Start dialog, whose Start goes on with that session and what is left
+of its budget, never more; Continue is offered while one of its tasks is still ready, no
+session of the project runs and none began since (once one did, it went on with the work, and the
+line keeps only Mark read); pressing it marks the line read. The next Start works at once too. Its page still says what it finished and what it
 spent before Forerunner closed ("Interrupted: Forerunner closed: 1 done. CHF 0.01."), with the same
 amount in "Spent of this session's budget", and the Overview shows it as the last session. Stop on a session that nothing runs any more
 ends it the same way.
@@ -978,7 +990,9 @@ Everything that waits on you, and short news. Two lists:
 
 After you answer, the card is replaced by one line saying what happens next ("Done: Trying
 "Style the page" again: a session started."). **Answered** at the bottom lists what you answered
-lately and what came of it, and cards that were closed because you moved their task. If your
+lately and what came of it, true when you read it: once the task is done its line says so
+('Answers saved in the decision record; "Add the phone number" is done.'), and names what waits on
+the task only while something still does. If your
 answers came after their task had already finished, the entry says so and offers **Redo with
 these answers**: the task opens again and its next attempt reads them.
 
@@ -1061,7 +1075,11 @@ done, and a task that was waiting on it is ready: it runs at your next Start, or
 session that is running if it fits (the card's Done line says which); a task a specialist was
 working on goes back to ready and its next run gets your answers. On a specialist's questions,
 **Go ahead without** lets the specialist decide and say in its report what it assumed; the task is
-ready again in the same way. The specialist is not let ask you the same again: if the work cannot be done
+ready again in the same way. Beside **Send answers** and **Go ahead without** a line says what
+pressing it does now: "The task goes on with your answers; it runs at your next Start.", "...; it
+joins the running session if it fits." while a session of the project runs, or "...; a session
+starts for it by itself." when the project's "Start a session by itself" is on; on a task planned
+for you it reads "Saves your answers in the decision record and closes the task." The specialist is not let ask you the same again: if the work cannot be done
 at all without your answer (a file that is missing), you get one card that says why in its own
 words, where you can answer or cancel the task, without a second **Go ahead without**. A task
 planned for you has no specialist to decide in your place, so its card has no Go ahead without:
@@ -1630,15 +1648,20 @@ month's report is then not written.
 When a session of yours stopped to wait for Claude (a usage limit, a refused key) and goes on by
 itself when Claude is back, the bar reads **Quote page · waiting until 15:40, then it goes on**
 with **Cancel** instead of Stop; Cancel means nothing starts when Claude is back and its tasks
-wait for your Start. The same wait shows on the project's line and on that session's page (with
+wait for your Start. The same wait shows on the project's line (without a Cancel of its own: the
+bar's and the Overview's Working now are the place for it) and on that session's page (with
 Cancel, or once cancelled **Continue**, which opens Start with the rest of that session and what
-is left of its budget). After Cancel, the session's result on its page, on the Overview (and in
+is left of its budget). While a session works, the session page's Current task says what the bar
+says ('The critic checks "Style the page"', "Picks the next task"), and during a project's first
+session the Overview's Last result reads "Running now: Open the session". After Cancel, the session's result on its page, on the Overview (and in
 Read aloud), its Update line in the Inbox and Chat ("summary", or a question about the last
 session) say "...; then it runs at your next Start." instead of "then your session goes on",
 at once, with no reload of the page. The project's line also says what waits to start: "Starts at
 15:40" for a Start you pressed while Claude was out (with Cancel), "Starts after your quiet
 hours", 'Starts after the session on "Quote page"' (as soon as you press Start there, no reload
-needed), or "Ready: 3 tasks wait for your Start".
+needed; with **Cancel**, and the project offers no second **Start session** while it waits: a
+second press elsewhere keeps the one start and says 'A session of Bird notes already starts
+after the session on "Quote page".'), or "Ready: 3 tasks wait for your Start".
 
 After an answer in the Inbox that readied work for your next Start, its Done line offers
 **Start**, which opens that project's Start dialog; it is not shown while a session of that

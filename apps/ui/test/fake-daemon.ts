@@ -200,6 +200,7 @@ import {
   needsOf,
 } from "@forerunner/runtime/session/credential-choice";
 import { nothingRunsYetSentence } from "@forerunner/runtime/session/credential-wait";
+import { INTERRUPTED_UPDATE_LEAD } from "@forerunner/runtime/session/recovery-words";
 import { NO_MODEL_CHAT_REPLY, SETUP_ASSISTANT_PATH } from "@forerunner/runtime/setup/no-model";
 import { type ChooserFacts, DEFAULT_CHOOSER_FACTS } from "@forerunner/runtime/wiring/billing-pick";
 import {
@@ -589,6 +590,16 @@ export interface FakeDaemonState {
    * tasks that wait on the open ask card (' · 1 task waits for your answer' with Answer).
    */
   runCredential: Record<string, { on?: string; asking?: { count: number; to: string } }>;
+  /**
+   * l4-starts-sessions (L4-money-208), as the daemon's run fold: the task the critic checks in a
+   * running session, by session id (the bar's 'the critic checks "X"'; no task is in flight).
+   */
+  runReview: Record<string, string>;
+  /**
+   * l4-starts-sessions (the review of run L4g), as the daemon's `plan.startedBy.continues`: the
+   * session each Continue went on with, by the new session's id.
+   */
+  continuesOf: Record<string, string>;
   /**
    * d1109-run-visible (V-3): what waits to start for a project, as the daemon's `startsWaitOf`
    * reads it (the person's session going on, a kept Start, a held hands-off start, a person start
@@ -1456,6 +1467,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     sessions: clone(SESSIONS),
     runningExtra: [],
     runCredential: {},
+    runReview: {},
+    continuesOf: {},
     startsWait: {},
     waitBlockAfterCancel: {},
     projectSessions: clone(PROJECT_SESSIONS),
@@ -1589,15 +1602,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const project = state.projects.find((p) => p.id === s.projectId);
       if (!project) continue;
       busy.add(project.id);
-      const task = s.currentTask;
+      const review = state.runReview[s.id];
+      const task = review ? null : s.currentTask;
       const runState: RunningView["state"] =
-        s.status === "paused" ? "stopping" : task ? "working" : "between";
+        s.status === "paused" ? "stopping" : review ? "reviewing" : task ? "working" : "between";
       // CS-7, as the daemon: the running task on the credential its choice puts second, and
       // the tasks that wait for the person's answer on the ask card.
       const credential = state.runCredential[s.id];
       const words = {
         state: runState,
-        taskTitle: task?.title ?? null,
+        taskTitle: review ?? task?.title ?? null,
         specialist: task?.specialist ?? null,
         ...(runState === "working" && credential?.on ? { on: credential.on } : {}),
         ...(credential?.asking ? { asking: credential.asking.count } : {}),
@@ -1686,7 +1700,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         // d1109-starts-engine S-9: as the daemon's `preparedContextOf`, an open card's options
         // that prepare work say what pressing them does now (a session of the project running,
         // another one running, "Start a session by itself" on).
-        ...(r.status === "open" && r.projectId ? preparedOfFake(r.projectId) : {}),
+        // l4-starts-sessions (L4-money-205), as the daemon: an answered card whose answer joined
+        // a session says so only while one of the project runs.
+        ...((r.status === "open" ||
+          (r.changeCard as { start?: unknown } | null)?.start === "joined") &&
+        r.projectId
+          ? preparedOfFake(r.projectId)
+          : {}),
         // d1109-cred-engine, as the daemon's `credentialAskFor`: the ask card is worded in the
         // person's clock at the time it was filed; the fake keeps every stop's session waiting.
         ...((r.changeCard as { key?: unknown } | null)?.key === "credential:ask"
@@ -1835,6 +1855,23 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.desktop = { revoked: false, revokedReason: null, control: { ...DESKTOP_OFF } };
     state.speedQuality = {};
     state.holdSessions = false;
+    state.runningExtra = [];
+    state.runCredential = {};
+    state.runReview = {};
+    state.continuesOf = {};
+    state.startsWait = {};
+    return c.json({ ok: true });
+  });
+  // l4-starts-sessions (L4-money-208): a person's session waiting to go on, for a browser test:
+  // its project's line (`startsWait`) and the run indicator's entry, as the daemon has them.
+  app.post("/__test/waiting", async (c) => {
+    const body = (await c.req.json()) as { projectId: string; head: string; view: RunningView };
+    state.startsWait[body.projectId] = { kind: "continuation", head: body.head };
+    state.runningExtra = [
+      ...state.runningExtra.filter((r) => r.projectId !== body.projectId),
+      body.view,
+    ];
+    emitRunning();
     return c.json({ ok: true });
   });
   app.post("/__test/hold-sessions", async (c) => {
@@ -2172,6 +2209,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       hasModel: me.provider === undefined ? null : me.provider !== null,
       stopped: state.killActive,
       working,
+      // l4-starts-sessions (L4-money-208), as the daemon: the working line in the bar's words.
+      workingWhat: session
+        ? (fakeRunning().find((v) => v.sessionId === session.id && v.state !== "waiting")?.what ??
+          null)
+        : null,
       folder,
       // OJ-06, as the daemon: a project closed into another reads where its work went.
       joinedInto: state.joined[p.id]
@@ -2189,6 +2231,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return {
       ...p,
       statusLine,
+      // L4-money-209, as the daemon: the project whose session this one's start waits behind.
+      startsAfter:
+        !working && state.startsWait[p.id]?.kind === "queued"
+          ? ((state.startsWait[p.id] as { behind: string }).behind ?? null)
+          : null,
       progress: progressOf(tasks.map((t) => ({ status: t.status as never }))),
       working,
       folder,
@@ -3532,15 +3579,25 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         sess.waitBlock = state.waitBlockAfterCancel[sess.id] ?? null;
         delete state.waitBlockAfterCancel[sess.id];
       }
-    // d1109-run-visible: a continuation or a kept Start on the project's line goes with it.
+    // d1109-run-visible: a continuation or a kept Start on the project's line goes with it;
+    // l4-starts-sessions (L4-money-209): so does a person's start waiting in line.
     const startsWait = state.startsWait[project.id];
-    if (startsWait?.kind === "continuation" || startsWait?.kind === "kept_start") {
+    if (
+      startsWait?.kind === "continuation" ||
+      startsWait?.kind === "kept_start" ||
+      startsWait?.kind === "queued"
+    ) {
       delete state.startsWait[project.id];
       state.runningExtra = state.runningExtra.filter(
         (r) => !(r.state === "waiting" && r.projectId === project.id),
       );
       emit("project.changed", { id: project.id });
       emitRunning();
+      if (startsWait.kind === "queued")
+        return c.json({
+          cancelled: true,
+          sentence: `Cancelled: the session of ${project.name} does not start; its tasks wait for your Start.`,
+        });
       if (!state.credentialWaitNow[project.id]?.kept)
         return c.json({
           cancelled: true,
@@ -3611,11 +3668,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       state.startCredential[parsed.data.projectId] = null;
     }
     // d1109-starts-engine (S-10), as the daemon: Continue goes on with the ended session, with the
-    // rest of its budget (its cap less its spend), and is refused in words when none is left.
+    // rest of its budget (its cap less its spend, less what a session that already went on with
+    // it took: its spend, or its cap while it works), and is refused in words when none is left.
     if (parsed.data.continues) {
       const earlier = state.sessions.find((x) => x.id === parsed.data.continues);
       if (!earlier) return errorBody(c, 404, "not_found", "no such session");
-      const left = earlier.budgetCap.usdMicro - earlier.spent.usdMicro;
+      const taken = state.sessions
+        .filter((x) => x.id !== earlier.id && state.continuesOf[x.id] === earlier.id)
+        .reduce((n, x) => n + (x.endedAt ? x.spent.usdMicro : x.budgetCap.usdMicro), 0);
+      const left = earlier.budgetCap.usdMicro - earlier.spent.usdMicro - taken;
       if (left <= 0)
         return errorBody(
           c,
@@ -3700,6 +3761,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       budgetUsdMicro: parsed.data.budgetUsdMicro ?? 6_250_000,
       note: parsed.data.note,
     });
+    if (parsed.data.continues) state.continuesOf[session.id] = parsed.data.continues;
     // As the daemon's `closeByStart` (d1109-oversize-pause, OP-0): the session takes a task paused
     // at a session's budget (or its specialist's limit) that got further in its turn; its card
     // closes with the Done line and the task is ready again. A pause at its own budget, one that
@@ -3966,7 +4028,47 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     return c.json({
       requests,
-      messages: state.messages,
+      // L4-money-207, as the daemon's `crashContinueOf`: a restart's Update about an interrupted
+      // session offers Continue while a task of its project is ready, its budget has something
+      // left, no session of the project works now and none began since it ended.
+      messages: state.messages.map((m) => {
+        if (m.type !== "info" || !m.projectId || !m.body.startsWith(INTERRUPTED_UPDATE_LEAD))
+          return m;
+        if (
+          state.sessions.some(
+            (s) =>
+              s.projectId === m.projectId && ["running", "paused", "planned"].includes(s.status),
+          )
+        )
+          return m;
+        const ended = state.sessions.find(
+          (s) => s.projectId === m.projectId && s.stopReason === "interrupted",
+        );
+        const left = ended ? ended.budgetCap.chfMicro - ended.spent.chfMicro : 0;
+        const ready = state.tasks.some((t) => t.projectId === m.projectId && t.status === "ready");
+        const later = state.sessions.some(
+          (s) =>
+            s.projectId === m.projectId &&
+            s.id !== ended?.id &&
+            (s.startedAt ?? "") > (ended?.endedAt ?? ""),
+        );
+        if (!ended || left <= 0 || !ready || later) return m;
+        const budgetLeft = {
+          usdMicro: ended.budgetCap.usdMicro - ended.spent.usdMicro,
+          chfMicro: left,
+        };
+        return {
+          ...m,
+          action: {
+            kind: "continue" as const,
+            label: "Continue",
+            explain: `Opens Start with the rest of your last session and the ${formatChf(left)} left of its budget.`,
+            projectId: m.projectId,
+            sessionId: ended.id,
+            budgetLeft,
+          },
+        };
+      }),
       blockingCount: blockingCount(),
       needsYouCount: needsYouCount(),
     });

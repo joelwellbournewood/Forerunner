@@ -186,6 +186,51 @@ export function intakeDecisionLine(card: IntakeCardView): string | null {
 }
 
 /**
+ * l4-starts-sessions (L4-money-207, design §5's crash example): a restart's Update about an
+ * interrupted session offers Continue, the daemon's words: the Start dialog opens, and its Start
+ * goes on with that session (POST /sessions with `continues`) with what is left of its budget.
+ * The press marks the Update read (`onPress`); the daemon offers it only until a later session of
+ * the project began.
+ */
+function CrashContinue({
+  action,
+  onPress,
+}: {
+  action: NonNullable<MessageView["action"]>;
+  onPress: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <Button
+        variant="primary"
+        onClick={() => {
+          setOpen(true);
+          onPress();
+        }}
+        title={action.explain}
+        data-testid="message-continue"
+      >
+        {action.label}
+      </Button>
+      <span
+        className="text-xs text-neutral-600 dark:text-neutral-400"
+        data-testid="message-continue-explain"
+      >
+        {action.explain}
+      </span>
+      <StartSessionDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        projectId={action.projectId}
+        reference={action.budgetLeft}
+        continues={{ sessionId: action.sessionId, budget: action.budgetLeft }}
+      />
+    </span>
+  );
+}
+
+/**
  * The card key of questions only the person can answer (U-022): the runtime's
  * `PERSON_QUESTIONS_KEY_PREFIX` (`session/person-questions.ts`), which `test/inbox.test.tsx`
  * checks this equals; the runtime module itself needs Node and is not imported here.
@@ -226,12 +271,19 @@ function PersonQuestionsForm({
   busy,
   onSend,
   showContext = true,
+  submit,
 }: {
   card: PersonQuestionsView;
   busy: boolean;
   onSend: (value: unknown) => void;
   /** The card body says the specialist's words already (design §3.8): not twice. */
   showContext?: boolean;
+  /**
+   * L4-money-202: the daemon's words for the form's button and what pressing it does now
+   * ("The task goes on with your answers; it runs at your next Start."), shown beside it as
+   * every option's line is; absent from an older daemon (the button then has no line).
+   */
+  submit?: { label: string; explain: string } | null;
 }) {
   const [answers, setAnswers] = useState<string[]>(() => card.questions.map(() => ""));
   const given = card.questions
@@ -268,14 +320,24 @@ function PersonQuestionsForm({
           />
         </label>
       ))}
-      <Button
-        type="submit"
-        variant="primary"
-        disabled={busy || given.length === 0}
-        data-testid="send-answers"
-      >
-        Send answers
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={busy || given.length === 0}
+          data-testid="send-answers"
+        >
+          {submit?.label ?? "Send answers"}
+        </Button>
+        {submit?.explain ? (
+          <span
+            className="text-xs text-neutral-600 dark:text-neutral-400"
+            data-testid="send-answers-explain"
+          >
+            {submit.explain}
+          </span>
+        ) : null}
+      </div>
     </form>
   );
 }
@@ -598,9 +660,17 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
 
   const markRead = async (message: MessageView) => {
     const updated = await client.markRead(message.id);
+    // The read route answers the stored message; an action GET /inbox derived for it (the crash
+    // Update's Continue, whose press marks it read with its Start dialog open) stays until the
+    // next read of the Inbox says otherwise.
     inbox.setData((prev) =>
       prev
-        ? { ...prev, messages: prev.messages.map((m) => (m.id === updated.id ? updated : m)) }
+        ? {
+            ...prev,
+            messages: prev.messages.map((m) =>
+              m.id === updated.id ? { ...updated, ...(m.action ? { action: m.action } : {}) } : m,
+            ),
+          }
         : prev,
     );
   };
@@ -727,6 +797,14 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
             <span className="ml-auto text-xs text-neutral-500">
               {m.fromAgentName} · {relativeTime(m.createdAt)}
             </span>
+            {m.action ? (
+              <CrashContinue
+                action={m.action}
+                onPress={() => {
+                  if (!m.readAt) void markRead(m).catch(() => undefined);
+                }}
+              />
+            ) : null}
             {m.readAt ? null : (
               <Button variant="ghost" onClick={() => void markRead(m)} data-testid="mark-read">
                 Mark read
@@ -1064,6 +1142,7 @@ function RequestCard({
           busy={busy}
           onSend={send}
           showContext={!request.body}
+          submit={request.submit ?? null}
         />
       ) : null}
       {intake ? (

@@ -107,6 +107,9 @@ export function summarize(answers: Map<string, AdmitOutcome>): AdmitOutcome {
   const all = [...answers.values()];
   if (all.length > 0 && all.every((a) => a === "joined")) return "joined";
   if (all.length > 0 && all.every((a) => a === "stopping")) return "stopping";
+  // L4-money-203: tasks too large for the session (and the ones it stopped taking) never join.
+  if (all.includes("too_large") && all.every((a) => a === "too_large" || a === "stopping"))
+    return "too_large";
   return all.includes("joined") || all.includes("no_room") ? "no_room" : "stopping";
 }
 
@@ -199,6 +202,8 @@ export function preparedLine(outcome: PrepareOutcome, by?: "hands_off"): string 
       return "It joins the session that is running.";
     case "no_room":
       return "Ready: it joins this session if budget is left after its own tasks, else your next Start.";
+    case "too_large":
+      return "Ready: it is larger than this session's budget, so it runs at your next Start.";
     case "stopping":
     case "waits_start":
       return "Ready: it runs at your next Start.";
@@ -243,6 +248,7 @@ export function isPreparedOutcome(outcome: unknown): outcome is PrepareOutcome {
   return (
     outcome === "joined" ||
     outcome === "no_room" ||
+    outcome === "too_large" ||
     outcome === "stopping" ||
     outcome === "waits_start" ||
     outcome === "waits_continuation" ||

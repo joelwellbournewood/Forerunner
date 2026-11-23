@@ -103,6 +103,13 @@ export interface RequestWords {
    * Try again; its next brief carries the answers). Null otherwise.
    */
   followUp?: { label: string; explain: string; action: "redo" | "reopen" | "try_again" } | null;
+  /**
+   * l4-starts-sessions (L4-money-202): the form's own button (`reply: 'form'`) with its
+   * one-line consequence, read when the card is shown like every option that prepares work
+   * (S-9): "Send answers" / "The task goes on with your answers; it runs at your next Start.".
+   * Absent on cards without a form.
+   */
+  submit?: { label: string; explain: string } | null;
 }
 
 /** A list a card shows under its body: its label ("Left to do") and its items, each whole. */
@@ -483,6 +490,32 @@ function retryCard(
 const toneRank = (t: RequestChoiceWords["tone"]) =>
   t === "primary" ? 0 : t === "secondary" ? 1 : 2;
 
+/**
+ * l4-starts-sessions (L4-money-205): what a Done or Answered line says after "is done" about the
+ * work its answer prepared (the one helper for every such line), true when the line is read: of
+ * `subject` ("what waits on it", "what comes after it"), never of the done task itself; nothing
+ * once nothing waits on the task (live check 4 read "what waits on it joins the session that is
+ * running." with nothing waiting and nothing running); a join only while a session of the project
+ * runs, else the person's next Start; the hands-off setting's start as it happened, after the
+ * task's end ("a session started for what comes after it (...)", never "what comes after it a
+ * session started for it"). Null for a card answered before run C (its caller keeps its words).
+ */
+function afterDoneWords(
+  card: JsonObject,
+  ctx: RequestWordsContext,
+  subject: string,
+): string | null {
+  const handsOff = card.start_by === "hands_off";
+  if (!isPreparedOutcome(card.start) && !handsOff) return null;
+  const started = startWords(card.start, card.start_by);
+  if (!started) return null;
+  if (ctx.waiting && ctx.waiting.length === 0) return null;
+  if (handsOff) return started.replace(/\bfor it\b/, `for ${subject}`);
+  if (card.start === "joined" && ctx.running !== undefined && ctx.running !== "this_project")
+    return `${subject} runs at your next Start`;
+  return started.replace(/^it /, `${subject} `);
+}
+
 function retryOutcome(card: JsonObject, ctx: RequestWordsContext, verdict: boolean): string | null {
   const task = q(ctx.taskTitle ?? "the task");
   const started = startWords(card.start, card.start_by);
@@ -492,12 +525,15 @@ function retryOutcome(card: JsonObject, ctx: RequestWordsContext, verdict: boole
       return `Trying ${task} again${started ? `: ${started}` : ": the next session runs it"}.`;
     case "accept": {
       // S-2: what comes after it is prepared, not started ("; what comes after it runs at your
-      // next Start"); a card answered before run C kept its start's words.
-      const after = started
-        ? isPreparedOutcome(card.start) || card.start_by === "hands_off"
-          ? `; what comes after it ${started.replace(/^it /, "")}.`
-          : `. What comes after it runs now: ${started}.`
-        : ".";
+      // next Start"); a card answered before run C kept its start's words. L4-money-205: said
+      // only while something comes after it, true when read (`afterDoneWords`).
+      const prepared = isPreparedOutcome(card.start) || card.start_by === "hands_off";
+      const words = prepared ? afterDoneWords(card, ctx, "what comes after it") : null;
+      const after = words
+        ? `; ${words}.`
+        : started && !prepared
+          ? `. What comes after it runs now: ${started}.`
+          : ".";
       return verdict
         ? `${task} is done${after}`
         : `${task} is done: accepted without review${after}`;
@@ -540,10 +576,13 @@ function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords
   const choices: RequestChoiceWords[] = [];
   // Not offered again once the person went ahead without on the task (live L-3): the work then
   // needs what it asks for (a missing input), and going ahead again only ran the same ask.
+  // L4-money-202 (S-9 extended): Go ahead without and Send answers prepare the work, so each
+  // says what pressing it does now ("...; it joins the running session if it fits.").
+  const next = preparedExplain(ctx);
   if (!planned && card.go_ahead !== false)
     choices.push({
       label: "Go ahead without",
-      explain: "The specialist decides and says what it assumed.",
+      explain: `The specialist decides and says what it assumed; ${next}.`,
       tone: "secondary",
       confirm: null,
       input: null,
@@ -563,6 +602,13 @@ function questionsCard(card: JsonObject, ctx: RequestWordsContext): RequestWords
     reply: "form",
     details: [],
     outcome: null,
+    submit: {
+      label: "Send answers",
+      // The person's own task is done by the answers (the body says so); a specialist's goes on.
+      explain: planned
+        ? "Saves your answers in the decision record and closes the task."
+        : `The task goes on with your answers; ${next}.`,
+    },
   };
 }
 
@@ -574,10 +620,16 @@ function questionsOutcome(card: JsonObject, ctx: RequestWordsContext): string | 
   if (outcome === "task_moved_on")
     return `Your answers came after ${task} had finished. They are kept in the decision record.`;
   // S-2: a done task's prepared work is what waits on it ("what waits on it runs at your next
-  // Start"), never the done task itself.
+  // Start"), never the done task itself. L4-money-205: a specialist's card prepared the task
+  // itself, so once it is done the line says only that; the person's own card says what waits
+  // on it only while something does, true when read (`afterDoneWords`).
+  const own = !offersGoAheadWithout(card);
+  const afterWords = own ? afterDoneWords(card, ctx, "what waits on it") : null;
   const after =
-    ctx.taskStatus === "done" && started && isPreparedOutcome(card.start)
-      ? started.replace(/^it /, "what waits on it ")
+    ctx.taskStatus === "done"
+      ? isPreparedOutcome(card.start) || card.start_by === "hands_off" || !own
+        ? afterWords
+        : started
       : started;
   if (outcome === "without")
     return ctx.taskStatus === "done"

@@ -221,6 +221,20 @@ export function endedStatusText(
   return `Ended: ${parts.join(", ")}`;
 }
 
+/**
+ * l4-starts-sessions (L4-money-213): the Sessions row's own end words for a session that ended
+ * with tasks that needed the person (its counts say "2 needed you") while some of them still
+ * wait now: "1 still needs you", "2 still need you, 1 paused" (before: "Ended: 1 task needs you"
+ * beside "2 needed you", two counts for one thing). The session page's badge keeps
+ * `endedStatusText` (L-21); null when nothing needs the person now (the row then reads as
+ * `endedStatusText` says, "Done" when nothing waits).
+ */
+export function stillWaitsText(waits: EndedWaits): string | null {
+  if (waits.needYou <= 0) return null;
+  const still = `${waits.needYou} still ${waits.needYou === 1 ? "needs" : "need"} you`;
+  return waits.paused ? `${still}, ${waits.paused} paused` : still;
+}
+
 /** `handoff.stop_reason` of a session row, or null. */
 export function stopReasonOfHandoff(handoff: unknown): string | null {
   if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) return null;

@@ -53,7 +53,11 @@ import { aboutWords, moneyWords } from "../session/money-words.ts";
 import { TASK_FILES_EVENT } from "../session/peers.ts";
 import type { PreparedContext } from "../session/prepared-work.ts";
 import { defaultRiskTier } from "../session/project-plan.ts";
-import { isIntakeSession } from "../session/recovery.ts";
+import {
+  INTERRUPTED_STOP_REASON,
+  INTERRUPTED_UPDATE_LEAD,
+  isIntakeSession,
+} from "../session/recovery.ts";
 import type { LastSessionOutcome } from "../session/result.ts";
 import {
   blockedOfHandoff,
@@ -140,7 +144,7 @@ import {
   spentOf,
 } from "./session-list.ts";
 import { loadTaskDisplayContext, runOrder, taskDisplay, taskHeldWork } from "./task-display.ts";
-import { agentChangeLine, plainPlurals, withoutIds } from "./task-words.ts";
+import { agentChangeLine, isPausedByPerson, plainPlurals, withoutIds } from "./task-words.ts";
 
 /** An agent as `GET /agents` lists it and `POST /agents/:id/rename` answers it. */
 export function agentView(a: AgentRow): AgentView {
@@ -211,6 +215,11 @@ export interface ProjectCardFacts {
    * sentence says it.
    */
   startsWait?: (projectId: string) => Promise<StartsWait | null>;
+  /**
+   * l4-starts-sessions (L4-money-208): what a working session does now in the run indicator's
+   * words (its entry's `what`), for the status sentence; null when the bar has no entry for it.
+   */
+  workingWhat?: (sessionId: string) => Promise<string | null>;
 }
 
 export async function projectCard(
@@ -265,6 +274,8 @@ export async function projectCard(
     facts?.credentialWaitNow && tasks.some((t) => displays.get(t.id)?.key === "ready")
       ? await facts.credentialWaitNow(p.id).catch(() => null)
       : null;
+  const startsWait =
+    !working && facts?.startsWait ? await facts.startsWait(p.id).catch(() => null) : null;
   const statusLine = projectStatusLine({
     projectId: p.id,
     tasks,
@@ -278,10 +289,13 @@ export async function projectCard(
     hasModel: facts?.hasModel ?? null,
     stopped: facts?.stopped ?? null,
     working,
+    workingWhat:
+      working && facts?.workingWhat
+        ? await facts.workingWhat(working.sessionId).catch(() => null)
+        : null,
     folder,
     joinedInto: joined ? { text: joined.text, projectId: joined.projectId } : null,
-    startsWait:
-      !working && facts?.startsWait ? await facts.startsWait(p.id).catch(() => null) : null,
+    startsWait,
   });
   return {
     id: p.id,
@@ -309,6 +323,8 @@ export async function projectCard(
     defaultRiskTier: defaultRiskTier(p),
     repos: p.repos,
     statusLine,
+    // L4-money-209: the project whose session this project's start waits behind.
+    startsAfter: startsWait?.kind === "queued" ? startsWait.behind : null,
     progress: progressOf(tasks),
     working,
     folder,
@@ -496,11 +512,19 @@ export async function projectSummary(
   const keptName = joinedTo
     ? ((await store.project.get(joinedTo.project))?.name ?? joinedTo.name ?? "")
     : "";
+  // L4-money-214: a task the person paused while it ran is said by the result ('You paused "X";
+  // nothing else ran.'); while it is still theirs no "Since then" line says it again.
+  const pausedByYou = new Set(
+    (outcomeOfHandoff(lastRow?.handoff)?.pausedByYou ?? []).map((t) => t.id),
+  );
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const movedOn = blockedTaskIds(lastRow?.handoff).filter((id) => {
+    const t = byId.get(id);
+    return !(pausedByYou.has(id) && t && isPausedByPerson(t, false));
+  });
   const since = lastRow
     ? [
-        ...sinceLines(blockedTaskIds(lastRow.handoff), new Map(tasks.map((t) => [t.id, t])), (t) =>
-          taskDisplay(t, ctx),
-        ),
+        ...sinceLines(movedOn, byId, (t) => taskDisplay(t, ctx)),
         // merge-in-app: the pull requests the session left open that are merged now (by the
         // person's Merge, the retry, or on GitHub); the result still says it left them.
         ...(await mergedSinceLine(store, lastRow.handoff)),
@@ -647,10 +671,13 @@ export async function stillBlocked(store: StateStore, handoff: unknown): Promise
       ? ((handoff as { paused: unknown[] }).paused.filter((x) => typeof x === "string") as string[])
       : [],
   );
+  // L4-money-214: a task the person paused while it ran waits on nobody while it is still theirs.
+  const pausedByYou = new Set((outcomeOfHandoff(handoff)?.pausedByYou ?? []).map((t) => t.id));
   const out: EndedWaits = { needYou: 0, paused: 0 };
   for (const id of new Set(ids)) {
     const t = await store.task.get(id);
     if (!t || (t.status !== "needs_human" && t.status !== "failed")) continue;
+    if (pausedByYou.has(id) && isPausedByPerson(t, false)) continue;
     if (pausedIds.has(id) && t.status === "needs_human") out.paused += 1;
     else out.needYou += 1;
   }
@@ -953,6 +980,69 @@ export function messageView(m: MessageRow, fromName: string): MessageView {
   };
 }
 
+/**
+ * l4-starts-sessions (L4-money-207): the Continue a restart's Update offers (design §5: 'Your last
+ * session was interrupted when Forerunner closed. "Create the page skeleton" is ready again.
+ * [Continue]'). Derived from the rows, no column of its own: the Update names its project, and
+ * the interrupted session is that project's newest one the restart ended (stop reason
+ * `interrupted`) by the Update's time. Offered only while it can do something: a task it released
+ * is still ready, its budget has something left, no session of the project works now and none
+ * began since it ended (that one went on with the work, whatever it did with it). The
+ * press is the person's Start that goes on with it (POST /sessions with `continues`, ADR 0118),
+ * through the Start dialog.
+ */
+export async function crashContinueOf(
+  store: StateStore,
+  m: Pick<MessageRow, "type" | "project_id" | "body" | "created_at">,
+  opts: { chfPerUsd: number; projectWorks: (projectId: string) => Promise<boolean> },
+): Promise<MessageView["action"] | undefined> {
+  if (m.type !== "info" || !m.project_id || !m.body.startsWith(INTERRUPTED_UPDATE_LEAD))
+    return undefined;
+  if (await opts.projectWorks(m.project_id)) return undefined;
+  const sessions = await store.session.forProject(m.project_id, { orderBy: "created_at desc" });
+  const at = Date.parse(m.created_at);
+  const ended = sessions.find((s) => {
+    const h = (s.handoff ?? {}) as { stop_reason?: unknown };
+    return (
+      h.stop_reason === INTERRUPTED_STOP_REASON &&
+      !!s.ended_at &&
+      Date.parse(s.ended_at) <= at + 60_000
+    );
+  });
+  if (!ended) return undefined;
+  // The review of run L4g (bench walk 7): once a later session of the project began (the
+  // Continue's own, or a Start), that one went on with the work, so this Update offers nothing
+  // more (as the session page's wait block, `waitBlockOf`): before, after Continue and Stop now
+  // the same Continue came back with all of the interrupted session's budget again.
+  const endedAt = ended.ended_at ?? "";
+  if (sessions.some((s) => s.id !== ended.id && s.created_at > endedAt && !isIntakeSession(s)))
+    return undefined;
+  const left = ended.budget_cap_usd_micro - ended.spent_usd_micro;
+  if (left <= 0) return undefined;
+  const released = ((ended.handoff ?? {}) as { released?: unknown }).released;
+  const ids = Array.isArray(released)
+    ? released.filter((x): x is string => typeof x === "string")
+    : [];
+  let ready = false;
+  for (const id of ids) {
+    const t = await store.task.get(id).catch(() => undefined);
+    if (t?.status === "ready") {
+      ready = true;
+      break;
+    }
+  }
+  if (!ready) return undefined;
+  const budgetLeft = money(left, opts.chfPerUsd);
+  return {
+    kind: "continue",
+    label: "Continue",
+    explain: `Opens Start with the rest of your last session and the ${formatChf(budgetLeft.chfMicro)} left of its budget.`,
+    projectId: m.project_id,
+    sessionId: ended.id,
+    budgetLeft,
+  };
+}
+
 /** What a request's option says on its button (`optionLabel`, `wiring/request-answers.ts`). */
 export { optionLabel };
 
@@ -995,6 +1085,8 @@ export function requestView(
     ...(startOfferOf(r.change_card, r.status, r.project_id) ? { startOffer: true } : {}),
     answeredAt: r.answered_at ?? null,
     followUp: words.followUp ?? null,
+    // L4-money-202: the questions form's button and its line.
+    ...(words.submit ? { submit: words.submit } : {}),
   };
 }
 
@@ -1036,10 +1128,13 @@ export async function requestContexts(
   // L-20: which projects work on a repository (the plan card's line while Approve and start
   // writes its docs pull request).
   const onRepository = new Map<string, boolean>();
-  // S-9: read once per project, for its open cards only (an answered card offers nothing).
+  // S-9: read once per project, for its open cards; l4-starts-sessions (L4-money-205): and for
+  // an answered one whose line says what its answer prepared (a join is said only while a
+  // session of the project runs).
   const preparedOf = new Map<string, Promise<PreparedContext>>();
   const preparedFor = async (r: HumanRequestRow): Promise<PreparedContext> => {
-    if (!prepared || r.status !== "open" || !r.project_id) return {};
+    const start = (r.change_card as { start?: unknown } | null)?.start;
+    if (!prepared || !r.project_id || (r.status !== "open" && start !== "joined")) return {};
     let p = preparedOf.get(r.project_id);
     if (!p) {
       p = prepared(r.project_id).catch(() => ({}));

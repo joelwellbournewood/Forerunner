@@ -984,6 +984,67 @@ describe("w15-run, wave 15: the result says what the person cancelled (W15-59)",
   });
 });
 
+/**
+ * l4-starts-sessions, run L4 (L4-money-214, live check 4 L4-l3-8): a session whose only task the
+ * person paused (Stop in its drawer while it ran) ended with the result "CHF 0.01." and nothing
+ * else, as W15-59's cancel did before.
+ */
+describe("l4-starts-sessions, run L4: the result says what the person paused (L4-money-214)", () => {
+  const facts = (over: Partial<Parameters<typeof sessionResultLines>[0]["outcome"]> = {}) => ({
+    outcome: {
+      done: [],
+      failed: [],
+      needsYou: [],
+      leftOver: [],
+      waiting: [],
+      waitingForDocker: [],
+      stopReason: "queue_empty",
+      spentChfMicro: 8_000,
+      ...over,
+    },
+    inReview: [],
+    leftOutForBudget: [],
+    sessionCapChfMicro: 1_000_000,
+    openTasks: 1,
+  });
+
+  it("only a task the person paused: 'You paused \"X\"; nothing else ran.' and its cost, and no Update", () => {
+    const lines = sessionResultLines(facts({ pausedByYou: [{ id: "t", title: "About page" }] }));
+    expect(lines).toEqual(['You paused "About page"; nothing else ran.', "CHF 0.01."]);
+    // The person's own click is no news for the Update (design §5 rule 11), nor is the money.
+    expect(lines.every((l) => !isNewsLine(l))).toBe(true);
+    expect(sessionUpdateLine("About club", lines, [])).toBeNull();
+  });
+
+  it("a cancel and a pause in one session are one sentence", () => {
+    const lines = sessionResultLines(
+      facts({
+        cancelled: [{ id: "c", title: "Contact page" }],
+        pausedByYou: [
+          { id: "a", title: "About page" },
+          { id: "b", title: "Board page" },
+        ],
+      }),
+    );
+    expect(lines).toEqual([
+      'You cancelled "Contact page" and paused "About page" and "Board page"; nothing else ran.',
+      "CHF 0.01.",
+    ]);
+    expect(lines.every((l) => !isNewsLine(l))).toBe(true);
+  });
+
+  it("with other work done the result says that work, not the pause", () => {
+    const lines = sessionResultLines(
+      facts({
+        pausedByYou: [{ id: "t", title: "About page" }],
+        done: [{ id: "d", title: "Home page" }],
+      }),
+    );
+    expect(lines.join(" ")).toContain('Did 1 task: "Home page".');
+    expect(lines.join(" ")).not.toContain("You paused");
+  });
+});
+
 describe("l4-github-link, run L4", () => {
   it("L4-github-108: no person-facing line puts a possessive after a quoted name; the take-over and held-status lines read 'the project \"X\"' and 'the status pull request of \"X\"'", async () => {
     const { readdirSync, readFileSync, statSync } = await import("node:fs");

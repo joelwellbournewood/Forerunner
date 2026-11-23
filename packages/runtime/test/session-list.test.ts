@@ -12,6 +12,7 @@ import { createDaemonApp } from "../src/daemon/server.ts";
 import {
   countsWords,
   GIST_MAX,
+  listEndWords,
   planningGist,
   resultTextNow,
   type SessionRecord,
@@ -75,6 +76,10 @@ describe("d1109-sessions, run C: the words of the Sessions list (SL-3)", () => {
     ).toBe('"Decide where the page is published" needed your answer.');
     expect(plain(sessionGist(record({ cancelled: [task("Draft the FAQ")] })))).toBe(
       'You cancelled "Draft the FAQ"; nothing else ran.',
+    );
+    // l4-starts-sessions, run L4 (L4-money-214): a task the person paused while it ran.
+    expect(plain(sessionGist(record({ pausedByYou: [task("About page")] })))).toBe(
+      '"About page" paused by you.',
     );
     expect(plain(sessionGist(record()))).toBe("Nothing finished.");
     expect(plain(sessionGist(record({ leftForYou: 2 })))).toBe("Nothing finished.");
@@ -588,4 +593,31 @@ describe("d1109-sessions, run C: an interrupted session's length is the time it 
     const again = await third.req<ProjectSessionsView>(`/projects/${project.id}/sessions`);
     expect(again.rows.find((r) => r.id === session.id)).toEqual(row);
   }, 60_000);
+});
+
+/**
+ * l4-starts-sessions, run L4 (L4-money-213): live check 4 (L4-session-12) read '2 needed you ·
+ * Ended: 1 task needs you' on one Sessions row, two counts for one thing. The row says what still
+ * waits in one count beside what the session left; the session page's badge keeps L-21's words.
+ */
+describe("l4-starts-sessions, run L4: a Sessions row counts what needed the person once", () => {
+  const done = { status: "completed", handoff: {}, plan: {} } as unknown as SessionRow;
+  it.each<[string, { needYou: number; paused: number }, number, string | null]>([
+    ["one of two still waits", { needYou: 1, paused: 0 }, 2, "1 still needs you"],
+    ["both still wait", { needYou: 2, paused: 0 }, 2, "2 still need you"],
+    ["one waits and one paused", { needYou: 1, paused: 1 }, 2, "1 still needs you, 1 paused"],
+    ["nothing waits now", { needYou: 0, paused: 0 }, 2, "Done"],
+    ["paused only", { needYou: 0, paused: 2 }, 1, "Ended: 2 paused"],
+    [
+      "nothing needed the person at its end",
+      { needYou: 1, paused: 0 },
+      0,
+      "Ended: 1 task needs you",
+    ],
+  ])("%s", (_what, waits, neededYou, words) => {
+    expect(listEndWords(done, waits, neededYou)).toBe(words);
+  });
+  it("the session page's badge keeps its own words (L-21)", () => {
+    expect(sessionEndWords(done, { needYou: 1, paused: 0 })).toBe("Ended: 1 task needs you");
+  });
 });

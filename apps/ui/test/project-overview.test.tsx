@@ -697,8 +697,9 @@ describe("the project header (design §2, §3.4)", () => {
     for (const r of harness.daemon.state.requests) r.status = "answered";
     renderApp("/projects/proj_atlas/tasks", harness);
     const header = await screen.findByTestId("project-header");
+    // l4-starts-sessions (L4-money-208): the bar's words with the count (it read 'Working on').
     expect(await within(header).findByTestId("project-status")).toHaveTextContent(
-      'Working on "Decide the versioning scheme" (1 of 3 done)',
+      'The coder works on "Decide the versioning scheme" (1 of 3 done)',
     );
     expect(within(header).queryByTestId("start-session")).toBeNull();
     expect(within(header).getByTestId("open-running-session")).toHaveAttribute(

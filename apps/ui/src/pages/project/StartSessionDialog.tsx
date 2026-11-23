@@ -437,8 +437,9 @@ export function StartSessionDialog({
       setNote("");
       // The person stays where they were (design §3.6); the session can be opened from here.
       // S-10: a Start kept for the credential's reset says when it starts, in the daemon's words.
+      // L4-money-209: a start already waiting in line is kept once, in the daemon's sentence.
       setNotice(
-        started.result === "kept" && started.sentence
+        (started.result === "kept" || started.result === "queued") && started.sentence
           ? started.sentence
           : startNotice(started.result, started.ahead, { planning }),
       );

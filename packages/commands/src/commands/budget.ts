@@ -283,6 +283,32 @@ async function describe(p: BudgetSetParams, ctx: CommandContext): Promise<Budget
   };
 }
 
+/**
+ * l4-starts-sessions (L4-money-204): a raised project budget or monthly cap wakes the tasks that
+ * paused at it at the write (the port), not at the scheduler's next tick (up to 30 s later the
+ * Start dialog still said the card "needs your answer"). A wake that fails is logged by the port
+ * and the tick stays the fallback; the limit is written either way.
+ */
+async function wakeAfterLimit(
+  ctx: CommandContext,
+  projectId: string | null,
+): Promise<string | null> {
+  try {
+    return (await ctx.ports.limitChanged?.(projectId)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The change's sentence and, when tasks were woken, the line that says so (before its Undo). */
+function withWoken(sentence: string, woken: string | null): string {
+  if (!woken) return sentence;
+  const undo = / Undo\.$/.exec(sentence);
+  return undo
+    ? `${sentence.slice(0, undo.index)} ${woken}${undo[0]}`
+    : `${sentence.replace(/\s+$/, "")} ${woken}`;
+}
+
 export const budgetSet: CommandDef<BudgetSetParams> = {
   name: "budget.set",
   description:
@@ -343,6 +369,7 @@ export const budgetSet: CommandDef<BudgetSetParams> = {
         { [MONTHLY_CAP_CHF_KEY]: d.next.chfMicro },
         { monthly_cap_usd_micro: d.next.usdMicro, ...author },
       );
+      const woken = await wakeAfterLimit(ctx, null);
       return {
         before: {
           scope: "month",
@@ -354,7 +381,7 @@ export const budgetSet: CommandDef<BudgetSetParams> = {
           monthly_cap_usd_micro: d.next.usdMicro,
           monthly_cap_chf_micro: d.next.chfMicro,
         },
-        sentence: d.sentence,
+        sentence: withWoken(d.sentence, woken),
         projectId: null,
       };
     }
@@ -370,6 +397,7 @@ export const budgetSet: CommandDef<BudgetSetParams> = {
         settings,
         ...author,
       });
+      const woken = await wakeAfterLimit(ctx, project.id);
       return {
         before: {
           scope: "project",
@@ -383,7 +411,7 @@ export const budgetSet: CommandDef<BudgetSetParams> = {
           budget_usd_micro: d.next.usdMicro,
           budget_chf_micro: d.next.chfMicro,
         },
-        sentence: d.sentence,
+        sentence: withWoken(d.sentence, woken),
         projectId: project.id,
       };
     }

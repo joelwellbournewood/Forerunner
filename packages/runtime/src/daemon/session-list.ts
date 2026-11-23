@@ -15,6 +15,7 @@ import {
   type EndedWaits,
   endedStatusText,
   planningStatusText,
+  stillWaitsText,
   stopReasonOfHandoff,
 } from "../session/stop-words.ts";
 import type {
@@ -26,6 +27,7 @@ import type {
 } from "./api-types.ts";
 import { joinedFromOf, joinedIntoOf, sessionsBeforeJoinSentence } from "./join-words.ts";
 import { sessionRunText } from "./run-indicator.ts";
+import { startedByReason } from "./started-by-words.ts";
 import { loadTaskDisplayContext, taskDisplay } from "./task-display.ts";
 import { shortTitle, withoutIds } from "./task-words.ts";
 
@@ -106,6 +108,8 @@ export interface SessionRecord {
   paused: PausedTask[];
   needsYou: NamedTask[];
   cancelled: NamedTask[];
+  /** L4-money-214: what the person paused while it ran (`LastSessionOutcome.pausedByYou`). */
+  pausedByYou?: NamedTask[];
   /** An older row's tasks left waiting for the person, counted, never named by id. */
   leftForYou: number;
 }
@@ -139,6 +143,7 @@ export function recordOfOutcome(o: LastSessionOutcome): SessionRecord {
     paused: named(o.paused) as PausedTask[],
     needsYou: named(o.needsYou),
     cancelled: named(o.cancelled),
+    ...(named(o.pausedByYou).length ? { pausedByYou: named(o.pausedByYou) } : {}),
     leftForYou: 0,
   };
 }
@@ -230,6 +235,9 @@ export function sessionGist(r: SessionRecord): string {
     return fitted(titles(r.needsYou), (names) => `${names} needed your answer.`);
   if (r.cancelled.length)
     return fitted(titles(r.cancelled), (names) => `You cancelled ${names}; nothing else ran.`);
+  // L4-money-214: before, "Nothing finished." for a session whose only task the person paused.
+  if (r.pausedByYou?.length)
+    return fitted(titles(r.pausedByYou), (names) => `${names} paused by you.`);
   return "Nothing finished.";
 }
 
@@ -347,6 +355,22 @@ export function sessionEndWords(
   );
 }
 
+/**
+ * l4-starts-sessions (L4-money-213): the Sessions row's end words. Beside "2 needed you" (what
+ * the session left for the person, from its record) the row says what still waits now in one
+ * count ("1 still needs you"), not a second count of the same thing ("Ended: 1 task needs you");
+ * every other end reads as `sessionEndWords` (the session page's badge, L-21).
+ */
+export function listEndWords(
+  row: Pick<SessionRow, "status" | "handoff" | "plan">,
+  waits: EndedWaits | undefined,
+  neededYou: number,
+): string | null {
+  const words = sessionEndWords(row, waits);
+  if (!waits || neededYou <= 0 || !words?.startsWith("Ended: ")) return words;
+  return stillWaitsText(waits) ?? words;
+}
+
 /** Who asked for a session (`plan.startedBy`, written by d1109-starts-engine from run C3). */
 export interface StartedBy {
   by: "person" | "schedule" | "hands_off" | "continuation";
@@ -376,24 +400,12 @@ function startedByOf(plan: unknown): StartedBy | null {
  */
 export function startedByWords(row: Pick<SessionRow, "plan" | "trigger">): string | null {
   const who = startedByOf(row.plan);
-  if (who) {
-    switch (who.by) {
-      case "schedule":
-        return "started on its schedule";
-      case "person":
-        return row.trigger === "remote" ? "started from your phone" : null;
-      case "hands_off":
-        // S-5: the project's "Start a session by itself" setting started it.
-        return "started by itself when work was ready";
-      case "continuation":
-        // S-10: the person's own session going on after a wait for its Claude credential.
-        return who.continuesAt
-          ? `goes on with your session of ${who.continuesAt}`
-          : "goes on with your earlier session";
-      default:
-        return null;
-    }
-  }
+  // L4-money-206: one map with the session page's first line (`started-by-words.ts`).
+  if (who)
+    return startedByReason(who.by, {
+      trigger: row.trigger,
+      continuesAt: who.continuesAt ?? null,
+    });
   switch (row.trigger) {
     case "schedule":
       return "started on its schedule";
@@ -640,7 +652,7 @@ export async function sessionRowView(
     gist: withoutIds(gist),
     tasks: counts,
     countsWords: countsWords(counts),
-    endedWords: sessionEndWords(row, waits),
+    endedWords: listEndWords(row, waits, counts.needsYou),
     spent,
     spentWords: spentWords(
       { chfMicro: spent.chfMicro, kinds: ctx.spend?.kinds ?? [] },
@@ -768,6 +780,7 @@ function hereOf(
     };
   if (has(record.needsYou)) return { words: "Needed your answer", key: "answer" };
   if (has(record.cancelled)) return { words: "Cancelled", key: "cancelled" };
+  if (has(record.pausedByYou ?? [])) return { words: "Paused by you", key: "paused" };
   return { words: "Worked on", key: null };
 }
 
@@ -799,6 +812,7 @@ export async function sessionTasksView(
       ...(outcome.paused ?? []),
       ...outcome.needsYou,
       ...(outcome.cancelled ?? []),
+      ...(outcome.pausedByYou ?? []),
     ])
       if (!order.includes(t.id)) order.push(t.id);
   const runningId = working ? await runningTaskIdOf(store, row.id) : null;

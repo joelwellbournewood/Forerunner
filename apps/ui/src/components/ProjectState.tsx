@@ -71,7 +71,16 @@ export const CANCEL_WAIT_LINE_EXPLAIN = CANCEL_WAIT_EXPLAIN;
  * run indicator read again, so the line says what waits now ("Ready: 2 tasks wait for your
  * Start").
  */
-function CancelWaitButton({ projectId, testId }: { projectId: string; testId: string }) {
+function CancelWaitButton({
+  projectId,
+  testId,
+  explain = CANCEL_WAIT_LINE_EXPLAIN,
+}: {
+  projectId: string;
+  testId: string;
+  /** L4-money-209: a start waiting in line says its own Cancel ("it does not start ..."). */
+  explain?: string;
+}) {
   const client = useClient();
   const store = useUiStore();
   const [busy, setBusy] = useState(false);
@@ -92,12 +101,7 @@ function CancelWaitButton({ projectId, testId }: { projectId: string; testId: st
   };
   return (
     <>
-      <Button
-        onClick={() => void cancel()}
-        disabled={busy}
-        title={CANCEL_WAIT_LINE_EXPLAIN}
-        data-testid={testId}
-      >
+      <Button onClick={() => void cancel()} disabled={busy} title={explain} data-testid={testId}>
         Cancel
       </Button>
       {error ? (
@@ -156,7 +160,11 @@ export function ProjectStatus({
       ) : action?.kind === "retry" ? (
         <RetryPlanButton projectId={project.id} label={action.label} testId={`${testId}-action`} />
       ) : action?.kind === "cancel" ? (
-        <CancelWaitButton projectId={project.id} testId={`${testId}-action`} />
+        <CancelWaitButton
+          projectId={project.id}
+          testId={`${testId}-action`}
+          {...(action.explain ? { explain: action.explain } : {})}
+        />
       ) : action?.kind === "link" && action.to ? (
         <Link
           to={action.to}

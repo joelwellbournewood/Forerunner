@@ -1991,6 +1991,66 @@ export function defineStateSuite(target: SuiteTarget): void {
           expect(ids(second)[0]).toBe([a.id, b.id].sort()[0]);
         });
 
+        // l4-starts-sessions, run L4 (L4-money-201; ADR 0116 point 5, amended 2026-11-23): live
+        // check 4's Start with only a refused key ended at once to wait (no run, no ledger row)
+        // and the Sessions tab said "No sessions yet." while Last result pointed to it.
+        it("lists a person's start and a session that ended to wait, with no run and no money, but not an automatic start that found nothing (l4-starts-sessions, run L4)", async () => {
+          const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
+          const project = await store.project.insert({ name: "Waits" });
+          const ended = async (
+            fields: Record<string, unknown>,
+            handoff: Record<string, unknown>,
+          ) => {
+            await clock.advance(1_000);
+            const row = await store.session.insert({
+              agent_id: s.alice.id,
+              project_id: project.id,
+              reason: "who asked for the session",
+              author_agent: s.alice.id,
+              ...fields,
+            });
+            const on = await store.session.setStatus(row.id, row.version, "running");
+            await store.session.setStatus(on.id, on.version, "stopped", {
+              handoff: handoff as never,
+            });
+            return row;
+          };
+          // The person's Start that met only a refused key: stopped at once to wait.
+          const persons = await ended(
+            { trigger: "manual", plan: { startedBy: { by: "person" } } },
+            { stop_reason: "credential_wait" },
+          );
+          // The hands-off setting's start that found nothing: not news (design §4.8).
+          await ended(
+            { trigger: "message", plan: { startedBy: { by: "hands_off" } } },
+            { stop_reason: "nothing_runnable" },
+          );
+          // A schedule's start that found nothing: not news either.
+          await ended(
+            { trigger: "schedule", plan: { startedBy: { by: "schedule" } } },
+            { stop_reason: "nothing_runnable" },
+          );
+          // A hands-off start that ended to wait for Claude: it is waiting, so it is listed.
+          const handsOffWaits = await ended(
+            { trigger: "message", plan: { startedBy: { by: "hands_off" } } },
+            { stop_reason: "credential_wait" },
+          );
+          // The continuation of the person's session (S-10), before it ran anything.
+          const goesOn = await ended(
+            {
+              trigger: "manual",
+              plan: { startedBy: { by: "continuation", continues: persons.id } },
+            },
+            { stop_reason: "credential_wait" },
+          );
+          const rows = await store.session.pageForProject(project.id, { limit: 50 });
+          expect(ids(rows)).toEqual([goesOn.id, handsOffWaits.id, persons.id]);
+          expect(await store.session.listedCountForProject(project.id)).toBe(3);
+          expect(
+            ids(await store.session.pageForProject(project.id, { limit: 50, ended: true })),
+          ).toEqual([goesOn.id, handsOffWaits.id, persons.id]);
+        });
+
         it("sums each session's ledger rows by the kind of credential that paid, as sum() does, and chat about the project apart", async () => {
           const l = await listed();
           const sums = await store.costLedger.sumsBySessionAndSource([

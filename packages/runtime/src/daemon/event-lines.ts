@@ -23,6 +23,7 @@ import {
 } from "./event-audience.ts";
 import { continuesLine, takenLine } from "./oversize-words.ts";
 import { balancedCut } from "./quoted-title.ts";
+import { startedByOfValue, startedLine } from "./started-by-words.ts";
 
 type Payload = Record<string, unknown>;
 
@@ -214,9 +215,8 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
   const spent = (k: string) => moneyWords(chf(k), n(k));
   switch (type) {
     case "session.started":
-      return s("trigger") === "manual"
-        ? `You started the session with a budget of ${chf("budgetCapUsdMicro")}.`
-        : `The session started with a budget of ${chf("budgetCapUsdMicro")}.`;
+      // L4-money-206: who started it, from the event's `by` (one map with the Sessions row).
+      return startedLine(startedByOfValue(p.by), s("trigger") || null, chf("budgetCapUsdMicro"));
     // W15B-14: the review-only pass (W15-27) says it goes on before its verdict.
     case REVIEW_RESUMED_EVENT:
       return reviewResumedLine(p);

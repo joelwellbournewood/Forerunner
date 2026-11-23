@@ -135,3 +135,25 @@ from "Site".
 Dated note, 2026-11-22 (l4-money-pause, run L4, L4-money-104 and L4-selftasks-107): the session's size is its promise on every screen: the plan's clause counts no task that comes after a larger one as cut, and the session review measures the promise's tasks against the promise's figure plus what joined it.
 
 Dated note, 2026-11-22 (review of l4-money-pause, L4-github-110): the session's Details say its size once, as the promise ("It promised 3 tasks, about CHF 0.34."). With a promise, the Plan line says only how the tasks were chosen ("Plan: the first session you approved with the project plan, in its order."; before: "Plan: 1 task, about CHF 0.09 ... 1 task in its order" beside the promise of 3), and notes given to a task read "Gave 1 note to "X".", never "for the next session".
+
+## Amendment 2026-11-23 (l4-starts-sessions, run L4, L4-money-201): point 5, who is listed
+
+Live check 4 (LC-C21) pressed Start with only a refused API key: the session met the key's mark,
+stopped at once to wait (no run, no ledger row), and the Sessions tab said "No sessions yet."
+while the Overview's Last result opened it and the next session said it "goes on with your
+session of 07:24", a row the list never showed. Point 5 now reads: listed is every session of
+the project that ran a task, spent money, works now or planned (as before), and also every
+session the person started (`plan.startedBy.by` 'person') or that goes on with one
+('continuation'), and every session that ended to wait for its Claude credential
+(`handoff.stop_reason` 'credential_wait'), with or without a run. An automatic start (the
+schedule, the hands-off setting) that ended without a run and without a ledger row because it
+found nothing stays out: it is not news (design §4.8). Rows written before `plan.startedBy`
+keep the old rule. The heading's count and the Overview's "All N sessions" use the same rule.
+
+## Amendment 2026-11-23 (l4-starts-sessions, run L4, L4-money-213): one count for what needed you
+
+A row of a session that ended with tasks that needed the person read '2 needed you · Ended: 1
+task needs you' (live check 4): two counts for one thing, one from the session's record, one from
+what waits now. The row keeps the record's count and says what still waits in one count: '2 needed
+you · 1 still needs you' ('Done' once nothing waits). The session page's badge is unchanged (L-21).
+

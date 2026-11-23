@@ -88,7 +88,12 @@ import {
   reviewLevelValue,
   specialistName,
 } from "../src/lib/task-actions.ts";
-import { intakeCardOf, intakeDecisionLine, intakeTotalLine } from "../src/pages/InboxPage.tsx";
+import {
+  intakeCardOf,
+  intakeDecisionLine,
+  intakeTotalLine,
+  personQuestionsOf,
+} from "../src/pages/InboxPage.tsx";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
 import { latestRunByTask, taskCapWords } from "../src/pages/project/TasksTab.tsx";
 
@@ -254,6 +259,24 @@ describe("the UI client against the real daemon", () => {
   const someWork = (title: string) =>
     client.createTask(projectId, { title, outcome: `${title} exists`, riskTier: 0 });
 
+  /**
+   * CI-flake-1 (Desktop app run 86, Windows): a case that starts a session waits for it to end
+   * before the next case starts one (one session per agent). The wait is on the daemon's own
+   * answer, bounded at 30 s of real time, and fails with what it saw: a slow runner is no
+   * reason for the next case to read a session that never started.
+   */
+  const sessionEnds = (sessionId: string, why: string) =>
+    eventually(
+      async () => !!(await client.session(sessionId)).endedAt,
+      `${why}: the session to end (30 s)`,
+      async () => {
+        const s = await client.session(sessionId);
+        const running = (await client.sessions({ projectId })).filter((x) => !x.endedAt);
+        return `status ${s.status}, ${running.length} running`;
+      },
+      30_000,
+    );
+
   it("start session: answers with the session it started, which the dialog opens (U-003)", async () => {
     // Nothing to run yet: refused in the Start dialog's words, no session.
     await expect(
@@ -269,15 +292,15 @@ describe("the UI client against the real daemon", () => {
     expect(session?.projectId).toBe(projectId);
     // The dialog navigates to the session page, which reads it by id.
     expect((await client.session(session?.id ?? "")).id).toBe(session?.id);
+    // Nothing is left running for the next case (CI-flake-1).
+    await sessionEnds(session?.id ?? "", "the first start");
   });
 
   it("start session with a note: the session keeps it for every task's brief (design §4.6)", async () => {
-    // The session the case before started ends first (one session per agent).
-    for (let i = 0; i < 200; i++) {
-      const running = (await client.sessions({ projectId })).filter((s) => !s.endedAt);
-      if (running.length === 0) break;
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    // The session the case before started has ended (CI-flake-1: one session per agent; on a
+    // slow runner a second start answered without a session and the read met 404).
+    const running = (await client.sessions({ projectId })).filter((s) => !s.endedAt);
+    for (const s of running) await sessionEnds(s.id, "the session the case before started");
     await someWork("Write note.md");
     const started = await client.startSession({
       agentId,
@@ -285,15 +308,11 @@ describe("the UI client against the real daemon", () => {
       trigger: "manual",
       note: "Keep it in plain HTML.",
     });
+    expect(started.result, JSON.stringify(started)).toBe("started");
     const id = started.session?.id ?? "";
-    let handoff: unknown = null;
-    for (let i = 0; i < 200; i++) {
-      const s = await client.session(id);
-      handoff = s.handoff;
-      if (s.endedAt) break;
-      await new Promise((r) => setTimeout(r, 25));
-    }
-    expect(handoff).toMatchObject({ note: "Keep it in plain HTML." });
+    expect(id).not.toBe("");
+    await sessionEnds(id, "the session with a note");
+    expect((await client.session(id)).handoff).toMatchObject({ note: "Keep it in plain HTML." });
   });
 
   it("next-session queue: add, list and dismiss (U-004)", async () => {
@@ -3582,12 +3601,16 @@ describe("the UI client against the real daemon: a task that fails gets one card
       async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
       60_000,
     );
-    // The Answered list keeps both answers with what came of them.
+    // The Answered list keeps both answers with what came of them; l4-starts-sessions
+    // (L4-money-205): true when read, so once the README is done nothing comes after it there.
     const answered = (await client.inbox(me.id)).requests.filter(
       (r) => r.projectId === project.id && r.status === "answered",
     );
     expect(answered.map((r) => r.outcome)).toEqual(
-      expect.arrayContaining([marked.outcome, tried.outcome]),
+      expect.arrayContaining([
+        '"Write the scope in docs/scope.md" is done: accepted without review.',
+        tried.outcome,
+      ]),
     );
   }, 120_000);
 
@@ -7125,9 +7148,26 @@ describe("the UI client against the real daemon: Quit during 'Being reviewed', t
       expect(updates.join("\n")).not.toContain("Nothing was left half done.");
       const check = await second.client.startCheck(projectId);
       expect(check.runnable.map((t) => t.taskId)).toContain(taskId);
-      // The next Start runs it and the critic reviews it.
+      // l4-starts-sessions (L4-money-207, design §5's crash example): the Update offers Continue
+      // (before: only Mark read), the person's Start that goes on with the interrupted session.
+      const crashUpdate = (await second.client.inbox(me.id)).messages.find((m) =>
+        m.body.startsWith("Your last session was interrupted when Forerunner closed."),
+      );
+      expect(crashUpdate?.action).toMatchObject({
+        kind: "continue",
+        label: "Continue",
+        projectId,
+        explain: expect.stringMatching(
+          /^Opens Start with the rest of your last session and the CHF \d+\.\d{2} left of its budget\.$/,
+        ),
+      });
+      // The next Start, through that Continue, runs it and the critic reviews it.
       const agentId = (await second.client.agents())[0]?.id ?? "";
-      const started = await second.client.startSession({ agentId, projectId });
+      const started = await second.client.startSession({
+        agentId,
+        projectId,
+        continues: crashUpdate?.action?.sessionId ?? "",
+      });
       await eventually(
         async () => (await second.client.session(started.session?.id ?? "")).status !== "running",
         "the next session to end",
@@ -7138,6 +7178,17 @@ describe("the UI client against the real daemon: Quit during 'Being reviewed', t
       expect(done.task.status).toBe("done");
       expect(done.runs.some((r) => r.kind === "review")).toBe(true);
       expect(second.criticCalls.length).toBeGreaterThan(0);
+      // The Continue goes on with the interrupted session; once its task is done it is gone.
+      expect(
+        (await second.client.sessionEvents(started.session?.id ?? "")).some(
+          (e) =>
+            e.type === "session.started" &&
+            (e.payload as { continues?: string }).continues === crashUpdate?.action?.sessionId,
+        ),
+      ).toBe(true);
+      expect(
+        (await second.client.inbox(me.id)).messages.find((m) => m.id === crashUpdate?.id)?.action,
+      ).toBeUndefined();
     } finally {
       await second.rt.close();
     }
@@ -21379,11 +21430,17 @@ describe("d1109-run-visible, run C", () => {
       expect(await texts()).toEqual([
         'Quote page · the coder works on "Write A" · then Garden site',
       ]);
-      // V-3: Garden site's own line says when it starts, and the screens hear that it changed.
+      // V-3: Garden site's own line says when it starts, and the screens hear that it changed;
+      // l4-starts-sessions (L4-money-209): with Cancel, which drops that one start.
       expect((await client.project(garden.id)).statusLine).toEqual({
         kind: "paused",
         text: 'Starts after the session on "Quote page"',
-        action: null,
+        action: {
+          kind: "cancel",
+          label: "Cancel",
+          to: null,
+          explain: "Cancel: it does not start after that session; its tasks wait for your Start.",
+        },
       });
       await eventually(
         async () => changed.filter((id) => id === garden.id).length > heardBefore,
@@ -21739,11 +21796,12 @@ describe("d1109-run-visible, run C: a person's session waiting to go on", () => 
         text: "Quote page · waiting until 11:40, then it goes on",
         waiting: true,
       });
-      // V-3: the project's line says it too, with Cancel.
+      // V-3: the project's line says it too; its Cancel is the run indicator's entry's
+      // (l4-starts-sessions, L4-money-208, D8: one wait, one Cancel beside the bar).
       expect((await client.project(project.id)).statusLine).toEqual({
         kind: "paused",
         text: "Waiting until 11:40 (your subscription's limit), then it goes on",
-        action: { kind: "cancel", label: "Cancel", to: null },
+        action: null,
       });
       // The person's quiet hours cover the reset: it goes on when they end.
       const me = await rt.store.human.mustGet(rt.human.id);
@@ -27451,4 +27509,774 @@ describe("l4-selftasks-chat, run L4", () => {
       await a.rt.close();
     }
   }, 60_000);
+});
+
+describe("l4-starts-sessions, run L4", () => {
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+  const refusedKey = ["sk-ant-api03-", "refused", "5".repeat(40)].join(""); // not-a-secret
+  const goodKey = ["sk-ant-api03-", "good", "4".repeat(40)].join(""); // not-a-secret
+  const ENDED = ["completed", "stopped", "failed", "killed"];
+
+  /**
+   * The daemon as `fr daemon` composes it (no injected provider) over the vault's API key: the
+   * Messages API stand-in answers a key holding "refused" with 401, and the bench's role-player
+   * is the model behind it once a key serves. The home is on disk, so it can be composed again.
+   */
+  async function keyWorld(home: string, clock: SimulatedClock, key = refusedKey) {
+    if (!homes.includes(home)) homes.push(home);
+    const model = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    const standIn = messagesApiStandIn({
+      model,
+      clock,
+      answerFor: keyRule({ refuse: ["refused"] }),
+    });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault({ anthropic_api_key: key }),
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const agentId = (await client.agents())[0]?.id ?? "";
+    return { rt, client, agentId, standIn };
+  }
+
+  const readyTask = (client: DaemonClient, projectId: string, title: string) =>
+    client.createTask(projectId, {
+      title,
+      outcome: `${title} is written`,
+      acceptanceCriteria: ["it is written"],
+      priority: "medium",
+      status: "ready",
+      dependsOn: [],
+      budgetUsdMicro: 0,
+      specialist: "coder",
+      riskTier: 0,
+    });
+
+  const ended = (client: DaemonClient, sessionId: string, what: string) =>
+    eventually(
+      async () => ENDED.includes((await client.session(sessionId)).status),
+      `${what} to end (20 s)`,
+      async () => (await client.session(sessionId)).status,
+      20_000,
+    );
+
+  /** The Sessions tab's rows as a person reads them: line 1, how it ended, why it started. */
+  const listed = async (client: DaemonClient, projectId: string) => {
+    const view = await client.projectSessions(projectId);
+    return {
+      count: view.count,
+      rows: [...view.working, ...view.rows].map((r) => ({
+        id: r.id,
+        gist: r.gist,
+        ended: r.endedWords,
+        startedBy: r.startedBy,
+      })),
+    };
+  };
+
+  /** Marks the key refused the way live check 4's LC-C21 did before its Start: one call. */
+  async function keyRefusedFirst(client: DaemonClient) {
+    const planned = await client.createProject({
+      name: "Plan first",
+      goal: goalFromBrief("A page that shows a random quote."),
+      brief: "A page that shows a random quote.",
+      intake: true,
+    });
+    await eventually(
+      async () => (await client.intakeStatus(planned.id)).state === "waiting",
+      "the planning to wait for a new key (20 s)",
+      async () => JSON.stringify(await client.intakeStatus(planned.id)),
+      20_000,
+    );
+  }
+
+  it("L4-money-201: a person's Start that stopped at once to wait for a new API key is listed and counted while it waits and after a restart", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4starts-201-"));
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    let projectId = "";
+    let waitingId = "";
+    const a = await keyWorld(home, clock);
+    try {
+      await keyRefusedFirst(a.client);
+      const project = await a.client.createProject({ name: "Field notes", goal: "A note" });
+      projectId = project.id;
+      await readyTask(a.client, project.id, "Write notes/today.md");
+      const started = await a.client.startSession({ agentId: a.agentId, projectId: project.id });
+      waitingId = started.session?.id ?? "";
+      expect(waitingId, JSON.stringify(started)).not.toBe("");
+      await ended(a.client, waitingId, "the person's session");
+      await settleSessions(a.rt);
+      // No run and no money: it met the key's mark, not the API.
+      expect(await a.rt.store.run.forSession(waitingId)).toEqual([]);
+      const view = await listed(a.client, project.id);
+      expect(view.count, JSON.stringify(view)).toBe(1);
+      expect(view.rows.map((r) => r.id)).toEqual([waitingId]);
+      expect(view.rows[0]?.ended).toBe("Stopped to wait for a Claude credential");
+      // What it did is true later too; how it ended says the wait (the session page has the rest).
+      expect(view.rows[0]?.gist).toBe("Nothing finished.");
+      expect((await a.client.session(waitingId)).summary?.split("\n")[0]).toBe(
+        "Waits for a new API key: save one in Settings; then your session goes on.",
+      );
+      expect((await a.client.projectSummary(project.id)).sessionCount).toBe(1);
+    } finally {
+      await settleSessions(a.rt);
+      await a.rt.close();
+    }
+    // The daemon starts again on the same home: still listed and counted.
+    const b = await keyWorld(home, clock);
+    try {
+      const view = await listed(b.client, projectId);
+      expect(view.count).toBe(1);
+      expect(view.rows.map((r) => r.id)).toEqual([waitingId]);
+      expect((await b.client.projectSummary(projectId)).sessionCount).toBe(1);
+      // A working key is saved: the person's session goes on (S-10), and the list holds both,
+      // the continuation naming the row above it by its start time.
+      expect((await b.client.setupAnthropic(goodKey)).ok).toBe(true);
+      await eventually(
+        async () => (await b.client.tasks(projectId)).every((t) => t.status === "done"),
+        "the session that goes on to finish the task (30 s)",
+        async () => (await b.client.tasks(projectId)).map((t) => t.status).join(", "),
+        30_000,
+      );
+      await settleSessions(b.rt);
+      const after = await listed(b.client, projectId);
+      expect(after.count, JSON.stringify(after)).toBe(2);
+      expect(after.rows.map((r) => r.id)[1]).toBe(waitingId);
+      const first = await b.rt.store.session.mustGet(waitingId);
+      const at = clockTime(first.started_at ?? "", "Europe/Zurich", clock.now());
+      expect(after.rows[0]?.startedBy).toBe(`goes on with your session of ${at}`);
+      expect((await b.client.projectSummary(projectId)).sessionCount).toBe(2);
+    } finally {
+      await settleSessions(b.rt);
+      await b.rt.close();
+    }
+  }, 120_000);
+
+  // L4-money-202 (live check 4, LC-C18 and LC-C19): the questions card's Send answers had no line
+  // and Go ahead without a fixed one, whether nothing ran or the hands-off setting started a
+  // session at the press. Both now say what pressing them does when the card is shown (S-9), and
+  // the press does that.
+  it("L4-money-202: GET /inbox's questions card says under Send answers and Go ahead without what pressing does now, and the answer does that", async () => {
+    const { rt, client } = await composeWithRolePlayer({
+      FORERUNNER_BENCH_ASK: "phone number,rehearsal address",
+    });
+    try {
+      const me = await client.me();
+      const project = await client.createProject({ name: "Choir", goal: "A contact page" });
+      for (const title of [
+        "Add the choir's phone number to contact.html",
+        "Add the choir's rehearsal address to contact.html",
+      ])
+        await readyTask(client, project.id, title);
+      const first = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+      await ended(client, first.session?.id ?? "", "the session that asks");
+      await settleSessions(rt);
+      const cards = async () =>
+        (await client.inbox(me.id)).requests.filter(
+          (r) => r.status === "open" && r.reply === "form" && r.projectId === project.id,
+        );
+      await eventually(
+        async () => (await cards()).length === 2,
+        "both questions cards (20 s)",
+        async () => (await client.inbox(me.id)).requests.map((r) => r.title).join(" | "),
+        20_000,
+      );
+      const lines = (c: Awaited<ReturnType<typeof cards>>[number]) => [
+        c.submit?.label,
+        c.submit?.explain,
+        c.choices?.find((x) => x.label === "Go ahead without")?.explain,
+      ];
+      const [phone, address] = await cards();
+      // Nothing runs and the setting is off: the person's next Start runs it.
+      expect(lines(phone as NonNullable<typeof phone>)).toEqual([
+        "Send answers",
+        "The task goes on with your answers; it runs at your next Start.",
+        "The specialist decides and says what it assumed; it runs at your next Start.",
+      ]);
+      const answer = (c: NonNullable<typeof phone>) =>
+        client.answerRequest(c.id, {
+          version: c.version,
+          answer: {
+            answers: [
+              {
+                question: personQuestionsOf(c.changeCard)?.questions[0] ?? "",
+                answer: "079 123 45 67",
+              },
+            ],
+          },
+        });
+      const before = (await client.sessions({ projectId: project.id })).length;
+      const sent = await answer(phone as NonNullable<typeof phone>);
+      expect(sent.outcome).toMatch(/; it runs at your next Start\.$/);
+      // Nothing started and nothing waits to start (the setting is off).
+      expect(rt.scheduler.isActive(rt.agent.id)).toBe(false);
+      expect(rt.scheduler.pendingFor(rt.agent.id)).toBeUndefined();
+      expect((await client.sessions({ projectId: project.id })).length).toBe(before);
+      // "Start a session by itself" on: a session starts for it, and the press starts one.
+      const asked = await client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: { key: "start_by_itself", value: true, project: project.id },
+          },
+        ],
+        source: "ui",
+      });
+      expect((await client.confirmCommand(asked.pendingId ?? "", { answer: "yes" })).status).toBe(
+        "done",
+      );
+      const shown = (await cards()).find((c) => c.id === address?.id);
+      expect(lines(shown as NonNullable<typeof shown>)).toEqual([
+        "Send answers",
+        "The task goes on with your answers; a session starts for it by itself.",
+        "The specialist decides and says what it assumed; a session starts for it by itself.",
+      ]);
+      await answer(shown as NonNullable<typeof shown>);
+      await eventually(
+        async () => (await client.sessions({ projectId: project.id })).length === before + 1,
+        "the session the setting started (20 s)",
+        async () => `${(await client.sessions({ projectId: project.id })).length} sessions`,
+        20_000,
+      );
+      const started = (await client.sessions({ projectId: project.id })).find(
+        (s) => s.id !== first.session?.id,
+      );
+      await ended(client, started?.id ?? "", "the session the setting started");
+      await settleSessions(rt);
+      // L4-money-205 (LC-C18, LC-C19): once both tasks are done, their Answered lines say only
+      // that (before: "...; what waits on it joins the session that is running." with nothing
+      // waiting, and "... is done; a session started for it (...)" after the hands-off start).
+      const done = (await client.inbox(me.id)).requests.filter(
+        (r) => r.projectId === project.id && r.reply === "form" && r.status === "answered",
+      );
+      expect(
+        (await client.tasks(project.id)).map((t) => t.status),
+        "both tasks done by the session the setting started",
+      ).toEqual(["done", "done"]);
+      expect(done.map((r) => r.outcome).sort()).toEqual([
+        'Answers saved in the decision record; "Add the choir\'s phone number to contact.html" is done.',
+        'Answers saved in the decision record; "Add the choir\'s rehearsal address to contact.html" is done.',
+      ]);
+      for (const r of done) expect(r.outcome).not.toMatch(/is done; a session started for it/);
+      // L4-money-206 (LC-C19): its page's first line says who started it, as its row does.
+      const firstLine = (await client.sessionEvents(started?.id ?? "")).find(
+        (e) => e.audience === "person" && e.type === "session.started",
+      );
+      expect(firstLine?.text).toMatch(
+        /^Started by itself when work was ready \(this project's setting\), with a budget of CHF \d+\.\d{2}\.$/,
+      );
+      const row = (await client.projectSessions(project.id)).rows.find((r) => r.id === started?.id);
+      expect(row?.startedBy).toBe("started by itself when work was ready");
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  // L4-money-203 (live check 4, LC-C18): in a CHF 1.00 session Make ready on a draft priced about
+  // CHF 1.10 said '... is ready. It joins this session if budget is left after its own tasks,
+  // else your next Start.'; it could never join (the admit gave 'no_room' to a task above the
+  // whole work budget and to one that only lacked room now).
+  it("L4-money-203: Make ready on a draft larger than the running session's budget says it runs at your next Start, and the session never runs it", async () => {
+    let reached: () => void = () => undefined;
+    const reachedP = new Promise<void>((r) => {
+      reached = r;
+    });
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let armed = true;
+    const player = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({
+          file: join(mkdtempSync(join(tmpdir(), "fr-l4starts-203-")), "c.jsonl"),
+        }),
+      ),
+    );
+    const stream = player.stream.bind(player);
+    player.stream = (req) => {
+      if (!armed || detectRole(req).role !== "specialist") return stream(req);
+      armed = false;
+      return (async function* () {
+        reached();
+        await released;
+        yield* stream(req);
+      })();
+    };
+    const { rt, client } = await composeWithRolePlayer({}, { provider: player });
+    try {
+      const project = await client.createProject({ name: "Garden club", goal: "A club page" });
+      const intro = await readyTask(client, project.id, "Write the intro");
+      await rt.store.task.patch(intro.id, { est_cost_usd_micro: 50_000 });
+      // CHF 1.00 a session at the stand-in's rate of 0.8 (its work budget a fifth less).
+      const capUsdMicro = 1_250_000;
+      const started = await client.startSession({
+        agentId: rt.agent.id,
+        projectId: project.id,
+        budgetUsdMicro: capUsdMicro,
+      });
+      const sessionId = started.session?.id ?? "";
+      await reachedP;
+      const draft = await client.createTask(project.id, {
+        title: "Research local garden suppliers",
+        outcome: "suppliers.md lists five suppliers",
+        acceptanceCriteria: ["it lists five"],
+        priority: "medium",
+        status: "draft",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 0,
+      });
+      // Priced above the CHF 0.80 work budget however the learned estimate weighs it.
+      await rt.store.task.patch(draft.id, { est_cost_usd_micro: 5_000_000 });
+      const row = await rt.store.task.mustGet(draft.id);
+      const made = await client.taskAction(draft.id, {
+        version: row.version,
+        action: "make_ready",
+      });
+      expect(made.change?.sentence).toBe(
+        '"Research local garden suppliers" is ready. It is larger than this session\'s budget, so it runs at your next Start.',
+      );
+      expect(made.change?.sentence).not.toMatch(/joins/);
+      release();
+      await ended(client, sessionId, "the CHF 1.00 session");
+      await settleSessions(rt);
+      // It never ran here, and the session stayed within its budget.
+      expect(
+        (await client.task(draft.id)).runs,
+        JSON.stringify((await rt.store.event.list(sessionId)).map((e) => [e.type, e.payload])),
+      ).toEqual([]);
+      expect((await client.task(draft.id)).task.status).toBe("ready");
+      const s = await client.session(sessionId);
+      expect(s.summary ?? "").toMatch(
+        /Left for your next Start: "Research local garden suppliers" \(about CHF \d+\.\d{2}\)/,
+      );
+      expect((await rt.store.session.mustGet(sessionId)).spent_usd_micro).toBeLessThanOrEqual(
+        capUsdMicro,
+      );
+    } finally {
+      release();
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  // L4-money-204 (live check 4, L3-run-10): ten seconds after the person raised the project's
+  // budget, the Start dialog said 'Nothing can run: "X" needs your answer.'; the task paused at
+  // the budget went on only at the scheduler's next tick (up to 30 s).
+  it("L4-money-204: right after a raise in Settings the Start dialog's check runs the paused task, its card is closed, and the change says so", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const me = await client.me();
+      const project = await client.createProject({ name: "Club motto", goal: "A motto" });
+      const motto = await readyTask(client, project.id, "Write the club motto in motto.txt");
+      // Paused at the project's budget of CHF 0.06, as the run left it.
+      await rt.store.project.patch(project.id, { budget_usd_micro: 75_000 });
+      await rt.store.task.patch(motto.id, { status: "needs_human", reason: "paused" });
+      await fileBudgetStopCard({
+        store: rt.store,
+        task: await rt.store.task.mustGet(motto.id),
+        session: null,
+        humanId: rt.human.id,
+        agentId: rt.agent.id,
+        runId: null,
+        stop: {
+          capUsdMicro: 75_000,
+          spentUsdMicro: 20_000,
+          source: "project",
+          specialist: "coder",
+        },
+        handoff: { stopped: "Half of it.", leftToDo: ["The rest"], stoppedBy: "budget" },
+        now: rt.clock.nowIso(),
+      });
+      expect((await client.startCheck(project.id)).blocked?.sentence).toBe(
+        'Nothing can run: "Write the club motto in motto.txt" needs your answer.',
+      );
+      // Settings: Project budget to CHF 0.50, with its yes.
+      const asked = await client.executeCommands({
+        commands: [
+          { name: "budget.set", params: { scope: "project", amountChf: 0.5, project: project.id } },
+        ],
+        wordsUsed: "Settings: Project budget to 0.50",
+        source: "ui",
+        projectId: project.id,
+      });
+      const done =
+        asked.status === "pending"
+          ? await client.confirmCommand(asked.pendingId ?? "", { answer: "yes" })
+          : asked;
+      expect(done.status, JSON.stringify(done)).toBe("done");
+      expect((done as { sentence?: string }).sentence ?? "").toMatch(
+        / 1 paused task is ready again: it runs at your next Start\. Undo\.$/,
+      );
+      // No tick: the check right after the raise runs it.
+      const check = await client.startCheck(project.id);
+      expect(check.blocked).toBeNull();
+      expect(check.runnable.map((t) => t.title)).toEqual(["Write the club motto in motto.txt"]);
+      const card = (await client.inbox(me.id)).requests.find((r) => r.taskId === motto.id);
+      expect(card?.status).toBe("withdrawn");
+      expect(card?.outcome).toBe(
+        '"Write the club motto in motto.txt" is ready again: its limit has room; it runs at your next Start.',
+      );
+      // The wake prepared it and started nothing (the hands-off setting is off).
+      expect(rt.scheduler.isActive(rt.agent.id)).toBe(false);
+      expect(rt.scheduler.pendingFor(rt.agent.id)).toBeUndefined();
+      expect(await client.sessions({ projectId: project.id })).toEqual([]);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("L4-money-208: while a session works, the project's line is the bar's words with the count, and nothing has ended yet", async () => {
+    // Live check 4 (C5L-12): 'Working on "Create index.html" (0 of 7 done)' on the header beside
+    // the bar's 'the coder works on "Create index.html"'; one fact, the bar's words.
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4starts-208-"));
+    homes.push(home);
+    const model = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    let release = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const stream = model.stream.bind(model);
+    // The specialist's calls wait until the case has read the line: the session is mid-task.
+    model.stream = (req) =>
+      detectRole(req).role === "specialist"
+        ? (async function* () {
+            await gate;
+            yield* stream(req);
+          })()
+        : stream(req);
+    const { rt, client } = await composeWithRolePlayer({}, { provider: model });
+    let sessionId = "";
+    try {
+      const project = await client.createProject({ name: "Club site", goal: "A note" });
+      await readyTask(client, project.id, "Write the club motto");
+      await readyTask(client, project.id, "Write the club rules");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const started = await client.startSession({ agentId, projectId: project.id });
+      expect(started.result, JSON.stringify(started)).toBe("started");
+      sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          (await client.running()).some((v) => v.sessionId === sessionId && v.state === "working"),
+        "the session to work on its first task (20 s)",
+        async () => JSON.stringify(await client.running()),
+        20_000,
+      );
+      const entry = (await client.running()).find((v) => v.sessionId === sessionId);
+      expect(entry?.what).toMatch(/^the coder works on "Write the club (motto|rules)"$/);
+      const what = entry?.what ?? "";
+      const card = await client.project(project.id);
+      expect(card.statusLine).toEqual({
+        kind: "working",
+        text: `${what.charAt(0).toUpperCase()}${what.slice(1)} (0 of 2 done)`,
+        action: {
+          kind: "link",
+          label: "Open running session",
+          to: `/sessions/${encodeURIComponent(sessionId)}`,
+        },
+      });
+      // The Overview's Last result reads "Running now: Open the session" from these two.
+      expect(card.working?.sessionId).toBe(sessionId);
+      expect((await client.projectSummary(project.id)).lastSession ?? null).toBeNull();
+    } finally {
+      release();
+      if (sessionId) await ended(client, sessionId, "the held session");
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("L4-money-209: a start waiting behind another project's session is one start, said on its project, and Cancel drops it", async () => {
+    // Live check 4 / run C (C5L-17): the header still offered Start session while the start
+    // waited, and each press queued one more.
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4starts-209-"));
+    homes.push(home);
+    const model = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    let release = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const stream = model.stream.bind(model);
+    model.stream = (req) =>
+      detectRole(req).role === "specialist"
+        ? (async function* () {
+            await gate;
+            yield* stream(req);
+          })()
+        : stream(req);
+    const { rt, client } = await composeWithRolePlayer({}, { provider: model });
+    let firstId = "";
+    try {
+      const club = await client.createProject({ name: "Club site", goal: "A note" });
+      await readyTask(client, club.id, "Write the club motto");
+      const birds = await client.createProject({ name: "Bird notes", goal: "A note" });
+      await readyTask(client, birds.id, "Write notes/wren.md");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const first = await client.startSession({ agentId, projectId: club.id });
+      expect(first.result, JSON.stringify(first)).toBe("started");
+      firstId = first.session?.id ?? "";
+      const queued = await client.startSession({ agentId, projectId: birds.id });
+      expect(queued.result, JSON.stringify(queued)).toBe("queued");
+      const card = await client.project(birds.id);
+      expect(card.startsAfter).toBe("Club site");
+      expect(card.statusLine).toEqual({
+        kind: "paused",
+        text: 'Starts after the session on "Club site"',
+        action: {
+          kind: "cancel",
+          label: "Cancel",
+          to: null,
+          explain: "Cancel: it does not start after that session; its tasks wait for your Start.",
+        },
+      });
+      // A second press keeps the one start.
+      const again = await client.startSession({ agentId, projectId: birds.id });
+      expect(again).toMatchObject({
+        result: "queued",
+        startId: queued.startId,
+        session: null,
+        sentence: 'A session of Bird notes already starts after the session on "Club site".',
+      });
+      const inLine = () =>
+        rt.scheduler.pendingStarts(rt.agent.id).filter((e) => e.req.projectId === birds.id);
+      expect(inLine()).toHaveLength(1);
+      // Cancel on its line drops it; nothing starts for it when the other session ends.
+      expect(await client.cancelContinuation(birds.id)).toEqual({
+        cancelled: true,
+        sentence:
+          "Cancelled: the session of Bird notes does not start; its tasks wait for your Start.",
+      });
+      expect(inLine()).toEqual([]);
+      expect((await client.project(birds.id)).startsAfter ?? null).toBeNull();
+      release();
+      await ended(client, firstId, "the session of Club site");
+      await settleSessions(rt);
+      expect(await client.sessions({ projectId: birds.id })).toEqual([]);
+    } finally {
+      release();
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("L4-money-213: a Sessions row of a session that ended on questions says what still waits once, beside what needed the person", async () => {
+    // Live check 4 (L4-session-12): '2 needed you · Ended: 1 task needs you'.
+    const { rt, client } = await composeWithRolePlayer({
+      FORERUNNER_BENCH_ASK: "phone number,rehearsal address",
+    });
+    try {
+      const me = await client.me();
+      const project = await client.createProject({ name: "Choir rows", goal: "A contact page" });
+      for (const title of [
+        "Add the choir's phone number to contact.html",
+        "Add the choir's rehearsal address to contact.html",
+      ])
+        await readyTask(client, project.id, title);
+      const first = await client.startSession({ agentId: rt.agent.id, projectId: project.id });
+      const sessionId = first.session?.id ?? "";
+      await ended(client, sessionId, "the session that asks");
+      await settleSessions(rt);
+      const cards = async () =>
+        (await client.inbox(me.id)).requests.filter(
+          (r) => r.status === "open" && r.reply === "form" && r.projectId === project.id,
+        );
+      await eventually(
+        async () => (await cards()).length === 2,
+        "both questions cards (20 s)",
+        async () => (await client.inbox(me.id)).requests.map((r) => r.title).join(" | "),
+        20_000,
+      );
+      const row = async () =>
+        (await client.projectSessions(project.id)).rows.find((r) => r.id === sessionId);
+      expect(await row()).toMatchObject({
+        countsWords: "2 needed you",
+        endedWords: "2 still need you",
+      });
+      const [phone] = await cards();
+      await client.answerRequest(phone?.id ?? "", {
+        version: phone?.version ?? 0,
+        answer: {
+          answers: [
+            {
+              question: personQuestionsOf(phone?.changeCard)?.questions[0] ?? "",
+              answer: "079 123 45 67",
+            },
+          ],
+        },
+      });
+      const after = await row();
+      expect(after).toMatchObject({ countsWords: "2 needed you", endedWords: "1 still needs you" });
+      expect(`${after?.countsWords} · ${after?.endedWords}`).not.toMatch(/Ended: 1 task needs you/);
+      // The session page's badge keeps L-21's words.
+      expect((await client.session(sessionId)).statusText).toBe("Ended: 1 task needs you");
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  it("L4-money-207: once a later session of the project began, the crash Update offers no Continue, and a Continue sent after it gets only what is left", async () => {
+    // Review of run L4g (bench walk 7): a session interrupted by a crash; Continue, then Stop
+    // now on the continuation (its task Ready again): the Update offered 'the CHF 1.00 left of
+    // its budget' again for the interrupted session, and a second Continue started another
+    // session with all of it, so the two could spend more than was left.
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4starts-207-"));
+    homes.push(home);
+    const env = { FORERUNNER_HOME: home };
+    const dirs = appDirs({ env });
+    const stateUrl = `sqlite:${join(home, "state.sqlite")}`;
+    // The first review holds where the live one was (opening the page in a browser), so Quit
+    // leaves the session for the next start to end as interrupted.
+    let trying = false;
+    const first = await composeWithRolePlayer(
+      {},
+      {
+        env,
+        dirs,
+        stateUrl,
+        tryIt: {
+          tryPages: () => {
+            trying = true;
+            return new Promise(() => undefined);
+          },
+        },
+      },
+    );
+    let projectId = "";
+    let taskId = "";
+    try {
+      const project = await first.client.createProject({ name: "Bakery site", goal: "Pages" });
+      projectId = project.id;
+      const page = await first.client.createTask(project.id, {
+        title: "Welcome page in welcome.html",
+        outcome: "welcome.html greets the bakery's visitors",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      taskId = page.id;
+      const started = await first.client.startSession({ agentId: first.rt.agent.id, projectId });
+      expect(started.result, JSON.stringify(started)).toBe("started");
+      await eventually(
+        async () =>
+          trying &&
+          (await first.client.tasks(projectId)).find((t) => t.id === taskId)?.display?.label ===
+            "Being reviewed",
+        "the task to read Being reviewed (30 s)",
+        async () => (await first.client.tasks(projectId)).map((t) => t.status).join(", "),
+        30_000,
+      );
+      const { app, token } = createDaemonApp(first.rt, { onShutdown: () => undefined });
+      const quit = await app.request("/shutdown", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(quit.status).toBe(202);
+    } finally {
+      await first.rt.close();
+    }
+
+    const second = await composeWithRolePlayer({}, { env, dirs, stateUrl, tryIt: false });
+    try {
+      const me = await second.client.me();
+      const crash = async () =>
+        (await second.client.inbox(me.id)).messages.find((m) =>
+          m.body.startsWith("Your last session was interrupted when Forerunner closed."),
+        );
+      const offered = (await crash())?.action;
+      expect(offered).toMatchObject({ kind: "continue", label: "Continue", projectId });
+      const interruptedId = offered?.sessionId ?? "";
+      const interrupted = await second.client.session(interruptedId);
+      const left = interrupted.budgetCap.usdMicro - interrupted.spent.usdMicro;
+      expect(offered?.budgetLeft?.usdMicro).toBe(left);
+      // The Continue, as the Start dialog sends it; the critic takes its time, so the
+      // continuation is still at work when the person presses Stop now on its page.
+      second.bench.criticDelayMs = 60_000;
+      const goesOn = await second.client.startSession({
+        agentId: second.rt.agent.id,
+        projectId,
+        continues: interruptedId,
+      });
+      expect(goesOn.result, JSON.stringify(goesOn)).toBe("started");
+      const continuationId = goesOn.session?.id ?? "";
+      expect(goesOn.session?.budgetCap.usdMicro).toBe(left);
+      const row = async () => (await second.client.tasks(projectId)).find((t) => t.id === taskId);
+      await eventually(
+        async () => (await row())?.display?.key === "review",
+        "the continuation's critic to review the task (20 s)",
+        async () => `${(await row())?.display?.label}`,
+        20_000,
+      );
+      await second.client.stopSession(continuationId, "stopped from the live view");
+      await ended(second.client, continuationId, "the stopped continuation");
+      second.bench.criticDelayMs = 0;
+      await settleSessions(second.rt);
+      expect((await row())?.display?.label).toBe("Ready");
+      // A later session of the project began: the Update offers no Continue (before: the same
+      // Continue with all of the interrupted session's budget again), only Mark read.
+      const update = await crash();
+      expect(update?.body).toMatch(/^Your last session was interrupted when Forerunner closed\./);
+      expect(update?.action).toBeUndefined();
+      // A Continue of the interrupted session sent after that (a Start dialog left open, the
+      // phone) goes on with what is left of its promise: the continuation's spend is taken from
+      // it, never the whole of it again.
+      const spentByContinuation = (await second.client.session(continuationId)).spent.usdMicro;
+      expect(spentByContinuation).toBeGreaterThan(0);
+      const again = await second.client.startSession({
+        agentId: second.rt.agent.id,
+        projectId,
+        continues: interruptedId,
+      });
+      expect(again.result, JSON.stringify(again)).toBe("started");
+      expect(again.session?.budgetCap.usdMicro).toBe(left - spentByContinuation);
+      await ended(second.client, again.session?.id ?? "", "the second continuation");
+    } finally {
+      second.bench.criticDelayMs = 0;
+      await settleSessions(second.rt);
+      await second.rt.close();
+    }
+  }, 120_000);
 });

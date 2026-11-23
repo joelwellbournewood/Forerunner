@@ -1243,7 +1243,15 @@ one-session rule then refused every later start ("agent Alice already has an act
 on with the services, never in a CLI one-shot that composes beside a live daemon), after
 `intake.closeExpired`: every running or paused work session of this human's agents (not an
 intake session, not a cloud runner's, not another device's) with no live kill-switch
-registration is ended `stopped` with the stop reason `interrupted` and the summary
+registration is ended `stopped` with the stop reason `interrupted` (its one Update starts with
+`INTERRUPTED_UPDATE_LEAD`, `session/recovery-words.ts`; GET /inbox's `messages[].action` offers
+Continue on it through `crashContinueOf` in `daemon/views.ts`, l4-starts-sessions L4-money-207,
+derived from the rows with no column of its own: the project's newest session ended `interrupted`
+by the Update's time, offered while a task it released is ready, its budget has something left,
+no session of the project works and none began since it ended (as the session page's wait block:
+the review of run L4g found the same Continue back with all of the budget after Continue and Stop
+now on the continuation); the press is POST /sessions with `continues` through the Start dialog
+and marks the Update read) and the summary
 "Interrupted: Forerunner closed while this session ran. "X" is ready again.", its running runs
 are closed (`killed`), the tasks its agent holds go back to ready with the reason "Forerunner
 closed while it ran", and so do the tasks its runs left in review, claimed or not (L-1, live
@@ -2609,8 +2617,13 @@ amended 2026-11-08; the owner's decision of 2026-11-02).**
   { budgetUsdMicro })`; its outcome line is 'Gave "X" CHF 0.40 more: a session started.'. Cancel
   cancels it and calls the `setAside` port (`PrTaskExecutor.setAsideWork`), the card recording
   `set_aside` or `kept` for its line. An older card (`raise_to_usd_micro`) keeps its meaning.
-- *Limits no Continue lifts (`wakeBudgetWaits`).* Before every scheduler tick (compose's
-  `refresh`, beside `credentialWaits.wake`), each open budget card whose limit changed since the
+- *Limits no Continue lifts (`wakeBudgetWaits`).* Right after `budget.set` writes a project
+  budget or the monthly cap (`CommandPorts.limitChanged`, whose line the change's sentence ends
+  with: "... 1 paused task is ready again: it runs at your next Start. Undo."), before `GET
+  /projects/:id/start-check`, `POST /sessions` and chat's start check read the tasks
+  (`RuntimeApp.wakeLimitWaits`, l4-starts-sessions L4-money-204), and still before every
+  scheduler tick as the fallback (compose's `refresh`, beside `credentialWaits.wake`; one
+  function, `wakeLimitWaits`, for all four), each open budget card whose limit changed since the
   pause and has room goes on: at `project`, the project's budget now (`limitNow`, compose reads
   the row; unset is none) above the card's `cap_usd_micro`; at `month`, the monthly cap above it
   or the card's `resets_at` passed (else the month after the card was filed); at `plan`, its
@@ -3834,7 +3847,18 @@ requests for you to merge." counts only what waits for the person (`openPrs`). A
 only work the person cancelled while it ran or was reviewed says 'You cancelled "X"; nothing else
 ran.' before its cost (W15-59: `LastSessionOutcome.cancelled`, the builder "cancelled by you";
 it said only "CHF 0.01."); the Update leaves it out (`NOT_NEWS`: the person's own click is no
-news, design §5 rule 11). The Overview's Last result gets "Since then: merged #2, #3
+news, design §5 rule 11). The same for a task the person paused (Pause or Stop on the Tasks tab)
+while the session ran it, still paused by them at its end (l4-starts-sessions, L4-money-214, live
+check 4 L4-l3-8: "CHF 0.01." alone, the Sessions row "Nothing finished." and the status note
+"Ended: 1 task needs you."): `LastSessionOutcome.pausedByYou` (the runner's `pausedByYou`, which
+also keeps it out of `needsYou`), 'You paused "X"; nothing else ran.' (with a cancel in one
+sentence: 'You cancelled "A" and paused "B"; nothing else ran.'), not news; the status note's
+count and `stillBlocked` (the session page's badge, the Sessions row's end words) leave it out,
+and so does the Overview's "Since then" while the task is still theirs (the fix-up's bench walk
+read 'Since then: "X" is paused by you.' under the result that said it);
+`sessionGist` reads '"X" paused by you.' and the session's task list "Paused by you" (tests:
+`writing-rules.test.ts`, `session-list.test.ts` and the composed `continuity-cancel.test.ts`,
+each "l4-starts-sessions, run L4"). The Overview's Last result gets "Since then: merged #2, #3
 and #4." (`mergedSinceLine` in `views.ts`) for the pull requests the session left open whose record
 says merged now.
 
@@ -7523,7 +7547,11 @@ card for the phone and the state service). `projectCard` adds, computed when rea
   you: "X"', "Waiting for you: 2 questions", or the kinds of the cards, "Waiting for you: 1
   sign-off and 1 paused task" (L-13a; up to three kinds named, then "and N more"; W15-77: a change waiting for a yes, the registry's card with a `command` and no card key, is "1 change to confirm", "2 changes to confirm", never a question), with Answer opening the oldest card,
   `/inbox#card-<id>` (later #55); the Docker card asks nothing, `holdsTask`); a
-  session working on it ('Working on "X" (3 of 7 done)', action Open running session); a task
+  session working on it, in the run indicator's words with the count (l4-starts-sessions,
+  L4-money-208: `ProjectStatusInput.workingWhat`, the entry's `what` from `rt.running.views()`
+  through `ProjectCardFacts.workingWhat`; 'The coder works on "X" (3 of 7 done)', 'The critic
+  checks "X" (3 of 7 done)', a long title shortened inside its quotes by `withProgress`; without
+  it, 'Working on "X" (3 of 7 done)'; action Open running session); a task
   `stuck` behind a failed or cancelled one ('Stuck: "X" failed; 2 tasks wait on it') or tasks
   waiting for Docker; tasks that can run ("Ready to continue: 3 tasks ready"; W15-67: while no
   ready task can run because its credential rests or was refused, kept or not, the line names
@@ -7746,12 +7774,21 @@ page's "Tasks in this session" and of a planning call's row is written in
   "Planning failed: <words>"), `workingWords` (the project status's own working sentence through
   `projectStatusLine`, never a wording of its own; d1109-run-visible re-points it at its run
   view), `sessionEndWords` (the one map, `sessionStatusText`/`endedStatusText`, with a planning
-  call saying how it ended only when it failed), `spentWords` (the CHF figure with the
+  call saying how it ended only when it failed; the list row reads it through `listEndWords`,
+  l4-starts-sessions L4-money-213: beside the record's "2 needed you" what still waits is one
+  count, `stillWaitsText` in `stop-words.ts`, "1 still needs you", "2 still need you, 1
+  paused", never "Ended: 1 task needs you" a second time; the session page's badge keeps
+  `endedStatusText`, L-21), `spentWords` (the CHF figure with the
   credential that paid, from the billing source's kind: "on your API key", "of your Claude
   subscription's allowance", "of your plan credits", both named when two paid, none on the
   stand-in; "so far" while it works), `startedByWords` (`plan.startedBy` first, then the
   trigger of older rows; nothing for `manual`, `message` and `budget_reset`; the words for
-  `hands_off` and `continuation` are d1109-starts-engine's, in this function), `countsWords`.
+  `hands_off` and `continuation` are d1109-starts-engine's, since l4-starts-sessions (L4-money-206)
+  in `daemon/started-by-words.ts`' `startedByReason`, the one map that also gives the session
+  page's first line, `startedLine`, from the `session.started` event's `by`: "Started by itself
+  when work was ready (this project's setting), with a budget of CHF 1.00.", "Started on its
+  schedule, ...", "You started the session ..." for the person's start whatever its trigger, an old
+  event without `by` by its trigger as before), `countsWords`.
 - **One figure per session, read when shown.** `sessionSpends` (one query,
   `CostLedgerRepo.sumsBySessionAndSource`) and `spentOf` give the ledger's sum as booked (a row
   without ledger rows reads its own counter at today's rate). `views.ts`' `sessionView` uses it
@@ -7769,7 +7806,10 @@ page's "Tasks in this session" and of a planning call's row is written in
   takes the same words. `planningStatusText` gives a planning call's page "Drafting the plan",
   "Plan drafted" or "Planning failed".
 - **The routes.** `GET /projects/:id/sessions?before=&limit=` (`projectSessionsView`): `count`
-  (the listed rule, `SessionRepo.listedCountForProject`), `working` (first page only),
+  (the listed rule, `SessionRepo.listedCountForProject`: a session that ran a task, spent money,
+  works now or planned, and since l4-starts-sessions (L4-money-201) every session the person
+  started or that goes on with one, and every session that ended to wait for its Claude
+  credential, run or not; an automatic start that found nothing stays out), `working` (first page only),
   `rows` (`SessionRepo.pageForProject` with `ended`, newest first by created_at and id), `next`
   (an opaque base64url cursor of the last row's created_at and id, valid across a restart; a
   cursor it cannot read is 400 "This list cannot go on from there. Open Sessions again."),
@@ -7977,13 +8017,22 @@ Only the person starts a session; everything else prepares work. The pieces:
   session") and `plan.promise`.
 - **`prepareWork`** (`session/prepared-work.ts`, `PrepareDeps`, `PreparePort`): the work an
   action made runnable joins the project's live session (`LiveSessions.forProject(...).admit`) if
-  it fits, else waits (`waits_start`), or waits for the person's continuation
+  it fits (the admit answers `joined`, `no_room`, `too_large` for a task above the whole work
+  budget, which never joins, l4-starts-sessions L4-money-203, or `stopping`), else waits (`waits_start`), or waits for the person's continuation
   (`waits_continuation`), or, with `start_by_itself` on and `by` not `agent`, starts a
   `hands_off` session (kept on `summary_cache.start_pending` when it cannot start now;
   `sweepStartPending` asks again; a hands-off start that begins drops it). `preparedLine`,
   `preparedClause` and `preparedExplain` are the only words; `previewWork` is the read-only
-  sibling for a read-back. An Inbox option that prepares work (Try again, Send it back, the
-  cannot-run card's Try again, the rebuild and rebase cards' Redo) says what pressing it does,
+  sibling for a read-back. A Done or Answered line of a card whose task is done says its start
+  words through one helper (`afterDoneWords` in `daemon/request-words.ts`, l4-starts-sessions
+  L4-money-205): of what waits on the task or comes after it, never of the task itself (a
+  specialist's card says only "... is done."), only while something still waits on it, a join
+  only while a session of the project runs (`requestContexts` reads the prepared facts for an
+  answered card whose start was `joined`), and a hands-off start as "a session started for what
+  comes after it (...)". An Inbox option that prepares work (Try again, Send it back, the
+  cannot-run card's Try again, the rebuild and rebase cards' Redo, and since l4-starts-sessions
+  (L4-money-202) the questions card's Go ahead without and its form's Send answers, the form's
+  button being `RequestWords.submit`/`HumanRequestView.submit`) says what pressing it does,
   read when the card is shown: `preparedContextOf` (the same steps as `prepareWork`: the
   project's live or asked-for session, the person's waiting session, `start_by_itself` with Stop
   all and quiet hours, another project's session) feeds `RequestWordsContext` through
@@ -8007,7 +8056,10 @@ Only the person starts a session; everything else prepares work. The pieces:
   `continuations.cancel` (`POST /projects/:id/continuation/cancel`), `dropAll` (Stop all) and the
   project's removal; `continuations.waiting` says "Your session of 10:00 goes on by itself at
   15:00." and POST /sessions refuses a second wait with it (`claim_conflict`). `POST /sessions`
-  with `continues` goes on with an ended session's budget left. The words of a wait
+  with `continues` goes on with an ended session's budget left: its cap less its spend, less what
+  a session that already went on with it took (`plan.startedBy.continues`: its spend, or its whole
+  cap while it works), so a second Continue of one session never has all of it again (the review
+  of run L4g; `real-daemon.test.ts` "l4-starts-sessions, run L4" L4-money-207). The words of a wait
   (`credential-wait.ts`, `afterWaitClause(goesOn)`): "; then your session goes on." or "; then it
   runs at your next Start."; when the person's quiet hours hold a continuation past the reset,
   every sentence names their end (`continuationGoesOnAt`/`goesOnAtWords` over
@@ -8099,9 +8151,17 @@ sentences from it); `daemon/run-indicator.ts` reads the store and re-exports the
 - **Elsewhere**: the Sessions list's working row says `sessionRunText` (d1109-sessions'
   `workingWords` re-pointed; the same kept fold as the bar); the project status line gains rule 2b from `startsWaitOf`
   (`ProjectCardFacts.startsWait`): "Waiting until 15:40 (your subscription's limit), then it
-  goes on" with Cancel (action kind `cancel`), "Starts at 15:40 (your subscription's limit)"
+  goes on" (its Cancel is the run indicator entry's since l4-starts-sessions, L4-money-208, D8:
+  one Cancel per wait beside the bar; it had action kind `cancel`), "Starts at 15:40 (your subscription's limit)"
   with Cancel (a kept Start), "Starts after your quiet hours" (a held hands-off start), 'Starts
-  after the session on "Quote page"' (a waiting person start), and rule 4 reads "Ready: 3 tasks
+  after the session on "Quote page"' (a waiting person start; since l4-starts-sessions,
+  L4-money-209, with Cancel, `explain` "Cancel: it does not start after that session; its tasks
+  wait for your Start.", which `POST /projects/:id/continuation/cancel` honours by dropping that
+  start from the scheduler's line, `personStartInLine`; the card's `startsAfter` names the
+  project it waits behind, and a second `POST /sessions` for it while it waits behind another
+  project's session answers the same start, `result: "queued"`, with 'A session of X already
+  starts after the session on "Y".', where before each press queued one more; behind the
+  project's own session the starts keep their order, U-043), and rule 4 reads "Ready: 3 tasks
   wait for your Start"; a session that ended to wait has `SessionView.waitBlock` (`{state:
   goes_on | starts_again | stopped, text, action: cancel | continue, explain, projectId,
   budgetLeft}`), and once nothing goes on by itself its stored result says "...; then it runs

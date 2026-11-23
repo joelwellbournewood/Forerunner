@@ -349,7 +349,9 @@ describe("d1109-run-visible: Home, the Overview, the project's line and Talk (V-
     expect(within(section).getByTestId("run-stop")).toBeInTheDocument();
   });
 
-  it("the project's line: the person's session waiting to go on, with Cancel; after Cancel the tasks wait for the Start", async () => {
+  it("the project's line: the person's session waiting to go on, its Cancel in Working now; after Cancel the tasks wait for the Start", async () => {
+    // l4-starts-sessions (L4-money-208, D8: one place per fact): the line keeps the wait without
+    // a Cancel of its own; Working now (and the bar) carry it with its explanation in view.
     const user = userEvent.setup();
     const harness = createHarness();
     const beaconTask = harness.daemon.state.tasks.find((t) => t.id === "task_4");
@@ -367,10 +369,10 @@ describe("d1109-run-visible: Home, the Overview, the project's line and Talk (V-
         "Waiting until 15:40 (your subscription's limit), then it goes on",
       ),
     );
-    const cancel = within(header).getByTestId("project-status-action");
-    expect(cancel).toHaveTextContent("Cancel");
-    expect(cancel).toHaveAttribute(
-      "title",
+    expect(within(header).queryByTestId("project-status-action")).toBeNull();
+    const working = await screen.findByTestId("overview-working");
+    const cancel = within(working).getByTestId("run-cancel");
+    expect(within(working).getByTestId("run-cancel-explain")).toHaveTextContent(
       "Cancel: nothing starts when Claude is back; its tasks wait for your Start.",
     );
     await user.click(cancel);
@@ -834,5 +836,123 @@ describe("l4-cred-screens, run L4: the bar says why a session waits for the API 
     const bar = await screen.findByTestId("run-indicator-bar");
     const entry = await within(bar).findByTestId("run-entry");
     expect(within(entry).queryByTestId("run-wait-why")).toBeNull();
+  });
+});
+
+describe("l4-starts-sessions, run L4: a running or waiting session is said once beside the bar (L4-money-208)", () => {
+  // Live check 4 (LC-C31, C5L-11..13): one wait three times with three Cancels on the Overview,
+  // 'Working on "X"' beside the bar's 'the coder works on "X"', 'Choosing the next task…' while
+  // the bar said the critic checks, and 'Last result: No session yet.' during the first session.
+  /** The Cancels for a wait outside the run indicator's bar. */
+  const cancelsOutsideTheBar = () => {
+    const bar = screen.queryByTestId("run-indicator-bar");
+    return screen.getAllByRole("button", { name: "Cancel" }).filter((b) => !bar?.contains(b));
+  };
+
+  it("an Overview with a waiting session has one Cancel for the wait outside the bar, with what it does", async () => {
+    const harness = createHarness();
+    const beaconTask = harness.daemon.state.tasks.find((t) => t.id === "task_4");
+    if (!beaconTask) throw new Error("fixture changed");
+    beaconTask.status = "ready";
+    harness.daemon.state.startsWait.proj_beacon = {
+      kind: "continuation",
+      head: "Waiting until 15:40 (your subscription's limit)",
+    };
+    harness.daemon.state.runningExtra = [WAITING];
+    renderApp("/projects/proj_beacon", harness);
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("project-header")).getByTestId("project-status"),
+      ).toHaveTextContent(/^Waiting until 15:40 \(your subscription's limit\), then it goes on$/),
+    );
+    await screen.findByTestId("overview-working");
+    expect(screen.getByTestId("run-indicator-bar")).toBeInTheDocument();
+    const outside = cancelsOutsideTheBar();
+    expect(outside).toHaveLength(1);
+    expect(screen.getByTestId("overview-working")).toContainElement(outside[0] ?? null);
+  });
+
+  it("a working session: the project's line says the bar's words with the count", async () => {
+    const harness = createHarness();
+    running(harness);
+    // Nothing waits for the person in Atlas: the line says what works now.
+    for (const r of harness.daemon.state.requests)
+      if (r.projectId === "proj_atlas") r.status = "answered" as never;
+    renderApp("/projects/proj_atlas", harness);
+    const bar = await screen.findByTestId("run-indicator-bar");
+    await waitFor(() =>
+      expect(within(bar).getByTestId("run-text")).toHaveTextContent(
+        'Atlas · the coder works on "Add the search box"',
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("project-header")).getByTestId("project-status"),
+      ).toHaveTextContent(/^The coder works on "Add the search box" \(\d+ of \d+ done\)$/),
+    );
+    expect(screen.getByTestId("project-header")).not.toHaveTextContent(/Working on "/);
+  });
+
+  it("the session page's Current task reads the bar's state while the critic checks, not 'Choosing the next task…'", async () => {
+    const harness = createHarness();
+    running(harness, { currentTask: null });
+    harness.daemon.state.runReview.sess_live = "Add the search box";
+    renderApp("/sessions/sess_live", harness);
+    await waitFor(() =>
+      expect(screen.getByTestId("current-task")).toHaveTextContent(
+        /^The critic checks "Add the search box"$/,
+      ),
+    );
+    expect(screen.queryByText(/Choosing the next task/)).toBeNull();
+  });
+
+  it("between tasks the session page says what the bar says", async () => {
+    const harness = createHarness();
+    running(harness, { currentTask: null });
+    renderApp("/sessions/sess_live", harness);
+    await waitFor(() =>
+      expect(screen.getByTestId("current-task")).toHaveTextContent(/^Picks the next task$/),
+    );
+  });
+
+  it("the Overview's Last result during the first session: Running now, never 'No session yet.'", async () => {
+    const harness = createHarness();
+    running(harness, { projectId: "proj_beacon" });
+    renderApp("/projects/proj_beacon", harness);
+    const last = await screen.findByTestId("last-result-running");
+    expect(last).toHaveTextContent(/^Running now: Open the session$/);
+    expect(within(last).getByRole("link", { name: "Open the session" })).toHaveAttribute(
+      "href",
+      "/sessions/sess_live",
+    );
+    expect(screen.queryByText("No session yet.")).toBeNull();
+  });
+
+  it("L4-money-209: while a start waits behind another project's session, the header offers no Start session; its line's Cancel drops it", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const beaconTask = harness.daemon.state.tasks.find((t) => t.id === "task_4");
+    if (!beaconTask) throw new Error("fixture changed");
+    beaconTask.status = "ready";
+    harness.daemon.state.startsWait.proj_beacon = { kind: "queued", behind: "Atlas" };
+    renderApp("/projects/proj_beacon", harness);
+    const header = await screen.findByTestId("project-header");
+    await waitFor(() =>
+      expect(within(header).getByTestId("project-status")).toHaveTextContent(
+        /^Starts after the session on "Atlas"$/,
+      ),
+    );
+    expect(within(header).queryByTestId("start-session")).toBeNull();
+    const cancel = within(header).getByTestId("project-status-action");
+    expect(cancel).toHaveTextContent("Cancel");
+    expect(cancel).toHaveAttribute(
+      "title",
+      "Cancel: it does not start after that session; its tasks wait for your Start.",
+    );
+    await user.click(cancel);
+    await waitFor(() =>
+      expect(postedCalls(harness, "/projects/proj_beacon/continuation/cancel")).toHaveLength(1),
+    );
+    await waitFor(() => expect(within(header).getByTestId("start-session")).toBeInTheDocument());
   });
 });

@@ -531,13 +531,15 @@ describe("d1109-run-visible, run C: what waits to start, on the project's line (
     });
   const CANCEL = { kind: "cancel", label: "Cancel", to: null };
 
-  it("the person's session waiting to go on: its time, then it goes on, with Cancel", () => {
+  it("the person's session waiting to go on: its time, then it goes on; its Cancel is the bar's", () => {
+    // l4-starts-sessions (L4-money-208, D8: one place per fact): the run indicator's entry (the
+    // bar on every page, Working now) carries the wait's Cancel; before, the line had its own.
     expect(
       line({ kind: "continuation", head: "Waiting until 15:40 (your subscription's limit)" }),
     ).toEqual({
       kind: "paused",
       text: "Waiting until 15:40 (your subscription's limit), then it goes on",
-      action: CANCEL,
+      action: null,
     });
     expect(
       line({ kind: "continuation", head: "Waiting until 07:00 (after your quiet hours)" }).text,
@@ -569,17 +571,23 @@ describe("d1109-run-visible, run C: what waits to start, on the project's line (
       text: "Starts after your quiet hours",
       action: null,
     });
+    // l4-starts-sessions (L4-money-209): the start waiting in line is the person's own; Cancel
+    // drops it (before: no button, and the header still offered Start session).
+    const queuedCancel = {
+      ...CANCEL,
+      explain: "Cancel: it does not start after that session; its tasks wait for your Start.",
+    };
     expect(line({ kind: "queued", behind: "Quote page" })).toEqual({
       kind: "paused",
       text: 'Starts after the session on "Quote page"',
-      action: null,
+      action: queuedCancel,
     });
     // l4-cred-screens (L4a-left-4, L4-creds-9 part 3): the person's own session that waited for
     // its credential goes on after the other project's session, said as such.
     expect(line({ kind: "queued", behind: "Map notes", goesOn: true })).toEqual({
       kind: "paused",
       text: 'Goes on after the session on "Map notes"',
-      action: null,
+      action: queuedCancel,
     });
     // Nothing waits: the ready line, which says the work waits for the person's Start.
     expect(line(null)).toEqual({
@@ -597,5 +605,73 @@ describe("d1109-run-visible, run C: what waits to start, on the project's line (
       { kind: "kept_start" as const, head: `Starts at Wed 4 Nov, 15:40 (${long})` },
     ])
       expect(line(sw).text.length).toBeLessThanOrEqual(80);
+  });
+});
+
+/**
+ * l4-starts-sessions, run L4 (L4-money-208; D8, design §5 rule 10, one place per fact): while a
+ * session works, the project's line says the run indicator's words with the count (live check 4:
+ * 'Working on "Create index.html" (0 of 7 done)' beside the bar's 'the coder works on
+ * "Create index.html"'); an older daemon's read without them keeps 'Working on "X"'.
+ */
+describe("l4-starts-sessions, run L4: the working line in the bar's words (L4-money-208)", () => {
+  const ready = { key: "ready", label: "Ready", tone: "neutral" } as never;
+  const working = {
+    sessionId: "s1",
+    agentName: "Alice",
+    taskId: "t1",
+    taskTitle: "Create index.html",
+    since: null,
+  };
+  const line = (workingWhat: string | null) =>
+    projectStatusLine({
+      projectId: "p1",
+      tasks: [
+        { id: "t1", title: "Create index.html", status: "in_progress", depends_on: [] },
+        { id: "t2", title: "Style the page", status: "ready", depends_on: [] },
+        { id: "t3", title: "Add the quotes", status: "done", depends_on: [] },
+      ],
+      displays: new Map([
+        ["t1", ready],
+        ["t2", ready],
+        ["t3", ready],
+      ]),
+      cards: [],
+      plan: "none",
+      working,
+      workingWhat,
+      folder: null,
+    });
+
+  it.each<[string, string]>([
+    [
+      'the coder works on "Create index.html"',
+      'The coder works on "Create index.html" (1 of 3 done)',
+    ],
+    [
+      'the critic checks "Create index.html"',
+      'The critic checks "Create index.html" (1 of 3 done)',
+    ],
+    ["picks the next task", "Picks the next task (1 of 3 done)"],
+    ["plans the session", "Plans the session (1 of 3 done)"],
+    ['stops after "Create index.html"', 'Stops after "Create index.html" (1 of 3 done)'],
+  ])("%s", (what, text) => {
+    expect(line(what)).toEqual({
+      kind: "working",
+      text,
+      action: { kind: "link", label: "Open running session", to: "/sessions/s1" },
+    });
+  });
+
+  it("a long title is shortened inside its quotes; the count and the closing quote stay", () => {
+    const what =
+      'the coder works on "Write a page that lists every opening hour of the club and its holidays"';
+    const text = line(what).text;
+    expect(text.length).toBeLessThanOrEqual(80);
+    expect(text).toMatch(/^The coder works on "Write a page that .+…" \(1 of 3 done\)$/);
+  });
+
+  it("without the bar's words: the line as before", () => {
+    expect(line(null).text).toBe('Working on "Create index.html" (1 of 3 done)');
   });
 });

@@ -524,3 +524,51 @@ describe("l4-money-pause, run L4: the session's size is said once, as its promis
     );
   });
 });
+
+// l4-starts-sessions, run L4 (L4-money-206): live check 4 (LC-C19): a session the hands-off
+// setting started read "The session started with a budget of CHF 1.00." on its page while its
+// Sessions row said "started by itself when work was ready". The first line says who started it,
+// from the event's `by`, with the row's map.
+describe("l4-starts-sessions, run L4: the session page's first line says who started it", () => {
+  const line = (p: Record<string, unknown>) =>
+    personLine("session.started", { budgetCapUsdMicro: 1_250_000, ...p }, 0.8);
+  it.each<[string, Record<string, unknown>, string]>([
+    [
+      "the hands-off setting",
+      { trigger: "message", by: "hands_off" },
+      "Started by itself when work was ready (this project's setting), with a budget of CHF 1.00.",
+    ],
+    [
+      "the person's start of an answer (trigger message)",
+      { trigger: "message", by: "person" },
+      "You started the session with a budget of CHF 1.00.",
+    ],
+    [
+      "the person's phone",
+      { trigger: "remote", by: "person" },
+      "You started the session from your phone with a budget of CHF 1.00.",
+    ],
+    [
+      "a schedule",
+      { trigger: "schedule", by: "schedule" },
+      "Started on its schedule, with a budget of CHF 1.00.",
+    ],
+    [
+      "the person's session going on",
+      { trigger: "manual", by: "continuation" },
+      "It goes on with a budget of CHF 1.00.",
+    ],
+    [
+      "an old event of a press, with no by",
+      { trigger: "manual" },
+      "You started the session with a budget of CHF 1.00.",
+    ],
+    [
+      "an old event of another start, with no by",
+      { trigger: "budget_reset" },
+      "The session started with a budget of CHF 1.00.",
+    ],
+  ])("%s", (_what, p, expected) => {
+    expect(line(p)).toBe(expected);
+  });
+});
