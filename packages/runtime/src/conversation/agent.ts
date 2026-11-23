@@ -68,6 +68,7 @@ import {
   claimNudge,
   claimsOf,
   LOOKING_STEP,
+  NOTHING_CHANGED_ASKS_REPLY,
   NOTHING_CHANGED_CARD_WAITS_REPLY,
   NOTHING_CHANGED_REPLY,
   type ReplyClaim,
@@ -2398,7 +2399,7 @@ export class ConversationAgent {
     // …") is never the model's: it is left out of what the person is shown and what is stored, so
     // a forged change line cannot pose as a change in the conversation or a later turn's history.
     let reply = claimGuard?.replaced
-      ? this.trueLine(results, didAll)
+      ? this.trueLine(results, didAll, claimGuard.kind)
       : withoutAppMarkers(
           stopped
             ? completeSentencesOf(streamed)
@@ -2995,13 +2996,14 @@ export class ConversationAgent {
    * the reply; else "Nothing changed", with the earlier card that still waits when there is one.
    * Never "nothing waits" above a Yes/No card, nor "Nothing changed" above a change.
    */
-  private trueLine(results: readonly CommandResultView[], did: TurnDid): string {
+  private trueLine(results: readonly CommandResultView[], did: TurnDid, kind: ReplyClaim["kind"]): string {
     const changes = results
       .filter((r) => r.status === "done" || r.status === "partial")
       .map((r) => this.sentenceOf(r, "Done"));
     if (changes.length) return changes.join(" ");
     if (did.asked) return "";
-    return did.waiting ? NOTHING_CHANGED_CARD_WAITS_REPLY : NOTHING_CHANGED_REPLY;
+    if (did.waiting) return NOTHING_CHANGED_CARD_WAITS_REPLY;
+    return kind === "asks" ? NOTHING_CHANGED_ASKS_REPLY : NOTHING_CHANGED_REPLY;
   }
 
   private sentenceOf(r: CommandResultView, prefix: string): string {

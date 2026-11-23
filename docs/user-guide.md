@@ -419,7 +419,10 @@ them as you left them; an open file or task stays on its own tab.
   its answer claimed more than it did, Chat tries once more, and when it still claims it, Chat
   says only what is true: the change it made, its Yes/No question, or "Nothing changed, and
   nothing waits for your yes. Say it again to try once more." ("Nothing changed; the change I
-  asked about earlier still waits for your yes." while an earlier question still waits). A rule
+  asked about earlier still waits for your yes." while an earlier question still waits). When
+  its answer asked for your yes in its own words again ("Shall I resume it?"), the line is
+  "Nothing changed, and nothing waits for your yes. If you want a change, say what you want
+  done.": say the change, and it comes back as the app's question with **Yes** and **No**. A rule
   like that is a setting,
   never a lesson: "remember that …" keeps a lesson for later sessions, and its line says it
   changes no setting. A change to a task is read back once in one line ('Make "Write the FAQ"

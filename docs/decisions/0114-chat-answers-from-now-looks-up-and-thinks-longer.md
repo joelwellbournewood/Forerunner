@@ -329,3 +329,12 @@ Only the app writes "The app did: …" and "The app asked, with Yes and No: …"
 writes in any letter case ("the app did: …"), at a line's start, behind a short bracketed lead or
 after a sentence, is left out of the reply, the stored row and every later turn's history, and
 is a change claim the guard nudges (L4c-left-6). Before, the check was case-sensitive.
+
+## Amendment 2026-11-23 (l4-chat-carried, run L4): the true line after a yes asked in words
+
+When the reply still asks for a yes in its own words after the nudge ("Shall I resume it?") and
+the turn changed nothing and nothing waits, the reply is "Nothing changed, and nothing waits for
+your yes. If you want a change, say what you want done." (L4c-left-7). The person may have asked
+no change at all (a status question), so "Say it again to try once more" would presume one; a
+change said that way comes back as the app's question with Yes and No, as the user guide says. A
+claimed change or a claimed read-back keeps "Say it again to try once more."

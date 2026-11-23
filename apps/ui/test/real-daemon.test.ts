@@ -24885,8 +24885,9 @@ describe("l4-chat-answers, run L4", () => {
         "say: Shall I set research for Garden club to any public website again?",
       );
       // The stand-in asks again after the nudge, so the line is put right: nothing changed.
+      // l4-chat-carried (L4c-left-7): an ask in words gets the line without "say it again".
       expect(asked.reply).toBe(
-        "Nothing changed, and nothing waits for your yes. Say it again to try once more.",
+        "Nothing changed, and nothing waits for your yes. If you want a change, say what you want done.",
       );
       expect(asked.pendingConfirmation).toBeNull();
       expect(a.chatCalls()).toHaveLength(2);

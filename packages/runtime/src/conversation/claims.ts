@@ -393,6 +393,16 @@ export const NOTHING_CHANGED_REPLY =
   "Nothing changed, and nothing waits for your yes. Say it again to try once more.";
 
 /**
+ * l4-chat-carried, run L4 (L4c-left-7): the same after a reply that only asked for a yes in words
+ * ("Shall I resume it?"): the person may have asked no change (a status question), so "Say it
+ * again to try once more" would presume one; the line says how to ask for one instead, and a
+ * change asked for that way comes back as the app's question with Yes and No. A claimed change
+ * or a claimed read-back keeps the try-again clause.
+ */
+export const NOTHING_CHANGED_ASKS_REPLY =
+  "Nothing changed, and nothing waits for your yes. If you want a change, say what you want done.";
+
+/**
  * The same when a card an earlier turn read back still waits for the person's yes (its Yes and
  * No stay under that earlier reply): "nothing waits" would be false there.
  */

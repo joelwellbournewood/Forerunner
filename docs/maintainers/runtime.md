@@ -4958,7 +4958,13 @@ in one project cancelled a task in another. Now:
   the read-back of the turn's card is the reply; else `NOTHING_CHANGED_REPLY` ("Nothing changed,
   and nothing waits for your yes. Say it again to try once more."), or
   `NOTHING_CHANGED_CARD_WAITS_REPLY` ("Nothing changed; the change I asked about earlier still
-  waits for your yes.") while an earlier card waits; only these two are marked `notice`. So the
+  waits for your yes.") while an earlier card waits; only these are marked `notice`.
+  l4-chat-carried (L4c-left-7): when the claim is a yes asked in words (kind `asks`, for example
+  "Shall I resume it?" under a status question), the line is `NOTHING_CHANGED_ASKS_REPLY`
+  ("Nothing changed, and nothing waits for your yes. If you want a change, say what you want
+  done."): the person may have asked no change, so "say it again" would presume one
+  (`trueLine(results, did, kind)`; conversation-memory.test.ts "the true line after an ask in
+  words"). So the
   app never writes "nothing waits" above a Yes/No card, nor "Nothing changed" above a change (the
   review of l3-chat-claims found both). The `chat.reply` row keeps `claimGuard: { kind, phrase,
   nudged, replaced }` and the log says "chat reply claimed what no command did".

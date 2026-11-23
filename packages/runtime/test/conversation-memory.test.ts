@@ -13,6 +13,7 @@ import {
   cardAnsweredReply,
   YES_TO_WHAT_REPLY,
 } from "../src/conversation/agent.ts";
+import { NOTHING_CHANGED_ASKS_REPLY } from "../src/conversation/claims.ts";
 import { readTranscript } from "../src/conversation/transcript.ts";
 import { findingAsk, NO_FIX_NAMED, withoutNoActionGiven } from "../src/daemon/task-words.ts";
 import { syncAnsweredCards } from "../src/loop/answered-cards.ts";
@@ -1834,7 +1835,10 @@ describe("l4-chat-answers, run L4", () => {
     const res = await w.chat("sounds good");
     expect(w.provider.calls).toHaveLength(2);
     expect(nudgeText(w, 1)).toBe(ASKS_NUDGE);
-    expect(res.reply).toBe(NOTHING);
+    // l4-chat-carried (L4c-left-7): an ask in words gets the line without "say it again".
+    expect(res.reply).toBe(
+      "Nothing changed, and nothing waits for your yes. If you want a change, say what you want done.",
+    );
     expect(res.pendingConfirmation).toBeNull();
     const yes = await w.chat("yes");
     expect(yes.reply).toBe(YES_TO_WHAT);
@@ -2198,6 +2202,29 @@ describe("l4-chat-carried, run L4: an old hold reply stays out of the history (L
     const sent = w.messages(0);
     expect(sent.map((m) => m.content).join("\n")).not.toContain("so I have not answered");
     expect(sent.filter((m) => m.role === "assistant")).toEqual([]);
+    await w.store.close();
+  });
+});
+
+/**
+ * l4-chat-carried, run L4 (L4c-left-7): a reply that asks for a yes in words twice, after the
+ * nudge, about a change nobody asked for (a status question the model answered with "Shall I
+ * …?"), read "Nothing changed, and nothing waits for your yes. Say it again to try once more.":
+ * "say it again" presumed the person had asked for a change. An ask in words gets the true line
+ * without it; a claimed change or a claimed ask keeps it.
+ */
+describe("l4-chat-carried, run L4: the true line after an ask in words (L4c-left-7)", () => {
+  const ASKS = "The README task is paused. Shall I resume it?";
+  const ASKS_TRUE =
+    "Nothing changed, and nothing waits for your yes. If you want a change, say what you want done.";
+  it("a status question answered with 'Shall I …?' twice: the true line says how to ask for a change, with no 'say it again'; nothing waits", async () => {
+    const w = await setup([textReply(ASKS, { ttftMs: 0 }), textReply(ASKS, { ttftMs: 0 })]);
+    const res = await w.chat("what is paused?");
+    expect(w.provider.calls).toHaveLength(2);
+    expect(res.reply).toBe(ASKS_TRUE);
+    expect(NOTHING_CHANGED_ASKS_REPLY).toBe(ASKS_TRUE);
+    expect(res.pendingConfirmation).toBeNull();
+    expect(await w.store.humanRequest.open({ humanId: w.human }, { limit: 10 })).toEqual([]);
     await w.store.close();
   });
 });
