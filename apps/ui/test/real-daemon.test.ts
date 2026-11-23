@@ -87,7 +87,7 @@ import {
   reviewLevelValue,
   specialistName,
 } from "../src/lib/task-actions.ts";
-import { intakeCardOf, intakeTotalLine } from "../src/pages/InboxPage.tsx";
+import { intakeCardOf, intakeDecisionLine, intakeTotalLine } from "../src/pages/InboxPage.tsx";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
 import { latestRunByTask, taskCapWords } from "../src/pages/project/TasksTab.tsx";
 
@@ -25928,17 +25928,15 @@ describe("l4-github-link, run L4", () => {
         );
       return { bare, seedDir, seed };
     };
-    const compose = () =>
-      composeWithRolePlayer(
-        {},
-        {
-          gitHost: host,
-          tryIt: false,
-          env,
-          dirs: appDirs({ env }),
-          stateUrl: `sqlite:${join(home, "state.sqlite")}`,
-        },
-      );
+    /** `bench`: the stand-in's knobs for this compose (`FORERUNNER_BENCH_INTAKE_BAD`, ...). */
+    const compose = (bench: Record<string, string> = {}) =>
+      composeWithRolePlayer(bench, {
+        gitHost: host,
+        tryIt: false,
+        env,
+        dirs: appDirs({ env }),
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      });
     return { work, host, seeded, compose };
   };
   /** What a refused call answered: the status, the message and the details. */
@@ -26055,6 +26053,83 @@ describe("l4-github-link, run L4", () => {
       await rt.close();
       ({ rt, client } = await w.compose());
       expect((await client.project(made.id)).repositoryElsewhere).toEqual(said);
+      await settleSessions(rt);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  // Review of the fix: the composed intake case asserted the stored card's docs only, and its
+  // record had no "Decision:" line, so it passed whether or not the person saw a decision.
+  it("L4-github-104: a first plan whose reply has no docs is asked once for its decision record with the exact problem line, and the plan card in the Inbox reads its Decision line, also after the daemon starts again; Add to it's plan-only reply without docs is taken with one call and its card has no decision line", async () => {
+    const w = world();
+    // The stand-in's first reply of each draft has no docs (the live model's, run C's CL-6).
+    let { rt, client, intakeCalls } = await w.compose({ FORERUNNER_BENCH_INTAKE_BAD: "no-docs" });
+    const decided =
+      "Decision: a plain page in three files (index.html, styles.css, script.js), opened straight from the folder; no framework, no build step.";
+    try {
+      const me = await client.me();
+      const planCard = async (c: DaemonClient, projectId: string) => {
+        const cards = (await c.inbox(me.id)).requests.filter(
+          (r) => r.projectId === projectId && r.status === "open",
+        );
+        expect(cards).toHaveLength(1);
+        const shown = intakeCardOf(cards[0]?.changeCard);
+        if (!shown) throw new Error("the Inbox card is not a plan card");
+        return { card: cards[0], shown };
+      };
+      const before = intakeCalls.length;
+      const project = await client.createProject({
+        name: "Quote page",
+        goal: "A page that shows a random quote",
+        brief: "A one-page website that shows a random quote. Plain HTML, CSS and JavaScript.",
+        intake: true,
+      });
+      await rt.intake.inFlight(project.id);
+      const calls = intakeCalls.slice(before);
+      expect(calls).toHaveLength(2);
+      // The retry carries the refused reply and the one problem line, word for word.
+      expect(String(calls[1]?.messages[2]?.content)).toBe(
+        [
+          "Forerunner could not use your reply:",
+          "- docs: the decision record is missing: write docs/decisions/0001-<slug>.md with the choice the brief points to; any standard doc you leave out is written from the template.",
+          "",
+          "Reply again with the whole JSON object in the shape the instructions give, with these problems fixed and nothing else changed: no text and no code fence around it.",
+        ].join("\n"),
+      );
+      const first = await planCard(client, project.id);
+      expect(first.card?.title).toMatch(/^Plan for "Quote page": \d+ tasks?$/);
+      expect(first.shown.planOnly).toBe(false);
+      expect(first.shown.docs[0]?.path).toBe("docs/decisions/0001-plain-static-page.md");
+      // What the card shows the person under the tasks (data-testid intake-decision-line).
+      expect(intakeDecisionLine(first.shown)).toBe(decided);
+
+      // Add to it on a project with work: the plan-only form writes no docs, so its reply without
+      // docs is taken at once, and its card has no decision line.
+      const site = await client.createProject({ name: "Site", goal: "A site" });
+      await client.createTask(site.id, {
+        title: "Write the home page",
+        outcome: "The home page is written",
+        riskTier: 0,
+      });
+      const addBefore = intakeCalls.length;
+      const view = await client.proposeIntake(site.id, {
+        brief: "Add a page of favourite quotes.",
+      });
+      expect(view).toMatchObject({ pending: true, projectId: site.id, docsTarget: null });
+      expect(intakeCalls.length).toBe(addBefore + 1);
+      const added = await planCard(client, site.id);
+      expect(added.card?.id).toBe(view.requestId);
+      expect(added.shown).toMatchObject({ planOnly: true, docs: [] });
+      expect(intakeDecisionLine(added.shown)).toBeNull();
+
+      // Both cards read the same after the daemon starts again (the stand-in now plays well).
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client, intakeCalls } = await w.compose());
+      expect(intakeDecisionLine((await planCard(client, project.id)).shown)).toBe(decided);
+      expect(intakeDecisionLine((await planCard(client, site.id)).shown)).toBeNull();
+      expect(intakeCalls).toHaveLength(0);
       await settleSessions(rt);
     } finally {
       await rt.close();

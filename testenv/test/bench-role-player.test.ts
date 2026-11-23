@@ -304,6 +304,19 @@ describe("bench role-player: intake", () => {
     expect(smallTasks.length).toBeGreaterThanOrEqual(1);
     expect(smallTasks.length).toBeLessThanOrEqual(3);
     expect(lines(big.log).map((l) => l.injected ?? null)).toEqual(["intake-bad=too-big", null]);
+    // no-docs (L4-github-104): the plan and its first session with no docs key at all, so no
+    // decision record; the retry gets the plan with its record and its "Decision: " line.
+    const bare = player({ FORERUNNER_BENCH_INTAKE_BAD: "no-docs" });
+    const noDocs = (await call(bare.p, intakeRequest())).text;
+    expect(Object.keys(JSON.parse(noDocs) as Record<string, unknown>).sort()).toEqual([
+      "firstSession",
+      "plan",
+    ]);
+    const withDocs = parseIntakeReply((await call(bare.p, retryOf(intakeRequest(), noDocs))).text);
+    expect(withDocs.docs["docs/decisions/0001-plain-static-page.md"]).toMatch(
+      /^# 0001: .*\n\nDecision: /,
+    );
+    expect(lines(bare.log).map((l) => l.injected ?? null)).toEqual(["intake-bad=no-docs", null]);
   });
 
   /**

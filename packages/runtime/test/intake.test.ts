@@ -2057,7 +2057,13 @@ describe("l4-github-link, run L4", () => {
     const w = await world();
     try {
       const { docs: _docs, ...noDocs } = proposal();
-      w.replies.push({ text: JSON.stringify(noDocs) }, { text: JSON.stringify(proposal()) });
+      // The retry brings the record with the decision the card reads ("Decision: ...").
+      const record =
+        "# 0001 — Stack\n\nDecision: one TypeScript service with one SQLite file.\n\n## Context\n\nSmall team.\n";
+      const withRecord = proposal({
+        docs: { ...proposal().docs, "docs/decisions/0001-stack.md": record },
+      });
+      w.replies.push({ text: JSON.stringify(noDocs) }, { text: JSON.stringify(withRecord) });
       const before = w.provider.calls.length;
       const planned = await json(
         await w.req(`/projects/${w.project.id}/intake`, { method: "POST", body: "{}" }),
@@ -2075,7 +2081,9 @@ describe("l4-github-link, run L4", () => {
       const card = (await w.rt.store.humanRequest.mustGet(String(planned.requestId)))
         .change_card as JsonObject;
       const docs = (card.proposal as JsonObject).docs as Record<string, string>;
-      expect(docs["docs/decisions/0001-stack.md"]).toContain("# 0001");
+      // The stored record whole; what the Inbox card shows from it is pinned in
+      // apps/ui/test/real-daemon.test.ts ("l4-github-link, run L4", L4-github-104).
+      expect(docs["docs/decisions/0001-stack.md"]).toBe(record);
       // A plan-only form (the project has tasks now) takes a reply without docs at once.
       await w.answer(String(planned.requestId), "approve");
       const { docs: _none, ...planOnly } = proposal();

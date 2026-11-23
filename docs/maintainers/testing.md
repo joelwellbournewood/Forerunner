@@ -2844,8 +2844,8 @@ reads the run label the loop driver puts on every call (`ModelRequest.origin.lab
 `intake <id>`, `<specialist> on <title>`, `critic tier <n> on ...`, `conversation`) and answers
 so the real flow goes on: an intake proposal `parseIntakeReply` accepts (a small plan of two
 tasks with no riskTier, the README and the decision only, when the request says "Plan size:
-small"; the live model's bad first replies with `FORERUNNER_BENCH_INTAKE_BAD`, `too-big` among
-them, the retry's request, which carries the refused reply, getting the plan), specialist runs through
+small"; the live model's bad first replies with `FORERUNNER_BENCH_INTAKE_BAD`, `too-big` and
+`no-docs` (no decision record, L4-github-104) among them, the retry's request, which carries the refused reply, getting the plan), specialist runs through
 the app's own tools (a run offered `web_fetch` whose brief names web addresses reads up to three
 of them first and writes its markdown file from them: each fact quoted with its page's address,
 the pages not read under "Uncertainty" with the refusal's words, every page under "Sources

@@ -1899,7 +1899,8 @@ row (`intake_<session>` and `intake_<session>_2`) and its ledger rows; the card'
 is their sum and `model_calls` says 2. A call that did not complete (the provider, the time
 limit, the budget, a stop) is not repeated. A first plan (not the plan-only form) whose reply
 has no `docs/decisions/0001-<slug>.md` is asked once more with `MISSING_DECISION_PROBLEM` (the
-card's "Decision: ..." line is read from that record; L4-github-104, run L4), and a retry still
+card's "Decision: ..." line is read from that record; L4-github-104, run L4; the real-daemon case
+walks it with the stand-in's `FORERUNNER_BENCH_INTAKE_BAD=no-docs`), and a retry still
 without it is taken as it is (no third call); the cut-off advice is `CUT_OFF_PROBLEM` (keep the
 record, leave out the standard docs) or, for the plan-only form, `CUT_OFF_PLAN_ONLY_PROBLEM`
 (`readIntakeReply(text, {stopReason, planOnly})`). (4) The failure words name the cause
