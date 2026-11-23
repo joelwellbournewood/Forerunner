@@ -1889,7 +1889,12 @@ from `details.problems`, "plan.milestones[0].tasks[1] (key "build").outcome: …
 with the whole JSON object…"). Both calls share the session's budget; each has its token, its Run
 row (`intake_<session>` and `intake_<session>_2`) and its ledger rows; the card's `cost_usd_micro`
 is their sum and `model_calls` says 2. A call that did not complete (the provider, the time
-limit, the budget, a stop) is not repeated. (4) The failure words name the cause
+limit, the budget, a stop) is not repeated. A first plan (not the plan-only form) whose reply
+has no `docs/decisions/0001-<slug>.md` is asked once more with `MISSING_DECISION_PROBLEM` (the
+card's "Decision: ..." line is read from that record; L4-github-104, run L4), and a retry still
+without it is taken as it is (no third call); the cut-off advice is `CUT_OFF_PROBLEM` (keep the
+record, leave out the standard docs) or, for the plan-only form, `CUT_OFF_PLAN_ONLY_PROBLEM`
+(`readIntakeReply(text, {stopReason, planOnly})`). (4) The failure words name the cause
 (`details.words` from the reader): "Claude's plan could not be read.", "Claude's plan was cut off
 before it ended.", "Claude's plan was missing its tasks.", "Claude's plan was missing a task's
 outcome.", "Claude's plan had tasks waiting for each other in a circle.", with " Forerunner asked

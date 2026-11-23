@@ -26,6 +26,7 @@ import {
   NO_WEB_RULE,
   onlyWebsitesLines,
   parseIntakeReply,
+  readIntakeReply,
   SMALL_PLAN_RULES,
 } from "../src/session/intake.ts";
 import { type PlannerContext, StaticPlanner } from "../src/session/runner.ts";
@@ -2027,5 +2028,74 @@ describe("l4-github-link, run L4", () => {
     } finally {
       await w.rt.close();
     }
+  }, 60_000);
+  it("L4-github-104: a first plan's reply without the decision record is asked again once with the exact problem line; the record the retry brings lands on the card; a plan-only reply without docs is taken at once", async () => {
+    const w = await world();
+    try {
+      const { docs: _docs, ...noDocs } = proposal();
+      w.replies.push({ text: JSON.stringify(noDocs) }, { text: JSON.stringify(proposal()) });
+      const before = w.provider.calls.length;
+      const planned = await json(
+        await w.req(`/projects/${w.project.id}/intake`, { method: "POST", body: "{}" }),
+      );
+      expect(w.provider.calls.length).toBe(before + 2);
+      const retry = w.provider.calls.at(-1)?.messages.at(-1);
+      expect(String(retry?.content)).toBe(
+        [
+          "Forerunner could not use your reply:",
+          "- docs: the decision record is missing: write docs/decisions/0001-<slug>.md with the choice the brief points to; any standard doc you leave out is written from the template.",
+          "",
+          "Reply again with the whole JSON object in the shape the instructions give, with these problems fixed and nothing else changed: no text and no code fence around it.",
+        ].join("\n"),
+      );
+      const card = (await w.rt.store.humanRequest.mustGet(String(planned.requestId)))
+        .change_card as JsonObject;
+      const docs = (card.proposal as JsonObject).docs as Record<string, string>;
+      expect(docs["docs/decisions/0001-stack.md"]).toContain("# 0001");
+      // A plan-only form (the project has tasks now) takes a reply without docs at once.
+      await w.answer(String(planned.requestId), "approve");
+      const { docs: _none, ...planOnly } = proposal();
+      w.replies.push({ text: JSON.stringify(planOnly) });
+      const callsBefore = w.provider.calls.length;
+      const added = await w.req(`/projects/${w.project.id}/intake`, {
+        method: "POST",
+        body: JSON.stringify({ brief: "Add an export." }),
+      });
+      expect(added.status).toBe(202);
+      expect(w.provider.calls.length).toBe(callsBefore + 1);
+    } finally {
+      await w.rt.close();
+    }
+  }, 60_000);
+
+  it("L4-github-104: when the retry also has no decision record the card is filed without it (no third call); the cut-off advice keeps the record and drops the rest", async () => {
+    const w = await world();
+    try {
+      const { docs: _docs, ...noDocs } = proposal();
+      w.replies.push({ text: JSON.stringify(noDocs) }, { text: JSON.stringify(noDocs) });
+      const before = w.provider.calls.length;
+      const planned = await w.req(`/projects/${w.project.id}/intake`, {
+        method: "POST",
+        body: "{}",
+      });
+      expect(planned.status).toBe(202);
+      expect(w.provider.calls.length).toBe(before + 2);
+    } finally {
+      await w.rt.close();
+    }
+    const cutOff = (planOnly: boolean) => {
+      try {
+        readIntakeReply('{ "plan": {', { stopReason: "max_tokens", planOnly });
+      } catch (e) {
+        return (e as { details: { problems: string[] } }).details.problems;
+      }
+      throw new Error("not refused");
+    };
+    expect(cutOff(false)).toEqual([
+      "Your reply was cut off at the output limit before the JSON object ended. Write each doc in a few lines, or leave out the standard docs (Forerunner writes them from its templates), but keep docs/decisions/0001-<slug>.md, in a few lines, so the whole object fits.",
+    ]);
+    expect(cutOff(true)).toEqual([
+      "Your reply was cut off at the output limit before the JSON object ended. Write each task in a few lines, so the whole object fits.",
+    ]);
   }, 60_000);
 });

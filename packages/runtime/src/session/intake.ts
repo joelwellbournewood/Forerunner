@@ -783,8 +783,31 @@ export interface IntakeReadReply {
  * The model's reply as a proposal (`readIntakeReply`), or a `validation` error naming what is
  * wrong in words (`IntakeReplyProblem` in its details).
  */
-export function parseIntakeReply(text: string, opts: { stopReason?: string } = {}): IntakeProposal {
+export function parseIntakeReply(
+  text: string,
+  opts: { stopReason?: string; planOnly?: boolean } = {},
+): IntakeProposal {
   return readIntakeReply(text, opts).proposal;
+}
+
+/**
+ * L4-github-104: what a first plan's reply without its decision record is told on the one retry
+ * (model-facing: the card's "Decision: ..." line is read from that record, design section 3.3).
+ */
+export const MISSING_DECISION_PROBLEM =
+  "docs: the decision record is missing: write docs/decisions/0001-<slug>.md with the choice the brief points to; any standard doc you leave out is written from the template.";
+
+/** L4-github-104: the cut-off advice of the first-plan form keeps the decision record. */
+export const CUT_OFF_PROBLEM =
+  "Your reply was cut off at the output limit before the JSON object ended. Write each doc in a few lines, or leave out the standard docs (Forerunner writes them from its templates), but keep docs/decisions/0001-<slug>.md, in a few lines, so the whole object fits.";
+
+/** The cut-off advice of the plan-only form (Add to it), which writes no document. */
+export const CUT_OFF_PLAN_ONLY_PROBLEM =
+  "Your reply was cut off at the output limit before the JSON object ended. Write each task in a few lines, so the whole object fits.";
+
+/** Whether a first plan's reply carries its decision record (`docs/decisions/0001-<slug>.md`). */
+export function hasDecisionRecord(proposal: Pick<IntakeProposal, "docs">): boolean {
+  return Object.keys(proposal.docs ?? {}).some((p) => FIRST_DECISION_PATH.test(p));
 }
 
 /**
@@ -795,7 +818,10 @@ export function parseIntakeReply(text: string, opts: { stopReason?: string } = {
  * "not JSON" (live check of 2026-11-01, two of six replies). Over-long prose is shortened by the
  * schema (`planProse`, `shortenDoc`); `shortened` names what was cut, for the log.
  */
-export function readIntakeReply(text: string, opts: { stopReason?: string } = {}): IntakeReadReply {
+export function readIntakeReply(
+  text: string,
+  opts: { stopReason?: string; planOnly?: boolean } = {},
+): IntakeReadReply {
   const parsed = replyObject(text);
   if (!parsed) {
     const cutOff = opts.stopReason === "max_tokens";
@@ -806,9 +832,7 @@ export function readIntakeReply(text: string, opts: { stopReason?: string } = {}
       cutOff
         ? {
             words: "Claude's plan was cut off before it ended.",
-            problems: [
-              "Your reply was cut off at the output limit before the JSON object ended. Write each doc in a few lines, or leave docs out (Forerunner writes the standard docs from its templates), so the whole object fits.",
-            ],
+            problems: [opts.planOnly ? CUT_OFF_PLAN_ONLY_PROBLEM : CUT_OFF_PROBLEM],
           }
         : {
             words: "Claude's plan could not be read.",
@@ -1764,6 +1788,7 @@ export class IntakeService {
         try {
           read = readIntakeReply(result.finalText, {
             ...(result.stopReason ? { stopReason: result.stopReason } : {}),
+            planOnly: !!ask.planOnly,
           });
           checkPlanShape(read.proposal, project);
         } catch (e) {
@@ -1793,11 +1818,18 @@ export class IntakeService {
         }
         const tooBig =
           ask.checkSize && call < INTAKE_CALLS ? smallPlanProblem(read.proposal.plan) : null;
-        if (!tooBig) return taken(read, call);
-        // A small plan was asked for and a bigger one came: asked once more, with its size.
-        this.logger.info("intake: the plan is bigger than a small plan; asking once more", {
+        // L4-github-104: a first plan needs its decision record (the card's "Decision: ..."
+        // line); asked once more for it, and a retry without it is taken as it is.
+        const noRecord =
+          !ask.planOnly && call < INTAKE_CALLS && !hasDecisionRecord(read.proposal)
+            ? MISSING_DECISION_PROBLEM
+            : null;
+        if (!tooBig && !noRecord) return taken(read, call);
+        // A small plan was asked for and a bigger one came, or the record is missing: asked
+        // once more, with what to change.
+        this.logger.info("intake: asking the model once more", {
           projectId: project.id,
-          problem: tooBig,
+          problems: [tooBig, noRecord].filter(Boolean),
         });
         oversized = read;
         messages.push(
@@ -1805,8 +1837,8 @@ export class IntakeService {
           {
             role: "user",
             content: retryPrompt(
-              new ForerunnerError("validation", "intake: the plan is bigger than a small plan", {
-                details: { problems: [tooBig] },
+              new ForerunnerError("validation", "intake: the plan is asked for again", {
+                details: { problems: [tooBig, noRecord].filter((p): p is string => !!p) },
               }),
             ),
           },
