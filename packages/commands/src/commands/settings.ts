@@ -22,6 +22,10 @@ import { FAST_MODE_SETTING, fastModeEffect } from "@forerunner/runtime/models/fa
 import { DEFAULT_CEILING, TIERS } from "@forerunner/runtime/models/ladder";
 import { PUSH_UNFINISHED_SETTING } from "@forerunner/runtime/session/push-unfinished";
 import {
+  isTogether,
+  togetherStatusPullRequestSentence,
+} from "@forerunner/runtime/sources/repository-words";
+import {
   cleanSiteList,
   WEB_ACCESS_SETTING,
   webAccessNarrows,
@@ -107,6 +111,12 @@ export interface SettingSpec {
   replacedBy?: string;
   /** CE-13: the key is not offered to the chat model in settings_set's definition. */
   hiddenFromTool?: boolean;
+  /**
+   * L4-github-103: a project key's value this project cannot take, as one sentence (with the
+   * refusal's cause); null when it can. Refused before any read-back, so Settings, chat and voice
+   * say the same and nothing is written.
+   */
+  refuseFor?: (value: JsonValue, project: ProjectRow) => { sentence: string; cause: string } | null;
 }
 
 /** CE-13: the answer to a legacy credential key once credential_policy is stored. */
@@ -416,6 +426,13 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
         ? "each session's status goes to the repository as one pull request, docs: project status, which you merge when you like"
         : "each session's status stays in the app (Docs, Status); no status pull request is opened",
     display: (value) => (value === true ? "on" : "off"),
+    // L4-github-103 (D9): a project worked on together writes nothing to the repository, so
+    // its status stays in the app whatever the setting; turning it on would promise a pull
+    // request that never opens. Turning it off still acts.
+    refuseFor: (value, project) =>
+      value === true && isTogether(project)
+        ? { sentence: togetherStatusPullRequestSentence(project.name), cause: "together" }
+        : null,
   },
   // merge-in-app (the owner's decision of 2026-11-02, ADR 0111 amended): who merges a
   // repository project's accepted work. "you" (the default): each pull request waits for the
@@ -976,6 +993,11 @@ async function target(p: SettingsSetParams, ctx: CommandContext): Promise<Target
         `Only you can change ${spec.label} for ${project.name}.`,
         { details: { key: spec.key, cause: "person_only" } },
       );
+    const refused = spec.refuseFor?.(parsed.data, project);
+    if (refused)
+      throw new ForerunnerError("validation", refused.sentence, {
+        details: { key: spec.key, cause: refused.cause },
+      });
     const effect = spec.effect?.(parsed.data, {
       ...(await effectContext(spec, ctx)),
       project: {

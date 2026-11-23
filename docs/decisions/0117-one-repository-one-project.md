@@ -311,3 +311,10 @@ should be able to work seamlessly in the same git."
    that pull request is on GitHub. The point-7 Consequence "a take-over after this project's own
    `fr/docs-scaffold` pull request was opened still leaves that pull request without the
    take-over line" no longer holds.
+4. **A together project's Settings never promise a status pull request** (L4-github-103, D9).
+   Its status always stays in the app (point 6), but Settings offered the Status pull request
+   switch and its yes promised a pull request that never opened (live check 4). Settings now
+   shows no such row for it, and `settings.set status_pull_request` to on is refused in one
+   sentence at the command (Settings, chat and voice alike, nothing written): 'You work on
+   "Kite club" together with another Forerunner, so its status stays in the app (Docs, Status);
+   no status pull request is opened.' Turning it off still acts.

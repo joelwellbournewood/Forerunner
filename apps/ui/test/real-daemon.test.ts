@@ -26060,4 +26060,59 @@ describe("l4-github-link, run L4", () => {
       await rt.close();
     }
   }, 120_000);
+
+  it("L4-github-103: after Work together on o/kite, GET /settings has no Status pull request row for the project and settings.set status_pull_request=true answers the one refusal sentence and writes nothing; the same after the daemon starts again", async () => {
+    const w = world();
+    await w.seeded("kite", { "README.md": "# kite\n", ".forerunner/project.json": kiteMarker });
+    let { rt, client } = await w.compose();
+    try {
+      const made = await client.createProject({
+        name: "Kites here",
+        goal: "Fly kites",
+        repos: ["o/kite"],
+        switch: true,
+        together: { project: KITE_ID },
+      });
+      expect(made.id).toBe(KITE_ID);
+      const sentence =
+        'You work on "Kite club" together with another Forerunner, so its status stays in the app (Docs, Status); no status pull request is opened.';
+      const check = async (c: DaemonClient) => {
+        const rows = await c.settings();
+        expect(
+          rows.filter((r) => r.key === "project.status_pull_request" && r.scopeId === KITE_ID),
+        ).toEqual([]);
+        // Who merges and the other GitHub rows stay: the project's own task pull requests are its.
+        expect(rows.some((r) => r.key === "project.merge_mode" && r.scopeId === KITE_ID)).toBe(
+          true,
+        );
+        const changesBefore = (await c.changes({ projectId: KITE_ID })).length;
+        const r = await c.executeCommands({
+          commands: [
+            {
+              name: "settings.set",
+              params: { key: "status_pull_request", value: true, project: KITE_ID },
+            },
+          ],
+          wordsUsed: "turn on the status pull request",
+          source: "ui",
+          projectId: KITE_ID,
+          confirm: "tap",
+        });
+        expect(r.status).toBe("refused");
+        expect(r.reason).toBe(sentence);
+        expect((await c.changes({ projectId: KITE_ID })).length).toBe(changesBefore);
+        expect(
+          (await rt.store.project.mustGet(KITE_ID)).settings.status_pull_request,
+        ).toBeUndefined();
+      };
+      await check(client);
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      await check(client);
+      await settleSessions(rt);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
 });

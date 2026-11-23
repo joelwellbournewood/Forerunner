@@ -120,7 +120,10 @@ last active on GitHub on 3 Nov. Work on it together, or take it over if nobody w
 more.' **Work together** makes "Kite club" here as the same project: nothing on GitHub changes,
 each of you keeps your own tasks and merges your own pull requests, this computer never touches
 the other Forerunner's pull requests, and your project's status stays in the app (the Docs tab
-says 'Kept in the app: you work on "Kite club" together, so GitHub's copy is left as it is.').
+says 'Kept in the app: you work on "Kite club" together, so GitHub's copy is left as it is.'),
+so Settings has no Status pull request switch for it; asking chat to turn one on answers 'You
+work on "Kite club" together with another Forerunner, so its status stays in the app (Docs,
+Status); no status pull request is opened.'
 Its Overview says 'Shared on GitHub with another Forerunner: each keeps its own tasks.'
 **Take it over** is for a project nobody works on any more: the repository then names your
 project (its next docs pull request replaces the other project's marker and says so in one line;

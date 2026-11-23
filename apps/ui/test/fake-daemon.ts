@@ -112,6 +112,7 @@ import {
   takeOverDetails,
   takeOverLine,
   togetherLine,
+  togetherStatusPullRequestSentence,
   tookOverSentence,
 } from "@forerunner/runtime/sources/repository-words";
 
@@ -5242,15 +5243,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         description: `You press Merge (each accepted task's pull request waits for your Merge on the Overview of ${p.name}), or merge automatically after review (Forerunner merges it once the critic accepted it)`,
         risk: "medium",
       });
-      rows.push({
-        key: "project.status_pull_request",
-        label: "Status pull request",
-        scope: "project",
-        scopeId: p.id,
-        value: state.settingValues[settingSlot("status_pull_request", p.id)] === true,
-        description: `Each session's status of ${p.name} as one pull request on GitHub (off: it stays in the app, under Docs, Status)`,
-        risk: "low",
-      });
+      // l4-github-link, run L4 (L4-github-103, D9): a project worked on together has no status
+      // pull request, so no row (settings-view.ts).
+      if (state.repositoryOverview[p.id]?.kind !== "together")
+        rows.push({
+          key: "project.status_pull_request",
+          label: "Status pull request",
+          scope: "project",
+          scopeId: p.id,
+          value: state.settingValues[settingSlot("status_pull_request", p.id)] === true,
+          description: `Each session's status of ${p.name} as one pull request on GitHub (off: it stays in the app, under Docs, Status)`,
+          risk: "low",
+        });
     }
     // Like the daemon (settings-view.ts, 'sites'): "Web pages research may read" per project.
     for (const p of state.projects)
@@ -7116,6 +7120,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         const before = state.settingValues[slot] === true;
         const onOff = (v: boolean) => (v ? "on" : "off");
         const what = `the status pull request for ${project.name}`;
+        // l4-github-link, run L4 (L4-github-103): refused on a together project, as the daemon.
+        if (value && state.repositoryOverview[project.id]?.kind === "together")
+          return refuse(togetherStatusPullRequestSentence(project.name));
         if (before === value)
           return refuse(`The status pull request for ${project.name} is already ${onOff(before)}.`);
         const effect = value

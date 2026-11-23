@@ -244,6 +244,15 @@ export function heldStatusNote(holder: { projectName: string | null; marked: boo
     : "Kept in the app while another status pull request is open on GitHub; close it there to have this one's there.";
 }
 
+/**
+ * L4-github-103 (D9): `settings.set status_pull_request` on a project worked on together is
+ * refused in this sentence (Settings, chat and voice alike): such a project writes nothing to
+ * the repository, so a status pull request is never opened for it.
+ */
+export function togetherStatusPullRequestSentence(name: string): string {
+  return `You work on "${name}" together with another Forerunner, so its status stays in the app (Docs, Status); no status pull request is opened.`;
+}
+
 /** The Docs row of a together project's status (D9). */
 export function togetherStatusNote(name: string): string {
   return `Kept in the app: you work on "${name}" together, so GitHub's copy is left as it is.`;
