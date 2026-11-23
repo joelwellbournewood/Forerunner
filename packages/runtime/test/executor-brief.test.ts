@@ -28,7 +28,9 @@ const coder: SpecialistSpec = {
   promptVersion: "coder@1",
   defaultTier: "sonnet",
   defaultEffort: "medium",
-  allowedTools: ["echo", "read_file"],
+  // l4-selftasks-chat (L4-other-1): a coder writes files (a spec with no write tool is held to its
+  // report, `writesNoFile`).
+  allowedTools: ["echo", "read_file", "write_file"],
   allowedDomains: [],
   maxBudgetUsdMicro: 2_000_000,
   maxTurns: 10,

@@ -405,6 +405,8 @@ describe("d1109-chat-guard, run C: the record channel", () => {
       ["record-008", "repo_marker", "task_transition"],
       ["record-009", "repo_marker", "task_create"],
       ["record-010", "repo_marker", "task_transition"],
+      // l4-selftasks-chat, run L4 (L4-selftasks-121): a run report asks for fix_tasks.
+      ["record-011", "run_report", "fix_tasks"],
     ]);
     expect(record.filter((c) => !isHostile(c)).length).toBeGreaterThanOrEqual(2);
   });
