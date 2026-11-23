@@ -16,6 +16,7 @@ import {
   fixNoRoomReply,
   fixUnreadableReply,
   fixWhichProject,
+  parserQuestionReply,
 } from "../src/conversation/sentences.ts";
 import { proposalOutcome } from "../src/daemon/task-proposal-words.ts";
 
@@ -138,6 +139,35 @@ describe("l4-chat-carried, run L4: the chat's last-session block for a review th
         'Paused: "Write the guide" at its budget of CHF 0.40',
         'Paused: "Write the notes" before its budget of CHF 0.10 ran out',
       ]),
+    );
+  });
+});
+
+/**
+ * Review of l4-chat-carried (2026-11-23, L4c-left-9): a parser question's options follow its text
+ * only when the text does not name them all. The check matched any part of a word, so a question
+ * that held each option inside a longer word ('No project named "siteworks". Which one?' with Site
+ * and Works) dropped them, and voice and the phone read "Which one?" with no choice to make.
+ */
+describe("l4-chat-carried, run L4: a parser question names its options as whole words (L4c-left-9)", () => {
+  it("names each option once: in the text when it names them, after it otherwise", () => {
+    expect(
+      parserQuestionReply({ text: "Which project: Notes or Site?", options: ["Notes", "Site"] }),
+    ).toBe("Which project: Notes or Site?");
+    expect(
+      parserQuestionReply({
+        text: 'No project named "siteworks". Which one?',
+        options: ["Site", "Works"],
+      }),
+    ).toBe('No project named "siteworks". Which one? Options: Site, Works.');
+    expect(
+      parserQuestionReply({
+        text: "Which budget did you mean?",
+        options: ["The session budget, until then", "Nothing"],
+      }),
+    ).toBe("Which budget did you mean? Options: The session budget, until then, Nothing.");
+    expect(parserQuestionReply({ text: "Which value did you mean?", options: [] })).toBe(
+      "Which value did you mean?",
     );
   });
 });

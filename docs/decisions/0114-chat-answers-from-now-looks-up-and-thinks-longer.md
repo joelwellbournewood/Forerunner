@@ -338,3 +338,13 @@ your yes. If you want a change, say what you want done." (L4c-left-7). The perso
 no change at all (a status question), so "Say it again to try once more" would presume one; a
 change said that way comes back as the app's question with Yes and No, as the user guide says. A
 claimed change or a claimed read-back keeps "Say it again to try once more."
+
+## Amendment 2026-11-23 (fixup-l4-chat-carried, run L4): what a Stop during the nudge shows
+
+A Stop during the claim guard's nudge shows what any Stop shows: the complete sentences the nudge
+call streamed before it, under "You stopped this answer: CHF … spent." The guard does not check
+them again, so a nudge answer that repeats the claim and streams a whole sentence of it before the
+Stop would show that sentence. This is the same as a Stop during the first call, before the guard
+runs; the composed tests assert the common case exactly (the held nudge call streamed nothing: an
+empty reply with the stopped line). Checking the stopped text with the guard is left for a later
+round.

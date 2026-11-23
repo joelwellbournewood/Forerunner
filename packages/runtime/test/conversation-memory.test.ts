@@ -2041,8 +2041,6 @@ describe("l4-chat-carried, run L4: a Stop during the claim guard's nudge (C3-lef
   const ONLY = { key: "web_access", value: { mode: "only", only: ["developer.mozilla.org"] } };
   const CLAIM =
     "Widening research access needs your yes, so I've asked for confirmation. Once you approve, research can read any public website again.";
-  const GUARD_LINE =
-    "Nothing changed, and nothing waits for your yes. Say it again to try once more.";
 
   it("the turn ends stopped: no guard line, the stopped line with what it cost, nothing changed, nothing waits", async () => {
     const w = await setup(
@@ -2078,9 +2076,9 @@ describe("l4-chat-carried, run L4: a Stop during the claim guard's nudge (C3-lef
     expect(w.agent.turnsOf().stop(turnId)).toBe(true);
     const res = await pending;
     // Stopped, as a Stop at any other point: the stopped line with its money, no guard line.
-    expect(res.reply).not.toBe(GUARD_LINE);
-    expect(res.reply).not.toContain("Nothing changed");
-    expect(res.reply).not.toContain("I've asked");
+    // Nothing of the held nudge call had streamed, so the reply is empty (review of 2026-11-23:
+    // the exact reply, not only what it is not).
+    expect(res.reply).toBe("");
     expect(res.footer).toMatch(/^You stopped this answer: (?:under )?CHF \d+\.\d{2} spent\.$/);
     const sessionId = await w.agent.conversationSessionId(w.alice, w.quote);
     const row = (await w.store.event.list(sessionId, 0, 500))
@@ -2093,7 +2091,7 @@ describe("l4-chat-carried, run L4: a Stop during the claim guard's nudge (C3-lef
     expect(res.costUsdMicro).toBeGreaterThan(0);
     // The conversation reads the same after a reload: stopped, no guard line.
     const turns = await readTranscript(w.store, sessionId, w.quote);
-    expect(turns.at(-1)?.reply?.text ?? "").not.toContain("Nothing changed");
+    expect(turns.at(-1)?.reply?.text ?? "").toBe("");
     expect(turns.at(-1)?.reply?.footer).toBe(res.footer);
     // Nothing changed and nothing waits.
     expect(res.actions).toEqual([]);

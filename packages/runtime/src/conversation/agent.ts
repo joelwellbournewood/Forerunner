@@ -142,7 +142,13 @@ import {
 } from "./recall.ts";
 import { stepLine } from "./recall-steps.ts";
 import { scopeOf } from "./scope.ts";
-import { completeSentencesOf, FIX_NO_PROJECT, fixWhichProject, SentenceGate } from "./sentences.ts";
+import {
+  completeSentencesOf,
+  FIX_NO_PROJECT,
+  fixWhichProject,
+  parserQuestionReply,
+  SentenceGate,
+} from "./sentences.ts";
 import { type ChatTaskFixResult, fixTasksInChat, fixTasksTool } from "./task-fix-tool.ts";
 import {
   DEFAULT_CHAT_HISTORY_TOKENS,
@@ -1435,12 +1441,8 @@ export class ConversationAgent {
       if (parsed.question && parsed.matched !== "none") {
         const q = parsed.question;
         // l4-chat-carried (L4c-left-9): a question that names its options ("Which project: Notes
-        // or Site?") is not followed by them again: the buttons show them, and voice and the
-        // phone read the text. One that does not name them ("Which budget did you mean?") keeps
-        // them in the text.
-        const named = q.options.every((o) => q.text.toLowerCase().includes(o.toLowerCase()));
-        const reply = `${q.text}${q.options.length && !named ? ` Options: ${q.options.join(", ")}.` : ""}`;
-        return finish(reply, [], { question: q });
+        // or Site?") is not followed by them again (`parserQuestionReply`, whole words only).
+        return finish(parserQuestionReply(q), [], { question: q });
       }
       if (parsed.commands.length) {
         const r = await this.deps.commands.compose(parsed.commands, lineTurn);
@@ -2996,13 +2998,6 @@ export class ConversationAgent {
   }
 
   /**
-   * What the person reads in place of a claim no command backed (l3-chat-claims): the turn's
-   * change sentences, as a command's own reply says them (the changes' rows with Undo show the
-   * same words, so the reply shows once); else nothing, and the read-back of the turn's card is
-   * the reply; else "Nothing changed", with the earlier card that still waits when there is one.
-   * Never "nothing waits" above a Yes/No card, nor "Nothing changed" above a change.
-   */
-  /**
    * l4-chat-carried (L4c-left-10): the project the newest project switch of this conversation
    * made active, read from its change-log row (`after.active_project`); a switch undone since does
    * not count. A row kept before replies named their change-log ids gives the registry's record,
@@ -3023,6 +3018,14 @@ export class ConversationAgent {
     return null;
   }
 
+  /**
+   * What the person reads in place of a claim no command backed (l3-chat-claims): the turn's
+   * change sentences, as a command's own reply says them (the changes' rows with Undo show the
+   * same words, so the reply shows once); else nothing, and the read-back of the turn's card is
+   * the reply; else "Nothing changed", with the earlier card that still waits when there is one.
+   * Never "nothing waits" above a Yes/No card, nor "Nothing changed" above a change. A claimed
+   * ask (`kind` "asks", L4c-left-7) never says "Say it again": nobody asked for a change.
+   */
   private trueLine(
     results: readonly CommandResultView[],
     did: TurnDid,

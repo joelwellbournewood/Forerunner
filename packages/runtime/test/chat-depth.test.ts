@@ -1051,8 +1051,9 @@ describe("d1109-chat-depth fixup: the claim guard's step resets the live text", 
       },
     });
     expect(slow.calls).toHaveLength(2);
-    expect(r.reply).not.toContain(CLAIM);
-    expect(r.reply).not.toBe(TRUE_LINE);
+    // Nothing of the held nudge call had streamed: the reply is empty, the footer says why
+    // (review of 2026-11-23: asserted exactly, as the case did before with TRUE_LINE).
+    expect(r.reply).toBe("");
     expect(r.footer).toMatch(/^You stopped this answer: (?:under )?CHF \d+\.\d{2} spent\.$/);
     const row = await w.lastRow();
     expect(row.outcome).toBe("stopped");
