@@ -87,3 +87,16 @@ change reverts after a restart, and how commands reach the PC from a phone.
 ## Amendment 2026-11-16 (ADR 0119, d1109-selftasks-run): the session's own changes
 
 The change log gains the source `session`, and `CommandContext.planFix` (`{ level }`) marks a call as the session's own task-list fix: free from the chat read-back from Standard up (`plan_fix`), no Inbox line, its Undo as any other. Only the daemon's task check sets either; `POST /commands/execute` refuses the source and strips the field. A composed row whose every command words its own Undo says each in one sentence.
+
+## Amendment 2026-11-23 (l4-selftasks-chat, run L4): whose name a confirmed chat change carries; chat read-backs wait
+
+- A change the chat's model reads back on the person's own words (a turn that read no record)
+  is planned and decided as the agent's (item 2 holds); once the person says yes it is made and
+  recorded as theirs (`onPersonsWords`), and it is no Inbox Update. A change that acts at once on
+  the model's call stays the agent's act.
+- Point 3's ten-minute expiry is replaced for chat, Talk and voice read-backs (the owner,
+  2026-11-17: "wait until I answer"): such a card waits until it is answered or another
+  read-back of its conversation replaces it, across a restart, and its Yes is decided again on the
+  state then, applying only what it read back while that is unchanged (the named tasks' fields, a
+  value's old value, a fix set's task-list fingerprint); else one line says what changed. Every
+  other confirmation keeps ten minutes, and its lapse is told (events and one Update).

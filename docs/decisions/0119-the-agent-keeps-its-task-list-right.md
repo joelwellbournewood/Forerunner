@@ -202,3 +202,11 @@ run, it should be able to do things like that."
   changed nothing. The line was kept out of the check's request whole, so the part the quote cuts
   off was never acted on. Run L4's acceptance asked for the line whole; quoting it whole, or with a
   higher cap on that one line, is the session lead's to decide (one constant).
+
+## Amendment 2026-11-23 (l4-selftasks-chat, run L4): chat's part
+
+A change the person names in chat is theirs once they say yes (run C decision 52); the agent's
+own fixes (fix_tasks' set, the session's) stay the agent's. A "fix the tasks" read-back waits
+until it is answered, across a restart; its Yes after the task list changed says so and offers
+the check again (run C decision 53). A merged card of fix_tasks and another change keeps the
+planFix rules. A set refused at one change says that none was made.

@@ -9895,3 +9895,23 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 - `daemon/task-words.ts` `mergedDisplay` reads a merged-through record as "Merged through #48";
   `daemon/quoted-title.ts` `balancedCut` keeps a title whole when the word cut dropped its
   quoted part and the overrun is within the slack.
+
+## l4-selftasks-chat (run L4, 2026-11-23): chat changes, read-backs and the reviewer's criterion
+
+- **Chat (L4-selftasks-116/117/122/126).** The chat's command tools set `onPersonsWords` for a
+  turn that read no record; a pass that answers an earlier line (Think it through, Go ahead)
+  sets `turn.wordsUsed` to that line, and fix_tasks gets it as its request. `recompose` keeps
+  the strictest context of the cards it folds (planFix, askFirst, the fingerprint).
+  `fixTasksInChat` takes the task list's fingerprint when the check starts and passes it to
+  `planFix`. `withoutCardTalk` drops the model's sentences about a waiting card; DEFAULT_PROMPT
+  and conversation-agent 1.5.2 say the card speaks for the change. compose wires the executor's
+  `onExpired`: `events.emit("inbox")`, `ChatTurns.touched(projectId)` (conversation.changed) and
+  one Update (`lapsedCardUpdate`, loop/answered-cards.ts).
+- **The criterion of a task with no criteria (L4-other-1, ADR 0109).** `outcomeCriterion(outcome,
+  { writesNoFile })`: for a specialist none of whose tools writes a file (`writesNoFile` in
+  registry/tools.ts, today the reviewer) 'The report shows this outcome (this specialist writes
+  no file, so a file named here is met by its report): <outcome>', in the brief
+  (session/executor.ts) and the critic's evidence (loop/critic.ts, `CriticLoopDeps.writesNoFile`);
+  every other specialist keeps 'The work itself shows this outcome (a file, a page or an output,
+  not only the report): <outcome>'. `GET /settings/models` adds `specialists[].writesNoFile`
+  (`writesNoFileLine`).

@@ -63,3 +63,13 @@ critic reviews it), so a reviewer's findings reach the person without a file.
 - **A read-only command mode for the reviewer now.** The right enforcement, but a sandbox change
   (both the process stand-in and the Docker mount) out of proportion to a minor finding; left as
   the follow-up named above.
+
+## Amendment 2026-11-23 (l4-selftasks-chat, run L4, L4-other-1)
+
+Decision 1 covers the tasks the person makes too (New task, Edit, chat): New task and Edit say
+"The reviewer writes no file: its findings are its report, which you read in the task's
+drawer." when the reviewer is chosen, and nothing is refused. A task with no criteria whose
+specialist writes no file (decided from its registry tools, `writesNoFile`) is held to its
+report: its brief and its review read "The report shows this outcome (this specialist writes no
+file, so a file named here is met by its report): <outcome>". No prompt changed. validation.md's
+gap (the planner only plans work the specialist can do, U-022) stays open.
