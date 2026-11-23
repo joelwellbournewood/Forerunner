@@ -257,7 +257,7 @@ describe("the UI client against the real daemon", () => {
     // Nothing to run yet: refused in the Start dialog's words, no session.
     await expect(
       client.startSession({ agentId, projectId, trigger: "manual" }),
-    ).rejects.toMatchObject({ code: "conflict", message: "Nothing can run: no task is ready." });
+    ).rejects.toMatchObject({ code: "validation", message: "Nothing can run: no task is ready." });
     await someWork("Write contract.md");
     const started = await client.startSession({ agentId, projectId, trigger: "manual" });
     expect(started.result).toBe("started");
@@ -6183,9 +6183,10 @@ describe("the UI client against the real daemon: screens that lead somewhere (ph
     const check = await client.startCheck(project.id);
     expect(check.blocked?.kind).toBe("nothing_runnable");
     expect(refused).toBeInstanceOf(ApiError);
+    // l4-cred-screens (L4-creds-21): a refusal in words is a 400 "validation".
     expect(refused, JSON.stringify(refused)).toMatchObject({
-      code: "conflict",
-      status: 409,
+      code: "validation",
+      status: 400,
       message: check.blocked?.sentence,
     });
     expect((await client.sessions()).length).toBe(before);
@@ -6694,9 +6695,10 @@ describe("the UI client against the real daemon: a start on a project with nothi
         (r) => r,
         (e: unknown) => e,
       );
+      // l4-cred-screens (L4-creds-21): a refusal in words is a 400 "validation".
       expect(refused, JSON.stringify(refused)).toMatchObject({
-        code: "conflict",
-        status: 409,
+        code: "validation",
+        status: 400,
         message: "Nothing can run: no task is ready.",
       });
       const reply = await client.chat({
