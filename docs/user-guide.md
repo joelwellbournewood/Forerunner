@@ -1176,6 +1176,12 @@ If Anthropic refused your key or sign-in, every Start (the dialog, Continue, the
 same: "Nothing can run until you save a new API key in Settings.", and a session waiting to go on
 says it goes on once you save a new one.
 
+Under "Subscription first, then ask me", while your subscription is out and your API key could
+run, the project's line says "Ready: 2 tasks; your subscription is at its limit until 02:51;
+Start asks first"; the plan card's tasks say "Approve and start asks before your API key is
+used.". After **Start at 04:28** the Start dialog says "Starts at 04:28 (your subscription's
+limit)." with **Cancel the wait**.
+
 When your subscription has used its share for the month, **Start on 1 Dec** keeps your start for
 the month's start: no session runs before, and one starts then by itself. **Change the allowance**
 is beside the wait on the run bar, the project's status line and the session page.

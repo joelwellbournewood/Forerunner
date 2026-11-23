@@ -47,6 +47,12 @@ export interface StartBlockedFacts {
     kept?: boolean;
     /** S-10, with `startable`: the Start button's words ("Start at 15:40"). */
     startLabel?: string;
+    /**
+     * S-10: a Start the person pressed is kept for the reset: "Starts at 15:40 (your
+     * subscription's limit)" (l4-cred-screens, L4-creds-26: the dialog says it, with Cancel;
+     * before, "...; then your session goes on." for a start that is no session yet).
+     */
+    startsAt?: string;
   } | null;
   /**
    * C2-left-2 (run C3): with no task ready, the title of a task of the project that waits on the
@@ -90,7 +96,9 @@ export function startBlocked(r: StartCheck, f: StartBlockedFacts): StartCheckVie
       // W15-78: one sentence with a subject (before: "Nothing can run yet. Waits until ...").
       sentence: f.credentialWait.startable
         ? f.credentialWait.text
-        : nothingRunsYetSentence(f.credentialWait.text),
+        : f.credentialWait.kept && f.credentialWait.startsAt
+          ? `${f.credentialWait.startsAt}.`
+          : nothingRunsYetSentence(f.credentialWait.text),
       action: f.credentialWait.save
         ? { kind: "link", label: f.credentialWait.save.label, to: f.credentialWait.save.to }
         : null,

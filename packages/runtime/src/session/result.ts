@@ -582,7 +582,12 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
     name: "cost",
     line: 3,
     // W14-6: a spend under a centime reads "Less than CHF 0.01.", never "CHF 0.00."
-    build: (_f, o) => [`${moneyWordsFirst(formatChf(o.spentChfMicro), o.spentChfMicro)}.`],
+    // l4-cred-screens (L4-creds-26, C6L-8): a session that ended to wait and spent nothing says
+    // no money (design §5 rule 5: before, "Waits until 15:40 (...). CHF 0.00.").
+    build: (_f, o) =>
+      o.credentialWait && o.spentChfMicro <= 0
+        ? []
+        : [`${moneyWordsFirst(formatChf(o.spentChfMicro), o.spentChfMicro)}.`],
   },
   {
     // budget-resume: a task paused at a budget, by the limit its card names; its card is the

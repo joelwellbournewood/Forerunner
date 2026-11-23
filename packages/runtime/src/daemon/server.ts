@@ -1993,8 +1993,10 @@ export function createDaemonApp(
     // Start dialog's and chat's sentence ("Nothing can run until you save a new API key in
     // Settings."), also while the person's session is kept to go on; before, a start from the
     // API, the phone or the session page's Continue got the kept session's "goes on by itself
-    // once its Claude credential is back", which names no step.
-    if (body.projectId && !yesForStop) {
+    // once its Claude credential is back", which names no step. Only while a session is kept:
+    // without one, a start still runs and meets the refusal, and that session goes on by itself
+    // once a new one is saved (S-10, the refused-key case's "starts both by itself").
+    if (body.projectId && !yesForStop && (await rt.continuations.waiting(body.projectId))) {
       const check = await rt.startCheck(body.projectId, body.budgetUsdMicro);
       const refused = await startBlocked(check, body.projectId, body.agentId, {
         credentialWait: true,
@@ -2518,7 +2520,8 @@ export function createDaemonApp(
     let batch: ReturnType<RuntimeApp["chooser"]["batch"]> | null = null;
     const chooseFor: ReturnType<RuntimeApp["chooser"]["batch"]> = (input) => {
       batch ??= rt.chooser.batch();
-      return batch(input);
+      // l4-cred-screens (L4-creds-26): the plan card's lines name its button (Approve and start).
+      return batch({ ...input, on: "plan" });
     };
     // d1116-budget-all (BA-7): an open plan card prices with what the Start dialog learns from.
     if (requests.some((r) => r.status === "open" && isRecordWithProposal(r.change_card)))

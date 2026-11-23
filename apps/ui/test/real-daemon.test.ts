@@ -11520,12 +11520,13 @@ describe("leftovers7-tailrun, wave 13", () => {
       expect((await client.project(started.id)).statusLine?.text).toBe(
         "Starts at 09:30 (your API key's limit)",
       );
-      // From then on its check says the person's session goes on (true now), with Start off.
+      // From then on its check says when the kept Start starts (true now), with Start off.
       expect((await client.startCheck(started.id)).blocked).toEqual({
         kind: "nothing_runnable",
         // W15-78 (before: "Nothing can run yet. Waits until 09:30 (...) and starts by itself.");
-        // d1109-starts-engine S-10: only the person's session goes on by itself.
-        sentence: "Nothing can run until 09:30 (your API key's limit); then your session goes on.",
+        // l4-cred-screens (L4-creds-26, C6L-8): a kept person Start is no session yet, so it
+        // reads when it starts (before: "...; then your session goes on.").
+        sentence: "Starts at 09:30 (your API key's limit).",
         action: null,
         // The person's Start is kept: the dialog offers Cancel the wait.
         kept: true,
@@ -22533,6 +22534,19 @@ describe("d1109-cred-screens, run C", () => {
       expect(waiting.some((t) => (t.runsOn?.line ?? "").startsWith(`Waits until ${at}`))).toBe(
         true,
       );
+      // l4-cred-screens (L4-creds-26, C6L-8): the card's button is "Approve and start", and its
+      // task lines name it (before: "Press Start and the work starts then.").
+      const lineOf = (ts: typeof waiting) => ts.map((t) => t.runsOn?.line ?? "");
+      for (const line of lineOf(waiting)) expect(line).not.toContain("Press Start");
+      expect(lineOf(waiting)).toContain(
+        `Waits until ${at} (your subscription's limit); Approve and start keeps it for then.`,
+      );
+      await setPolicyCs(client, "subscription_then_ask");
+      const asking = (await card())?.planTasks ?? [];
+      for (const line of lineOf(asking)) expect(line).not.toContain("Press Start");
+      expect(lineOf(asking)).toContain(
+        `Waits until ${at} (your subscription's limit); Approve and start asks before your API key is used.`,
+      );
     } finally {
       await settleSessions(rt);
       await rt.close();
@@ -25593,6 +25607,46 @@ describe("l4-cred-screens, run L4", () => {
       // Nothing the Costs tab shows in words reads CHF 0.00 for the spend above zero.
       expect(rows.map((r) => r.words).join(" ")).not.toMatch(/CHF 0\.00/);
     } finally {
+      await rt.close();
+    }
+  }, 60_000);
+
+  // L4-creds-26 (C6L-8): under "ask" with the key able to run, the header said "nothing runs
+  // until 11:40" beside a dialog that offers Use API key; after "Start at 11:40" the reopened
+  // dialog said "...; then your session goes on." for a start that is no session yet.
+  it("L4-creds-26: under 'ask' the header names the stop and the ask; after Start at 11:40 the dialog reads when it starts, with Cancel", async () => {
+    const { rt, client, keyCalls } = await composeL4();
+    try {
+      await setPolicyL4(client, "subscription_then_ask");
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      await addTask(client, project.id, "Style the page");
+      await addTask(client, project.id, "Write the copy");
+      await restSource(rt, "subscription", resetAt);
+      const header = (await client.project(project.id)).statusLine;
+      expect(header?.text).toBe(
+        "Ready: 2 tasks; your subscription is at its limit until 11:40; Start asks first",
+      );
+      expect(header?.text ?? "").not.toMatch(/nothing runs/);
+      expect(header?.action).toEqual({ kind: "start", label: "Continue", to: null });
+      // The dialog offers what the header says: Use API key, or Start at 11:40.
+      const check = await client.startCheck(project.id);
+      expect(check.credential?.runOut?.use.label).toBe("Use API key");
+      expect(check.credential?.runOut?.later?.label).toBe("Start at 11:40");
+      // "Start at 11:40" keeps the person's start: the reopened dialog says when it starts, with
+      // its Cancel, and never that "your session goes on".
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const kept = await client.startSession({ agentId, projectId: project.id });
+      expect(kept.result).toBe("kept");
+      const again = await client.startCheck(project.id);
+      expect(again.blocked?.sentence).toBe("Starts at 11:40 (your subscription's limit).");
+      expect(again.blocked?.kept).toBe(true);
+      expect(JSON.stringify(again.blocked)).not.toContain("your session goes on");
+      expect((await client.project(project.id)).statusLine?.text).toBe(
+        "Starts at 11:40 (your subscription's limit)",
+      );
+      expect(keyCalls()).toHaveLength(0);
+    } finally {
+      await settleSessions(rt);
       await rt.close();
     }
   }, 60_000);

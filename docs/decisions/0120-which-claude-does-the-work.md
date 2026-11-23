@@ -238,3 +238,14 @@ answer 3 ("For all work.": the yes covers all work until the stop ends) and his 
    key until you sign in again, about CHF 0.90."). Under "Subscription first, then ask me"
    Settings' now line with no card open says "...; you are asked before your API key is used.",
    not that the work waits.
+8. **Words that agree with the buttons beside them (L4-creds-26).** The plan card's task lines
+   name its button ("Waits until 08:26 (your subscription's limit); Approve and start keeps it
+   for then.", under ask "...; Approve and start asks before your API key is used."); New task
+   keeps "Press Start ...". Under ask with the key able to run, the project's line reads "Ready:
+   2 tasks; your subscription is at its limit until 02:51; Start asks first" (within 80
+   characters; the spec's longer sentence ran past §5's status length), not "nothing runs". A
+   session that ended to wait and spent nothing says no "CHF 0.00". A kept person Start reads
+   "Starts at 04:28 (your subscription's limit)." in the Start dialog, with Cancel the wait,
+   never "your session goes on". `POST /sessions` refuses with the refused credential's sentence
+   only while a session is kept (L4a-left-1); without one a start still runs, meets the refusal
+   and goes on by itself once a new credential is saved.

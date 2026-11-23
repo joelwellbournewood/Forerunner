@@ -198,6 +198,8 @@ export interface ProjectCardFacts {
     startable?: boolean;
     /** S-10: a Start the person pressed is kept for the reset ("Starts at 15:40 (...)"). */
     startsAt?: string;
+    /** l4-cred-screens (L4-creds-26): under "ask", the stop in a few words; Start asks first. */
+    askFirst?: string;
   } | null>;
   /** OR-07: the Overview's line about the repository (`RepositoryUse.overviewOf`). */
   repositoryElsewhere?: (project: ProjectRow) => Promise<ProjectCard["repositoryElsewhere"]>;

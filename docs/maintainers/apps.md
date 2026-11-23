@@ -1046,6 +1046,10 @@ l4-cred-screens, run L4 ([ADR 0120](../decisions/0120-which-claude-does-the-work
 - **Change the allowance (L4-creds-18).** The Overview's status line and the session page's wait
   block (`session-wait-answer`) show the daemon's link for the share's wait. Tests:
   `test/credential-screens-l4.test.tsx`.
+- **A kept person Start (L4-creds-26).** The Start dialog shows the daemon's "Starts at 04:28
+  (your subscription's limit)." with Cancel the wait; the fake daemon's `credentialWaitNow` carries
+  `startsAt` and `askFirst` as the daemon does. Tests: `test/credential-start.test.tsx` (describe
+  "a kept person Start in the Start dialog").
 
 ## How to change it
 

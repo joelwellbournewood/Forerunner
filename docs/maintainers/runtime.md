@@ -1214,6 +1214,14 @@ the session on ...").
 in again") without the budget clause, so it fits 100 characters; `stoppedNowLine` under ask with
 no card open says "you are asked before your API key is used".
 
+**Words beside the buttons (L4-creds-26).** `waitThenStartSentence(wait, { on, ask })`: the plan
+card's chooser batch passes `on: "plan"` (server.ts `chooseFor`), and under ask `ask: true`
+(compose.ts' chooser); New task and Settings keep "Press Start ...". `billing.waits.now` returns
+`askFirst` (the stop in a few words) under ask when the other credential is saved and serves, and
+`projectStatusLine` reads it ("...; Start asks first"). `startBlocked` says a kept person Start's
+`startsAt` ("Starts at 15:40 (...).") in place of the wait's goes-on sentence. result.ts' cost
+line is left out for a credential wait that spent nothing.
+
 **Crash recovery (`session/recovery.ts`, design §4.10).** A daemon that died while a session ran
 left the row `running`, its run `running` and its task held under a claim nobody renews; the
 one-session rule then refused every later start ("agent Alice already has an active session

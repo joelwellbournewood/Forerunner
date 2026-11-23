@@ -846,6 +846,8 @@ export interface RuntimeApp {
       specialist: string;
       projectId?: string | null;
       task?: { title: string; outcome: string; acceptance_criteria: readonly string[] } | null;
+      /** l4-cred-screens (L4-creds-26): where the line shows (the plan card names its button). */
+      on?: "plan" | "new_task";
     }): Promise<{ kind: string; line: string | null } | null>;
     /**
      * R-inboxperf: `forTask` for one request that asks it many times (GET /inbox, a plan card's
@@ -856,6 +858,7 @@ export interface RuntimeApp {
       specialist: string;
       projectId?: string | null;
       task?: { title: string; outcome: string; acceptance_criteria: readonly string[] } | null;
+      on?: "plan" | "new_task";
     }) => Promise<{ kind: string; line: string | null } | null>) & {
       /**
        * d1109-cred-screens (CS-4, R-inboxperf): the billing view the batch reads the credentials
@@ -999,6 +1002,12 @@ export interface RuntimeApp {
         startLabel?: string;
         /** S-10: a kept person Start: "Starts at 15:40 (your subscription's limit)". */
         startsAt?: string;
+        /**
+         * l4-cred-screens (L4-creds-26, C6L-8): under "ask" with the other credential able to run,
+         * the stop in a few words ("your subscription is at its limit until 02:51"): the header
+         * says Start asks first, not that nothing runs (the Start dialog offers Use API key).
+         */
+        askFirst?: string;
         /**
          * d1109-cred-screens (CS-7): while the one ask card of the stop is open (`text` is then its
          * "Waits for your answer: ..." form), the wait's own sentence with its time ("Waits until
@@ -4142,10 +4151,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       specialist,
       projectId,
       task,
+      on,
     }: {
       specialist: string;
       projectId?: string | null;
       task?: { title: string; outcome: string; acceptance_criteria: readonly string[] } | null;
+      on?: "plan" | "new_task";
     }) => {
       const name = canonicalSpecialistName(specialist);
       const spec = specialists(name);
@@ -4206,7 +4217,15 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         ? {
             ...choice,
             // W15-66: creating the task keeps no wait, so nothing starts by itself (TR-2).
-            line: waitThenStartSentence(wait, { timezone: await zoneNow(), nowMs: clock.now() }),
+            // l4-cred-screens (L4-creds-26): the plan card names its own button.
+            line: waitThenStartSentence(wait, {
+              timezone: await zoneNow(),
+              nowMs: clock.now(),
+              ...(on ? { on } : {}),
+              ...(on === "plan" && credentialPolicyOf(prefs).rule.whenStopped === "ask"
+                ? { ask: true }
+                : {}),
+            }),
           }
         : choice;
     };
@@ -4781,7 +4800,28 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       const kept = source
         ? waitingOf(source.limits).find((w) => w.projectId === projectId)?.kept
         : undefined;
-      if (wait.reason !== "refused" && !kept)
+      if (wait.reason !== "refused" && !kept) {
+        // l4-cred-screens (L4-creds-26, C6L-8): under "ask", with the other credential saved
+        // and serving, the Start dialog offers Use API key: the header says Start asks first.
+        const stop = asStopWait(wait);
+        const policy = await policyOf(store, human.id).catch(() => null);
+        const other: BillingSource["kind"] =
+          stop.kind === "subscription" ? "api_key" : "subscription";
+        const otherServes =
+          policy?.rule.whenStopped === "ask" &&
+          policy.rule.kinds.includes(other) &&
+          (await taskBilling.savedKinds().catch(() => [] as string[])).includes(other) &&
+          !(await taskBilling.blockedKinds().catch(() => new Map())).has(other);
+        const askFirst =
+          otherServes && stop.until && ["limit", "share", "key_month"].includes(stop.reason)
+            ? `${stop.kind === "subscription" ? "your subscription" : "your API key"} ${
+                stop.reason === "share"
+                  ? "has used its share"
+                  : stop.reason === "key_month"
+                    ? "is at its monthly cap"
+                    : "is at its limit"
+              } until ${clockTime(stop.until, words.timezone, words.nowMs)}`
+            : null;
         return {
           text: startKeepsWaitSentence(wait, words),
           save: null,
@@ -4790,7 +4830,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           ...(wait.until
             ? { startLabel: `Start at ${clockTime(wait.until, words.timezone, words.nowMs)}` }
             : {}),
+          ...(askFirst ? { askFirst } : {}),
         };
+      }
       // CS-7: under 'ask' with the card open, the plain wait with its time and the card.
       const askingId = (source?.limits as { asking?: { requestId?: unknown } } | undefined)?.asking
         ?.requestId;

@@ -678,6 +678,10 @@ export interface FakeDaemonState {
       startable?: boolean;
       /** d1109-starts-engine S-10: the person's session waits to go on: Cancel drops it. */
       kept?: boolean;
+      /** S-10: a kept person Start, as the daemon: "Starts at 15:40 (your subscription's limit)". */
+      startsAt?: string;
+      /** l4-cred-screens (L4-creds-26): under "ask", the stop in a few words; Start asks first. */
+      askFirst?: string;
     }
   >;
   /**
@@ -3297,9 +3301,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       view.blocked = {
         kind: "nothing_runnable",
         // W15-78: one sentence with a subject, as the daemon's `startBlocked`.
+        // l4-cred-screens (L4-creds-26), as the daemon: a kept person Start says when it starts.
         sentence: credentialWait.startable
           ? credentialWait.text
-          : nothingRunsYetSentence(credentialWait.text),
+          : credentialWait.kept && credentialWait.startsAt
+            ? `${credentialWait.startsAt}.`
+            : nothingRunsYetSentence(credentialWait.text),
         action: credentialWait.save
           ? { kind: "link", label: credentialWait.save.label, to: credentialWait.save.to }
           : null,

@@ -29,14 +29,20 @@ import {
 } from "../src/daemon/credential-policy-view.ts";
 import { eventAudience } from "../src/daemon/event-audience.ts";
 import { projectStatusLine } from "../src/daemon/project-status.ts";
+import { startBlocked } from "../src/daemon/start-blocked.ts";
 import { describeEvent } from "../src/daemon/views.ts";
-import { needsWaitWords, waitRowWords } from "../src/session/credential-wait.ts";
+import {
+  needsWaitWords,
+  waitRowWords,
+  waitThenStartSentence,
+} from "../src/session/credential-wait.ts";
 import {
   askCardWords,
   backLogLine,
   chatOneOffExplain,
   switchRunLine,
 } from "../src/session/credential-words.ts";
+import { sessionResultLines } from "../src/session/result.ts";
 import { waitingWorkUsdMicro } from "../src/session/start-check.ts";
 
 /**
@@ -671,5 +677,115 @@ describe("l4-cred-screens, run L4: credential words within section 5 (L4-creds-2
     expect(stoppedNowLine("subscription", limit, "wait", { ...opts, askOpen: false })).toBe(
       "Your subscription is at its limit until 15:40; the work waits for it.",
     );
+  });
+});
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-26, C6L-8): credential words that agree with the buttons
+ * beside them: the plan card names "Approve and start", the header under "ask" names the stop
+ * and the ask (not "nothing runs"), a wait result spends nothing and says no "CHF 0.00", and a
+ * kept person start reads when it starts, not that "your session goes on".
+ */
+describe("l4-cred-screens, run L4: words that agree with the buttons (L4-creds-26)", () => {
+  const wait = {
+    reason: "limit" as const,
+    sourceId: "bs_1",
+    kind: "subscription" as const,
+    until: "2026-11-16T14:40:00Z",
+  };
+  it("the plan card's wait line names Approve and start; New task keeps Press Start", () => {
+    expect(waitThenStartSentence(wait, opts)).toBe(
+      "Waits until 15:40 (your subscription's limit). Press Start and the work starts then.",
+    );
+    const plan = waitThenStartSentence(wait, { ...opts, on: "plan" });
+    expect(plan).toBe(
+      "Waits until 15:40 (your subscription's limit); Approve and start keeps it for then.",
+    );
+    const ask = waitThenStartSentence(wait, { ...opts, on: "plan", ask: true });
+    expect(ask).toBe(
+      "Waits until 15:40 (your subscription's limit); Approve and start asks before your API key is used.",
+    );
+    for (const s of [plan, ask]) {
+      expect(s).not.toContain("Press Start");
+      expect(s.length).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it("the header under ask names the stop and the ask, within 80 characters", () => {
+    const tasks = [
+      { id: "t1", status: "ready", title: "A" },
+      { id: "t2", status: "ready", title: "B" },
+    ];
+    const displays = new Map([
+      ["t1", { key: "ready", label: "Ready" }],
+      ["t2", { key: "ready", label: "Ready" }],
+    ]);
+    const line = projectStatusLine({
+      tasks,
+      displays: displays as never,
+      cards: [],
+      plan: "none",
+      credentialWaitNow: {
+        text: "Nothing can run until 15:40 (your subscription's limit). Press Start at 15:40 and the work starts then.",
+        save: null,
+        startable: true,
+        askFirst: "your subscription is at its limit until 15:40",
+      },
+    } as never);
+    expect(line.text).toBe(
+      "Ready: 2 tasks; your subscription is at its limit until 15:40; Start asks first",
+    );
+    expect(line.text.length).toBeLessThanOrEqual(80);
+    expect(line.text).not.toContain("nothing runs");
+    expect(line.action).toEqual({ kind: "start", label: "Continue", to: null });
+  });
+
+  it("a session that ended to wait and spent nothing says no CHF 0.00", () => {
+    const lines = sessionResultLines({
+      outcome: {
+        done: [],
+        failed: [],
+        needsYou: [],
+        leftOver: [{ id: "t1", title: "Style the page" }],
+        waiting: [],
+        waitingForDocker: [],
+        stopReason: "credential_wait",
+        spentChfMicro: 0,
+        credentialWait:
+          "Waits until 15:40 (your subscription's limit); then it runs at your next Start.",
+      },
+      inReview: [],
+      leftOutForBudget: [],
+      sessionCapChfMicro: 800_000,
+      openTasks: 1,
+    } as never).join(" ");
+    expect(lines).toContain("Waits until 15:40");
+    expect(lines).not.toContain("CHF 0.00");
+  });
+
+  it("a kept person start reads when it starts, with Cancel, never 'your session goes on'", () => {
+    const blocked = startBlocked(
+      {
+        runnable: [{ taskId: "t1", title: "Style the page", estimateUsdMicro: 100_000 }],
+        ready: 1,
+        waiting: [],
+        later: [],
+        overBudget: [],
+        oversized: null,
+        workBudgetUsdMicro: 800_000,
+      } as never,
+      {
+        projectId: "p1",
+        hasModel: true,
+        credentialWait: {
+          text: "Waits until 15:40 (your subscription's limit); then your session goes on.",
+          save: null,
+          kept: true,
+          startsAt: "Starts at 15:40 (your subscription's limit)",
+        },
+      } as never,
+    );
+    expect(blocked?.sentence).toBe("Starts at 15:40 (your subscription's limit).");
+    expect(blocked?.kept).toBe(true);
   });
 });

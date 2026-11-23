@@ -387,3 +387,27 @@ describe("l4-cred-screens, run L4: the key-first direction in the Start dialog (
     expect(within(dialog).getByTestId("confirm-start-session")).toHaveTextContent(/^Start$/);
   });
 });
+
+/**
+ * l4-cred-screens, run L4 (L4-creds-26, C6L-8): after "Start at 04:28" the reopened dialog read
+ * "...; then your session goes on." with "Cancel the wait" for a kept person Start, which is no
+ * session yet. It reads when the start happens (the daemon's sentence), with its Cancel.
+ */
+describe("l4-cred-screens, run L4: a kept person Start in the Start dialog (L4-creds-26)", () => {
+  it("reads 'Starts at 04:28 (your subscription's limit).' with Cancel the wait, never 'your session goes on'", async () => {
+    const harness = createHarness();
+    harness.daemon.state.credentialWaitNow.proj_atlas = {
+      text: "Waits until 04:28 (your subscription's limit); then your session goes on.",
+      save: null,
+      kept: true,
+      startsAt: "Starts at 04:28 (your subscription's limit)",
+    };
+    const { dialog } = await openDialog(harness);
+    const blocked = await within(dialog).findByTestId("start-session-blocked");
+    expect(blocked).toHaveTextContent(/^Starts at 04:28 \(your subscription's limit\)\.$/);
+    expect(dialog).not.toHaveTextContent("your session goes on");
+    expect(within(dialog).getByTestId("start-session-cancel-wait")).toHaveTextContent(
+      "Cancel the wait",
+    );
+  });
+});

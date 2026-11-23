@@ -400,11 +400,29 @@ export function keptStartLine(
  */
 export function waitThenStartSentence(
   wait: CredentialWait,
-  opts: { timezone?: string; nowMs: number },
+  opts: {
+    timezone?: string;
+    nowMs: number;
+    /**
+     * l4-cred-screens (L4-creds-26, C6L-8): where the line shows. On the plan card the button is
+     * "Approve and start" (before, its task lines said "Press Start ..."): "...; Approve and
+     * start keeps it for then.", and under "ask" "...; Approve and start asks before your API
+     * key is used.". New task and Settings ("new_task", the default) keep "Press Start ...".
+     */
+    on?: "plan" | "new_task";
+    /** With `on: "plan"`: the person's policy asks before the other credential is used. */
+    ask?: boolean;
+  },
 ): string {
   const w = asStopWait(wait);
   if (w.reason === "refused" || w.reason === "needs") return waitSentence(w, opts);
   const at = w.until ? clockTime(w.until, opts.timezone, opts.nowMs) : "its reset";
+  if (opts.on === "plan") {
+    const other = w.kind === "subscription" ? "your API key" : "your subscription";
+    return opts.ask
+      ? `Waits until ${at} (${stopWordsOf(w)}); Approve and start asks before ${other} is used.`
+      : `Waits until ${at} (${stopWordsOf(w)}); Approve and start keeps it for then.`;
+  }
   return `Waits until ${at} (${stopWordsOf(w)}). ${PRESS_START_THEN}`;
 }
 
