@@ -232,3 +232,7 @@ reaching the next brief is unchanged.
   later change to what one of them waits for (a step added before it) the Undo is refused in
   words naming that change, never done in part; undoing the later change first lets the split go
   back. A part a session holds reads "is running now", not "has run since".
+- Point 9 (dated note, SC-13): the session review counts a planned task that was split, or
+  dropped as the same as another, while the session ran as replaced, never as planned and left
+  undone ("1/1 planned, 1 replaced"): a correct fix must not lower the session's grade. An undone
+  change counts as before.

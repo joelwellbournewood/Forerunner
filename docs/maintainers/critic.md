@@ -465,6 +465,19 @@ done" matches "It promised 2 tasks"; `planEstimateOf` is the promise's figure pl
 (`promiseOf`), so a re-plan's re-priced estimate of a promised task no longer moves the measured
 figure away from "It promised 3 tasks, about CHF X.". A plan without a promise reads as before.
 
+l4-chat-carried, run L4 (SC-13; ADR 0119 dated note 2026-11-23): a planned task split, or dropped
+as the same as another, while the session ran is **replaced**, never planned and left undone: a
+correct fix of the task list must not lower the grade. `replacedDuring(store, session)` reads the
+project's change log rows made between the session's start and end that were not undone
+(`task.split`'s task, `task.transition` with `duplicate_of`), whoever made them (the session's
+check, chat's "fix the tasks", the person). `sessionChecks` takes them out of the measured planned
+set (`plannedTasks`, the done count, the failed, sent-back and waiting counts, and the "spent and
+no task reached done" finding, which a session whose other planned tasks are done or paused no
+longer gets) and counts them in `metrics.replacedTasks`; the honesty check still accepts a count
+over the whole plan. The summary says so: 'Session review: 1 done task (1/1 planned, 1 replaced),
+…' or '(1 planned task replaced)' when nothing else was planned. Tests: session-review.test.ts
+"l4-chat-carried, run L4".
+
 `reviewSession({ store, sessionId, criticAgentId })` runs three deterministic checks against the
 store and persists a `Review` with `session_id` set and `task_id` null:
 

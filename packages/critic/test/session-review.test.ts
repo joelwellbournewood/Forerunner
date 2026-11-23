@@ -1140,3 +1140,172 @@ describe("l4-money-pause, run L4: a session review's revise names its cause (L4-
     );
   });
 });
+
+/**
+ * l4-chat-carried, run L4 (SC-13, run C decision; ADR 0119 dated note 2026-11-23): a task of the
+ * plan that was split, or dropped as the same as another, during the session counts as replaced
+ * in the review's measure, never as planned and left undone: a correct fix of the task list must
+ * not lower the session's grade. The rows are written as the command executor writes them (a
+ * change log row with its commands and their before/after, the session's own `source`).
+ */
+describe("l4-chat-carried, run L4: a split or dropped task counts as replaced (SC-13)", () => {
+  /** A change of the task list as the executor records it, made now. */
+  async function changed(
+    w: Awaited<ReturnType<typeof world>>,
+    commands: { name: string; params: Record<string, unknown> }[],
+    afters: Record<string, unknown>[],
+    over: { undone?: boolean } = {},
+  ) {
+    const row = await w.store.changeLog.record({
+      human_id: w.ids.human,
+      agent_id: w.ids.owner,
+      words_used: "",
+      commands: commands as never,
+      before: (afters.length === 1 ? {} : afters.map(() => ({}))) as never,
+      after: (afters.length === 1 ? afters[0] : afters) as never,
+      scope: "project",
+      project_id: w.ids.project,
+      expires_at: null,
+      undo_state: "undoable",
+      source: "session",
+      sentence: "a change",
+      author_human: null,
+      author_agent: w.ids.owner,
+    } as never);
+    if (over.undone) await w.store.changeLog.markUndone(row.id, row.version);
+    return row;
+  }
+  async function planned(
+    w: Awaited<ReturnType<typeof world>>,
+    tasks: { id: string; title: string }[],
+    spentUsd: number,
+  ) {
+    await w.store.session.patch(w.ids.session, {
+      reason: "planned for the test",
+      author_agent: w.ids.owner,
+      plan: {
+        items: tasks.map((t) => ({ taskId: t.id, title: t.title, estimateUsdMicro: 100_000 })),
+        estimateUsdMicro: 100_000 * tasks.length,
+        summary: "",
+      },
+      summary: "Did the work.",
+      status: "completed",
+      spent_usd_micro: spentUsd,
+    });
+  }
+  const review = (w: Awaited<ReturnType<typeof world>>) =>
+    reviewSession({ store: w.store, sessionId: w.ids.session, criticAgentId: w.ids.critic });
+
+  it("a planned task dropped as the same as a done one is replaced: 1/1 planned, 1 replaced, accepted", async () => {
+    const w = await world();
+    try {
+      w.clock.advance(1_000);
+      const a = await w.newTask({ status: "done", title: "Write the page" });
+      const b = await w.newTask({ status: "cancelled", title: "Write the page again" });
+      await planned(w, [a, b], 100_000);
+      w.clock.advance(1_000);
+      await changed(
+        w,
+        [{ name: "task.transition", params: { task: b.id, to: "cancelled", duplicate_of: a.id } }],
+        [{ task_id: b.id, status: "cancelled", duplicate_of: a.id }],
+      );
+      const out = await review(w);
+      expect(out).toMatchObject({ verdict: "accept", grade: 100, findings: [] });
+      expect(out.summary).toBe(
+        "Session review: 1 done task (1/1 planned, 1 replaced), cost CHF 0.08 against an estimate of CHF 0.16; 0 findings.",
+      );
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("the only planned task dropped as a duplicate: no 'spent and no task reached done' finding; the line reads accepted", async () => {
+    const w = await world();
+    try {
+      w.clock.advance(1_000);
+      const done = await w.newTask({ status: "done", title: "Write the page" });
+      const dup = await w.newTask({ status: "cancelled", title: "Write the page again" });
+      // The session's own check cost something; the plan's only task was the duplicate.
+      await planned(w, [dup], 20_000);
+      w.clock.advance(1_000);
+      await changed(
+        w,
+        [
+          {
+            name: "task.transition",
+            params: { task: dup.id, to: "cancelled", duplicate_of: done.id },
+          },
+        ],
+        [{ task_id: dup.id, status: "cancelled", duplicate_of: done.id }],
+      );
+      const out = await review(w);
+      expect(out.findings.map((f) => f.description)).toEqual([]);
+      expect(out).toMatchObject({ verdict: "accept", grade: 100 });
+      expect(reviseCause(out.findings)).toBeNull();
+      expect(out.summary).toBe(
+        "Session review: 0 done tasks (1 planned task replaced), cost CHF 0.02 against an estimate of CHF 0.08; 0 findings.",
+      );
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("a planned task split by the session's check, its parts left for the next Start, is replaced; undone, it counts as planned again", async () => {
+    const w = await world();
+    try {
+      w.clock.advance(1_000);
+      const create = await w.newTask({ status: "done", title: "Create the page" });
+      const style = await w.newTask({ status: "ready", title: "Style the page: layout" });
+      const colours = await w.newTask({ status: "ready", title: "Style the page: colours" });
+      await planned(w, [create, style], 100_000);
+      w.clock.advance(1_000);
+      const split = await changed(
+        w,
+        [{ name: "task.split", params: { task: style.id, parts: [], order: "in_turn" } }],
+        [
+          {
+            task_id: style.id,
+            title: "Style the page: layout",
+            parts: [{ task_id: colours.id, title: colours.title, attempt: 0 }],
+          },
+        ],
+      );
+      let out = await review(w);
+      expect(out).toMatchObject({ verdict: "accept", grade: 100, findings: [] });
+      expect(out.summary).toMatch(/^Session review: 1 done task \(1\/1 planned, 1 replaced\), /);
+      const data = await loadSessionReviewData(w.store, w.ids.session);
+      expect(sessionChecks(data).metrics).toMatchObject({
+        plannedTasks: 1,
+        plannedDoneTasks: 1,
+        replacedTasks: 1,
+      });
+      // The person undid the split: "Style the page" is planned and left undone again.
+      await w.store.changeLog.markUndone(split.id, split.version);
+      out = await review(w);
+      expect(out.summary).toMatch(/^Session review: 1 done task \(1\/2 planned\), /);
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("a split or drop made before the session started, or of another project's task, is no replacement in it", async () => {
+    const w = await world();
+    try {
+      const a = await w.newTask({ status: "done", title: "A" });
+      const b = await w.newTask({ status: "cancelled", title: "B" });
+      await changed(
+        w,
+        [{ name: "task.transition", params: { task: b.id, to: "cancelled", duplicate_of: a.id } }],
+        [{ task_id: b.id, status: "cancelled", duplicate_of: a.id }],
+      );
+      // The session's start is after that change.
+      w.clock.advance(5_000);
+      await w.store.session.patch(w.ids.session, { started_at: w.clock.nowIso() });
+      await planned(w, [a, b], 100_000);
+      const out = await review(w);
+      expect(out.summary).toMatch(/\(1\/2 planned\)/);
+    } finally {
+      await w.close();
+    }
+  });
+});
