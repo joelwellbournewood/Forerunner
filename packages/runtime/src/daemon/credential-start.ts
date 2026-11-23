@@ -157,8 +157,9 @@ export async function startCredential(
     // fixup-l4-cred-screens (the review of L4-creds-17): the other credential serves and the work
     // can run on it. Before, a key-first dialog said "..., so this runs on your subscription"
     // beside "Nothing can run until 11:40 (your API key's limit)" for work only the key can do.
-    const runsThere =
-      (await nextServes()) && !(await (facts.waitsNow?.() ?? false).catch(() => false));
+    const waitsNow = async () =>
+      facts.waitsNow ? await facts.waitsNow().catch(() => false) : false;
+    const runsThere = (await nextServes()) && !(await waitsNow());
     return {
       view: {
         line: runsThere ? startRunOutLine(first.kind, stop, about, opts) : null,
