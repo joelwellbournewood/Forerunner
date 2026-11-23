@@ -7991,7 +7991,13 @@ Only the person starts a session; everything else prepares work. The pieces:
   `hands_off` session (kept on `summary_cache.start_pending` when it cannot start now;
   `sweepStartPending` asks again; a hands-off start that begins drops it). `preparedLine`,
   `preparedClause` and `preparedExplain` are the only words; `previewWork` is the read-only
-  sibling for a read-back. An Inbox option that prepares work (Try again, Send it back, the
+  sibling for a read-back. A Done or Answered line of a card whose task is done says its start
+  words through one helper (`afterDoneWords` in `daemon/request-words.ts`, l4-starts-sessions
+  L4-money-205): of what waits on the task or comes after it, never of the task itself (a
+  specialist's card says only "... is done."), only while something still waits on it, a join
+  only while a session of the project runs (`requestContexts` reads the prepared facts for an
+  answered card whose start was `joined`), and a hands-off start as "a session started for what
+  comes after it (...)". An Inbox option that prepares work (Try again, Send it back, the
   cannot-run card's Try again, the rebuild and rebase cards' Redo, and since l4-starts-sessions
   (L4-money-202) the questions card's Go ahead without and its form's Send answers, the form's
   button being `RequestWords.submit`/`HumanRequestView.submit`) says what pressing it does,

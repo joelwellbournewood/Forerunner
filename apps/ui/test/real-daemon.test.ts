@@ -3601,12 +3601,16 @@ describe("the UI client against the real daemon: a task that fails gets one card
       async () => (await client.tasks(project.id)).map((t) => `${t.title}=${t.status}`).join(", "),
       60_000,
     );
-    // The Answered list keeps both answers with what came of them.
+    // The Answered list keeps both answers with what came of them; l4-starts-sessions
+    // (L4-money-205): true when read, so once the README is done nothing comes after it there.
     const answered = (await client.inbox(me.id)).requests.filter(
       (r) => r.projectId === project.id && r.status === "answered",
     );
     expect(answered.map((r) => r.outcome)).toEqual(
-      expect.arrayContaining([marked.outcome, tried.outcome]),
+      expect.arrayContaining([
+        '"Write the scope in docs/scope.md" is done: accepted without review.',
+        tried.outcome,
+      ]),
     );
   }, 120_000);
 
@@ -27732,6 +27736,22 @@ describe("l4-starts-sessions, run L4", () => {
         (s) => s.id !== first.session?.id,
       );
       await ended(client, started?.id ?? "", "the session the setting started");
+      await settleSessions(rt);
+      // L4-money-205 (LC-C18, LC-C19): once both tasks are done, their Answered lines say only
+      // that (before: "...; what waits on it joins the session that is running." with nothing
+      // waiting, and "... is done; a session started for it (...)" after the hands-off start).
+      const done = (await client.inbox(me.id)).requests.filter(
+        (r) => r.projectId === project.id && r.reply === "form" && r.status === "answered",
+      );
+      expect(
+        (await client.tasks(project.id)).map((t) => t.status),
+        "both tasks done by the session the setting started",
+      ).toEqual(["done", "done"]);
+      expect(done.map((r) => r.outcome).sort()).toEqual([
+        'Answers saved in the decision record; "Add the choir\'s phone number to contact.html" is done.',
+        'Answers saved in the decision record; "Add the choir\'s rehearsal address to contact.html" is done.',
+      ]);
+      for (const r of done) expect(r.outcome).not.toMatch(/is done; a session started for it/);
     } finally {
       await settleSessions(rt);
       await rt.close();

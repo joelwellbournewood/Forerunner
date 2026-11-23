@@ -1038,10 +1038,13 @@ export async function requestContexts(
   // L-20: which projects work on a repository (the plan card's line while Approve and start
   // writes its docs pull request).
   const onRepository = new Map<string, boolean>();
-  // S-9: read once per project, for its open cards only (an answered card offers nothing).
+  // S-9: read once per project, for its open cards; l4-starts-sessions (L4-money-205): and for
+  // an answered one whose line says what its answer prepared (a join is said only while a
+  // session of the project runs).
   const preparedOf = new Map<string, Promise<PreparedContext>>();
   const preparedFor = async (r: HumanRequestRow): Promise<PreparedContext> => {
-    if (!prepared || r.status !== "open" || !r.project_id) return {};
+    const start = (r.change_card as { start?: unknown } | null)?.start;
+    if (!prepared || !r.project_id || (r.status !== "open" && start !== "joined")) return {};
     let p = preparedOf.get(r.project_id);
     if (!p) {
       p = prepared(r.project_id).catch(() => ({}));

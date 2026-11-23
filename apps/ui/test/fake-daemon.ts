@@ -1686,7 +1686,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         // d1109-starts-engine S-9: as the daemon's `preparedContextOf`, an open card's options
         // that prepare work say what pressing them does now (a session of the project running,
         // another one running, "Start a session by itself" on).
-        ...(r.status === "open" && r.projectId ? preparedOfFake(r.projectId) : {}),
+        // l4-starts-sessions (L4-money-205), as the daemon: an answered card whose answer joined
+        // a session says so only while one of the project runs.
+        ...((r.status === "open" ||
+          (r.changeCard as { start?: unknown } | null)?.start === "joined") &&
+        r.projectId
+          ? preparedOfFake(r.projectId)
+          : {}),
         // d1109-cred-engine, as the daemon's `credentialAskFor`: the ask card is worded in the
         // person's clock at the time it was filed; the fake keeps every stop's session waiting.
         ...((r.changeCard as { key?: unknown } | null)?.key === "credential:ask"

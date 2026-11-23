@@ -982,7 +982,9 @@ Everything that waits on you, and short news. Two lists:
 
 After you answer, the card is replaced by one line saying what happens next ("Done: Trying
 "Style the page" again: a session started."). **Answered** at the bottom lists what you answered
-lately and what came of it, and cards that were closed because you moved their task. If your
+lately and what came of it, true when you read it: once the task is done its line says so
+('Answers saved in the decision record; "Add the phone number" is done.'), and names what waits on
+the task only while something still does. If your
 answers came after their task had already finished, the entry says so and offers **Redo with
 these answers**: the task opens again and its next attempt reads them.
 
