@@ -653,3 +653,63 @@ CHF 0.04 for its review: it is told to wrap up before a step that could pass CHF
 CHF 0.04 to finish." The first wording ("what is left of the project's budget less the CHF 0.04
 kept for its review: before a step that could take it past ...") ran to about 210 characters and
 the session page cut it before its reserve.
+
+## Amendment 2026-11-22 (l4c-workstate, run L4: a line that says work remains is work)
+
+The review of l4-money-pause probed point 1's general rule and found that it read a Left-to-do
+line that says the work is not done as an empty list: "Nothing the task requires has been tested",
+"Nothing the brief asks for is tested", "Nothing the criteria require is in the repository" and
+four more. Such a line named the whole set, and the rule's list of work states knew only a few
+verbs, so the task went to its review instead of pausing, and its Continue card never came. The
+same probe found two older siblings of the same kind: a reason after punctuation was never read
+("Nothing for the criteria: tests and docs remain" was nothing since L3-research-1), and any words
+could stand between "for", "in" or "to meet" and what the line is about ("Nothing in the code
+works for the task" was nothing since W15-14).
+
+Point 5's parse now leans to the safe side: only a line that clearly says nothing is left is an
+empty list, and when unsure a line is work left. Ending a task early closes its Continue; a pause
+only asks the person once more. So:
+
+1. The general rule is a closed form, not a whole-set line less a list of work states: "nothing"
+   or "none", words that say left ("else", "more", "is left", "is needed", "to do"), what it is
+   about (a preposition and the whole set, or a relative clause such as "the criteria require"),
+   at most one more of those words or "remains", and nothing else. Any other word ("tested",
+   "ready", "pending", "in the repository", "untested") makes the line work. What it is about
+   says nothing of it is left on its own only when its verb says what the set needs ("require",
+   "ask for") or its preposition what the line is for ("for", "to meet"). A verb that only says
+   what the set holds ("lists", "covers", "names", "included") or a place ("in", "on", "from",
+   "against") needs a word that says left: "Nothing the brief lists is outstanding" is nothing,
+   "Nothing the brief lists", "Nothing on the task" and "None in the brief" are work. A line that
+   starts "none of" or "nothing of" is never this form ("None of the deliverables included").
+2. The words between the preposition and what a line is about are a closed list ("the", "this",
+   "the task's", "acceptance", "the scope of" ...).
+3. A reason after punctuation counts only when each of its parts, split at punctuation and
+   "and", is a closed form that says the work is done, whole: a state ("both are met", "notes.md
+   is written", "each part of it was checked", "all met", "complete"), a subject that does it to
+   all of it ("hosts.md covers each of them", "each listed page gives its address", "I checked
+   each one"), "all tests pass", or that nothing is left ("nothing remains", "so nothing is
+   left", "no work left", "no outstanding items"). A part with a qualifier or a hedge ("mostly",
+   "half", "80%", "some", "two of the three", "only", "a draft", "the main parts", "probably",
+   "seems", "I think"), an exception or a condition ("apart
+   from", "other than", "save for", "bar", "minus", "without", "once", "after", "when", "if",
+   "until", "unless", "as soon as"), a future ("to be", "will", "can", "next", "later",
+   "awaiting", "to add"), work still to come ("remain", "pending", "left", "need to", "then"),
+   "nothing" or "nobody" as what is done, or an order ("check that all are met") is none of these,
+   and anything else is work too. So a "nothing" about the whole set makes the other items notes
+   only when its reason passes this form.
+4. The items under a heading line that reads as nothing ("Left to do: nothing the criteria
+   require.") are read as under a "nothing" item: a note beside a whole-set "nothing", work beside
+   a bare one. Before, they were dropped.
+
+Corrected on 2026-11-23 (fixup-l4c-workstate, the review of l4c-workstate). Point 3 first said a
+reason counts when it "says the work is done and names none still to come", and the code read
+that with a done word and a list of words to refuse, the shape this amendment set out to end:
+"Nothing for the task: mostly done", "... done apart from the tests", "... done once the tests are
+added" and "... the code is written, docs next" read as nothing, and such a line made the next
+item, real work, a note. Removing the list of work states had also removed its "none of" guard,
+so "None of the deliverables included" read as nothing (it was work before). Points 1, 3 and 4
+are now as above.
+
+Every phrasing the earlier points read as nothing (W15-14, L3-research-1, L4-money-101's live
+line, the bench stand-in's note line) still is. The trigger, the line, the reserve and the
+save-only rule are unchanged.

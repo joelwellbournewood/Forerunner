@@ -1095,4 +1095,48 @@ describe("l4-money-pause, run L4: a session review's revise names its cause (L4-
     expect(reviseCause([])).toBeNull();
     expect(overrun).not.toMatch(/sent back for changes/);
   });
+
+  /**
+   * l4c-workstate, run L4 (the review of l4-money-pause): reviseCause cut a long finding with
+   * slice(0, 200), inside a word and with no ellipsis ("... the critic asked for a result").
+   */
+  it("a long finding is cut at a word, with an ellipsis, within 200 characters (l4c-workstate)", () => {
+    const long =
+      "Planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%, with one task tried twice; its second try rewrote the pairing rules, the tests and the README after the critic asked for a results table the brief did not name";
+    expect(long.length).toBe(230);
+    const cause = reviseCause([{ severity: "medium", description: long }]);
+    expect(cause).toBe(
+      "Planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%, with one task tried twice; its second try rewrote the pairing rules, the tests and the README after the critic asked for a…",
+    );
+    expect(cause?.length).toBeLessThanOrEqual(200);
+    // A whole word before the ellipsis: the original goes on with a space there.
+    expect(long.startsWith(`${cause?.slice(0, -1)} `)).toBe(true);
+    // A finding within 200 characters is whole, as before, its spaces folded.
+    expect(reviseCause([{ severity: "high", description: "  The plan\nran  over.  " }])).toBe(
+      "The plan ran over.",
+    );
+  });
+
+  /**
+   * fixup-l4c-workstate, run L4 (the review of l4c-workstate, a non-blocking note): `quotedWords`
+   * keeps at most two sentences and drops "*", "#" and backticks, so a finding of three short
+   * sentences lost its third with no ellipsis, and "`#2`" read "2".
+   */
+  it("a finding within 200 characters is whole, every sentence and every mark of it (fixup-l4c-workstate)", () => {
+    expect(
+      reviseCause([
+        {
+          severity: "medium",
+          description: "The plan ran over. One task was tried twice. The `#2` estimate was low.",
+        },
+      ]),
+    ).toBe("The plan ran over. One task was tried twice. The `#2` estimate was low.");
+    // A long one of several sentences is cut at a word inside its third, with the ellipsis.
+    const long =
+      "Planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%. One task was tried twice. Its second try rewrote the pairing rules, the tests and the README after the critic asked for a results table.";
+    expect(long.length).toBe(207);
+    expect(reviseCause([{ severity: "medium", description: long }])).toBe(
+      "Planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%. One task was tried twice. Its second try rewrote the pairing rules, the tests and the README after the critic asked for a…",
+    );
+  });
 });

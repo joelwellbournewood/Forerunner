@@ -892,7 +892,8 @@ line under Details says so ("Session review: the work waits for your answers (gr
 findings)."): answer the card in the Inbox and the work goes on. A session review sends nothing
 back: when it notes something, such as the planned tasks costing more than their estimate, its
 line says what it noted, and under **More ▾ → Reviews → Session checks** it reads "noted" (or
-"accepted", "needs you"), its findings "noted".
+"accepted", "needs you"), its findings "noted", with no "To fix" line: there is nothing for you
+to fix there.
 
 **Every session of a project** is listed under **More ▾ → Sessions** (also **All 3 sessions** on
 the Overview's Last result, and **All sessions** on every session page). The heading is the
@@ -1419,7 +1420,12 @@ budget, or that wrapped up with work left, is paused: the critic does not review
 it does not count as a failed try, and its report stays in the task. A run that wraps up with
 nothing left is reviewed as usual. "Left to do" counts only what the task's acceptance criteria
 still need: "Nothing for the acceptance criteria" or "nothing the criteria require" is nothing, and an optional extra the agent
-suggests is kept as a note, so finished work goes to its review instead of waiting on a card. The card and the task name the limit that stopped it: the
+suggests is kept as a note, so finished work goes to its review instead of waiting on a card. A
+line that says the work is not done ("Nothing the task requires has been tested", "Nothing for
+the criteria: tests and docs remain", "Nothing for the task: mostly done", "None of the
+deliverables included") is work left: the task pauses and its card offers Continue. When the
+agent's words leave it unclear whether anything is left, the task pauses too: Continue or Cancel
+task is your choice. The card and the task name the limit that stopped it: the
 task's budget, the specialist's limit, the session's budget, the project's budget, this month's
 cap or the share of your Claude subscription Forerunner may use. A stop at the session's budget,
 the project's budget, the month's cap or the subscription's share ends the session, and the

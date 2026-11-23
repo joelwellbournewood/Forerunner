@@ -130,4 +130,53 @@ describe("l4-money-pause, run L4: a session check reads noted, never sent back (
     expect(row).not.toHaveTextContent(/sent back/);
     expect(within(row).getByTestId("finding-state")).not.toHaveTextContent("to fix");
   });
+
+  // l4c-workstate, run L4 (the review of l4-money-pause): the finding's badge read "noted" and
+  // under it "To fix: Record the overrun against the estimate so the next plan is calibrated".
+  // A session check's actions are the agent's (record the overrun, plan within the budget, say
+  // in the summary what the spend bought): none is a step the person takes, so none is shown.
+  it("a noted finding shows what was noted and no 'To fix' line (l4c-workstate)", async () => {
+    const harness = createHarness();
+    const check = harness.daemon.state.reviews.find((r) => r.id === "rev_0");
+    if (!check) throw new Error("no session check");
+    check.verdict = "revise";
+    check.grade = 85;
+    check.findings = [
+      {
+        id: "find_session_1",
+        reviewId: "rev_0",
+        taskId: null,
+        severity: "medium",
+        description:
+          "Planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%, with one task tried twice",
+        // What the real daemon sends for this finding (session-review.ts).
+        requiredAction:
+          "Record the overrun against the estimate so the next plan is calibrated; split the work that overran",
+        status: "open",
+        resolvedByRun: null,
+        fingerprint: "fp_session_1",
+        createdAt: "2026-10-19T21:12:00.000Z",
+        version: 1,
+      },
+    ];
+    renderApp("/projects/proj_atlas/reviews", harness);
+    const panel = await screen.findByTestId("reviews");
+    const checks = within(panel).getByTestId("session-checks");
+    const finding = within(within(checks).getAllByTestId("review")[0] as HTMLElement).getByTestId(
+      "finding",
+    );
+    expect(within(finding).getByTestId("finding-state")).toHaveTextContent("noted");
+    expect(finding).toHaveTextContent(
+      "Planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%, with one task tried twice",
+    );
+    expect(finding).not.toHaveTextContent(/to fix/i);
+    expect(finding).not.toHaveTextContent(/Record the overrun/);
+    // A task's review keeps its "To fix" line under a finding that is still to fix.
+    const revise = within(panel)
+      .getAllByTestId("review")
+      .find((r) => r.dataset.reviewId === "rev_2") as HTMLElement;
+    expect(within(revise).getByTestId("finding")).toHaveTextContent(
+      "To fix: Debounce the input and query the index once per keystroke burst.",
+    );
+  });
 });

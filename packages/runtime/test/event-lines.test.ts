@@ -1,3 +1,4 @@
+import { reviseCause } from "@forerunner/critic";
 import { describe, expect, it } from "vitest";
 import { personLine } from "../src/daemon/event-lines.ts";
 import { describeEvent } from "../src/daemon/views.ts";
@@ -451,6 +452,24 @@ describe("l4-money-pause, run L4: a session review sends nothing back (L4-money-
       expect(
         describeEvent("critic.session_review", { verdict, grade: 70, findings: 2 }),
       ).not.toMatch(/sent back/);
+  });
+
+  // l4c-workstate, run L4 (the review of l4-money-pause): the cause the runner puts on the event
+  // is reviseCause's; a long one was cut inside a word with no ellipsis ("... asked for a
+  // result (grade 85, 1 finding).").
+  it("a long cause reads cut at a word with an ellipsis in the session log (l4c-workstate)", () => {
+    const long =
+      "Planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%, with one task tried twice; its second try rewrote the pairing rules, the tests and the README after the critic asked for a results table the brief did not name";
+    expect(
+      describeEvent("critic.session_review", {
+        verdict: "revise",
+        grade: 85,
+        findings: 1,
+        noted: reviseCause([{ severity: "medium", description: long }]),
+      }),
+    ).toBe(
+      "Session review: planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%, with one task tried twice; its second try rewrote the pairing rules, the tests and the README after the critic asked for a… (grade 85, 1 finding).",
+    );
   });
 });
 

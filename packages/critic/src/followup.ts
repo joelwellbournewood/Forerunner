@@ -140,14 +140,20 @@ export function saidByName(specialist: string | null | undefined): string | null
   return SPECIALIST_WORDS[id] ?? (id.replace(/[-_\s]+/g, " ").trim() || null);
 }
 
-/** A task title as a card's title names it: whole when short, else cut at a word. */
-function titleOf(title: string, max = 60): string {
-  const t = title.replace(/\s+/g, " ").trim();
+/**
+ * A text with its spaces folded: whole when it fits in `max` characters, else cut at a word with
+ * "…" (never inside a word; every sentence and mark is kept up to the cut).
+ */
+export function wordsWithin(text: string, max: number): string {
+  const t = text.replace(/\s+/g, " ").trim();
   if (t.length <= max) return t;
   const cut = t.slice(0, max - 1);
   const space = cut.lastIndexOf(" ");
   return `${(space > max / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
+
+/** A task title as a card's title names it: whole when short, else cut at a word. */
+const titleOf = (title: string, max = 60): string => wordsWithin(title, max);
 
 /**
  * The words of a retry card (design §3.8, "Retry card" before and after): the title names the
