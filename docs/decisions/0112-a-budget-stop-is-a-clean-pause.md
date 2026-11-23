@@ -688,8 +688,9 @@ only asks the person once more. So:
    is written", "each part of it was checked", "all met", "complete"), a subject that does it to
    all of it ("hosts.md covers each of them", "each listed page gives its address", "I checked
    each one"), "all tests pass", or that nothing is left ("nothing remains", "so nothing is
-   left", "no work left", "no outstanding items"). A part with a qualifier ("mostly", "half",
-   "80%", "some", "two of the three", "only", "a draft"), an exception or a condition ("apart
+   left", "no work left", "no outstanding items"). A part with a qualifier or a hedge ("mostly",
+   "half", "80%", "some", "two of the three", "only", "a draft", "the main parts", "probably",
+   "seems", "I think"), an exception or a condition ("apart
    from", "other than", "save for", "bar", "minus", "without", "once", "after", "when", "if",
    "until", "unless", "as soon as"), a future ("to be", "will", "can", "next", "later",
    "awaiting", "to add"), work still to come ("remain", "pending", "left", "need to", "then"),

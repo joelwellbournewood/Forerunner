@@ -2374,7 +2374,8 @@ budget-stop; the owner's decision of 2026-11-02).**
   subject that does it to all of it (`DOES_ALL`: "hosts.md covers each of them", "each listed
   page gives its address", "the file lists every page it names"), `ALL_PASS` ("all tests pass"),
   or `NONE_LEFT` ("nothing remains", "no work left", "no outstanding items"), with no qualifier
-  (`QUALIFIED`: "mostly", "half", "80%", "some", "two of the three", "only", "a draft"), exception
+  or hedge (`QUALIFIED`: "mostly", "half", "80%", "some", "two of the three", "only", "a draft",
+  "the main parts", "probably", "seems", "I think"), exception
   or condition (`EXCEPT_OR_IF`: "apart from", "save for", "bar", "minus", "once", "when", "if",
   "until"), future (`FUTURE`: "to be", "will", "next", "later", "awaiting", "to add"), work still
   to come (`STILL_TO_COME`), "nothing" or "nobody" as what is done (`NOBODY`) or order (`ORDER`);

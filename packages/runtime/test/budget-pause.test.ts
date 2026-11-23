@@ -2716,6 +2716,16 @@ describe("fixup-l4c-workstate, run L4: a reason after a 'nothing' counts only wh
       "Nothing for the criteria: a draft is written",
       "Nothing for the criteria: only the parser is done",
       "Nothing for the criteria: 3 of 4 pages are opened",
+      // Siblings: a hedge, or the main part only.
+      "Nothing for the criteria: probably done",
+      "Nothing for the criteria: seems done",
+      "Nothing for the criteria: hopefully met",
+      "Nothing for the criteria: likely met",
+      "Nothing for the criteria: I think all are met",
+      "Nothing for the criteria: the main parts are done",
+      "Nothing for the criteria: the core is done",
+      "Nothing for the criteria: the happy path is tested",
+      "Nothing for the criteria: the parts I touched are done",
     ]);
   });
 

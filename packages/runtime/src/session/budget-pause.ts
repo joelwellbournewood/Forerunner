@@ -107,8 +107,8 @@ const NOTHING = new RegExp(
  * - "all tests pass", "the tests pass" (`ALL_PASS`);
  * - that nothing is left: "nothing remains", "so nothing is left", "no work left", "no further
  *   work needed", "no outstanding items" (`NONE_LEFT`).
- * A part with a qualifier ("mostly", "half", "80%", "some", "two of the three", "only", "a
- * draft"), an exception or a condition ("apart from", "other than", "save for", "bar", "minus",
+ * A part with a qualifier or a hedge ("mostly", "half", "80%", "some", "two of the three", "only",
+ * "a draft", "the main parts", "probably", "seems", "I think"), an exception or a condition ("apart from", "other than", "save for", "bar", "minus",
  * "without", "once", "after", "when", "if", "until", "unless", "as soon as"), a future ("to be",
  * "will", "can", "next", "later", "awaiting", "to add"), work still to come ("remain", "pending",
  * "left", "need to", "then"), a "nothing" or "no one" as what is done ("nothing is done", "nobody
@@ -139,7 +139,7 @@ const ALL_PASS = new RegExp(
 const NONE_LEFT =
   /^(?:so\s+)?(?:nothing|none|no(?:\s+(?:more|further|other|outstanding|open|remaining))?\s+(?:work|steps?|items?|changes?|tasks?|actions?|issues?))(?:\s+(?:else|more|further))?(?:\s+(?:is|are))?(?:\s+(?:left(?:\s+to\s+(?:be\s+)?do(?:ne)?)?|remains?|remaining|outstanding|needed|required|to\s+do))?$/i;
 const QUALIFIED =
-  /\b(?:partly|partially|partial|mostly|half|halfway|nearly|almost|largely|mainly|roughly|somewhat|some|most|few|several|many|majority|only|first|initial|draft|rough)\b|\d+\s*%|\bpercent\b|\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:of|out\s+of)\b|^(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b/i;
+  /\b(?:partly|partially|partial|mostly|half|halfway|nearly|almost|largely|mainly|roughly|somewhat|some|most|few|several|many|majority|bulk|only|first|initial|draft|rough|main|core|key|basic|happy|primary|essential|important|critical|major|probably|possibly|likely|unlikely|seem(?:s|ed|ingly)?|appear(?:s|ed)?|apparently|hopefully|maybe|perhaps|presumably|supposedly|basically|essentially|technically|theoretically|think|believe|guess|hope|so\s+far|for\s+now|in\s+theory|more\s+or\s+less|kind\s+of|sort\s+of)\b|(?<!\b(?:each|every|all)\s+)\bparts?\b|\d+\s*%|\bpercent\b|\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:of|out\s+of)\b|^(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b/i;
 const EXCEPT_OR_IF =
   /\b(?:apart|other\s+than|save\s+for|bar|besides|aside|short\s+of|minus|excluding|without|once|after|when|whenever|if|until|till|unless|as\s+soon\s+as|before|provided|assuming)\b/i;
 const FUTURE =
