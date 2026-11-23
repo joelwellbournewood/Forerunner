@@ -11,8 +11,10 @@ import {
   type LinkIdentity,
   projectIdsOf,
   RepositoryIndex,
+  type RepositoryRead,
   RepositoryUse,
   sameLink,
+  verdictOf,
 } from "../src/sources/repository-use.ts";
 
 silenceSqliteExperimentalWarning();
@@ -318,5 +320,102 @@ describe("d1109-onerepo-join, run C: a GitHub that does not answer, and an unkno
     expect(refused).toMatchObject({
       details: { cause: "repository_used_elsewhere", canWorkTogether: true, canTakeOver: false },
     });
+  });
+});
+
+describe("l4-github-link, run L4", () => {
+  const KITE = "01a1a000-0000-7000-8000-00000000c1ab";
+  const clock = new SimulatedClock("2026-03-05T08:00:00.000Z");
+  let store: StateStore;
+  beforeAll(async () => {
+    store = await openStore({ url: "sqlite::memory:", clock });
+  });
+  afterAll(async () => {
+    await store.close();
+  });
+
+  const read = (marker: string | null): RepositoryRead => ({
+    marker: marker ? { project: marker, name: "Kite club" } : null,
+    markerUnreadable: false,
+    marked: [],
+    login: "alice",
+  });
+
+  it("L4-github-101: a removed project's take-over no longer makes an id known, so the repository's project is elsewhere again (ADR 0117 point 2); a kept project's take-over and a joined project's still count", async () => {
+    // The project made with Take it over, its creation then undone (W15-36): archived with its
+    // old name kept, `took_over` left on the row.
+    const removed = await store.project.insert({
+      name: "Kite flyers (removed)",
+      goal: "g",
+      repos: ["o/kite"],
+      status: "archived",
+      active: false,
+      settings: {
+        removed_name: "Kite flyers",
+        took_over: { projects: [KITE], name: "Kite club", at: clock.nowIso() },
+      },
+    });
+    let index = await RepositoryIndex.read(store);
+    expect(index.knows(KITE)).toBe(false);
+    const verdict = verdictOf(read(KITE), index, clock.now());
+    expect(verdict).toMatchObject({
+      kind: "elsewhere",
+      elsewhere: { ids: [KITE], name: "Kite club", canWorkTogether: true, canTakeOver: true },
+    });
+    // The check every entry point runs answers the offer again, never "free".
+    const host = new MemoryGitHost("alice");
+    await host.createRepo({ owner: "o", name: "kite", private: true });
+    await host.putFile(
+      { owner: "o", name: "kite" },
+      {
+        path: ".forerunner/project.json",
+        content: JSON.stringify({ schema: 1, project: KITE, name: "Kite club" }),
+        message: "marker",
+        branch: "main",
+      },
+    );
+    const use = new RepositoryUse({ store, clock, host: async () => host });
+    await expect(use.check(["o/kite"])).rejects.toMatchObject({
+      details: {
+        cause: "repository_used_elsewhere",
+        projects: [KITE],
+        canWorkTogether: true,
+        canTakeOver: true,
+      },
+    });
+    // The removed project's own id still frees the repository (run C decision 14).
+    expect(verdictOf(read(removed.id), index, clock.now())).toEqual({
+      kind: "removed",
+      projectId: removed.id,
+    });
+    // A project here that took it over (not removed) still makes the id known.
+    const kept = await store.project.insert({
+      name: "Kites",
+      goal: "g",
+      repos: ["o/other-kite"],
+      settings: { took_over: { projects: [KITE], name: "Kite club", at: clock.nowIso() } },
+    });
+    index = await RepositoryIndex.read(store);
+    expect(index.knows(KITE)).toBe(true);
+    expect(verdictOf(read(KITE), index, clock.now())).toEqual({ kind: "free" });
+    // A joined project (archived with joined_into) still counts through its keeper.
+    await store.project.update(kept.id, kept.version, { settings: {} });
+    const joined = await store.project.insert({
+      name: "Kite old",
+      goal: "g",
+      repos: [],
+      status: "archived",
+      active: false,
+      settings: { joined_into: { project: kept.id, name: "Kites", at: clock.nowIso() } },
+    });
+    await store.project.insert({
+      name: "Keeper",
+      goal: "g",
+      repos: ["o/keeper"],
+      settings: { joined_from: [joined.id] },
+    });
+    index = await RepositoryIndex.read(store);
+    expect(index.knows(joined.id)).toBe(true);
+    expect(index.knows(KITE)).toBe(false);
   });
 });

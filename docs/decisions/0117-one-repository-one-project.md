@@ -272,3 +272,18 @@ expired"). Every path now refuses with the joined sentence ('"Kite club" joined 
 work runs there.'), 409 `conflict` with `details.cause` `project_joined` at the routes, and
 writes nothing: the routes check the project first, the executor checks the stored card again
 before it performs, and a card armed again after a restart is refused in the same words.
+
+## Amendment 2026-11-23: said truly on GitHub and in the app (l4-github-link, run L4)
+
+Live check 4 (2026-11-17, real GitHub) and run C's leftovers. The owner's words this builds:
+D1, "There should not be 2 projects in one repo. ... Make it such that multiple projects are not
+done on one repo, in an intelligent way."; D9, "if 2 people are working on the same project they
+should be able to work seamlessly in the same git."
+
+1. **A removed project's take-over no longer counts** (L4-github-101). Point 2 reads: a removed
+   project uses nothing, so neither its `took_over` nor its `joined_from` make an id known
+   (`RepositoryIndex.knows`). Before, after the Undo of a project made with Take it over, New
+   project on that repository was made with no offer and took nothing over while the
+   repository still named "Kite club", and from then on the 14-day rule was skipped and the
+   Overview showed no line. A joined project still counts through its keeper, and a marker
+   naming the person's own removed project still frees the repository (run C decision 14).

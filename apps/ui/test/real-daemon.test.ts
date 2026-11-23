@@ -25878,3 +25878,137 @@ describe("l4-cred-screens, run L4", () => {
     }
   }, 60_000);
 });
+
+describe("l4-github-link, run L4", () => {
+  const KITE_ID = "01a1a000-0000-7000-8000-00000000c1ab";
+  const kiteMarker = `${JSON.stringify({ schema: 1, project: KITE_ID, name: "Kite club" }, null, 2)}\n`;
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  /**
+   * A daemon on its own home with a memory git host whose repositories are real bare ones (so
+   * this computer's copy and the docs pull requests are real git), composed again on the same
+   * home for what must survive a restart.
+   */
+  const world = () => {
+    const work = mkdtempSync(join(tmpdir(), "fr-ui-real-l4-link-"));
+    homes.push(work);
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const env = { FORERUNNER_HOME: home };
+    const host = new MemoryGitHost("alice");
+    const identity = { name: "Forerunner", email: "agent@example.test" };
+    /** o/<name> with `files` on main, in git and on the host's file view alike. */
+    const seeded = async (name: string, files: Record<string, string>) => {
+      const bare = join(work, `${name}.git`);
+      await run(["git", "init", "--bare", "-b", "main", bare]);
+      const seedDir = join(work, `${name}-seed`);
+      const seed = new GitOps({ cwd: seedDir, identity });
+      await seed.clone(bare);
+      for (const [path, text] of Object.entries(files)) {
+        mkdirSync(join(seedDir, ...path.split("/").slice(0, -1)), { recursive: true });
+        writeFileSync(join(seedDir, ...path.split("/")), text);
+      }
+      await seed.commitAll("seed");
+      await seed.push("main");
+      await host.createRepo({ owner: "o", name, private: true, cloneUrl: bare });
+      for (const [path, text] of Object.entries(files))
+        await host.putFile(
+          { owner: "o", name },
+          { path, content: text, message: "seed", branch: "main" },
+        );
+      return { bare, seedDir, seed };
+    };
+    const compose = () =>
+      composeWithRolePlayer(
+        {},
+        {
+          gitHost: host,
+          tryIt: false,
+          env,
+          dirs: appDirs({ env }),
+          stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        },
+      );
+    return { work, host, seeded, compose };
+  };
+  /** What a refused call answered: the status, the message and the details. */
+  const refusalOf = async (call: Promise<unknown>) => {
+    try {
+      await call;
+    } catch (e) {
+      if (e instanceof ApiError)
+        return { status: e.status, message: e.message, details: e.details };
+      throw e;
+    }
+    throw new Error("the call was not refused");
+  };
+
+  it('L4-github-101: after Take it over and the Undo of that creation, New project on the same repository gets the offer again (409 naming "Kite club", Work together and Take it over), and a project whose copy names Kite club has the Overview\'s line; the same after the daemon starts again', async () => {
+    const w = world();
+    await w.seeded("kite", { "README.md": "# kite\n", ".forerunner/project.json": kiteMarker });
+    const body = { name: "Kite flyers", goal: "Fly kites", repos: ["o/kite"], switch: true };
+    const offerAgain = async (c: DaemonClient) => {
+      const r = await refusalOf(
+        c.createProject({
+          ...body,
+          name: "Kite flyers again",
+          brief: "A page that lists the club's kites.",
+          intake: true,
+        }),
+      );
+      expect(r.status).toBe(409);
+      expect(r.message).toBe(
+        'o/kite is already the Forerunner project "Kite club", which is not on this computer. Work on it together, or take it over if nobody works on it any more.',
+      );
+      expect(r.details).toMatchObject({
+        cause: "repository_used_elsewhere",
+        projects: [KITE_ID],
+        canWorkTogether: true,
+        canTakeOver: true,
+      });
+    };
+    let { rt, client } = await w.compose();
+    try {
+      const first = await refusalOf(client.createProject(body));
+      expect(first.status).toBe(409);
+      expect(first.details).toMatchObject({ projects: [KITE_ID], canTakeOver: true });
+      const made = await client.createProject({ ...body, takeOver: { projects: [KITE_ID] } });
+      // Undo the creation on Changes (W15-36): the project is removed, its take-over with it.
+      const created = (await client.changes({ projectId: made.id })).find((r) =>
+        r.sentence.startsWith("Created the project Kite flyers"),
+      );
+      expect(created?.id).toBeTruthy();
+      await client.undoChange(created?.id ?? "");
+      expect((await rt.store.project.mustGet(made.id)).status).toBe("archived");
+      // Before: 201, a project with no offer and nothing taken over.
+      await offerAgain(client);
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      await offerAgain(client);
+      // A project made on o/kite before the rule (or while GitHub could not be read), whose copy
+      // of main names Kite club: the Overview's line, with Take it over (before: null).
+      const before = await rt.store.project.insert({
+        name: "Kite site",
+        goal: "g",
+        repos: ["o/kite"],
+        author_human: rt.human.id,
+      });
+      await rt.docs.refreshCopy(before);
+      const line = {
+        kind: "elsewhere",
+        text: 'o/kite is also the Forerunner project "Kite club", which is not on this computer.',
+        canTakeOver: true,
+      };
+      expect((await client.project(before.id)).repositoryElsewhere).toMatchObject(line);
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      expect((await client.project(before.id)).repositoryElsewhere).toMatchObject(line);
+      await settleSessions(rt);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});

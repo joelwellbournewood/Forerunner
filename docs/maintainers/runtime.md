@@ -7777,7 +7777,10 @@ no store, git host or file system, so the UI's fake daemon imports it).
   above it, words). `projectsUsing(link, except)` lists the non-archived projects that use a link
   (a joined project as its keeper, `settings.joined_from`, which d1109-onerepo-join writes);
   `usersOf(repo)` the ids of any status; `keeperOf(id)`; `knows(id)` (a row, a joined id, a
-  taken-over id).
+  taken-over id). A removed project (`isRemovedProject`: the Undo of its creation) uses nothing,
+  so its `took_over` and `joined_from` make no id known (L4-github-101, run L4: after the Undo of
+  a project made with Take it over, New project on that repository got no offer and took nothing
+  over); its own id stays a row, so a marker naming it still frees the repository (`removed`).
 - **The check** (`RepositoryUse.check(repos, {takeOver, together, withBrief, except})`), run
   before anything is written by `createProjectRecord` (`POST /projects`, Sources' accept, the
   chat's port), by `project.create`'s plan and run (the commands' `repositoryUse` port,

@@ -350,10 +350,19 @@ export class RepositoryIndex {
     return this.rows.find((p) => p.id === id) ?? null;
   }
 
-  /** Whether `id` names a project of this install: a row, joined into one, or taken over here. */
+  /**
+   * Whether `id` names a project of this install: a row, joined into one, or taken over here.
+   * L4-github-101 (ADR 0117 point 2): a removed project uses nothing, so neither its take-over
+   * nor the ids joined into it make an id known (live check 4: after the Undo of a project made
+   * with Take it over, New project on that repository got no offer and took nothing over, while
+   * the repository still named "Kite club"). A project joined into another still counts through
+   * its keeper, which is not removed. The removed project's own id stays a row here: the marker
+   * that names it frees the repository (`verdictOf`'s `removed`, run C decision 14).
+   */
   knows(id: string): boolean {
     if (this.row(id)) return true;
     for (const p of this.rows) {
+      if (isRemovedProject(p)) continue;
       if (projectIdsOf(p).includes(id)) return true;
       if (tookOverOf(p)?.projects.includes(id)) return true;
     }
