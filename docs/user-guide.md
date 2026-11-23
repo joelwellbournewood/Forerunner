@@ -1780,3 +1780,19 @@ held back paid evaluations) says what the runs may cost, in CHF, before it runs 
 
 `docs/maintainers/troubleshooting.md` lists the known failure modes and their fixes. `fr doctor`
 checks the installation and prints what is missing.
+
+### Merges that happened on GitHub, and one project after Make one project
+
+- If you close a pull request on GitHub while a later task's pull request still holds its change,
+  and you merge that later one there, the first task reads "Merged through #48": its change
+  reached main all the same. Its card offers **Take this work out** (a pull request that takes
+  only that change out of main; nothing changes until you merge it) and **Keep it**.
+- A card about a pull request you close on GitHub closes by itself ("Closed: #33 was closed on
+  GitHub."). A cancelled task's pull request you close there reads as closed without merging.
+- **Merge** reads GitHub first: a commit pushed a moment ago, a check that failed or a conflict
+  is said at once, and nothing is merged. A pull request you merged on GitHub already reads "#59
+  was merged on GitHub already.".
+- **Make one project** names the Status pull request setting and counts only the pull requests
+  still open. After it, the kept project lists the other's open status pull request with Merge.
+  The other project's page names it in the header, says where its files are and where its tasks
+  went on, and Costs counts a moved task's own runs.

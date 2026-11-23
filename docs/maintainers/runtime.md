@@ -9790,3 +9790,38 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   waits there and is lost on a restart before the hours end (the fired key is already set;
   `fr jobs ... --force` runs it). The stuck-place rule counts `read_file` re-reads by path
   only; an agent lost in searches without re-reading a file is not caught by that line.
+
+## Merges and joined projects say what is true now (l4-github-merge, run L4, ADR 0111 and 0117 amended 2026-11-23)
+
+- `session/dependent-branches.ts`: `closedOnHost` asks `PrTaskExecutor.reachedBase` whether the
+  closed pull request's reviewed commit is on main; if so (`mergedThrough`) the record moves to
+  `merged` / `MERGED_THROUGH` with `mergedThroughSentence` (`loop/merge-mode.ts`, which also has
+  `throughNumberOf` and `isClosedRecord`), its other merge cards close (reason
+  `merged_through`) and `mergedThroughCard` files one card with `MERGED_THROUGH_OPTIONS` ("Take
+  this work out", "Keep it"; `pr-answers.ts` applies them, Take this work out through
+  `TaskTakeOut.takeOut`, which reverts only the task's own commits with `through`).
+  `mergedOnHost` runs `closedReachedThrough` for the closed tasks the merged one built on and
+  fills a merged-through record's merge commit. Either order of the watcher's reads, and a
+  restart between them, give the same record. `closeMergeCards(taskId, prUrl, why)` marks
+  `closed: "merged" | "closed" | "merged_through"` (`request-words.ts` words the Answered line);
+  the sweep closes cards of records left to the person as closed too. A cancelled task's pull
+  request without a record gets one (`recordCancelledClose`) when its close is read.
+- `session/githost-watcher.ts`: `cancelledPullRequests` reads each cancelled task's open pull
+  request for its state only (no events), reports a close or merge once and marks it read.
+- `loop/merge.ts`: `headMovedNow` is the press's one read per pull request of its chain: branch
+  head (`getBranchHead`), mergeable and the checks on the reviewed head, refused at once in the
+  merge step's words; `finish` records a merge GitHub made first as `merged_on_host` and sets
+  `MergeOutcome.alreadyMerged` (`ports.ts`).
+- `daemon/pull-requests.ts`: the press calls `headMovedNow` for every task of the chain;
+  `isJoinedStatusPr` lists a joined project's marked open status pull request as the kept
+  project's docs row. `daemon/join-preview.ts` names "Status pull request" and counts open pull
+  requests with `isClosedRecord`; `daemon/join-words.ts` `settingAppliesLine` reads "the setting
+  of".
+- `daemon/views.ts`: `taskRunFacts` (one task-run helper) gives Costs' By task each task's own
+  runs, tries and accepted runs wherever its ledger rows are booked; `CostBucket.tries`
+  (append-only) leaves out a paused run a later run continued, for By task, By specialist and By
+  model; no money figure changes. A joined project's card has no folder, and its summary drops
+  the stored "is ready to continue" (`withoutReadyClause`) for `tasksWentOnLine`.
+- `daemon/task-words.ts` `mergedDisplay` reads a merged-through record as "Merged through #48";
+  `daemon/quoted-title.ts` `balancedCut` keeps a title whole when the word cut dropped its
+  quoted part and the overrun is within the slack.

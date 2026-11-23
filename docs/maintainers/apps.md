@@ -3095,3 +3095,12 @@ show no such line. The fake daemon sets it from the row's reason with the daemon
 (describe "d1109-selftasks-chat, run C", SC-8).
 
 l4-money-pause, run L4 (2026-11-22, L4-money-112): the Reviews tab words a session check (a review with no task) "accepted", "noted" or "needs you" (the warn tone unless accepted) and its findings "noted", never a task review's "sent back" and "to fix" (`reviewLabel`, `reviewTone` in `pages/project/ReviewsTab.tsx`, local to the tab). l4c-workstate, run L4 (the review of l4-money-pause): a session check's finding has no "To fix" line under its "noted" badge either; its action ("Record the overrun against the estimate so the next plan is calibrated ...") is the agent's, no step for the person, and the daemon still sends it (the real-daemon L4-money-112 case pins it, and `reviews.test.tsx` feeds the fake the same).
+
+## Joined projects and Costs' tries (l4-github-merge, run L4)
+
+The header (`Shell.tsx`) names the project on screen also when it is not in the active list (a
+project joined into another or removed): it reads its card once (`client.project`). The
+Overview's Your files of a joined project reads 'Its files are in "<kept>".' with a link
+(`joined-files`). Costs' Accepted column reads `accepted / tries` (`CostBucket.tries`, `runs`
+from an older daemon), titled "Accepted by the critic / tries; a run paused and continued is one
+try". The fake daemon gives a joined project no folder, as the daemon does.
