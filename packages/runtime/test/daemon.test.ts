@@ -196,9 +196,11 @@ describe("local daemon", () => {
       method: "POST",
       body: JSON.stringify({ agentId: rt.agent.id, projectId, budgetUsdMicro: 1_000_000 }),
     });
-    expect(nothing.status).toBe(409);
+    // l4-cred-screens (L4-creds-21): a start refused in words is a 400 "validation" (it was a
+    // 409 "conflict", for a refusal that is no conflict).
+    expect(nothing.status).toBe(400);
     expect(await json(nothing)).toMatchObject({
-      code: "conflict",
+      code: "validation",
       message: "Nothing can run: no task is ready.",
     });
     const added = await req(`/projects/${projectId}/tasks`, {
