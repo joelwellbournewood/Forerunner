@@ -27019,7 +27019,7 @@ describe("l4-selftasks-chat, run L4", () => {
       await eventually(
         async () => inboxEvents > before,
         "the lapse to send inbox.changed",
-        async () => inboxEvents,
+        async () => String(inboxEvents),
         10_000,
       );
       expect(touched).toContain(project.id);

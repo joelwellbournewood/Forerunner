@@ -1217,7 +1217,7 @@ describe("l3-chat-claims, run L3", () => {
     // l4-chat-depth bumped it to 1.5.0 ("Thinking longer": who writes the ask).
     // l4-chat-answers bumped it to 1.5.1 (a bare yes never reaches the model; only the app
     // writes its lines): the line moved, its words stay.
-    expect(prompt).toContain('version: "1.5.1"');
+    expect(prompt).toContain('version: "1.5.2"');
     expect(prompt).toContain(
       'A reply that changed something ends with the app\'s own line "The app did: …"; a reply without\n  it changed nothing, whatever it says.',
     );
@@ -1952,7 +1952,7 @@ describe("l4-chat-answers, run L4", () => {
       new URL("../../../evals/registry/principals/conversation-agent.md", import.meta.url),
       "utf8",
     );
-    expect(prompt).toContain('version: "1.5.1"');
+    expect(prompt).toContain('version: "1.5.2"');
     expect(prompt).toContain(
       '- The recent conversation: the person\'s earlier lines and your earlier replies. "It", "that"\n  and "what did I just ask?" refer to them; a bare "yes" never reaches you (the app answers it).\n  A reply that changed something ends with the app\'s own line "The app did: …"; a reply without\n  it changed nothing, whatever it says. A change the app read back shows as "The app asked, with\n  Yes and No: …". Only the app writes these two lines: never write them yourself.',
     );

@@ -933,7 +933,7 @@ describe("d1109-chat-depth, run C: the exact text", () => {
     ).principals.get("conversation-agent");
     // l4-chat-depth (L4-chat-202, L4-chat-203) made 1.5.0: who writes the ask, and whose section.
     // l4-chat-answers (L4c) made 1.5.1 (what it is given, what it looks up, how it answers).
-    expect(role?.version).toBe("1.5.1");
+    expect(role?.version).toBe("1.5.2");
     expect(role?.prompt).toContain("## Thinking longer");
     expect(role?.prompt).toContain(
       "- `answer_thoroughly` hands a question to a stronger model that thinks it through. Call it\n  first, before any lookup, and write nothing before it",
