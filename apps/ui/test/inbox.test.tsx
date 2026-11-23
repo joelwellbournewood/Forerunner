@@ -2439,6 +2439,8 @@ describe("l4-starts-sessions, run L4: the crash Update offers Continue (L4-money
       "Opens Start with the rest of your last session and the CHF 4.20 left of its budget.",
     );
     await user.click(button);
+    // The press marks the Update read (the review of run L4g: it stayed unread after the press).
+    await waitFor(() => expect(postedCalls(harness, "/messages/msg_crash/read")).toHaveLength(1));
     const dialog = await screen.findByTestId("start-session-dialog");
     await user.click(within(dialog).getByTestId("confirm-start-session"));
     await waitFor(() => expect(postedCalls(harness, "/sessions")).toHaveLength(1));
@@ -2446,6 +2448,27 @@ describe("l4-starts-sessions, run L4: the crash Update offers Continue (L4-money
       projectId: "proj_atlas",
       continues: sessionId,
     });
+  });
+
+  it("once a later session of the project began the Update offers no Continue, only Mark read (the review of run L4g)", async () => {
+    // Bench walk 7: Continue, Stop now on the continuation, and the same Continue came back with
+    // all of the interrupted session's budget again.
+    const { harness, sessionId } = setUp();
+    const later = structuredClone(harness.daemon.state.sessions[0]);
+    if (later) {
+      later.id = "sess_later";
+      later.stopReason = "you";
+      later.startedAt = "2026-11-17T08:40:00.000Z";
+      later.endedAt = "2026-11-17T08:41:00.000Z";
+      harness.daemon.state.sessions.push(later);
+    }
+    expect(sessionId).not.toBe("sess_later");
+    renderApp("/inbox", harness);
+    const row = (await screen.findAllByTestId("message")).find((m) =>
+      m.textContent?.includes("Your last session was interrupted"),
+    ) as HTMLElement;
+    expect(within(row).queryByTestId("message-continue")).toBeNull();
+    expect(within(row).getByTestId("mark-read")).toHaveTextContent("Mark read");
   });
 
   it("with nothing ready any more the Update offers no Continue", async () => {

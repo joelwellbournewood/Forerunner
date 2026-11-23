@@ -246,6 +246,14 @@ works). Continue is the person's own Start that goes on with the interrupted ses
 and starts nothing by itself. It is derived from the rows (the Update names its project; the
 interrupted session is that project's newest one the restart ended), so no migration was needed.
 
+Added the same day (the review of run L4g, bench walk 7): Continue, then Stop now on the
+continuation, and the Update offered the same Continue with all of the interrupted session's
+budget again, and a second Continue started another session with it. Now the Update offers
+Continue only until a later session of the project began (the session page's wait block does the
+same), the press marks the Update read, and `POST /sessions` with `continues` takes from what is
+left what a session that already went on with that one spent (or its whole cap while it works),
+so two Continues of one session never have more than its rest between them.
+
 
 ## Amendment 2026-11-23 (l4-starts-sessions, run L4, L4-money-208): a running or waiting session is said once beside the bar
 

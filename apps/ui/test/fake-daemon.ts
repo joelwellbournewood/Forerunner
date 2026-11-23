@@ -596,6 +596,11 @@ export interface FakeDaemonState {
    */
   runReview: Record<string, string>;
   /**
+   * l4-starts-sessions (the review of run L4g), as the daemon's `plan.startedBy.continues`: the
+   * session each Continue went on with, by the new session's id.
+   */
+  continuesOf: Record<string, string>;
+  /**
    * d1109-run-visible (V-3): what waits to start for a project, as the daemon's `startsWaitOf`
    * reads it (the person's session going on, a kept Start, a held hands-off start, a person start
    * behind another session); its status line says it. Cancel drops a continuation or kept start.
@@ -1463,6 +1468,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     runningExtra: [],
     runCredential: {},
     runReview: {},
+    continuesOf: {},
     startsWait: {},
     waitBlockAfterCancel: {},
     projectSessions: clone(PROJECT_SESSIONS),
@@ -1852,6 +1858,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.runningExtra = [];
     state.runCredential = {};
     state.runReview = {};
+    state.continuesOf = {};
     state.startsWait = {};
     return c.json({ ok: true });
   });
@@ -3661,11 +3668,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       state.startCredential[parsed.data.projectId] = null;
     }
     // d1109-starts-engine (S-10), as the daemon: Continue goes on with the ended session, with the
-    // rest of its budget (its cap less its spend), and is refused in words when none is left.
+    // rest of its budget (its cap less its spend, less what a session that already went on with
+    // it took: its spend, or its cap while it works), and is refused in words when none is left.
     if (parsed.data.continues) {
       const earlier = state.sessions.find((x) => x.id === parsed.data.continues);
       if (!earlier) return errorBody(c, 404, "not_found", "no such session");
-      const left = earlier.budgetCap.usdMicro - earlier.spent.usdMicro;
+      const taken = state.sessions
+        .filter((x) => x.id !== earlier.id && state.continuesOf[x.id] === earlier.id)
+        .reduce((n, x) => n + (x.endedAt ? x.spent.usdMicro : x.budgetCap.usdMicro), 0);
+      const left = earlier.budgetCap.usdMicro - earlier.spent.usdMicro - taken;
       if (left <= 0)
         return errorBody(
           c,
@@ -3750,6 +3761,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       budgetUsdMicro: parsed.data.budgetUsdMicro ?? 6_250_000,
       note: parsed.data.note,
     });
+    if (parsed.data.continues) state.continuesOf[session.id] = parsed.data.continues;
     // As the daemon's `closeByStart` (d1109-oversize-pause, OP-0): the session takes a task paused
     // at a session's budget (or its specialist's limit) that got further in its turn; its card
     // closes with the Done line and the task is ready again. A pause at its own budget, one that
@@ -4018,7 +4030,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       requests,
       // L4-money-207, as the daemon's `crashContinueOf`: a restart's Update about an interrupted
       // session offers Continue while a task of its project is ready, its budget has something
-      // left and no session of the project works now.
+      // left, no session of the project works now and none began since it ended.
       messages: state.messages.map((m) => {
         if (m.type !== "info" || !m.projectId || !m.body.startsWith(INTERRUPTED_UPDATE_LEAD))
           return m;
@@ -4034,7 +4046,13 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         );
         const left = ended ? ended.budgetCap.chfMicro - ended.spent.chfMicro : 0;
         const ready = state.tasks.some((t) => t.projectId === m.projectId && t.status === "ready");
-        if (!ended || left <= 0 || !ready) return m;
+        const later = state.sessions.some(
+          (s) =>
+            s.projectId === m.projectId &&
+            s.id !== ended?.id &&
+            (s.startedAt ?? "") > (ended?.endedAt ?? ""),
+        );
+        if (!ended || left <= 0 || !ready || later) return m;
         const budgetLeft = {
           usdMicro: ended.budgetCap.usdMicro - ended.spent.usdMicro,
           chfMicro: left,

@@ -302,6 +302,13 @@ function closedProjectAnswer(project: ProjectRow) {
   };
 }
 
+/** The session a session goes on with (S-10, `plan.startedBy.continues`), or null. */
+function continuesOf(s: Pick<SessionRow, "plan">): string | null {
+  const continues = (s.plan as { startedBy?: { continues?: unknown } } | null)?.startedBy
+    ?.continues;
+  return typeof continues === "string" ? continues : null;
+}
+
 /** The schema sync gate as `/health` reports it (spec M); the refusal counter stays internal. */
 function syncHealth(s: SchemaSyncStatus): SyncHealth {
   return {
@@ -1942,7 +1949,16 @@ export function createDaemonApp(
     // its budget (its cap less its booked spend), never more; refused when nothing is left.
     if (body.continues) {
       const earlier = await rt.store.session.mustGet(body.continues);
-      const left = earlier.budget_cap_usd_micro - earlier.spent_usd_micro;
+      // l4-starts-sessions (the review of run L4g): a session that already went on with this one
+      // took its rest (its cap was that rest): its spend, or its whole cap while it works, is
+      // no longer left, so a second Continue of the same session (a Start dialog left open, the
+      // phone) never goes on with all of it again.
+      const taken = earlier.project_id
+        ? (await rt.store.session.forProject(earlier.project_id))
+            .filter((s) => s.id !== earlier.id && continuesOf(s) === earlier.id)
+            .reduce((n, s) => n + (s.ended_at ? s.spent_usd_micro : s.budget_cap_usd_micro), 0)
+        : 0;
+      const left = earlier.budget_cap_usd_micro - earlier.spent_usd_micro - taken;
       if (left <= 0)
         throw new ForerunnerError(
           "validation",

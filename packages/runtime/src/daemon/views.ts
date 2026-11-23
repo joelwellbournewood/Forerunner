@@ -975,7 +975,8 @@ export function messageView(m: MessageRow, fromName: string): MessageView {
  * [Continue]'). Derived from the rows, no column of its own: the Update names its project, and
  * the interrupted session is that project's newest one the restart ended (stop reason
  * `interrupted`) by the Update's time. Offered only while it can do something: a task it released
- * is still ready, its budget has something left and no session of the project works now. The
+ * is still ready, its budget has something left, no session of the project works now and none
+ * began since it ended (that one went on with the work, whatever it did with it). The
  * press is the person's Start that goes on with it (POST /sessions with `continues`, ADR 0118),
  * through the Start dialog.
  */
@@ -998,6 +999,13 @@ export async function crashContinueOf(
     );
   });
   if (!ended) return undefined;
+  // The review of run L4g (bench walk 7): once a later session of the project began (the
+  // Continue's own, or a Start), that one went on with the work, so this Update offers nothing
+  // more (as the session page's wait block, `waitBlockOf`): before, after Continue and Stop now
+  // the same Continue came back with all of the interrupted session's budget again.
+  const endedAt = ended.ended_at ?? "";
+  if (sessions.some((s) => s.id !== ended.id && s.created_at > endedAt && !isIntakeSession(s)))
+    return undefined;
   const left = ended.budget_cap_usd_micro - ended.spent_usd_micro;
   if (left <= 0) return undefined;
   const released = ((ended.handoff ?? {}) as { released?: unknown }).released;

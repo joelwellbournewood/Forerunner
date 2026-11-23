@@ -189,14 +189,25 @@ export function intakeDecisionLine(card: IntakeCardView): string | null {
  * l4-starts-sessions (L4-money-207, design §5's crash example): a restart's Update about an
  * interrupted session offers Continue, the daemon's words: the Start dialog opens, and its Start
  * goes on with that session (POST /sessions with `continues`) with what is left of its budget.
+ * The press marks the Update read (`onPress`); the daemon offers it only until a later session of
+ * the project began.
  */
-function CrashContinue({ action }: { action: NonNullable<MessageView["action"]> }) {
+function CrashContinue({
+  action,
+  onPress,
+}: {
+  action: NonNullable<MessageView["action"]>;
+  onPress: () => void;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <span className="flex flex-wrap items-center gap-2">
       <Button
         variant="primary"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setOpen(true);
+          onPress();
+        }}
         title={action.explain}
         data-testid="message-continue"
       >
@@ -649,9 +660,17 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
 
   const markRead = async (message: MessageView) => {
     const updated = await client.markRead(message.id);
+    // The read route answers the stored message; an action GET /inbox derived for it (the crash
+    // Update's Continue, whose press marks it read with its Start dialog open) stays until the
+    // next read of the Inbox says otherwise.
     inbox.setData((prev) =>
       prev
-        ? { ...prev, messages: prev.messages.map((m) => (m.id === updated.id ? updated : m)) }
+        ? {
+            ...prev,
+            messages: prev.messages.map((m) =>
+              m.id === updated.id ? { ...updated, ...(m.action ? { action: m.action } : {}) } : m,
+            ),
+          }
         : prev,
     );
   };
@@ -778,7 +797,14 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
             <span className="ml-auto text-xs text-neutral-500">
               {m.fromAgentName} · {relativeTime(m.createdAt)}
             </span>
-            {m.action ? <CrashContinue action={m.action} /> : null}
+            {m.action ? (
+              <CrashContinue
+                action={m.action}
+                onPress={() => {
+                  if (!m.readAt) void markRead(m).catch(() => undefined);
+                }}
+              />
+            ) : null}
             {m.readAt ? null : (
               <Button variant="ghost" onClick={() => void markRead(m)} data-testid="mark-read">
                 Mark read

@@ -28158,4 +28158,125 @@ describe("l4-starts-sessions, run L4", () => {
       await rt.close();
     }
   }, 120_000);
+
+  it("L4-money-207: once a later session of the project began, the crash Update offers no Continue, and a Continue sent after it gets only what is left", async () => {
+    // Review of run L4g (bench walk 7): a session interrupted by a crash; Continue, then Stop
+    // now on the continuation (its task Ready again): the Update offered 'the CHF 1.00 left of
+    // its budget' again for the interrupted session, and a second Continue started another
+    // session with all of it, so the two could spend more than was left.
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4starts-207-"));
+    homes.push(home);
+    const env = { FORERUNNER_HOME: home };
+    const dirs = appDirs({ env });
+    const stateUrl = `sqlite:${join(home, "state.sqlite")}`;
+    // The first review holds where the live one was (opening the page in a browser), so Quit
+    // leaves the session for the next start to end as interrupted.
+    let trying = false;
+    const first = await composeWithRolePlayer(
+      {},
+      {
+        env,
+        dirs,
+        stateUrl,
+        tryIt: {
+          tryPages: () => {
+            trying = true;
+            return new Promise(() => undefined);
+          },
+        },
+      },
+    );
+    let projectId = "";
+    let taskId = "";
+    try {
+      const project = await first.client.createProject({ name: "Bakery site", goal: "Pages" });
+      projectId = project.id;
+      const page = await first.client.createTask(project.id, {
+        title: "Welcome page in welcome.html",
+        outcome: "welcome.html greets the bakery's visitors",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      taskId = page.id;
+      const started = await first.client.startSession({ agentId: first.rt.agent.id, projectId });
+      expect(started.result, JSON.stringify(started)).toBe("started");
+      await eventually(
+        async () =>
+          trying &&
+          (await first.client.tasks(projectId)).find((t) => t.id === taskId)?.display?.label ===
+            "Being reviewed",
+        "the task to read Being reviewed (30 s)",
+        async () => (await first.client.tasks(projectId)).map((t) => t.status).join(", "),
+        30_000,
+      );
+      const { app, token } = createDaemonApp(first.rt, { onShutdown: () => undefined });
+      const quit = await app.request("/shutdown", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(quit.status).toBe(202);
+    } finally {
+      await first.rt.close();
+    }
+
+    const second = await composeWithRolePlayer({}, { env, dirs, stateUrl, tryIt: false });
+    try {
+      const me = await second.client.me();
+      const crash = async () =>
+        (await second.client.inbox(me.id)).messages.find((m) =>
+          m.body.startsWith("Your last session was interrupted when Forerunner closed."),
+        );
+      const offered = (await crash())?.action;
+      expect(offered).toMatchObject({ kind: "continue", label: "Continue", projectId });
+      const interruptedId = offered?.sessionId ?? "";
+      const interrupted = await second.client.session(interruptedId);
+      const left = interrupted.budgetCap.usdMicro - interrupted.spent.usdMicro;
+      expect(offered?.budgetLeft?.usdMicro).toBe(left);
+      // The Continue, as the Start dialog sends it; the critic takes its time, so the
+      // continuation is still at work when the person presses Stop now on its page.
+      second.bench.criticDelayMs = 60_000;
+      const goesOn = await second.client.startSession({
+        agentId: second.rt.agent.id,
+        projectId,
+        continues: interruptedId,
+      });
+      expect(goesOn.result, JSON.stringify(goesOn)).toBe("started");
+      const continuationId = goesOn.session?.id ?? "";
+      expect(goesOn.session?.budgetCap.usdMicro).toBe(left);
+      const row = async () => (await second.client.tasks(projectId)).find((t) => t.id === taskId);
+      await eventually(
+        async () => (await row())?.display?.key === "review",
+        "the continuation's critic to review the task (20 s)",
+        async () => `${(await row())?.display?.label}`,
+        20_000,
+      );
+      await second.client.stopSession(continuationId, "stopped from the live view");
+      await ended(second.client, continuationId, "the stopped continuation");
+      second.bench.criticDelayMs = 0;
+      await settleSessions(second.rt);
+      expect((await row())?.display?.label).toBe("Ready");
+      // A later session of the project began: the Update offers no Continue (before: the same
+      // Continue with all of the interrupted session's budget again), only Mark read.
+      const update = await crash();
+      expect(update?.body).toMatch(/^Your last session was interrupted when Forerunner closed\./);
+      expect(update?.action).toBeUndefined();
+      // A Continue of the interrupted session sent after that (a Start dialog left open, the
+      // phone) goes on with what is left of its promise: the continuation's spend is taken from
+      // it, never the whole of it again.
+      const spentByContinuation = (await second.client.session(continuationId)).spent.usdMicro;
+      expect(spentByContinuation).toBeGreaterThan(0);
+      const again = await second.client.startSession({
+        agentId: second.rt.agent.id,
+        projectId,
+        continues: interruptedId,
+      });
+      expect(again.result, JSON.stringify(again)).toBe("started");
+      expect(again.session?.budgetCap.usdMicro).toBe(left - spentByContinuation);
+      await ended(second.client, again.session?.id ?? "", "the second continuation");
+    } finally {
+      second.bench.criticDelayMs = 0;
+      await settleSessions(second.rt);
+      await second.rt.close();
+    }
+  }, 120_000);
 });

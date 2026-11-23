@@ -1247,9 +1247,11 @@ registration is ended `stopped` with the stop reason `interrupted` (its one Upda
 `INTERRUPTED_UPDATE_LEAD`, `session/recovery-words.ts`; GET /inbox's `messages[].action` offers
 Continue on it through `crashContinueOf` in `daemon/views.ts`, l4-starts-sessions L4-money-207,
 derived from the rows with no column of its own: the project's newest session ended `interrupted`
-by the Update's time, offered while a task it released is ready, its budget has something left and
-no session of the project works; the press is POST /sessions with `continues` through the Start
-dialog) and the summary
+by the Update's time, offered while a task it released is ready, its budget has something left,
+no session of the project works and none began since it ended (as the session page's wait block:
+the review of run L4g found the same Continue back with all of the budget after Continue and Stop
+now on the continuation); the press is POST /sessions with `continues` through the Start dialog
+and marks the Update read) and the summary
 "Interrupted: Forerunner closed while this session ran. "X" is ready again.", its running runs
 are closed (`killed`), the tasks its agent holds go back to ready with the reason "Forerunner
 closed while it ran", and so do the tasks its runs left in review, claimed or not (L-1, live
@@ -8043,7 +8045,10 @@ Only the person starts a session; everything else prepares work. The pieces:
   `continuations.cancel` (`POST /projects/:id/continuation/cancel`), `dropAll` (Stop all) and the
   project's removal; `continuations.waiting` says "Your session of 10:00 goes on by itself at
   15:00." and POST /sessions refuses a second wait with it (`claim_conflict`). `POST /sessions`
-  with `continues` goes on with an ended session's budget left. The words of a wait
+  with `continues` goes on with an ended session's budget left: its cap less its spend, less what
+  a session that already went on with it took (`plan.startedBy.continues`: its spend, or its whole
+  cap while it works), so a second Continue of one session never has all of it again (the review
+  of run L4g; `real-daemon.test.ts` "l4-starts-sessions, run L4" L4-money-207). The words of a wait
   (`credential-wait.ts`, `afterWaitClause(goesOn)`): "; then your session goes on." or "; then it
   runs at your next Start."; when the person's quiet hours hold a continuation past the reset,
   every sentence names their end (`continuationGoesOnAt`/`goesOnAtWords` over

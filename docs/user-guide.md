@@ -966,8 +966,9 @@ Forerunner closed"), puts its task back to Ready ("Forerunner closed while it ra
 line in the Inbox ('Your last session was interrupted when Forerunner closed. "X" is ready
 again.') with **Continue** ("Opens Start with the rest of your last session and the CHF 4.20 left
 of its budget."): it opens the Start dialog, whose Start goes on with that session and what is left
-of its budget, never more; Continue is offered while one of its tasks is still ready and no
-session of the project runs. The next Start works at once too. Its page still says what it finished and what it
+of its budget, never more; Continue is offered while one of its tasks is still ready, no
+session of the project runs and none began since (once one did, it went on with the work, and the
+line keeps only Mark read); pressing it marks the line read. The next Start works at once too. Its page still says what it finished and what it
 spent before Forerunner closed ("Interrupted: Forerunner closed: 1 done. CHF 0.01."), with the same
 amount in "Spent of this session's budget", and the Overview shows it as the last session. Stop on a session that nothing runs any more
 ends it the same way.
