@@ -328,3 +328,17 @@ should be able to work seamlessly in the same git."
    nobody uses "The neighbourhood kite flying…" now.'); and a link on another host names the host
    this install is set up for (an Enterprise install's own, `configuredWebHost`), never
    github.com alone.
+6. **The plan's docs branch reads like a task's** (L4-github-111, design section 5 rule 3). A
+   first plan's docs pull request is on `fr/intake-<8 characters of the id's random end>-<the
+   project's name>-docs` (R-branch's form), and its body ends with the hidden mark that names the
+   project, as the scaffold's and the status pull request's do; detection reads the mark, and a
+   pull request an earlier version opened on `fr/intake-<whole id>-docs` is still its project's.
+   That whole-id branch is also used when GitHub has the short one and it is not provably this
+   project's, so a force-push still goes only over this project's own branch. The Consequence
+   "The intake's docs branch is still named by the project id" no longer holds. The comment on
+   an open intake pull request is gone (L4-github-107): only a first plan writes the doc set, and
+   a first plan never finds its own intake pull request open.
+7. **Work together's stamp is the daemon's clock** (L4-github-105): `settings.together.at` is
+   written with the daemon's `Clock`, at the press and when a removed together project is
+   brought back, as every other stamp; a folder source's marker is read through the scan's own
+   reader.

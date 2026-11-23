@@ -6,13 +6,7 @@ import {
   type RepoRef,
   readForerunnerMarker,
 } from "@forerunner/capabilities";
-import {
-  type Clock,
-  currentPlatform,
-  ForerunnerError,
-  type Platform,
-  safeSegment,
-} from "@forerunner/platform";
+import { type Clock, currentPlatform, ForerunnerError, type Platform } from "@forerunner/platform";
 import type { ProjectRow, StateStore } from "@forerunner/state";
 import { scanForInjection } from "../injection/scan.ts";
 import { DEFAULT_REPO_HOSTS, parseRepoLocator, type RepoLocator, repoKey } from "./locators.ts";
@@ -624,11 +618,6 @@ export function linkWords(identity: LinkIdentity, theirs?: LinkIdentity | null):
   if (identity.kind === "repo" && identity.repo)
     return theirs?.kind === "repo" && theirs.repo ? theirs.repo.locator : identity.repo.locator;
   return identity.entry.trim();
-}
-
-/** The safe segment of an id as an intake branch carries it (for the take-over's checks). */
-export function intakeBranchOf(id: string): string {
-  return `fr/intake-${safeSegment(id, "project")}-docs`;
 }
 
 /** Whether `clock`-relative instants are within the activity window. */

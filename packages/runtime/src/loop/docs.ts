@@ -229,7 +229,14 @@ export function isProjectDocsPr(
   if (ref === STATUS_BRANCH)
     return statusPullRequestOn(project) && isProjectStatusPr(project, pr, opts);
   const intake = /^fr\/intake-(.+)-docs$/.exec(ref);
-  if (intake) return ids.some((id) => intake[1] === safeSegment(id, "project"));
+  if (intake) {
+    // L4-github-111: the intake's pull request names its project in its hidden mark (its branch
+    // is `fr/intake-<8 characters>-<name>-docs`); one an earlier version opened is on a branch
+    // named by the whole id. A short branch without the mark is nobody's (fails closed).
+    const marked = readForerunnerMarker(pr.body)?.project?.toLowerCase();
+    if (marked) return ids.some((id) => id.toLowerCase() === marked);
+    return ids.some((id) => intake[1] === safeSegment(id, "project"));
+  }
   if (isScaffoldBranch(ref)) {
     // The PR the project's scaffold wrote its docs onto (recorded at creation) is its own.
     const recorded = (project.summary_cache?.docs as { pr_url?: unknown } | undefined)?.pr_url;

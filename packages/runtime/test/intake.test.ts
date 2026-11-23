@@ -1,6 +1,11 @@
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { GitOps, MemoryGitHost } from "@forerunner/capabilities";
+import {
+  forerunnerMarker,
+  GitOps,
+  MemoryGitHost,
+  readForerunnerMarker,
+} from "@forerunner/capabilities";
 import { appDirs, join, run, SimulatedClock } from "@forerunner/platform";
 import type { JsonObject } from "@forerunner/state";
 import { MemoryVault } from "@forerunner/vault";
@@ -13,6 +18,7 @@ import {
   STARTING_ESTIMATES_USD_MICRO,
   taskSizeFactor,
 } from "../src/estimates/model.ts";
+import { isProjectDocsPr } from "../src/loop/docs.ts";
 import { INTAKE_RUN_SPECIALIST } from "../src/models/ladder.ts";
 import type { StateBrief } from "../src/session/brief.ts";
 import {
@@ -23,6 +29,7 @@ import {
   IntakeService,
   intakeDocsBranch,
   intakeKey,
+  legacyIntakeDocsBranch,
   NO_WEB_RULE,
   onlyWebsitesLines,
   parseIntakeReply,
@@ -30,6 +37,8 @@ import {
   SMALL_PLAN_RULES,
 } from "../src/session/intake.ts";
 import { type PlannerContext, StaticPlanner } from "../src/session/runner.ts";
+import { projectIdsNamedBy } from "../src/sources/repository-use.ts";
+import { TAKE_OVER_UNDO_OPEN } from "../src/sources/repository-words.ts";
 import { WEB_ACCESS_SETTING } from "../src/wiring/web-access.ts";
 import { removeHomes, ScriptedProvider, type ScriptReply } from "./helpers.ts";
 
@@ -683,8 +692,9 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     expect(prs.some((pr) => pr.head.ref === "fr/docs-scaffold")).toBe(true);
     const intakePr = prs.find((pr) => /^fr\/intake-/.test(pr.head.ref));
     expect(intakePr?.title).toContain("doc set");
-    // The branch carries the whole project id: no other project's docs can land on it.
-    expect(intakePr?.head.ref).toBe(intakeDocsBranch(projectId));
+    // The branch is the project's own (L4-github-111: 8 characters of its id and its name; its
+    // pull request's hidden mark names the project).
+    expect(intakePr?.head.ref).toBe(intakeDocsBranch(await rt.store.project.mustGet(projectId)));
     const c = await card(requestId);
     expect(c.docs).toMatchObject({
       target: "repository",
@@ -1357,12 +1367,18 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     expect((await rt.store.milestone.forProject(projectId)).map((m) => m.name)).toEqual(["Tiny"]);
   });
 
-  it("the docs branch carries the whole project id, so two projects of one minute never share it", () => {
+  it("the docs branch carries the id's random end and the name (R-branch's form, L4-github-111), so two projects of one minute never share it", () => {
     // UUIDv7: the first eight hex characters are the top bits of the millisecond timestamp.
     const a = "019cbd02-c000-7141-af6d-7c62f66a6f86";
     const b = "019cbd02-c000-7151-a46d-0f0983870ed7";
-    expect(intakeDocsBranch(a)).toBe(`fr/intake-${a}-docs`);
-    expect(intakeDocsBranch(a)).not.toBe(intakeDocsBranch(b));
+    expect(intakeDocsBranch({ id: a, name: "Kite club" })).toBe(
+      "fr/intake-f66a6f86-kite-club-docs",
+    );
+    expect(intakeDocsBranch({ id: a, name: "Kite club" })).not.toBe(
+      intakeDocsBranch({ id: b, name: "Kite club" }),
+    );
+    // An earlier version's form, still read: the whole id.
+    expect(legacyIntakeDocsBranch(a)).toBe(`fr/intake-${a}-docs`);
   });
 });
 
@@ -1651,7 +1667,10 @@ describe("w15-words, wave 15 run B", () => {
       expect(pr?.body.split("\n\n")[0]).toBe(
         "The standard doc set drafted from the project brief by Forerunner.",
       );
-      expect(pr?.body).not.toMatch(uuid);
+      // L4-github-111: the hidden mark names the project (as the scaffold's and the status pull
+      // request's do, W15-08); what a person reads names no id.
+      expect(readForerunnerMarker(pr?.body)).toEqual({ project: projectId });
+      expect(pr?.body.replace(/<!--[\s\S]*?-->/g, "")).not.toMatch(uuid);
       const message = (
         await run(["git", "--git-dir", bare, "log", "-1", "--format=%B", pr?.head.ref ?? ""])
       ).stdout;
@@ -2002,7 +2021,7 @@ describe("l4-github-link, run L4", () => {
   it("L4-github-102 (sibling): the first plan's docs branch on GitHub from an earlier, closed pull request is this project's own, so the approved doc set replaces it from main with a lease and its pull request opens", async () => {
     const w = await world();
     try {
-      const branch = intakeDocsBranch(w.project.id);
+      const branch = intakeDocsBranch(w.project);
       // An earlier plan's docs pull request of this project, closed unmerged; GitHub keeps its branch.
       await run(["git", "-C", w.seedDir, "checkout", "-q", "-b", branch]);
       writeFileSync(join(w.seedDir, "OLD.md"), "an old draft\n");
@@ -2010,7 +2029,12 @@ describe("l4-github-link, run L4", () => {
       await w.seed.push(branch, { defaultBranch: "main" });
       const old = await w.host.createPullRequest(
         { owner: "o", name: "site" },
-        { title: "docs: old", body: "old", head: branch, base: "main" },
+        {
+          title: "docs: old",
+          body: `old\n\n${forerunnerMarker({ project: w.project.id })}`,
+          head: branch,
+          base: "main",
+        },
       );
       await w.host.updatePullRequest({ owner: "o", name: "site" }, old.number, { state: "closed" });
       w.replies.push({ text: JSON.stringify(proposal()) });
@@ -2097,5 +2121,43 @@ describe("l4-github-link, run L4", () => {
     expect(cutOff(true)).toEqual([
       "Your reply was cut off at the output limit before the JSON object ended. Write each task in a few lines, so the whole object fits.",
     ]);
+  }, 60_000);
+
+  it("L4-github-111: the first plan's docs pull request is on fr/intake-<8 characters>-<name>-docs, never the whole id, and its body carries the hidden mark; ownership, the ids it names and the take-over's Undo check read it", async () => {
+    // Live: "wants to merge ... from fr/intake-01a1e80e-6201-70a1-9dc1-4bfa2093ef6e-docs".
+    const w = await world();
+    try {
+      w.replies.push({ text: JSON.stringify(proposal()) });
+      const planned = await json(
+        await w.req(`/projects/${w.project.id}/intake`, { method: "POST", body: "{}" }),
+      );
+      await w.answer(String(planned.requestId), "approve");
+      const open = await w.host.listPullRequests({ owner: "o", name: "site" }, { state: "open" });
+      const pr = open.find((p) => p.head.ref.startsWith("fr/intake-"));
+      const own = w.project.id.replace(/-/g, "").slice(-8);
+      expect(pr?.head.ref).toBe(`fr/intake-${own}-site-docs`);
+      expect(pr?.head.ref).not.toContain(w.project.id);
+      expect(readForerunnerMarker(pr?.body)).toEqual({ project: w.project.id });
+      // What a person reads names no id: the mark is an HTML comment.
+      expect((pr?.body ?? "").replace(/<!--[\s\S]*?-->/g, "")).not.toMatch(
+        /[0-9a-f]{8}-[0-9a-f]{4}-/,
+      );
+      if (!pr) throw new Error("no intake pull request");
+      const row = await w.rt.store.project.mustGet(w.project.id);
+      expect(isProjectDocsPr(row, pr)).toBe(true);
+      expect(projectIdsNamedBy(pr)).toEqual([w.project.id]);
+      const other = { ...row, id: "01a1a000-0000-7000-8000-0000000000b2" };
+      expect(isProjectDocsPr(other, pr)).toBe(false);
+      // An earlier version's pull request on the whole id's branch is still this project's.
+      const legacy = { head: { ref: legacyIntakeDocsBranch(w.project.id), sha: "" }, body: "" };
+      expect(isProjectDocsPr(row, legacy)).toBe(true);
+      expect(projectIdsNamedBy(legacy)).toEqual([w.project.id]);
+      // The take-over's Undo reads the new form: its docs pull request is open on GitHub.
+      expect(await w.rt.repositoryUse?.takeOverUndoBlocked(w.project.id, "", null)).toBe(
+        TAKE_OVER_UNDO_OPEN,
+      );
+    } finally {
+      await w.rt.close();
+    }
   }, 60_000);
 });

@@ -1837,8 +1837,16 @@ an overlapping sync) exactly one writes the plan and the other's transaction rol
 (`applied_elsewhere`, nothing counted); then the docs: with a repository
 (`repoRefOf(repos[0])`, `owner/name` or a URL) the executor's branch-and-PR flow (`GitOps`
 clone or fetch into `<worktrees>/intake/<project>`, branch `intakeDocsBranch`:
-`fr/intake-<the whole project id>-docs`, push, `createPullRequest` or a comment on the open
-one), else the project's workspace `<data>/projects/<id>/workspace` (`workspaceDir`); a
+`fr/intake-<8 characters of the id's random end>-<the name>-docs` (L4-github-111, R-branch's
+form; `intakeBranchFor` takes it when GitHub has no such branch or it is this project's, by a
+pull request on it whose hidden mark names the project or by its marker file, else the whole
+id's `legacyIntakeDocsBranch`), push, `createPullRequest` with the hidden mark
+`forerunnerMarker({ project })` at the end of its body), else the project's workspace
+`<data>/projects/<id>/workspace` (`workspaceDir`). There is no comment on an open intake pull
+request (L4-github-107): only a first plan writes the doc set (a project with no task,
+`planOnlyFor`), tasks are never deleted and the approval writes its tasks before its docs, so
+no first plan finds its own intake pull request open, and the branch that commented ("Updated
+by Forerunner from the project's brief: ...") was removed; a
 drafted doc is written only where no file exists (`kept` otherwise) and `scaffoldDocs` fills
 the standard docs the model left out; a pull request that fails falls back to the workspace
 with `repo_error` on the card, and a docs failure after the rows is recorded on the card
@@ -4469,9 +4477,11 @@ answers `firstCommit: true`, `branch` the default branch, no PR; `summary_cache.
 After each write the docs clone is back on the default branch (`backToBase`), so what reads it
 sees what is merged; `docsInPullRequests(project)` fetches the clone and lists the docs that wait
 in one of Forerunner's docs pull requests (`isDocsBranch`: `fr/docs-scaffold`, the intake's
-`fr/intake-<id>-docs`, `fr/status`) with the PR's number and link, for the Docs tab; only this
+`fr/intake-...-docs`, `fr/status`) with the PR's number and link, for the Docs tab; only this
 project's (`isProjectDocsPr`, L-16 and W15-01: the status PR while its setting is on and it is
-this project's, the intake branch named for the project, a status or scaffold PR whose hidden
+this project's, an intake PR whose hidden mark names the project or, an earlier version's, on
+the branch named by its whole id (a short intake branch without the mark is nobody's), a status
+or scaffold PR whose hidden
 mark names it, a scaffold PR whose body ends "Forerunner project <id>." (before wave 15) or that
 the project's scaffold wrote onto, `summary_cache.docs.pr_url`; an unmarked one only while this
 is the one project of the install linked to the repository, `soleLinked`), the
@@ -7795,7 +7805,8 @@ no store, git host or file system, so the UI's fake daemon imports it).
   This computer first: a project here that uses the link is `repository_in_use` with its name.
   Then the repository (`readRepository`, the person's token on the configured host): the marker
   on the default branch, the marks of up to 100 pull requests in every state newest first
-  (`projectIdsNamedBy`: the hidden mark, `fr/intake-<id>-docs`, the visible L-16 line), and the
+  (`projectIdsNamedBy`: the hidden mark, an earlier version's `fr/intake-<whole id>-docs`, the
+  visible L-16 line), and the
   token's login. `verdictOf` gives `free`, `here`, `removed` (the person's own removed project:
   taken over with `removed: true`), `removed_together` (Work together brings that row back) or
   `elsewhere` (`elsewhereOf`: `lastActive`, `otherAccount` within `ACTIVE_ELSEWHERE_DAYS` = 14
@@ -7837,9 +7848,10 @@ no store, git host or file system, so the UI's fake daemon imports it).
   copy is settled back on the default branch also when a step throws (before, a refused push left
   it on the scaffold branch, so `copyMarker` read this project's own marker). `isScaffoldBranch`
   reads both names (`isDocsBranch`, `isProjectDocsPr`, the take-over Undo's `DOCS_BRANCH`). The
-  intake's `fr/intake-<id>-docs` carries the project's id, so one GitHub kept is its own:
-  without an open pull request the set starts from the default branch and is pushed with a lease
-  (before: refused as not a fast-forward). `docsPullRequestNamesProject(outcome)` (a pull
+  intake's branch (`intakeBranchFor`: free, or this project's by its pull request's mark or its
+  marker file, else the whole id's form) starts from the default branch and, when GitHub kept it
+  from an earlier, closed pull request, is pushed with a lease (before: refused as not a
+  fast-forward). `docsPullRequestNamesProject(outcome)` (a pull
   request and no other project's marker) is what `repositoryTakeOver.writeMarker` answers
   `failed` on; `scaffoldLeftNoMarker(project)` reads the same from `summary_cache.docs` for the
   Overview. A together project:
