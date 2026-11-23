@@ -190,17 +190,51 @@ export function quotedNameOf(e: Pick<Elsewhere, "name" | "ids">): string {
   return e.name ? `"${e.name}"` : "that project";
 }
 
+/** A consequence line's limit (design section 5 rule 1). */
+export const CONSEQUENCE_LINE_MAX = 100;
+
+/** `text` whole when it fits `max`, else cut at a word with "…" (a name is never cut mid-word). */
+function cutAtWord(text: string, max: number): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, Math.max(1, max - 1));
+  const space = cut.lastIndexOf(" ");
+  return `${(space > 0 ? cut.slice(0, space) : cut).replace(/[\s,;:.-]+$/, "")}…`;
+}
+
+/**
+ * L4-github-109: a consequence line that quotes the repository's project stays within
+ * `CONSEQUENCE_LINE_MAX`: the name whole when it fits, else cut at a word (a marker's name may be
+ * 60 characters, so the line under Take it over read 144).
+ */
+function withNameFitted(
+  e: Pick<Elsewhere, "name" | "ids">,
+  line: (quotedName: string) => string,
+  shorter: (quotedName: string) => string = line,
+): string {
+  const whole = line(quotedNameOf(e));
+  if (whole.length <= CONSEQUENCE_LINE_MAX || e.ids.length > 1 || !e.name) return whole;
+  const room = CONSEQUENCE_LINE_MAX - shorter('""').length;
+  return shorter(`"${cutAtWord(e.name, room)}"`);
+}
+
 /** Work together's consequence line (at most 100 characters). */
 export function togetherLine(e: Pick<Elsewhere, "name" | "ids">, withBrief: boolean): string {
-  const name = quotedNameOf(e);
-  return withBrief
-    ? `Works on ${name} too and plans your brief as its new work.`
-    : `This Forerunner works on ${name} too; nothing on GitHub changes now.`;
+  return withNameFitted(e, (name) =>
+    withBrief
+      ? `Works on ${name} too and plans your brief as its new work.`
+      : `This Forerunner works on ${name} too; nothing on GitHub changes now.`,
+  );
 }
 
 /** Take it over's consequence line (at most 100 characters). */
 export function takeOverLine(e: Pick<Elsewhere, "name" | "ids">): string {
-  return `The repository then names this project: choose it only if no Forerunner uses ${quotedNameOf(e)} now.`;
+  return withNameFitted(
+    e,
+    (name) =>
+      `The repository then names this project: choose it only if no Forerunner uses ${name} now.`,
+    (name) => `GitHub then names this project; choose it only if nobody uses ${name} now.`,
+  );
 }
 
 /** Take it over's Details line. */
@@ -208,9 +242,22 @@ export function takeOverDetails(e: Pick<Elsewhere, "name" | "ids">): string {
   return `The pull requests of ${quotedNameOf(e)} stay as they are.`;
 }
 
-/** OR-11: a URL on a git host this install does not use. */
-export function otherHostSentence(host: string): string {
-  return `Forerunner works with repositories on github.com, not ${host}. Link a GitHub repository or a folder.`;
+/**
+ * OR-11: a URL on a git host this install does not use. L4-github-109: it names the host this
+ * install is set up for (`configured`: an Enterprise install's own host from its API base,
+ * `configuredWebHost`), never github.com by default alone.
+ */
+export function otherHostSentence(host: string, configured = "github.com"): string {
+  return `Forerunner works with repositories on ${configured}, not ${host}. Link a GitHub repository or a folder.`;
+}
+
+/**
+ * The web host a person links repositories on, from the hosts this install accepts
+ * (`repoHostsFor`: the remote base's and the API base's): an Enterprise host when one is set up,
+ * else github.com.
+ */
+export function configuredWebHost(hosts: readonly string[]): string {
+  return hosts.find((h) => h !== "github.com") ?? "github.com";
 }
 
 /** OR-15: Work together needs GitHub's answer (it does not fail open as creation does). */

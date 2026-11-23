@@ -5,6 +5,7 @@ import { type GitHost, MemoryGitHost } from "@forerunner/capabilities";
 import { join, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore, silenceSqliteExperimentalWarning } from "@forerunner/state";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { repoHostsFor } from "../src/sources/locators.ts";
 import {
   type IdentityFs,
   identityOf,
@@ -417,5 +418,24 @@ describe("l4-github-link, run L4", () => {
     index = await RepositoryIndex.read(store);
     expect(index.knows(joined.id)).toBe(true);
     expect(index.knows(KITE)).toBe(false);
+  });
+
+  it("L4-github-109: a link on another host names the host this install is set up for (an Enterprise install's own), never github.com by default alone", async () => {
+    const enterprise = new RepositoryUse({
+      store,
+      clock,
+      host: async () => null,
+      hosts: repoHostsFor({ githubApiBase: "https://ghe.example.com/api/v3" }),
+    });
+    await expect(enterprise.check(["https://gitlab.com/o/site"])).rejects.toMatchObject({
+      message:
+        "Forerunner works with repositories on ghe.example.com, not gitlab.com. Link a GitHub repository or a folder.",
+      details: { cause: "other_host" },
+    });
+    const plain = new RepositoryUse({ store, clock, host: async () => null });
+    await expect(plain.check(["https://gitlab.com/o/site"])).rejects.toMatchObject({
+      message:
+        "Forerunner works with repositories on github.com, not gitlab.com. Link a GitHub repository or a folder.",
+    });
   });
 });

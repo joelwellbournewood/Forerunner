@@ -320,3 +320,11 @@ should be able to work seamlessly in the same git."
    sentence at the command (Settings, chat and voice alike, nothing written): 'You work on
    "Kite club" together with another Forerunner, so its status stays in the app (Docs, Status);
    no status pull request is opened.' Turning it off still acts.
+5. **The take-over and host lines read well** (L4-github-108, L4-github-109; design section 5
+   rules 1 and 6): no possessive after a quoted name ('it is now the project "Kite flyers".',
+   'Kept in the app while the status pull request of "A" is open on GitHub.'); the lines under
+   Work together and Take it over stay within 100 characters, the marker's name whole or cut at
+   a word (a long one under Take it over reads 'GitHub then names this project; choose it only if
+   nobody uses "The neighbourhood kite flying…" now.'); and a link on another host names the host
+   this install is set up for (an Enterprise install's own, `configuredWebHost`), never
+   github.com alone.

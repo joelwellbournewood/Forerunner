@@ -22,6 +22,7 @@ import {
   alreadyHereSentence,
   alsoElsewhereSentence,
   CHAT_TOGETHER_HINT,
+  configuredWebHost,
   type Elsewhere,
   elsewhereSentence,
   inUseSentence,
@@ -805,7 +806,10 @@ export class RepositoryUse {
       if (typeof entry !== "string") continue;
       const r = identityOf(entry, this.identityOptions());
       if (r.kind === "other_host")
-        throw linkRefusal(otherHostSentence(r.host), { cause: "other_host" });
+        throw linkRefusal(
+          otherHostSentence(r.host, configuredWebHost(this.deps.hosts ?? DEFAULT_REPO_HOSTS)),
+          { cause: "other_host" },
+        );
       if (r.kind === "identity") out.push(r.identity);
     }
     return out;

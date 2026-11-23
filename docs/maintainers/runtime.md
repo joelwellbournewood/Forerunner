@@ -7806,6 +7806,10 @@ no store, git host or file system, so the UI's fake daemon imports it).
   `untrusted` mark stripped); the sources routes the same. GitHub that cannot be read fails
   open at creation only; Work together answers 'GitHub did not answer, so the project cannot be
   checked. Try again.'
+- **The offer's lines** (L4-github-109): `togetherLine` and `takeOverLine` keep within
+  `CONSEQUENCE_LINE_MAX` (100): the name whole, else cut at a word (`withNameFitted`; Take it over
+  then reads 'GitHub then names this project; choose it only if nobody uses "..." now.');
+  `otherHostSentence(host, configuredWebHost(hosts))` names the install's own host.
 - **The marker's name** (`markerNameOf`): cut at 60 characters, control characters removed,
   `scanForInjection` flagged or `"<>\`` inside: null ("another Forerunner project").
 - **Creating** (`daemon/create-project.ts`): Take it over writes `settings.took_over`

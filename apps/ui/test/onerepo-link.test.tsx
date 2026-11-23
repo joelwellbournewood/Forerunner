@@ -477,3 +477,45 @@ describe("d1109-onerepo-link, run C: a plan-only plan promises no documents; the
     }
   });
 });
+
+describe("l4-github-link, run L4", () => {
+  it("L4-github-109: with a 60-character marker name the lines under Work together and Take it over stay within 100 characters, the name whole or cut at a word", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const name = "The neighbourhood kite flying club of the lower lake district";
+    expect(name.length).toBe(61);
+    harness.daemon.state.repositoryElsewhere["o/kite"] = {
+      ids: ["01a1a000-0000-7000-8000-00000000c1ab"],
+      name: name.slice(0, 60),
+      lastActive: null,
+      otherAccount: null,
+      canWorkTogether: true,
+      canTakeOver: true,
+    };
+    renderApp("/", harness);
+    await screen.findAllByTestId("project-card");
+    await user.click(screen.getByTestId("new-project"));
+    const dialog = await screen.findByTestId("new-project-dialog");
+    await user.type(within(dialog).getByLabelText("Name"), "Kites");
+    await user.type(within(dialog).getByLabelText(/Goal/), "Kites");
+    await user.type(within(dialog).getByLabelText(/Repository link/), "o/kite");
+    await user.click(within(dialog).getByTestId("create-project"));
+    const offer = await within(dialog).findByTestId("link-offer");
+    const lines = [...offer.querySelectorAll("p.text-xs")].map((p) => p.textContent ?? "");
+    expect(lines).toHaveLength(2);
+    for (const line of lines) {
+      expect(line.length, line).toBeLessThanOrEqual(100);
+      const quoted = /"([^"]+)"/.exec(line)?.[1] ?? "";
+      // Whole, or cut at a word: what is kept is the start of the name up to a space.
+      const kept = quoted.replace(/…$/, "");
+      expect(name.startsWith(kept), line).toBe(true);
+      if (quoted.endsWith("…")) expect(name[kept.length], line).toBe(" ");
+    }
+    expect(lines[0]).toBe(
+      'This Forerunner works on "The neighbourhood kite flying club…" too; nothing on GitHub changes now.',
+    );
+    expect(lines[1]).toBe(
+      'GitHub then names this project; choose it only if nobody uses "The neighbourhood kite flying…" now.',
+    );
+  });
+});
