@@ -3,9 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import type { EventSourceLike } from "../src/api/sse.ts";
+import { seedFromMessage } from "../src/pages/project/NewTaskDialog.tsx";
 import { AppRoutes } from "../src/routes.tsx";
 import { AppProvider } from "../src/store/context.tsx";
-import { seedFromMessage } from "../src/pages/project/NewTaskDialog.tsx";
 import { createStore } from "../src/store/store.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 

@@ -917,7 +917,8 @@ describe("l4-selftasks-chat, run L4: a change the person names is theirs, and ev
     const r = await w.chat("tidy the list and make Publish the page less important");
     const open = await w.store.humanRequest.open({ humanId: w.human });
     expect(open).toHaveLength(1);
-    const context = (open[0]?.change_card as { context?: Record<string, unknown> }).context;
+    const context = (open[0]?.change_card as { context?: Record<string, unknown> } | undefined)
+      ?.context;
     expect(context?.planFix).toMatchObject({ level: 1, fingerprint: expect.any(String) });
     expect(r.pendingConfirmation?.id).toBe(open[0]?.id);
     await w.restart();

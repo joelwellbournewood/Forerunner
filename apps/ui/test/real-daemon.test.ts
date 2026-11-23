@@ -26820,7 +26820,10 @@ describe("l4-selftasks-chat, run L4", () => {
   const NO_FILE =
     "The reviewer writes no file: its findings are its report, which you read in the task's drawer.";
 
-  async function open(prefix: string, opts: { clock?: SystemClock | SimulatedClock; home?: string } = {}) {
+  async function open(
+    prefix: string,
+    opts: { clock?: SystemClock | SimulatedClock; home?: string } = {},
+  ) {
     const dir = opts.home ?? mkdtempSync(join(tmpdir(), prefix));
     if (!opts.home) homes.push(dir);
     const log = new ModelCallLog({ file: join(dir, "model-calls.jsonl") });
@@ -26984,9 +26987,7 @@ describe("l4-selftasks-chat, run L4", () => {
       const rows = (await a.client.changes({ projectId: project.id })).filter(
         (r) => r.source === "chat",
       );
-      expect(rows.map((r) => [r.byAgent, r.humanName, r.wordsUsed])).toEqual([
-        [false, "J", line],
-      ]);
+      expect(rows.map((r) => [r.byAgent, r.humanName, r.wordsUsed])).toEqual([[false, "J", line]]);
       const inbox = await a.client.inbox(a.me.id);
       expect(inbox.messages.filter((m) => m.projectId === project.id)).toEqual([]);
     } finally {
@@ -27025,11 +27026,9 @@ describe("l4-selftasks-chat, run L4", () => {
       expect(touched).toContain(project.id);
       const inbox = await a.client.inbox(a.me.id);
       expect(inbox.requests.filter((x) => x.projectId === project.id)).toEqual([]);
-      expect(inbox.messages.filter((m) => m.projectId === project.id).map((m) => m.body)).toEqual(
-        [
-          "The change you asked for was not made: the session budget for Bike shop. Its card closed after 10 minutes without your yes; ask again if you still want it.",
-        ],
-      );
+      expect(inbox.messages.filter((m) => m.projectId === project.id).map((m) => m.body)).toEqual([
+        "The change you asked for was not made: the session budget for Bike shop. Its card closed after 10 minutes without your yes; ask again if you still want it.",
+      ]);
     } finally {
       await a.rt.close();
     }

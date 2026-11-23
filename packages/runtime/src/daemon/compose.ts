@@ -2533,7 +2533,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     driver,
     // L4-other-1 (D-4): the brief's and the review's criterion for a specialist that writes no file.
     writesNoFile: (name) => {
-      const d = registry.specialists.get(name) ?? registry.specialists.get(canonicalSpecialistName(name));
+      const d =
+        registry.specialists.get(name) ?? registry.specialists.get(canonicalSpecialistName(name));
       return d ? writesNoFile(d.allowed_tools ?? []) : false;
     },
     // The critic's calls follow the person's order for purpose `critic` (ADR 0100).

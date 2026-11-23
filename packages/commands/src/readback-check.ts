@@ -134,7 +134,9 @@ export function changedSince(shown: ChangeCard, fresh: ChangeCard): string | nul
     }
     const f = now[i];
     if (!p.subjects?.length && f && VALUE_COMMANDS.has(p.command) && p.oldValue !== f.oldValue)
-      lines.push(`${capitalised(p.what)} is ${f.oldValue} now, not ${p.oldValue} as I read it back`);
+      lines.push(
+        `${capitalised(p.what)} is ${f.oldValue} now, not ${p.oldValue} as I read it back`,
+      );
   }
   if (!lines.length) return null;
   return `${lines.slice(0, 2).join("; ")}. ${ASK_AGAIN}`;

@@ -797,8 +797,7 @@ export class CommandExecutor {
           emailToken: typeof json.email_token === "string" ? json.email_token : "",
           readback: readbackOf(card, decision, ctx.source),
           wordsUsed: stored.wordsUsed,
-          perform: async (by) =>
-            this.perform(await this.prepareAll(commandCalls, ctx), ctx, by),
+          perform: async (by) => this.perform(await this.prepareAll(commandCalls, ctx), ctx, by),
           redecide: async () => this.redecideAll(commandCalls, ctx),
           ...(print && card.projectId
             ? { fingerprint: { projectId: card.projectId, value: print } }
@@ -899,8 +898,7 @@ export class CommandExecutor {
     // the row's author, the session line's and the post's (a set with any other step stays the
     // agent's, as fix_tasks' own changes are).
     const personsWords = done.length > 0 && done.every((d) => d.step.persons === true);
-    const ctx: CommandContext =
-      person && personsWords ? { ...given, actor: person } : given;
+    const ctx: CommandContext = person && personsWords ? { ...given, actor: person } : given;
     const reversible = done.every((d) => d.outcome.reversible ?? d.step.def.reversible);
     const expiring = done
       .map((d) => d.outcome.expiresAt)
@@ -1064,21 +1062,17 @@ export class CommandExecutor {
     this.sweepPending();
     return [...this.pendings.values()]
       .filter((p) => humanId === undefined || p.humanId === humanId)
-      .map(({ perform: _p, cancelTimer: _c, redecide: _r, shown: _s, fingerprint: _f, ...rest }) => rest);
+      .map(
+        ({ perform: _p, cancelTimer: _c, redecide: _r, shown: _s, fingerprint: _f, ...rest }) =>
+          rest,
+      );
   }
 
   getPending(id: string): PendingConfirmation | undefined {
     this.sweepPending();
     const p = this.pendings.get(id);
     if (!p) return undefined;
-    const {
-      perform: _p,
-      cancelTimer: _c,
-      redecide: _r,
-      shown: _s,
-      fingerprint: _f,
-      ...rest
-    } = p;
+    const { perform: _p, cancelTimer: _c, redecide: _r, shown: _s, fingerprint: _f, ...rest } = p;
     return rest;
   }
 
