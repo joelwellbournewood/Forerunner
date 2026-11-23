@@ -8351,6 +8351,11 @@ log's lines stay in `session/credential-words.ts`); the shapes are in
   `ChatReplyView.oneOff` and the conversation turn's `reply.oneOff` (the newest reply only, kept
   on the `chat.reply` row) carry "Use API key"; a held reply is a notice with no closer (no Think
   it through).
+- **Chat's one-off in place** (l4-cred-screens, L4-creds-19): `ChatRequestBody.heldTurn` (with
+  `oneOff`) reaches the agent as `ChatRequest.heldTurn`. When it is the newest turn, held (its
+  reply carries `oneOff`) and has the same words, the new `chat.human` row records `replaces`;
+  `readTranscript` leaves a replaced turn out (the conversation view and `historyMessages`
+  alike, after a restart too), and the turn's `earlier` drops it before the model call.
 - **The refused card's closed line** (C5-left-5): `closeRefusedCards(..., {why, workWaited})`
   records why it closed; `refusedClosedLine` words it.
 - **Rows and status** (CS-5): `waitRowWords` covers the share (Change the allowance), a key's

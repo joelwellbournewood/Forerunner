@@ -386,6 +386,12 @@ export interface ChatRequest {
    * the next credential (no grant, no card); the next question holds again.
    */
   oneOffSwitch?: boolean;
+  /**
+   * l4-cred-screens (L4-creds-19): with `oneOffSwitch`, the held turn the press answers: the new
+   * turn takes its place (`replaces` on its line), so the question shows once and the model
+   * reads it once, without the hold reply. Only the newest held turn with the same words.
+   */
+  heldTurn?: string;
   /** The paired device the request came from (a phone routes session commands remotely). */
   deviceId?: string;
   signal?: AbortSignal;
@@ -1105,14 +1111,28 @@ export class ConversationAgent {
     // as the conversation shows (`GET /projects/:id/conversation`), so a card shown there
     // with Yes and No is the one a "yes" here answers; a model turn carries the last
     // `HISTORY_TURNS` of them (`historyMessages`).
-    const earlier = await readTranscript(store, sessionId, conversationProject, {
+    const read = await readTranscript(store, sessionId, conversationProject, {
       limit: TRANSCRIPT_SHOW_LIMIT,
     });
+    // l4-cred-screens (L4-creds-19): the one-off press answers the held question in its place:
+    // the newest turn, held (its reply carries the press), with the same words. Its line and hold
+    // reply leave the conversation and the history; anything else is a new question as before.
+    const newest = read.at(-1);
+    const replaces =
+      req.oneOffSwitch &&
+      req.heldTurn &&
+      newest?.transcriptId === req.heldTurn &&
+      newest.reply?.oneOff &&
+      newest.human.text.trim() === req.text.trim()
+        ? newest.transcriptId
+        : null;
+    const earlier = replaces ? read.filter((t) => t.transcriptId !== replaces) : read;
     await store.event.append(sessionId, "chat.human", {
       transcriptId,
       text: req.text,
       source: req.source ?? "text",
       conversationProjectId: conversationProject,
+      ...(replaces ? { replaces } : {}),
       // l4-chat-depth (L4-chat-205): the turn's number from the conversation's start, so the
       // history's stepped window is the same function of the rows after 100 turns and a restart.
       turn: nextTurnNumber(earlier),

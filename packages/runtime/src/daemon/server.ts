@@ -2815,6 +2815,8 @@ export function createDaemonApp(
       ...(body.depth ? { depth: body.depth } : {}),
       ...(body.offer ? { offer: body.offer } : {}),
       ...(body.oneOff ? { oneOffSwitch: true } : {}),
+      // l4-cred-screens (L4-creds-19): the held turn the one-off press answers in its place.
+      ...(body.oneOff && body.heldTurn ? { heldTurn: body.heldTurn } : {}),
     });
     await heardChat(r);
     return c.json(chatReplyView(r));
@@ -2844,6 +2846,7 @@ export function createDaemonApp(
           ...(body.depth ? { depth: body.depth } : {}),
           ...(body.offer ? { offer: body.offer } : {}),
           ...(body.oneOff ? { oneOffSwitch: true } : {}),
+          ...(body.oneOff && body.heldTurn ? { heldTurn: body.heldTurn } : {}),
           // The turn's id first (for Stop), then what it is doing at each step, then the tokens.
           onTurn: (t) => send("turn", t satisfies ChatTurnFrame),
           onStep: (text, o) =>

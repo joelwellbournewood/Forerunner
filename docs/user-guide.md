@@ -1224,8 +1224,9 @@ subscription: CHF 2.10 (estimate, 12% of its allowance)"; a few calls under a ce
 than CHF 0.01").
 
 While chat waits for your subscription it says so and offers **Use API key** for that one question
-("Answers this question on your API key: about CHF 0.02."); the press asks it again once, on the
-key, and the answer's note says so. It gives no standing yes: the next question waits again.
+("Answers this question on your API key: about CHF 0.02."); the press answers that question once,
+on the key, in its place (it shows once, with the answer under it), and the answer's note says
+so. It gives no standing yes: the next question waits again.
 
 An expired or signed-out Claude sign-in is read as a refusal however Claude Code reports it:
 the task is never marked Failed for it, chat does not ask the refused sign-in again, and Costs

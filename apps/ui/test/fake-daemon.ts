@@ -4679,6 +4679,18 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   };
 
   /** A turn kept in its conversation, as the daemon writes chat.human and chat.reply. */
+  /**
+   * l4-cred-screens (L4-creds-19), as the daemon: the one-off press answers the newest held turn
+   * with the same words in its place, so its line and hold reply leave the conversation.
+   */
+  const dropHeldTurn = (body: ChatRequestBody) => {
+    if (!body.oneOff || !body.heldTurn) return;
+    const key = body.projectId ?? "";
+    const turns = state.conversations.get(key) ?? [];
+    const last = turns.at(-1);
+    if (last?.id === body.heldTurn && last.reply?.oneOff && last.said.trim() === body.text.trim())
+      state.conversations.set(key, turns.slice(0, -1));
+  };
   const keepTurn = (body: ChatRequestBody, reply: ChatReplyView, failed = false): ChatReplyView => {
     const key = body.projectId ?? "";
     const turns = state.conversations.get(key) ?? [];
@@ -4798,6 +4810,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const extra = state.nextChatTurn;
     state.nextChatTurn = null;
     state.chatPosts.push({ text: parsed.data.text, oneOff: parsed.data.oneOff === true });
+    dropHeldTurn(parsed.data);
     const base = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
     const reply = keepTurn(
       parsed.data,
@@ -4839,6 +4852,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const extra = state.nextChatTurn;
     state.nextChatTurn = null;
     state.chatPosts.push({ text: parsed.data.text, oneOff: parsed.data.oneOff === true });
+    dropHeldTurn(parsed.data);
     const base = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
     const key = parsed.data.projectId ?? "";
     const startedAt = new Date().toISOString();

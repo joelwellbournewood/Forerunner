@@ -1164,6 +1164,13 @@ export const ChatRequestBody = z.object({
    * one question may go to the next credential at the stop (no grant, no card, never a job).
    */
   oneOff: z.boolean().optional(),
+  /**
+   * l4-cred-screens (L4-creds-19): with `oneOff`, the held turn the press answers (its id): the
+   * answer takes that turn's place, so the question shows once and reaches the model once, with
+   * no hold reply before it. Ignored unless that turn is the conversation's newest held one with
+   * the same words.
+   */
+  heldTurn: z.string().optional(),
 });
 export type ChatRequestBody = z.infer<typeof ChatRequestBody>;
 

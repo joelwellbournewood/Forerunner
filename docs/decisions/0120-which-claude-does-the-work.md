@@ -249,3 +249,8 @@ answer 3 ("For all work.": the yes covers all work until the stop ends) and his 
    never "your session goes on". `POST /sessions` refuses with the refused credential's sentence
    only while a session is kept (L4a-left-1); without one a start still runs, meets the refusal
    and goes on by itself once a new credential is saved.
+9. **Chat's one-off press answers the held question in its place (L4-creds-19).** `POST /chat`'s
+   `heldTurn` (with `oneOff`) names the held turn; the new turn's line records `replaces`, and
+   the transcript leaves the held line and its hold reply out, in the conversation and in the
+   model's history, also after a restart. Before, the question showed twice and reached the
+   model twice with "so I have not answered" between.

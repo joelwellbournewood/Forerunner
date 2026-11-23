@@ -24,6 +24,11 @@ export interface ConversationState {
     since?: string | null;
     depth?: string | null;
     stopping?: boolean;
+    /**
+     * l4-cred-screens (L4-creds-19): the held turn the one-off press answers in its place: it is
+     * not shown beside the live bubble, so the question shows once.
+     */
+    replaces?: string | null;
   } | null;
   /** The daemon did not answer the read; the screen offers Retry. */
   error: string | null;

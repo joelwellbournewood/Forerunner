@@ -1021,7 +1021,10 @@ answers the card with the option it shows.
 - **Session page**: `session-switch-line` under the spend; **drawer**: `drawer-run-switch`.
 - **Chat and Talk** (`components/Conversation.tsx`): a hold reply's `<ids>-one-off` press and
   `<ids>-one-off-explain`; the press sends the same line with `oneOff: true`, disabled while an
-  answer comes.
+  answer comes. l4-cred-screens (L4-creds-19): it also sends `heldTurn` (the held turn's id); the
+  live bubble's `replaces` hides that turn while the answer comes, and the daemon drops it, so
+  the question shows once (the fake's `dropHeldTurn` does the same). Tests:
+  `test/credential-chat.test.tsx` (describe "the one-off press answers the held turn in place").
 - **Costs**: `cost-by-credential` from `CostView.byCredential` (the fake's fixture carries it).
 
 The fake daemon mirrors each route (`credentialPolicy` option, `startCredential`,

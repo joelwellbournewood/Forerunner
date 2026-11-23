@@ -25650,4 +25650,58 @@ describe("l4-cred-screens, run L4", () => {
       await rt.close();
     }
   }, 60_000);
+
+  // L4-creds-19 (live check 4's LC-C25, C6L-6): chat's one-off "Use API key" sent the held
+  // question again as a new turn: it showed twice, stayed twice after a reload, and the model got
+  // the question twice with the hold reply ("so I have not answered") between them.
+  it("L4-creds-19: chat's one-off Use API key answers the held question in its place: it shows once, after composing again too, and reaches the model once", async () => {
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const scripted = new ScriptedProvider([{ text: "Next is the quote page." }], clock);
+    const standIn = messagesApiStandIn({ model: new AcceptingCriticProvider(scripted), clock });
+    const first = await composeL4({ clock, standIn });
+    const said = "what is next?";
+    try {
+      await restSource(first.rt, "subscription", resetAt);
+      const me = await first.client.me();
+      const agentId = (await first.client.agents())[0]?.id ?? "";
+      const held = await first.client.chat({ humanId: me.id, agentId, text: said });
+      expect(held.reply).toMatch(/so I have not answered/);
+      expect(held.oneOff?.label).toBe("Use API key");
+      // The press, as the conversation sends it: the same question, the one-off flag and the
+      // held turn it answers.
+      const answered = await first.client.chat({
+        humanId: me.id,
+        agentId,
+        text: said,
+        oneOff: true,
+        heldTurn: held.transcriptId,
+      });
+      expect(answered.reply).toContain("Next is the quote page.");
+      const once = async (client: DaemonClient) => {
+        const turns = (await client.conversation(null)).turns;
+        expect(turns.filter((t) => t.said === said)).toHaveLength(1);
+        expect(JSON.stringify(turns)).not.toContain("so I have not answered");
+        expect(turns.at(-1)?.reply?.text ?? "").toContain("Next is the quote page.");
+      };
+      await once(first.client);
+      // The model got the question once, without the hold reply before it.
+      const messages = (scripted.calls.at(-1)?.messages ?? []).map((m) => ({
+        role: m.role,
+        text: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+      }));
+      expect(messages.filter((m) => m.role === "user" && m.text.includes(said))).toHaveLength(1);
+      expect(messages.some((m) => m.text.includes("so I have not answered"))).toBe(false);
+      await settleSessions(first.rt);
+    } finally {
+      await first.rt.close();
+    }
+    const second = await composeL4({ home: first.home, clock, vault: first.vault, standIn });
+    try {
+      const turns = (await second.client.conversation(null)).turns;
+      expect(turns.filter((t) => t.said === said)).toHaveLength(1);
+      expect(JSON.stringify(turns)).not.toContain("so I have not answered");
+    } finally {
+      await second.rt.close();
+    }
+  }, 60_000);
 });
