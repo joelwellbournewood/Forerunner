@@ -1,0 +1,96 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "I ran the bench \"review-l4-starts-sessions\" (daemon 49150, UI 2750) from my worktree at b306883. I used the stand-in only and started it fresh 4 times. The walk JSONs, with every step's screen text, are in /tmp/frbench/review-l4-starts-sessions/walk1..7.json. Screenshots of walk 6 are in /tmp/frbench/review-l4-starts-sessions/kept-steps/. The later --fresh starts wiped the steps/ folder of walks 1-5, so their screen texts survive only in the JSONs.\n\nWalk 1-2 (201), bench-api with --api-key refused. I pressed Start in the UI on \"Field notes\". The session stopped at once to wait. More > Sessions showed \"1 session / Nothing finished. / 16:33 · under a minute · Stopped to wait for a Claude credential · CHF 0.00\", and GET /projects/:id/sessions returned count 1. I saved an ok key through POST /setup/anthropic. The work then went on by itself. The tab showed 2 sessions; the newer row read \"... · goes on with your session of 16:33\". I restarted the daemon (restart-daemon.mjs) and both rows stayed, still with count 2. PASS.\n\nWalk 3 (202/205/206/213), FORERUNNER_BENCH_ASK. Two questions cards appeared. Under Send answers: \"The task goes on with your answers; it runs at your next Start.\" Go ahead without: \"...; it runs at your next Start.\" I answered one card through the UI form. Nothing started. While a session of the project ran, the other card read \"...; it joins the running session if it fits.\" With start_by_itself on (settings.set plus its yes), it read \"...; a session starts for it by itself.\" The answer then started a session. Its page's first line was \"Started by itself when work was ready (this project's setting), with a budget of CHF 5.00.\" and its row said \"started by itself when work was ready\". Once both tasks were done, the Answered lines were 'Answers saved in the decision record; \"X\" is done.'. The Sessions row went \"2 needed you · 2 still need you\", then \"2 needed you · 1 still needs you\". The session page badge still read \"Ended: 1 task needs you\". PASS.\n\nWalk 4 (207/208). The header read 'The coder works on \"Write the quote list in quotes.md\" (0 of 2 done)', the same words as the bar. Last result read \"Running now: Open the session\". I crashed the daemon with restart-daemon --hard. Inbox > Updates showed the Update with Continue and \"Opens Start with the rest of your last session and the CHF 5.00 left of its budget.\" The press opened the Start dialog (\"What is left of that session's budget is filled in: it goes on with that, never more.\"). Its Start posted continues, both tasks finished, and the Continue then went away. PASS.\n\nWalk 5 (209). While Club site ran, Start on Bird notes was queued. Its header read 'Starts after the session on \"Club site\"' with Cancel. There was no Start session button at 1280 or at 375 px, and no sideways scroll. A second POST /sessions answered queued with the same startId and 'A session of Bird notes already starts after the session on \"Club site\".'. Cancel dropped the start and Start session came back. PASS. My 203 try on the bench did not exercise the case: the CHF 0.03 session ended before Make ready. I verified 203 through its real-daemon case instead.\n\nWalk 6 (208), bench-api with --api-key limited and a slow critic. The Overview at 1280 and 375 px had 2 Cancels: the bar's and Working now's, so exactly one outside the bar. The header line read \"Waiting until 16:44 (your API key's limit), then it goes on\" with no action, and there was no sideways scroll. After the reset, the session page's Current task read 'The critic checks \"Write the legend in legend.md\"' and the header read 'The critic checks \"...\" (0 of 1 done)'. PASS.\n\nWalk 7 (207 sibling), on the stand-in. Crash, Continue, then Stop now on the continuation. The Update then offered Continue again with the full CHF 1.00. That is blocking item 2 below.\n\nTests. I ran the fixer's named tests on the fix branch: all pass. I then reverted the 23 modified source files to claude/nifty-knuth-f9udt0 and kept the new tests and the two new leaf modules. All 8 new or changed real-daemon cases failed with the expected assertions: Quit-during-review/207, 201, 202, 203, 204, 208, 209 and 213. 37 runtime, commands and state unit tests failed too, among them starts-words 205/202, event-lines 206, session-list 213, the state suite's 201 case, session-join too_large and the commands limitChanged case. I restored the sources and the worktree is clean.\n\nUnder the heavy lock: pnpm check passed (560 files, 6161 tests; links and secret scan clean). docs-check --base passed. The full UI vitest suite passed (103 files, 1494 tests), Playwright passed (40 tests, including the new 208 cases at 1280 and 375 px), and pnpm test:e2e passed (25). I stopped the bench and deleted its home.",
+ "blocking": [
+  {
+   "issue": "L4-money-214 is not built, and it is not on the area's cut line. The spec lists the items that may end in not_done: 210, 211, 212, 215, 216, 207's time half, 208's session-page and Last-result parts, and 202's Tasks-row tooltips and chat's option line. 214 is not among them and is sized Medium. Its acceptance line fails: a session whose only task the person paused still ends with the result 'CHF 0.01.' and nothing else. The L4f review treated non-cut items left unbuilt as blocking.",
+   "evidence": "The fixer's own not_done lists 214 ('Not reached in this run'). There is no 'You paused' builder anywhere in packages/runtime/src: grep finds only runner.ts:3924's pausedByYou helper, which removes the task from needsYou, and no LastSessionOutcome.pausedByYou. result.ts has the W15-59 'cancelled by you' line but none for 'paused by you'. The live check evidence is L4-l3-8 (l3b state.sqlite: summary 'CHF 0.01.', session.ended counts 0).",
+   "expected": "Build what the triage note L4-132 asks for. Add LastSessionOutcome.pausedByYou. Add a line-2 builder beside 'cancelled by you': 'You paused \"X\"; nothing else ran.', then the money line. Append its sentence to NOT_NEWS, so there is no Inbox Update or notification. The status note must not say 'needs you'. sessionGist should read '\"X\" paused by you.' Add a composed case like continuity-cancel.test.ts:787 and a writing-rules unit case. Alternatively, the session lead moves 214 to the cut line in writing."
+  },
+  {
+   "issue": "L4-money-207 sibling (validation rule 8, money rule 'never more', writing rule 4 'true now'): the crash Update keeps offering Continue after a later session of the project has begun. It offers the interrupted session's whole remaining budget again. The new crashContinueOf only checks that nothing of the project runs now and that a released task is ready. The session page's Continue, waitBlockOf in server.ts, already hides its Continue 'once a later session of its project began'.",
+   "where": "packages/runtime/src/daemon/views.ts:982 (crashContinueOf); apps/ui/test/fake-daemon.ts (the same rule in the fake)",
+   "evidence": "Bench walk 7, /tmp/frbench/review-l4-starts-sessions/walk7.json, on the stand-in. I started a CHF 1.00 session and hard-restarted the daemon while it ran. The Update read: Continue, 'Opens Start with the rest of your last session and the CHF 1.00 left of its budget.' I pressed it: POST /sessions with continues started a session capped at CHF 1.00. I pressed Stop now on that continuation, which had spent CHF 0.0034; its task went back to Ready. GET /inbox then offered the same Continue again: 'the CHF 1.00 left of its budget', sessionId = the interrupted session. The second POST /sessions with continues started another CHF 1.00 session. Two continuations of one interrupted CHF 1.00 session can together spend more than what was left. Meanwhile the Start dialog says 'it goes on with that, never more', and 'your last session' now names a session that is not the last one. The area spec's money rule says: 'The crash Continue goes on with what is left of the interrupted session's budget ... never more'.",
+   "expected": "Offer the crash Update's Continue only while no later session of the project has begun since the interrupted one, as waitBlockOf does. With the press marking the Update read (the triage note asks for that too), the Update then keeps Mark read only. Keep the fake daemon's mirror in step. Add a real-daemon case next to the 'Quit during Being reviewed' case: Continue, stop the continuation, and GET /inbox offers no Continue."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "CI-flake-1: the note case waits on the case before's session end (30 s, with a message) and asserts started.result === 'started'; nothing it checks was weakened",
+   "holds": true,
+   "note": "sessionEnds() goes through eventually() with 30_000 ms and a 'seen' message. The handoff note assertion is kept. The remaining short setTimeout polls in real-daemon.test.ts are not wait-then-proceed races."
+  },
+  {
+   "claim": "L4-money-201: a person's start that stopped to wait is listed and counted (both dialects), and stays listed after a restart; the continuation names it",
+   "holds": true,
+   "note": "The real-daemon case and the state-suite case both fail on base. On the bench I saw 1 row, then 2 rows, and both stayed after the daemon restarted."
+  },
+  {
+   "claim": "L4-money-202: Send answers and Go ahead without say what pressing does now, and the press does that",
+   "holds": true,
+   "note": "On the bench all 3 states read as claimed (next Start / joins the running session / starts by itself). The hands-off press started one session and the off press started none. The real-daemon case fails on base."
+  },
+  {
+   "claim": "L4-money-203: a draft larger than the running session's work budget reads 'It is larger than this session's budget, so it runs at your next Start.' and never runs there",
+   "holds": true,
+   "note": "The real-daemon case fails on base with the old 'It joins this session if budget is left' sentence. My bench repro did not hit the running-session case."
+  },
+  {
+   "claim": "L4-money-204: a raised limit wakes its paused tasks at the write and in the start check; the sentence ends '1 paused task is ready again: it runs at your next Start. Undo.'",
+   "holds": true,
+   "note": "The real-daemon and commands cases fail on base. budget.set's Undo does not call the wake, although the triage note asks for it; the tick remains the fallback."
+  },
+  {
+   "claim": "L4-money-205: Answered lines once the task is done say only that it is done",
+   "holds": true,
+   "note": "Seen on the bench, and the unit tests fail on base."
+  },
+  {
+   "claim": "L4-money-206: the session page's first line says who started it, from one map shared with the Sessions row",
+   "holds": true,
+   "note": "Bench: 'Started by itself when work was ready (this project's setting), with a budget of CHF 5.00.'"
+  },
+  {
+   "claim": "L4-money-207 (Continue half): the crash Update offers Continue, which opens Start and posts continues",
+   "holds": true,
+   "note": "It works, but the Continue stays offered after a later session; see blocking item 2."
+  },
+  {
+   "claim": "L4-money-208: one Cancel for a wait outside the bar, the working line in the bar's words, the session page's Current task while the critic checks, and Last result during the first session",
+   "holds": true,
+   "note": "Checked on the bench at 1280 and 375 px, and by the Playwright cases."
+  },
+  {
+   "claim": "L4-money-209: a queued start is one start, with Cancel and no Start session in the header",
+   "holds": true,
+   "note": "Checked on the bench at 1280 and 375 px. A second POST returned the same startId with the sentence."
+  },
+  {
+   "claim": "L4-money-213: a Sessions row counts what needed you once ('2 needed you · 1 still needs you'); the page badge keeps L-21",
+   "holds": true
+  },
+  {
+   "claim": "Validation: pnpm check, test:integration, test:e2e, the UI suite and Playwright are green",
+   "holds": true,
+   "note": "I reran pnpm check, the UI suite (1494), Playwright (40) and test:e2e (25); all green. I did not rerun test:integration."
+  },
+  {
+   "claim": "not_done items are cut-line or leftovers, each with a reason",
+   "holds": false,
+   "note": "L4-money-214 is not on the cut line (blocking item 1). The others are cut-line items or leftovers carried forward with their text."
+  }
+ ],
+ "non_blocking": [
+  "L4-money-207: the triage note asks that the press of Continue mark the Update read. CrashContinue (InboxPage.tsx) only opens the Start dialog. The note also asks for 'one Update per project when several projects had tasks released'. recovery.ts still posts one Update with project_id null when several projects were interrupted, so that Update has no Continue.",
+  "The fake daemon does not model the limit wake (budget.set's woken line, the start-check wake), and it did not model the tick wake before either. Validation rule 3 asks for the fake to change with a changed route. The response shapes are unchanged, so UI tests are unaffected today.",
+  "L4-money-201: listedWhere does not list stop_reason 'plan_awaiting_approval' or a session another one continues (the triage note names both). A person's or continuation's start covers the observed cases.",
+  "Owner checklist, sibling of 209: while the project's own session waits to go on (a continuation), the header still offers Start session at 1280 and 375 px (walk 6 screenshot 02). POST /sessions answers 409 there. Not checked in the Start dialog.",
+  "Writing (design §5 rule 10): on a waiting Overview the wait's text still appears 4 times: the bar, the header line, Working now, and Last result/Next ('Waits until 16:44 ...'). The spec only asked for one Cancel outside the bar, which holds.",
+  "A continuation's page now reads 'Goes on with your session of 16:41.' then 'It goes on with a budget of CHF 5.00.' The spec said a continuation keeps the generic line. The two lines say 'goes on' twice.",
+  "Make ready's confirm dialog still reads 'Ready to run: the running session takes it if it fits, else your next Start.' On the bench it showed this after the session had already ended (walk 5, g2). These are fixed words, a sibling of 202's cut-line tooltips.",
+  "The queued start's Cancel explanation ('Cancel: it does not start after that session; ...') is shown only as a title tooltip in the header. That matches the earlier continuation Cancel there, but it is not a visible line.",
+  "Bird notes' Overview reads 'Last result: No session yet.' while its start waits in line. The fixer noted this; it is true but says nothing about the queued start.",
+  "Leftovers L4a-left-5, L4b-left-6, L4c-left-1/2/3 and L4d-left-1..4 remain in not_done with their text, and so do cut-line items 210, 211, 212, 215, 216 and 207's end-line time.",
+  "Bench evidence: the walk 1-5 screenshots were wiped by later --fresh starts. Their screen texts are in walk1..5.json, and walk 6's screenshots are in /tmp/frbench/review-l4-starts-sessions/kept-steps/."
+ ]
+}

@@ -1,0 +1,78 @@
+{
+ "merged": [
+  "fix/l4-starts-sessions (head 8a611d1: 13 fix commits and 3 fix-up commits) merged with --no-ff into claude/nifty-knuth-f9udt0 as 3e1ab9d (a signed merge commit)"
+ ],
+ "head_sha": "3e1ab9d862c4ee9c2cccd799f0f45a8edb249254",
+ "pushed": true,
+ "validation": [
+  {
+   "command": "git merge --no-edit --no-ff fix/l4-starts-sessions; git grep -n '^<<<<<<< '",
+   "result": "The merge was clean with no conflicts, because the branch sits directly on 987614d. It changed 51 files (+2970/-203). No conflict markers found."
+  },
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "ok"
+  },
+  {
+   "command": "DOCS_CHECK_BASE=origin/claude/nifty-knuth-f9udt0 flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0. Lint, lint:paths and typecheck clean. Unit: 560 files, 6165 passed, 7 skipped. docs-check ok (51 files), link-check ok (213 files), secret-scan clean (2273 files)."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped (the Postgres cases skip without FORERUNNER_TEST_PG)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm --filter @forerunner/live test",
+   "result": "exit 0: 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "exit 0: PASS, 92 cases (65 hostile, 27 controls), 92 passed, 0 failed"
+  },
+  {
+   "command": "FORCE_COLOR=1 HOME=<empty dir> flock /tmp/frbench/heavy.lock pnpm test (CI-like)",
+   "result": "exit 0: 560 files, 6165 passed, 7 skipped"
+  },
+  {
+   "command": "cd apps/ui && FORCE_COLOR=1 HOME=<empty dir> flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts (CI-like)",
+   "result": "exit 0: 103 files, 1496 passed"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts (normal environment)",
+   "result": "exit 0: 103 files, 1496 passed"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 40 passed (1.2 min)"
+  },
+  {
+   "command": "cd apps/desktop/src-tauri && CARGO_TARGET_DIR=/tmp/frbench/cargo-target cargo fmt --check",
+   "result": "exit 0. The area did not touch the desktop shell, so clippy and cargo test were not run."
+  },
+  {
+   "command": "node scripts/bench/start.mjs --name merge-w31 --daemon-port 49170 --ui-port 2770 --fresh && node scripts/bench/journeys/smoke.cjs merge-w31; node scripts/bench/stop.mjs --name merge-w31",
+   "result": "25/25 checks passed, 0 findings, 0 recorded problems. Model calls: intake 1, specialist 9, critic 6, chat 1. The bench was stopped and its home and browser profile deleted."
+  },
+  {
+   "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+   "result": "printed nothing; all 17 commits are signed, including the merge"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "pushed 987614d..3e1ab9d on the first try, no force"
+  }
+ ],
+ "problems_left": [
+  "Nothing the merge broke is left: every suite and the smoke are green. Logs are in /tmp/frbench/merge-w31/.",
+  "The area's own not_done items, carried for the session lead: L4-money-207's time half (the 'Interrupted' end line shows the restart's time) and one Update per project when one crash released tasks in several projects; cut-line items 210, 211, 212, 215 and 216; 202's and 208's Tasks-row tooltips and chat's option line; leftovers L4a-left-5, L4b-left-6, L4c-left-1/2/3 and L4d-left-1..4.",
+  "new_problems from the fixer and the fix-up: previewWork's no_room line while a session runs (sibling of 203); start-blocked.ts says 'needs your answer' for an outer-limit card without room; Bird notes' 'No session yet.' while its start waits in line; endedNote says 'Spent CHF 0.00.' where the result says 'Less than CHF 0.01.'; the 'Done' badge beside 'You paused \"X\"; nothing else ran.'; a running continuation's Sessions row shows startedBy null.",
+  "CI on 3e1ab9d (Windows and Linux, Desktop app) has not been checked here; it starts with the push."
+ ],
+ "conflicts_resolved": [],
+ "integration_fixes": [],
+ "smoke": "25/25 checks passed on the merged result (bench merge-w31, stand-in provider). The plan reached the Inbox with 2 tasks, and Approve and start ran one session that finished 2/2 tasks. The work wrote files to the project folder, the Files tab and the Overview show them, chat answers with no markdown, and the critic reviewed the work. The smoke journey script needed no change."
+}

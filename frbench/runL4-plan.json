@@ -5594,6 +5594,108 @@
    }
   },
   {
+   "key": "l4-starts-carried",
+   "title": "Run L4 sub-run L4g's leftovers close: start-check, make-ready and status-note sentences that are true now, no Start button that fails while a session waits to go on, a crash's Update per project with the right time, the earlier rounds' start and credential leftovers (a start under a refused credential refused in words), and the words, tests and bench walks the Start-dialog area left",
+   "problems": [
+    "[minor, false sentence, never cut] L4g-left-1: start-blocked.ts words an outer-limit card without room as 'needs your answer' in the start check; say the limit and what changes it (sibling of L4-money-204). (L4g leftovers) Sources: /tmp/frbench/runL4-L4g-{fix,review,fixup}-l4-starts-sessions.json and runL4-L4g-merge.json (problems_left).",
+    "[minor, false sentence, never cut] L4g-left-2: previewWork (chat's read-back of make ready) says the no_room line while a session runs, because it has no estimate to compare with the work budget; use the task's estimate as L4-money-203's admit does (sibling of 203). (L4g leftovers) Sources: /tmp/frbench/runL4-L4g-{fix,review,fixup}-l4-starts-sessions.json and runL4-L4g-merge.json (problems_left).",
+    "[minor, money words, never cut] L4g-left-3: The repository/folder status note says 'Spent CHF 0.00.' for a session whose result says 'Less than CHF 0.01.' (runner.ts endedNote uses formatChf instead of the W14-6 words). One money wording everywhere. (L4g leftovers) Sources: /tmp/frbench/runL4-L4g-{fix,review,fixup}-l4-starts-sessions.json and runL4-L4g-merge.json (problems_left).",
+    "[minor, a button that fails, never cut] L4g-left-4: While the project's own session waits to go on (a continuation), the header still offers Start session at 1280 and 375 px and POST /sessions answers 409 (review walk 6). Offer what the wait offers (Cancel the wait, or Start after it) and check the Start dialog too. (L4g leftovers) Sources: /tmp/frbench/runL4-L4g-{fix,review,fixup}-l4-starts-sessions.json and runL4-L4g-merge.json (problems_left).",
+    "[minor] L4-money-207 (rest): Time half: the 'Interrupted' end line carries the restart's time (session.ended is stamped when Forerunner starts again); use the last event's time. And one crash that released tasks in several projects posts one Update with project_id null; post one Update per project (the triage note). (L4g leftovers) Sources: /tmp/frbench/runL4-L4g-{fix,review,fixup}-l4-starts-sessions.json and runL4-L4g-merge.json (problems_left).",
+    "[minor, cut-able] L4-money-210/211/212/215/216: 210: stopping the critic's monthly check records it failed. 211: continuation and hands-off tests count sessions right after the task is done (race). 212: the Desktop window check passes without seeing the session run. 215: move read-backs name same-titled tasks by title only. 216: turning on 'Start a session by itself' does not say tasks that were already ready run too. (L4g leftovers) Sources: /tmp/frbench/runL4-L4g-{fix,review,fixup}-l4-starts-sessions.json and runL4-L4g-merge.json (problems_left).",
+    "[words, cut-able] L4g-left-5: Fixed words that do not follow the prepared context: the Tasks-row tooltips for Go ahead without, Redo and Try again, chat's option line (202's and 208's cut parts), and Make ready's confirm dialog ('Ready to run: the running session takes it if it fits, else your next Start.', shown after the session had ended, walk 5). (L4g leftovers) Sources: /tmp/frbench/runL4-L4g-{fix,review,fixup}-l4-starts-sessions.json and runL4-L4g-merge.json (problems_left).",
+    "[words, cut-able] L4g-left-6: Design section 5 rule 10: on a waiting Overview the wait's text appears four times (the bar, the header line, Working now, Last result/Next). A continuation's page reads 'Goes on with your session of 16:41.' then 'It goes on with a budget of CHF 5.00.' ('goes on' twice). The queued start's Cancel explanation is only a tooltip. Bird notes' Last result reads 'No session yet.' while its start waits in line (say it starts after that session). A running continuation's Sessions row shows startedBy null and 'plans the session'. (L4g leftovers) Sources: /tmp/frbench/runL4-L4g-{fix,review,fixup}-l4-starts-sessions.json and runL4-L4g-merge.json (problems_left).",
+    "[minor, owner-visible choice] L4g-left-7: A session whose only task the person paused (or cancelled, W15-59) shows the badge 'Done' beside 'You paused \"X\"; nothing else ran.'. Default kept: 'Done' (a queue end). Note it in notes_for_other_areas so the owner can change it. (L4g leftovers) Sources: /tmp/frbench/runL4-L4g-{fix,review,fixup}-l4-starts-sessions.json and runL4-L4g-merge.json (problems_left).",
+    "[tests, fake daemon] L4g-left-8: The fake daemon does not model the limit wake (budget.set's woken line, the start-check wake); validation rule 3 asks the fake to change with a changed route. listedWhere does not list stop_reason 'plan_awaiting_approval' or a session another one continues (L4-money-201's triage note). Bench walks before and after with screenshots kept outside --fresh. (L4g leftovers) Sources: /tmp/frbench/runL4-L4g-{fix,review,fixup}-l4-starts-sessions.json and runL4-L4g-merge.json (problems_left).",
+    "[carried from earlier rounds, never cut] L4a-left-5: L4-creds-8 part 3 (not on the cut line): chat's 'run it now' during a rest is not kept for the reset: the read-back says 'Start a session on Map notes (up to CHF 5)?' and the session then ends at once to wait (nothing moves or is spent). Build: session.start calls continuations.keepStart with its own read-back ('Start a session on ... at 15:40') and Undo dropping it; the hold reply's 'a Start now runs at 15:40' clause then comes back. (L4g leftovers) (l4-starts-sessions did not build it)",
+    "[carried from earlier rounds] L4b-left-6: L4-selftasks-115: the 'Assisted mode: approve this session plan before work starts.' card still offers 'approve' / 'reject' in lower case with no explanation lines. Changing the labels changes the answer words the plan-approval sync, the cloud runner's trigger and the fake daemon read: keep the stored answer values and change only what the person sees (labels and one-line explanations, design section 3.4). (L4g leftovers) (l4-starts-sessions did not build it)",
+    "[carried from earlier rounds] L4c-left-1: under an outer limit (the project's budget or the month's cap) the session status and result read 'Stopped at the project's budget' / '... Stopped at the project's budget of CHF 0.06. CHF 0.02.' while a third of that budget is spent, and the Sessions row reads '1 paused · Stopped at the ...'; say what happened (the run paused before the limit). stop-words.ts. (L4g leftovers) (l4-starts-sessions did not build it)",
+    "[carried from earlier rounds] L4c-left-2: result.ts' 'Left for next time: ...; this session's CHF X was used.' branch (~:502-512) can still fire for after_others items when a larger task's pause ends the session with room left; the 'budget used' sibling of L4-money-102. (L4g leftovers) (l4-starts-sessions did not build it)",
+    "[carried from earlier rounds] L4c-left-3: L4-money-111 sibling: the session status reads 'Ended: 1 paused' and the log 'paused before its review' while the row says 'Done; its review waits'; one state, one wording. (L4g leftovers) (l4-starts-sessions did not build it)",
+    "[carried from earlier rounds] L4d-left-1: under 'API key first, then subscription' with the key resting and mixed work, the Start dialog still says the work runs on the subscription and its figure covers work only the key can do; the plan card's foot line also says the subscription does the work meanwhile for tasks only the key can do. Name what waits for the key. (L4g leftovers) (l4-starts-sessions did not build it)",
+    "[carried from earlier rounds, never cut] L4d-left-2: session lead decision (L4d merge, 2026-11-23): a start under a refused credential is refused in words outright, also with no session kept (POST /sessions, the phone, Continue), with the Start dialog's sentence; today it starts a session that meets the refusal, and the user guide already promises 'every Start says the same'. Keep ONE_OFF_UNDER_WAIT as built. The owner can overrule. (L4g leftovers) (l4-starts-sessions did not build it)",
+    "[carried from earlier rounds] L4d-left-3: the Start dialog in the kept state ('Starts at 03:36 ...' with Cancel the wait) still offers Use API key with its CHF figure while the plan sentence is gone, so the figure names no task. (L4g leftovers) (l4-starts-sessions did not build it)",
+    "[carried from earlier rounds] L4d-left-4: L4-creds-21 part 1: an open Settings read-back stays in the Inbox as an approval card after the person leaves Settings; L4-creds-24: no Playwright cases for the credential section and the Start dialog at phone and desktop widths. (L4g leftovers) (l4-starts-sessions did not build it)"
+   ],
+   "decisions": [
+    "Session lead decision L4d-left-2 (2026-11-23, carried): a start under a refused credential is refused in words outright, also with no session kept (POST /sessions, the phone, Continue), with the Start dialog's sentence. The owner can overrule.",
+    "Default kept (L4g-left-7): a session whose only task the person paused shows 'Done' beside its sentence, like W15-59's cancel case, until the owner says otherwise."
+   ],
+   "u_entries": [
+    "U-090 and U-093 (sessions and starts): every item here."
+   ],
+   "root_causes": [
+    "packages/runtime/src/daemon/start-blocked.ts (L4g-left-1), previewWork (L4g-left-2), runner.ts endedNote (L4g-left-3), the header's Start offer (L4g-left-4), recovery.ts (L4-money-207 rest)."
+   ],
+   "fix_scope": "Run L4 area l4-starts-carried, sub-run L4i (wave 33), first in L4i, base: the merge of sub-run L4h. It builds on l4-starts-sessions (L4g, 3e1ab9d): its admit too_large, limit wake, prepared-context words and crash Continue are re-found and kept. Read runL4-L4g-merge.json and the L4g fix, review and fixup reports first.",
+   "files": [
+    "packages/runtime (start-blocked.ts, runner.ts, recovery.ts, request-words.ts, the session repo listing), packages/state (listedWhere, both dialects).",
+    "apps/ui (header, Overview, Tasks row tooltips, Make ready dialog, Sessions), apps/ui/src/api and the fake daemon.",
+    "docs/maintainers, docs/user-guide.md."
+   ],
+   "acceptance": [
+    "Never cut: L4g-left-1 to -4 and L4d-left-2, each with its failing test first at the boundary the person uses (real-daemon or UI), exact text.",
+    "The rest: each with its failing test first, or in not_done with the reason."
+   ],
+   "depends_on": [
+    "Base: the merge of sub-run L4h. Runs first in L4i, then l4-github-carried (sequential).",
+    "Built on l4-starts-sessions (L4g, 3e1ab9d)."
+   ],
+   "handoff_items": [
+    "L4g-left-1",
+    "L4g-left-2",
+    "L4g-left-3",
+    "L4g-left-4",
+    "L4-money-207 (rest)",
+    "L4-money-210/211/212/215/216",
+    "L4g-left-5",
+    "L4g-left-6",
+    "L4g-left-7",
+    "L4g-left-8",
+    "L4a-left-5",
+    "L4b-left-6",
+    "L4c-left-1",
+    "L4c-left-2",
+    "L4c-left-3",
+    "L4d-left-1",
+    "L4d-left-2",
+    "L4d-left-3",
+    "L4d-left-4"
+   ],
+   "owner_questions": [],
+   "size": "Large in count, small per item: about 19 items, most one sentence or one function. Cut line, may end in not_done with the evidence: L4-money-207 (rest), 210/211/212/215/216, L4g-left-5, -6, -7, -8, and the carried L4b-left-6, L4c-left-1/2/3, L4d-left-1/3/4. Never in not_done: L4g-left-1, -2, -3, -4, L4d-left-2 and L4a-left-5 (chat's run it now during a rest is kept for the reset; never on the cut line since L4a), and every money and security rule.",
+   "sub_run": "L4i",
+   "wave": 33,
+   "items": [
+    "L4g-left-1",
+    "L4g-left-2",
+    "L4g-left-3",
+    "L4g-left-4",
+    "L4-money-207 (rest)",
+    "L4-money-210/211/212/215/216",
+    "L4g-left-5",
+    "L4g-left-6",
+    "L4g-left-7",
+    "L4g-left-8",
+    "L4a-left-5",
+    "L4b-left-6",
+    "L4c-left-1",
+    "L4c-left-2",
+    "L4c-left-3",
+    "L4d-left-1",
+    "L4d-left-2",
+    "L4d-left-3",
+    "L4d-left-4"
+   ],
+   "counts": {
+    "items": 19,
+    "major": 0,
+    "minor": 19,
+    "words": 0,
+    "blocker": 0
+   }
+  },
+  {
    "key": "l4-github-carried",
    "title": "Run L4 sub-run L4e's GitHub leftovers close: the owner's Close button for a cancelled task's pull request still open on GitHub, a Try again for a take-over whose docs pull request did not open, task branches git accepts, a take-out that never promises what it cannot do, Add to that plans in the background, and the words and tests the two GitHub areas left",
    "problems": [
@@ -5673,8 +5775,8 @@
     "OQ-L4e-1"
    ],
    "size": "Medium: 15 items. Larger: L4-github-130 (a GitHub write the person presses, through route, client, fake, UI and ADR), L4e-left-1 (Try again with the scaffold's push rules), L4-github-106 (Add to in the background without breaking the route's callers). The rest are one function, one sentence or one test each. Cut line, may end in not_done with the evidence: L4-github-106, L4e-left-4, -5, -6, -7, -8, -9, -10, -11, L4c-left-4 and L4-github-124 (b)(c). Never in not_done: L4-github-130 (the owner's decision), L4e-left-1 (the default of OQ-L4e-1), L4e-left-2 (a push git refuses) and L4e-left-3 (a promise the app never keeps), and every security and money rule.",
-   "sub_run": "L4h",
-   "wave": 32,
+   "sub_run": "L4i",
+   "wave": 33,
    "items": [
     "L4-github-130",
     "L4e-left-1",
@@ -5785,13 +5887,24 @@
    "wave": 32,
    "keys": [
     "l4-chat-carried",
-    "l4-selftasks-carried",
-    "l4-github-carried"
+    "l4-selftasks-carried"
    ],
    "depends_on_sub_runs": [
     "L4g"
    ],
-   "note": "Base: L4g merged. One area alone and last (the plan check, D-L4-25): L4-selftasks-123, run C's nine carried chat items (C6L-19), moved out of l4-selftasks-chat so that area stays one fixer's run; it shares task.ts with l4-starts-sessions and agent.ts, task-proposal.ts and session-review.ts with earlier areas, so it pairs with none. After its merge: push, CI and the Desktop app workflow green, then phase F (final_check). Then l4-github-carried (added 2026-11-23 after L4e): run L4 sub-run L4e's GitHub leftovers, with the owner's Close button (L4-github-130, never cut); it runs after l4-chat-carried in the same sub-run and touches GitHub files only that area does not. Then l4-selftasks-carried (added 2026-11-23 after L4f): L4f's leftovers, between l4-chat-carried and l4-github-carried."
+   "note": "Base: L4g merged. One area alone and last (the plan check, D-L4-25): L4-selftasks-123, run C's nine carried chat items (C6L-19), moved out of l4-selftasks-chat so that area stays one fixer's run; it shares task.ts with l4-starts-sessions and agent.ts, task-proposal.ts and session-review.ts with earlier areas, so it pairs with none. After its merge: push, CI and the Desktop app workflow green, then L4i. (Sub-run split 2026-11-23 after L4g: l4-github-carried moved to L4i with l4-starts-carried.)"
+  },
+  {
+   "name": "L4i",
+   "wave": 33,
+   "keys": [
+    "l4-starts-carried",
+    "l4-github-carried"
+   ],
+   "depends_on_sub_runs": [
+    "L4h"
+   ],
+   "note": "Base: L4h merged. Two areas, sequential: l4-starts-carried (L4g's leftovers and the earlier rounds' start and credential leftovers) then l4-github-carried (L4e's leftovers with the owner's Close button, L4-github-130, never cut). They share few files (the Overview, the fake daemon). After its merge: push, CI and the Desktop app workflow green, then wave 8 and phase F (final_check)."
   }
  ],
  "merge_order": [
@@ -5807,6 +5920,7 @@
   "l4-starts-sessions",
   "l4-chat-carried",
   "l4-selftasks-carried",
+  "l4-starts-carried",
   "l4-github-carried"
  ],
  "shared_files": [

@@ -174,3 +174,8 @@
 2026-11-23T12:43:46Z L4f review saved; fixup running (wt -3).
 2026-11-23T14:11:30Z L4f fixup saved (dfa3477, all 5 blocking fixed); merge stage running (local merge 987614d); worktrees removed.
 2026-11-23T14:29:29Z L4f merged+pushed at 987614d (signed; validation + smoke green). Leftovers: L4-selftasks-129 -> l4-chat-carried; new area l4-selftasks-carried (11 items) in L4h. L4g args built.
+2026-11-23T15:34:57Z CI 333 green at 987614d; Desktop 89 failed on Windows only: real-daemon 'start session with a note' 404 again (CI-flake-1, being fixed in L4g now). Linux desktop build green.
+2026-11-23T17:06:59Z L4g fix saved (b306883); review running (wt -2).
+2026-11-23T17:48:49Z L4g review saved; fixup running (wt -3).
+2026-11-23T18:29:53Z L4g fixup saved (8a611d1, both blocking fixed); merge stage running (local merge 3e1ab9d); worktrees removed.
+2026-11-23T18:39:53Z L4g merged+pushed at 3e1ab9d (signed; validation + smoke green). Leftovers: new area l4-starts-carried (19 items, 6 never cut); last sub-run split: L4h = chat-carried + selftasks-carried, L4i = starts-carried + github-carried. L4h args built.
