@@ -473,7 +473,7 @@ describe("l4-chat-carried, run L4: a split asked for a closed project's task (C4
   // task.split is not among the commands a closed project still answers (OPEN_ON_A_CLOSED_PROJECT):
   // chat's split of a task left on Kite club after the join is refused in the same sentence as
   // any other new work, and nothing is split.
-  it("from chat and from the app: '\"Kite club\" joined \"Site\", so its work runs there.', nothing written", async () => {
+  it('from chat and from the app: \'"Kite club" joined "Site", so its work runs there.\', nothing written', async () => {
     const w = await world();
     w.ports.projectJoin = joinPort(w);
     const { site, kite } = await seedPair(w);

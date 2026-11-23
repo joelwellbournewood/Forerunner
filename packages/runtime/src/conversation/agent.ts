@@ -3023,7 +3023,11 @@ export class ConversationAgent {
     return null;
   }
 
-  private trueLine(results: readonly CommandResultView[], did: TurnDid, kind: ReplyClaim["kind"]): string {
+  private trueLine(
+    results: readonly CommandResultView[],
+    did: TurnDid,
+    kind: ReplyClaim["kind"],
+  ): string {
     const changes = results
       .filter((r) => r.status === "done" || r.status === "partial")
       .map((r) => this.sentenceOf(r, "Done"));
