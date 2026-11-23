@@ -397,7 +397,7 @@ describe("d1109-selftasks-run, run C: the fence (ST-8)", () => {
     const f = await fence(w, [{ kind: "edit", task: "Their task", title: "Mine now", why }]);
     expect(f.changes).toEqual([]);
     expect(f.refused).toEqual([
-      { what: 'the edit of "Their task"', reason: '"Their task" is no task of Quote page' },
+      { what: 'the change to "Their task"', reason: '"Their task" is no task of Quote page' },
     ]);
   });
 
@@ -472,6 +472,14 @@ describe("d1109-selftasks-run, run C: the fence (ST-8)", () => {
       // l4-selftasks-111: no possessive after a quoted name.
       `the first part keeps the specialist of "Style the page"`,
     ]);
+    // l4-selftasks-carried (L4b-left-3): what each change asked for, in words (Details' "Left
+    // out: ..."): no "the edit of", and no "a settings" for a kind the check does not know.
+    expect(f.refused.map((r) => r.what)).toEqual([
+      'the change to "Publish"',
+      'the change to "Publish"',
+      "a change",
+      'splitting "Style the page"',
+    ]);
     expect(f.changes).toEqual([]);
   });
 
@@ -504,7 +512,7 @@ describe("d1109-selftasks-run, run C: the fence (ST-8)", () => {
     const e = await fence(w, edits);
     expect(e.changes.length).toBe(12);
     expect(e.refused).toEqual([
-      { what: 'the edit of "Publish"', reason: "a check makes at most 12 changes" },
+      { what: 'the change to "Publish"', reason: "a check makes at most 12 changes" },
     ]);
   });
 

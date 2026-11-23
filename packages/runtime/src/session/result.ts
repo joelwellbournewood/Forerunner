@@ -223,7 +223,7 @@ export function taskCheckedLine(
 
 /**
  * l4-selftasks-104: what a check's fence and the commands refused, as one Details line ('Left
- * out (and 1 more): the add of "Write thanks.html": "Write book.html" was not added.'), the
+ * out (and 1 more): adding "Write thanks.html": "Write book.html" was not added.'), the
  * words chat's `fixLeftOut` says; null when nothing was refused. Before, the refusals were only
  * in the event's payload and the person never read them.
  */
