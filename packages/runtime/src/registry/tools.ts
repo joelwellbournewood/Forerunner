@@ -69,6 +69,29 @@ export const CLAUDE_CODE_TOOL_EQUIVALENTS: Readonly<Record<string, string>> = Ob
   WebSearch: WEB_SEARCH_TOOL,
 });
 
+/**
+ * l4-selftasks-chat (L4-other-1, D-1; ADR 0109): whether a registry entry's specialist writes no
+ * file: none of its `allowed_tools` maps to `write_file` (a `cc:` name through the table above,
+ * a Forerunner name as it is). Decided from the registry, never from a name: today only the
+ * reviewer. An entry with no tools at all is not said to write no file (it does nothing here).
+ */
+export function writesNoFile(allowedTools: readonly string[]): boolean {
+  if (!allowedTools.length) return false;
+  return !allowedTools.some((t) => {
+    const name = t.startsWith("cc:")
+      ? Object.hasOwn(CLAUDE_CODE_TOOL_EQUIVALENTS, t.slice(3))
+        ? CLAUDE_CODE_TOOL_EQUIVALENTS[t.slice(3)]
+        : undefined
+      : t;
+    return name === "write_file";
+  });
+}
+
+/** D-2: New task's and Edit's line under Who does it for such a specialist (design §5). */
+export function writesNoFileLine(specialist: string): string {
+  return `The ${specialist} writes no file: its findings are its report, which you read in the task's drawer.`;
+}
+
 /** The loop driver's built-in for one Claude Code tool name (without the prefix), if any. */
 function equivalentOf(ccTool: string): string | undefined {
   return Object.hasOwn(CLAUDE_CODE_TOOL_EQUIVALENTS, ccTool)

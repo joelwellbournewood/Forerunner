@@ -76,7 +76,13 @@ export function useWhoChoices(
   open: boolean,
   projectId?: string,
   words?: { title: string; outcome: string; criteria: string[] },
-): { value: string; label: string; limitation?: string | null; runsOn?: string | null }[] {
+): {
+  value: string;
+  label: string;
+  limitation?: string | null;
+  runsOn?: string | null;
+  writesNoFile?: string | null;
+}[] {
   const client = useClient();
   // TR-11: the words typed so far decide the runs-on line too (a task whose words need the
   // person's answers runs where it can ask them); asked again a moment after typing stops.
@@ -102,6 +108,8 @@ export function useWhoChoices(
     limitation: s.limitation ?? null,
     // Where it runs for this project and why (U-078, the plan card's words), said when chosen.
     runsOn: s.runsOn?.line ?? null,
+    // L4-other-1 (ADR 0109): a specialist that writes no file says so, beside the line above.
+    writesNoFile: s.writesNoFile ?? null,
   }));
   return [
     { value: WHO_AGENT, label: "Let the agent choose" },
@@ -373,6 +381,11 @@ export function NewTaskDialog({
         ) : whoLimitation ? (
           <p className="text-sm text-amber-800 dark:text-amber-200" data-testid="task-who-note">
             {`${whoLimitation}: the ${who} works only from the project's files.`}
+          </p>
+        ) : null}
+        {whoChoice?.writesNoFile ? (
+          <p className="text-sm" data-testid="task-who-writes-no-file">
+            {whoChoice.writesNoFile}
           </p>
         ) : null}
         {who === WHO_PERSON ? (

@@ -62,8 +62,16 @@ export function signoffReasonOf(specialist: string | null | undefined): string |
  * outcome described in the goal is achieved and verified.", which the critic marked met though
  * nothing was verified): the outcome itself, to be shown by the work, not by the report.
  */
-export function outcomeCriterion(outcome: string): string {
+export function outcomeCriterion(outcome: string, opts: { writesNoFile?: boolean } = {}): string {
   const o = outcome.trim().replace(/\s+/g, " ");
+  // l4-selftasks-chat (L4-other-1, D-4; ADR 0109): a specialist that writes no file (the
+  // reviewer) is held to its report, which stands for any file the outcome names; before, the
+  // brief and the critic asked it for "a file ... not only the report", and a review asking for
+  // review.md failed for a file its prompt forbids it to write.
+  if (opts.writesNoFile)
+    return o
+      ? `The report shows this outcome (this specialist writes no file, so a file named here is met by its report): ${o.slice(0, 400)}`
+      : "The report shows what the task's title asks for (this specialist writes no file, so a file named there is met by its report).";
   return o
     ? `The work itself shows this outcome (a file, a page or an output, not only the report): ${o.slice(0, 400)}`
     : "The work itself shows what the task's title asks for (a file, a page or an output, not only the report).";

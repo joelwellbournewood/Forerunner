@@ -214,7 +214,7 @@ import {
   WEB_SEARCH_TOOL,
 } from "../registry/index.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
-import { WEB_FETCH_TOOL } from "../registry/tools.ts";
+import { WEB_FETCH_TOOL, writesNoFile } from "../registry/tools.ts";
 import { CLAUDE_CODE_PREFIX } from "../registry/types.ts";
 import { DesktopPresence, RemoteCommandWatcher, registerDesktopDevice } from "../remote/index.ts";
 import type { EngineDetection } from "../sandbox/detect.ts";
@@ -2531,6 +2531,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     clock,
     tokens,
     driver,
+    // L4-other-1 (D-4): the brief's and the review's criterion for a specialist that writes no file.
+    writesNoFile: (name) => {
+      const d = registry.specialists.get(name) ?? registry.specialists.get(canonicalSpecialistName(name));
+      return d ? writesNoFile(d.allowed_tools ?? []) : false;
+    },
     // The critic's calls follow the person's order for purpose `critic` (ADR 0100).
     providers: criticProviders,
     providerName: criticProvider?.name ?? "none",

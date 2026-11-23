@@ -23,6 +23,7 @@ import {
 } from "../models/run-settings.ts";
 import { DEFAULT_PROVIDER_CAPABILITIES, type ProviderCapabilities } from "../provider/types.ts";
 import { needsWeb } from "../registry/alternates.ts";
+import { writesNoFile, writesNoFileLine } from "../registry/tools.ts";
 import type { SpecialistDef } from "../registry/types.ts";
 import type {
   CredentialRunsOn,
@@ -193,6 +194,8 @@ export function buildModelSettingsView(input: ModelSettingsViewInput): ModelSett
           ? NO_WEB_LIMITATION
           : null,
       ...(input.runsOn ? { runsOn: input.runsOn.get(d.name) ?? null } : {}),
+      // L4-other-1 (D-2, D-3): said under Who does it for a specialist that writes no file.
+      writesNoFile: writesNoFile(d.allowed_tools ?? []) ? writesNoFileLine(d.name) : null,
       settings: settingsView(
         resolveRunSettings({
           mode: specialistMode(d.name),

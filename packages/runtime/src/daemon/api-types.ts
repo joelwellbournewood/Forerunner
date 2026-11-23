@@ -2502,6 +2502,13 @@ export const ModelSettingsView = z.object({
        * saved credential; an older daemon leaves it out.
        */
       runsOn: CredentialRunsOn.nullable().optional(),
+      /**
+       * l4-selftasks-chat (L4-other-1, D-2/D-3; ADR 0109): for a specialist whose registry entry
+       * writes no file (today the reviewer), New task's and Edit's line under Who does it: "The
+       * reviewer writes no file: its findings are its report, which you read in the task's
+       * drawer."; null for every specialist with a write tool. An older daemon leaves it out.
+       */
+      writesNoFile: z.string().nullable().optional(),
     }),
   ),
   /** Why the principal's `model_config` was ignored, when it does not validate. */

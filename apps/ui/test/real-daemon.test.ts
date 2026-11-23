@@ -26810,3 +26810,228 @@ describe("l4-github-merge, run L4", () => {
     }
   }, 240_000);
 });
+
+describe("l4-selftasks-chat, run L4", () => {
+  // The owner (run C decision 52): "Changes the person names in their own words stay the
+  // person's instruction"; 2026-11-17: every chat read-back "stays open in chat and the Inbox
+  // until the person presses Yes or No". ADR 0109: a reviewer's findings are its report.
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+  const NO_FILE =
+    "The reviewer writes no file: its findings are its report, which you read in the task's drawer.";
+
+  async function open(prefix: string, opts: { clock?: SystemClock | SimulatedClock; home?: string } = {}) {
+    const dir = opts.home ?? mkdtempSync(join(tmpdir(), prefix));
+    if (!opts.home) homes.push(dir);
+    const log = new ModelCallLog({ file: join(dir, "model-calls.jsonl") });
+    const provider = createRolePlayer(benchOptionsFromEnv({ FORERUNNER_BENCH_DELAY_MS: "0" }, log));
+    const specialistCalls: ModelRequest[] = [];
+    const criticCalls: ModelRequest[] = [];
+    const stream = provider.stream.bind(provider);
+    provider.stream = (req) => {
+      const role = detectRole(req).role;
+      if (role === "specialist")
+        specialistCalls.push({ ...req, messages: structuredClone(req.messages) });
+      if (role === "critic") criticCalls.push({ ...req, messages: structuredClone(req.messages) });
+      return stream(req);
+    };
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: dir },
+      dirs: appDirs({ env: { FORERUNNER_HOME: dir } }),
+      config: null,
+      clock: opts.clock ?? new SystemClock(),
+      stateUrl: `sqlite:${join(dir, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const chat = (projectId: string, text: string) =>
+      client.chat({ humanId: me.id, agentId, projectId, projectTab: true, text, source: "text" });
+    return { rt, client, me, agentId, chat, home: dir, specialistCalls, criticCalls };
+  }
+
+  const said = (req: ModelRequest | undefined): string =>
+    JSON.stringify([req?.system ?? "", req?.messages ?? []]);
+
+  it("L4-other-1: GET /settings/models says the reviewer writes no file (D-2, D-3), null for every specialist with a write tool", async () => {
+    const a = await open("fr-ui-real-l4-stc-who-");
+    try {
+      const project = await a.client.createProject({ name: "Launch", goal: "A launch plan" });
+      const models = await a.client.modelSettings(undefined, project.id, {
+        title: "Review the plan",
+        outcome: "review.md lists the gaps and risks found in README.md",
+        criteria: [],
+      });
+      const lines = Object.fromEntries(models.specialists.map((s) => [s.name, s.writesNoFile]));
+      expect(lines.reviewer).toBe(NO_FILE);
+      expect(lines.coder).toBeNull();
+      const others = Object.entries(lines).filter(([n]) => n !== "reviewer");
+      expect(others.length).toBeGreaterThan(3);
+      expect(others.every(([, l]) => l === null)).toBe(true);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+
+  it("L4-other-1 (D-4): a reviewer task with no criteria is briefed and reviewed against its report; a coder task keeps 'not only the report'", async () => {
+    const a = await open("fr-ui-real-l4-stc-review-");
+    try {
+      const project = await a.client.createProject({ name: "Launch", goal: "A launch plan" });
+      const outcome = "review.md lists the gaps and risks found in README.md";
+      const task = await a.client.createTask(project.id, {
+        title: "Review the launch plan",
+        outcome,
+        acceptanceCriteria: [],
+        riskTier: 1,
+        priority: "high",
+        status: "ready",
+        specialist: "reviewer",
+      });
+      const started = await a.client.startSession({
+        agentId: a.agentId,
+        projectId: project.id,
+        trigger: "manual",
+      });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () => (await a.client.session(sessionId)).status !== "running",
+        "the reviewer's session to end",
+        async () => (await a.client.session(sessionId)).status,
+        30_000,
+      );
+      await settleSessions(a.rt);
+      const criterion = `The report shows this outcome (this specialist writes no file, so a file named here is met by its report): ${outcome}`;
+      expect(said(a.specialistCalls[0])).toContain(criterion);
+      expect(said(a.specialistCalls[0])).not.toContain("not only the report");
+      expect(a.criticCalls.length).toBeGreaterThan(0);
+      expect(said(a.criticCalls[0])).toContain(criterion);
+      expect(said(a.criticCalls[0])).not.toContain("not only the report");
+      expect((await a.client.task(task.id)).task.title).toBe("Review the launch plan");
+      // Every other specialist keeps today's criterion byte for byte.
+      const coderOutcome = "notes.md holds the plan";
+      await a.client.createTask(project.id, {
+        title: "Write the notes",
+        outcome: coderOutcome,
+        acceptanceCriteria: [],
+        riskTier: 1,
+        priority: "high",
+        status: "ready",
+        specialist: "coder",
+      });
+      const before = a.specialistCalls.length;
+      const next = await a.client.startSession({
+        agentId: a.agentId,
+        projectId: project.id,
+        trigger: "manual",
+      });
+      await eventually(
+        async () => (await a.client.session(next.session?.id ?? "")).status !== "running",
+        "the coder's session to end",
+        async () => (await a.client.session(next.session?.id ?? "")).status,
+        30_000,
+      );
+      await settleSessions(a.rt);
+      expect(said(a.specialistCalls[before])).toContain(
+        `The work itself shows this outcome (a file, a page or an output, not only the report): ${coderOutcome}`,
+      );
+    } finally {
+      await a.rt.close();
+    }
+  }, 120_000);
+
+  it("L4-selftasks-116: a change the model reads back on the person's line, confirmed with yes, is the person's on GET /changes and is no GET /inbox Update", async () => {
+    const a = await open("fr-ui-real-l4-stc-own-");
+    try {
+      const project = await a.client.createProject({ name: "Bike shop", goal: "A shop page" });
+      await a.client.createTask(project.id, {
+        title: "Write the contact page",
+        outcome: "contact.html exists",
+        acceptanceCriteria: [],
+        riskTier: 1,
+        priority: "normal",
+        status: "ready",
+      });
+      const line = 'tool: task_update {"task": "Write the contact page", "priority": "high"}';
+      const asked = await a.chat(project.id, line);
+      expect(asked.pendingConfirmation?.readback).toBe(
+        'Change "Write the contact page": priority to High?',
+      );
+      // GET /commands/pending: a chat read-back waits until it is answered (no expiry).
+      const pending = await a.client.pendingCommands();
+      expect(pending.map((p) => [p.readback, p.expiresAt])).toEqual([
+        ['Change "Write the contact page": priority to High?', null],
+      ]);
+      const yes = await a.chat(project.id, "yes");
+      expect(yes.actions).toHaveLength(1);
+      const rows = (await a.client.changes({ projectId: project.id })).filter(
+        (r) => r.source === "chat",
+      );
+      expect(rows.map((r) => [r.byAgent, r.humanName, r.wordsUsed])).toEqual([
+        [false, "J", line],
+      ]);
+      const inbox = await a.client.inbox(a.me.id);
+      expect(inbox.messages.filter((m) => m.projectId === project.id)).toEqual([]);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+
+  it("L4-selftasks-117: a settings-screen card that still lapses after 10 minutes leaves one Update, an inbox event and a conversation event", async () => {
+    const clock = new SimulatedClock("2026-11-17T09:00:00Z");
+    const a = await open("fr-ui-real-l4-stc-lapse-", { clock });
+    try {
+      const project = await a.client.createProject({ name: "Bike shop", goal: "A shop page" });
+      let inboxEvents = 0;
+      a.rt.events.on("inbox", () => {
+        inboxEvents++;
+      });
+      const touched: (string | null)[] = [];
+      a.rt.conversation?.turnsOf().on((p) => touched.push(p));
+      const r = await a.client.executeCommands({
+        commands: [
+          { name: "budget.set", params: { scope: "session", amountChf: 20, project: project.id } },
+        ],
+        source: "ui",
+        projectId: project.id,
+      });
+      expect(r.status).toBe("pending");
+      expect(r.expiresAt).toBeTruthy();
+      const before = inboxEvents;
+      await clock.advance(10.5 * 60_000);
+      await eventually(
+        async () => inboxEvents > before,
+        "the lapse to send inbox.changed",
+        async () => inboxEvents,
+        10_000,
+      );
+      expect(touched).toContain(project.id);
+      const inbox = await a.client.inbox(a.me.id);
+      expect(inbox.requests.filter((x) => x.projectId === project.id)).toEqual([]);
+      expect(inbox.messages.filter((m) => m.projectId === project.id).map((m) => m.body)).toEqual(
+        [
+          "The change you asked for was not made: the session budget for Bike shop. Its card closed after 10 minutes without your yes; ask again if you still want it.",
+        ],
+      );
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+});

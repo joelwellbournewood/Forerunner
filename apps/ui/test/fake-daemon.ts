@@ -1384,10 +1384,34 @@ const WEB_SPECIALISTS = new Set(["researcher", "science-evaluator"]);
  * 'sites' the page reader runs on both credentials, so only an install without it is limited).
  */
 function withWebAccess(view: ModelSettingsView, web: boolean): ModelSettingsView {
-  for (const s of view.specialists)
+  for (const s of view.specialists) {
     s.limitation = WEB_SPECIALISTS.has(s.name) && !web ? NO_WEB_LIMITATION : null;
+    // l4-selftasks-chat (L4-other-1): the daemon's `writesNoFile` (registry/tools.ts): a
+    // specialist none of whose tools writes a file, in the daemon's words.
+    s.writesNoFile = WRITES_NO_FILE.has(s.name)
+      ? `The ${s.name} writes no file: its findings are its report, which you read in the task's drawer.`
+      : null;
+  }
   return view;
 }
+
+/**
+ * l4-selftasks-chat (L4-other-1): the registry's reviewer beside the fixture's specialists, as
+ * the real daemon lists it (a copy of the researcher's settings under the reviewer's name).
+ */
+function withReviewer(view: ModelSettingsView): ModelSettingsView {
+  const model = view.specialists.find((x) => x.name === "researcher");
+  if (model && !view.specialists.some((x) => x.name === "reviewer"))
+    view.specialists.push({
+      ...clone(model),
+      name: "reviewer",
+      description: "Reviews work and reports what it finds; writes no file.",
+    });
+  return view;
+}
+
+/** The registry's specialists with no write tool (the reviewer: cc:Read, cc:Bash, cc:Grep, cc:Glob). */
+const WRITES_NO_FILE = new Set(["reviewer"]);
 
 /**
  * The registry entries' tools the credential chooser reads (U-078), as `evals/registry` writes
@@ -1515,7 +1539,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         : {}),
     },
     desktopAllowlist: [{ app: "code" }],
-    modelSettings: withWebAccess(clone(MODEL_SETTINGS), !options.noWebAccess),
+    modelSettings: withWebAccess(withReviewer(clone(MODEL_SETTINGS)), !options.noWebAccess),
     acceptsTemperature: options.acceptsTemperature ?? true,
     voiceSessions: new Map(),
     nextVoiceLine: null,

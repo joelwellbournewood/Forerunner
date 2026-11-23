@@ -765,6 +765,11 @@ function EditTaskForm({
           </select>
         </Field>
       </div>
+      {who.find((w) => w.value === specialist)?.writesNoFile ? (
+        <p className="text-sm" data-testid="edit-who-writes-no-file">
+          {who.find((w) => w.value === specialist)?.writesNoFile}
+        </p>
+      ) : null}
       {raised ? (
         <p className="text-sm" data-testid="edit-full-review-note">
           {FULL_REVIEW_SPECIALISTS.get(specialist)} keeps the full review and your sign-off: saving

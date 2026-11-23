@@ -133,6 +133,11 @@ export interface CriticLoopDeps {
   context?: ContextManager;
   /** Lesson proposals (repeat findings) are recorded in critic memory through this. */
   memory?: Pick<MemoryPort, "record">;
+  /**
+   * l4-selftasks-chat (L4-other-1, D-4): whether a specialist writes no file (its registry entry,
+   * `writesNoFile`), so a task with no criteria is reviewed against its report, as its brief says.
+   */
+  writesNoFile?: (specialist: string) => boolean;
   /** Where `PrTaskExecutor` keeps worktrees (`<worktrees>/<task id>`), for the diff. */
   worktreeRoot?: string;
   /** The diff of the work under review; default: git in the worktree. Tests inject one. */
@@ -486,7 +491,11 @@ export class CriticLoop implements CriticPort {
     const evidence: ReviewEvidence = {
       acceptanceCriteria: task.acceptance_criteria.length
         ? task.acceptance_criteria
-        : [outcomeCriterion(task.outcome)],
+        : [
+            outcomeCriterion(task.outcome, {
+              writesNoFile: this.deps.writesNoFile?.(task.specialist ?? "") === true,
+            }),
+          ],
       brief: [`${task.title}: ${task.outcome}`, ...(continues ? [continues] : [])].join("\n"),
       ...(personGave ? { personGave } : {}),
       // W15-25: the site rule the run read pages under, which the critic judges a refusal by.

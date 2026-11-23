@@ -107,6 +107,7 @@ import {
   TOOL_UNMAPPED_AUDIT,
   WEB_FETCH_TOOL,
   WEB_SEARCH_TOOL,
+  writesNoFile,
 } from "../registry/tools.ts";
 import { CLAUDE_CODE_PREFIX } from "../registry/types.ts";
 import type { Sandbox } from "../sandbox/types.ts";
@@ -1156,7 +1157,11 @@ export class LoopTaskExecutor implements TaskExecutor {
       // The critic reviews against the same criterion (live2 #8: a generic one was "met").
       acceptanceCriteria: task.acceptance_criteria.length
         ? task.acceptance_criteria
-        : [outcomeCriterion(task.outcome)],
+        : [
+            outcomeCriterion(task.outcome, {
+              writesNoFile: writesNoFile(profileOf(defaultSpec).registryTools),
+            }),
+          ],
       budgetUsdMicro: Math.max(1, runCapUsdMicro),
       riskTier: task.risk_tier as 0 | 1 | 2 | 3,
       specialist: defaultSpec.name,
