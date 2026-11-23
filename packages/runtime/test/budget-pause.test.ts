@@ -562,6 +562,10 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     // was left of the cap: "This run may spend CHF 0.05, the rest of this month's cap: ..."; it
     // heard the wrap-up at CHF 0.04). l4c-workstate: the run is deterministic, so the summary
     // says this one sentence, exactly (L4-money-103 had accepted "paused at" too).
+    // fixup-l4c-workstate (the review of l4c-workstate): its two lines disagree today ("paused
+    // before ... ran out", then "Stopped at this month's cap"), design section 5 rule 4. That is
+    // the review of l4-money-pause's known outer-limit sibling, left for its own round: when it is
+    // fixed, this exact text changes with it.
     expect(summary).toBe(
       "\"Members page\" paused before this month's cap of CHF 0.10 ran out: it is ready again once that limit is raised or resets, for your next Start.\nStopped at this month's cap of CHF 0.10. CHF 0.04.",
     );

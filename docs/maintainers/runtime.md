@@ -2360,14 +2360,31 @@ budget-stop; the owner's decision of 2026-11-02).**
   or "remains", and nothing else; it replaced `WORK_STATE`, a list of a few work verbs, under which
   "Nothing the task requires has been tested", "Nothing the brief asks for is tested" and
   "Nothing the criteria require is in the repository" read as empty and the task went to review
-  instead of pausing. The words between the preposition and the noun in `ABOUT` are a closed list
-  too (`ABOUT_WORD`: "the", "this", "the task's", "acceptance", "the scope of" ...; before, any
+  instead of pausing (`saysOnlyNothingLeft`, fixup-l4c-workstate: what it is about says nothing
+  is left on its own only with a verb of need, "require", "ask for", or "for", "to meet"; a verb
+  that says what the set holds, "lists", "covers", "included", or a place, "in", "on", "from",
+  "against", needs a `LEFT` word, and a line that starts "none of" or "nothing of" is never this
+  form, so "None of the deliverables included", "Nothing the brief lists" and "None in the brief"
+  are items). The words between the preposition and the noun in `ABOUT` are a closed list too
+  (`ABOUT_WORD`: "the", "this", "the task's", "acceptance", "the scope of" ...; before, any
   words, so "Nothing in the code works for the task" read as empty), and a reason after
-  punctuation, in `NOTHING` and `RELATIVE_HEAD` alike, counts only when it says done
-  (`reasonSaysDone`: a word such as "met", "covers", "written", "opened"; no work still to come,
-  "remain", "pending", "left", "to do", "need to", "then"; no part that starts with an order,
-  "write ..."), so "Nothing for the criteria: tests and docs remain" and "Nothing the criteria
-  need: tests and docs" are items) and decides: a run is paused when it stopped
+  punctuation, in `NOTHING` and `RELATIVE_HEAD` alike, counts only when each of its parts (split
+  at punctuation and "and") is a closed done form (`reasonSaysDone`, `partSaysDone`,
+  fixup-l4c-workstate): a state (`IS_DONE`: "both are met", "notes.md is written", "all met"), a
+  subject that does it to all of it (`DOES_ALL`: "hosts.md covers each of them", "each listed
+  page gives its address", "the file lists every page it names"), `ALL_PASS` ("all tests pass"),
+  or `NONE_LEFT` ("nothing remains", "no work left", "no outstanding items"), with no qualifier
+  (`QUALIFIED`: "mostly", "half", "80%", "some", "two of the three", "only", "a draft"), exception
+  or condition (`EXCEPT_OR_IF`: "apart from", "save for", "bar", "minus", "once", "when", "if",
+  "until"), future (`FUTURE`: "to be", "will", "next", "later", "awaiting", "to add"), work still
+  to come (`STILL_TO_COME`), "nothing" or "nobody" as what is done (`NOBODY`) or order (`ORDER`);
+  anything else is an item. Before (l4c-workstate) a reason counted with any done word and none
+  of a few words to refuse, so "Nothing for the task: mostly done", "... done apart from the
+  tests" and "... the code is written, docs next" read as empty and, about the whole set, made
+  the next item a note. The items under a heading line that reads as nothing ("Left to do:
+  nothing the criteria require." over "- Add the tests") are read too, a note beside a whole-set
+  "nothing" and work beside a bare one (before, dropped); text on the heading line starts the
+  list, so a blank line after it ends it) and decides: a run is paused when it stopped
   at a budget of any level (`stoppedBy: "budget"`), or when it heard the wrap-up in this run and
   listed at least one item (`stoppedBy: "wrap_up"`); a run that ends normally without a wrap-up,
   or after one with nothing left, is reviewed as usual. The result is `TaskExecutionResult`

@@ -79,9 +79,10 @@ const MAX_ITEM_CHARS = 200;
  * left reads as empty; when unsure, a line is work left. So the words between "for", "in" or "to
  * meet" and what the line is about are a closed list (`ABOUT_WORD`: "the", "this", "the task's",
  * "acceptance", "the scope of" ...; before, any words: "Nothing in the code works for the task"
- * read as nothing), and a reason after punctuation counts only when it says the work is done and
- * names none left (`reasonSaysDone`; before, any reason: "Nothing for the criteria: tests and
- * docs remain" read as nothing).
+ * read as nothing), and a reason after punctuation counts only when each of its parts is a
+ * closed form that says the work is done (`reasonSaysDone`, fixup-l4c-workstate; before, any
+ * reason: "Nothing for the criteria: tests and docs remain" read as nothing, and in l4c-workstate
+ * any reason with a done word and none of a few words: "Nothing for the task: mostly done").
  */
 const ABOUT_WORD = String.raw`(?:the|this|that|these|its|their|our|my|your|all|every|each|both|any|whole|full|entire|original|stated|listed|given|agreed|acceptance|first|second|third|fourth|fifth|last|other|remaining|task'?s|brief'?s|project'?s|two|three|four|five|six|\d+|of|scope\s+of)`;
 const NOUN = `(?:criteri(?:a|on)|brief|task|scope|requirements?|deliverables?)`;
