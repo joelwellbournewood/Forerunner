@@ -21430,11 +21430,17 @@ describe("d1109-run-visible, run C", () => {
       expect(await texts()).toEqual([
         'Quote page · the coder works on "Write A" · then Garden site',
       ]);
-      // V-3: Garden site's own line says when it starts, and the screens hear that it changed.
+      // V-3: Garden site's own line says when it starts, and the screens hear that it changed;
+      // l4-starts-sessions (L4-money-209): with Cancel, which drops that one start.
       expect((await client.project(garden.id)).statusLine).toEqual({
         kind: "paused",
         text: 'Starts after the session on "Quote page"',
-        action: null,
+        action: {
+          kind: "cancel",
+          label: "Cancel",
+          to: null,
+          explain: "Cancel: it does not start after that session; its tasks wait for your Start.",
+        },
       });
       await eventually(
         async () => changed.filter((id) => id === garden.id).length > heardBefore,
