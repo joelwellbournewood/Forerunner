@@ -4849,7 +4849,9 @@ parsed into commands first (no model call), a combined request becomes one chang
 back in the reply (`pendingConfirmation` with the commands and whether a yes or the paired
 device confirms), a plain "yes"/"ja" or "no" answers the card without a model call, "undo"
 undoes the latest undoable change, the parser's questions (an ambiguous project, a budget
-without a time) are asked with options (`question`), text that is data (the envelope) is
+without a time) are asked with options (`question`; the reply text adds " Options: …" only
+when the question does not already name every option, so "Which project: Notes or Site?" is
+read once, l4-chat-carried L4c-left-9), text that is data (the envelope) is
 refused without a model call, and only a sentence no pattern understands goes to the model,
 which is offered the registry's command tools and nothing else. A stop in any clause of the
 line runs at once even when the rest was not understood ("stop and tell me what happened":

@@ -24979,7 +24979,14 @@ describe("l4-chat-answers, run L4", () => {
       const titles = async (id: string) => (await a.client.tasks(id)).map((t) => t.title);
       // Before any switch, "there" names no project: chat asks which.
       const asked = await a.chat(notes.id, "add a task there: write the about page");
-      expect(asked.reply).toBe("Which project: Notes or Site? Options: Notes, Site.");
+      // l4-chat-carried (L4c-left-9): the question names its options, so they are not read
+      // twice (as text and as buttons); voice and the phone read the question alone.
+      expect(asked.reply).toBe("Which project: Notes or Site?");
+      expect(asked.question?.options).toEqual(["Notes", "Site"]);
+      // A question that does not name its options keeps them in the text.
+      const budget = await a.chat(notes.id, "set the project budget to 5 chf until friday");
+      expect(budget.reply).toContain("Which budget did you mean? Options: The session budget");
+      expect(budget.question?.options).toHaveLength(3);
       expect(await titles(notes.id)).toEqual([]);
       const added = await a.chat(notes.id, "add a task to Site: write the shop page");
       expect(added.reply).toContain('"Write the shop page" to Site');
@@ -25187,7 +25194,7 @@ describe("l4-chat-answers, run L4", () => {
         "Fix the login: users cannot sign in",
       ]);
       const asked = await a.chat(notes.id, "add a task there: write the shop page");
-      expect(asked.reply).toBe("Which project: Notes or Site? Options: Notes, Site.");
+      expect(asked.reply).toBe("Which project: Notes or Site?");
       expect(asked.question?.options).toEqual(["Notes", "Site"]);
       expect(await titles(a.client, site.id)).toEqual([]);
       expect(a.chatCalls()).toHaveLength(0);

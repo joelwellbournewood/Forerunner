@@ -4630,7 +4630,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const ask = `Which project: ${names.slice(0, -1).join(", ")} or ${names.at(-1)}?`;
       return {
         ...base,
-        reply: `${ask} Options: ${names.join(", ")}.`,
+        reply: ask,
         question: { text: ask, options: names },
       };
     }

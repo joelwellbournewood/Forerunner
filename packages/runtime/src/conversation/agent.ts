@@ -1433,7 +1433,12 @@ export class ConversationAgent {
       // to the model with the command tools instead of the parser's fallback question.
       if (parsed.question && parsed.matched !== "none") {
         const q = parsed.question;
-        const reply = `${q.text}${q.options.length ? ` Options: ${q.options.join(", ")}.` : ""}`;
+        // l4-chat-carried (L4c-left-9): a question that names its options ("Which project: Notes
+        // or Site?") is not followed by them again: the buttons show them, and voice and the
+        // phone read the text. One that does not name them ("Which budget did you mean?") keeps
+        // them in the text.
+        const named = q.options.every((o) => q.text.toLowerCase().includes(o.toLowerCase()));
+        const reply = `${q.text}${q.options.length && !named ? ` Options: ${q.options.join(", ")}.` : ""}`;
         return finish(reply, [], { question: q });
       }
       if (parsed.commands.length) {
