@@ -702,3 +702,56 @@ describe("l4-chat-carried, run L4: a split's Undo after a later change (C4-left-
     await w.store.close();
   });
 });
+
+describe("l4-chat-carried, run L4: the Undo of a set names what is there after it (C4-left-5)", () => {
+  // Design section 5 rule 4 (true now): the Undo of a split plus a step before its first part
+  // said '"Style the layout" waits for what it waited for before', a title gone once the split is
+  // undone. It names the task as it is after the Undo.
+  it('a split and a step before its first part, undone together after a restart: the sentence names "Style the page"', async () => {
+    const w = await world();
+    const s = await runningSession(w);
+    const style = await seed(w, "Style the page", { acceptance_criteria: ["a", "b", "c"] });
+    const composed = done(
+      await w.executor.compose(
+        [
+          {
+            name: "task.split",
+            params: {
+              task: style.id,
+              parts: [
+                { title: "Style the layout", acceptance_criteria: ["a", "b"] },
+                { title: "Style the colours", acceptance_criteria: ["c"] },
+              ],
+              order: "in_turn",
+            },
+          },
+          {
+            name: "task.create",
+            params: {
+              title: "Pick the grid",
+              outcome: "The grid is picked",
+              acceptance_criteria: ["a grid of 12 columns"],
+              before: [style.id],
+              specialist: "coder",
+            },
+          },
+        ],
+        sessionCtx(w, s.id),
+      ),
+    );
+    expect(composed.sentence).toBe(
+      'Split "Style the page" into "Style the layout" and "Style the colours". Added "Pick the grid" before "Style the layout".',
+    );
+    const u = done(await restarted(w).undo(composed.changeLogId, w.ctx({ source: "ui" })));
+    expect(u.sentence).toBe(
+      'Undone: "Style the page" is one task again; cancelled "Pick the grid"; "Style the page" waits for what it waited for before.',
+    );
+    expect((await w.store.task.mustGet(style.id)).title).toBe("Style the page");
+    // What Changes shows for the Undo is that sentence.
+    const rows = await w.store.changeLog.forProject(w.pharma.id);
+    expect(
+      rows.find((r) => r.commands.some((c) => (c as { name?: string }).name === "undo"))?.sentence,
+    ).toBe(u.sentence);
+    await w.store.close();
+  });
+});

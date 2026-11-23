@@ -20873,7 +20873,7 @@ describe("d1109-selftasks-run, run C", () => {
         answer: third?.options[0],
       });
       expect(applied.outcome).toBe(
-        `Changed 1 task; your next Start runs them. Left out: ${SPLIT_LINE.replace(/\.$/, "")}: "Style the page" is cancelled, so it is not split.`,
+        `Changed 1 task; your next Start runs it. Left out: ${SPLIT_LINE.replace(/\.$/, "")}: "Style the page" is cancelled, so it is not split.`,
       );
       expect((await a.client.tasks(w.project.id)).map((t) => t.title)).toContain(
         "Check that the links work",
@@ -28418,7 +28418,7 @@ describe("l4-chat-carried, run L4", () => {
       const card = await cardOf(b, cardId);
       expect(card?.status).toBe("answered");
       expect(card?.outcome).not.toBe("Making the changes…");
-      expect(card?.outcome).toMatch(/^Changed 1 task; your next Start runs/);
+      expect(card?.outcome).toBe("Changed 1 task; your next Start runs it.");
       expect((await b.client.tasks(w.project.id)).map((t) => [t.title, t.status])).toEqual([
         ["Style the page: layout", "ready"],
         ["Style the page: colours", "ready"],
@@ -28433,7 +28433,7 @@ describe("l4-chat-carried, run L4", () => {
     const c = await open(home, true);
     try {
       expect((await splitRows(c, w.project.id)).length).toBe(1);
-      expect((await cardOf(c, cardId))?.outcome).toMatch(/^Changed 1 task; your next Start runs/);
+      expect((await cardOf(c, cardId))?.outcome).toBe("Changed 1 task; your next Start runs it.");
     } finally {
       await c.rt.close();
     }
@@ -28453,7 +28453,7 @@ describe("l4-chat-carried, run L4", () => {
         version: card?.version ?? 0,
         answer: card?.options[0],
       });
-      expect(answered.outcome).toMatch(/^Changed 1 task; your next Start runs/);
+      expect(answered.outcome).toBe("Changed 1 task; your next Start runs it.");
       // The crash came after the changes and before the card's outcome was written: the row as
       // it was right after the mark.
       const row = await a.rt.store.humanRequest.mustGet(cardId);
@@ -28473,7 +28473,7 @@ describe("l4-chat-carried, run L4", () => {
     }
     const b = await open(home, true);
     try {
-      expect((await cardOf(b, cardId))?.outcome).toMatch(/^Changed 1 task; your next Start runs/);
+      expect((await cardOf(b, cardId))?.outcome).toBe("Changed 1 task; your next Start runs it.");
       const rows = await splitRows(b, w.project.id);
       expect(rows.map((r) => [r.undoable, r.wordsUsed])).toEqual([[true, "Make these changes"]]);
       expect((await b.client.tasks(w.project.id)).map((t) => t.title)).toEqual([

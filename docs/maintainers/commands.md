@@ -854,7 +854,11 @@ run C").
   and strips `planFix`).
 - **A set's Undo** in one sentence: when every command of a composed row words its own Undo,
   the executor joins them ('Undone: "Style the page" is one task again; cancelled the task
-  "Check the links" you created.'); else the card's "<what> is back to <old value>".
+  "Check the links" you created.'); else the card's "<what> is back to <old value>". A step of
+  the set that renamed a task (a split's first part, a title edit) gets its old title back with
+  the Undo, so the other steps' words name the task as it is after it (l4-chat-carried,
+  C4-left-5: '...; cancelled "Pick the grid"; "Style the page" waits for what it waited for
+  before.', never the first part's title that no longer exists; `stepWords`).
 
 Tests: `test/selftasks-run.test.ts` (ST-2, ST-3, ST-5), `test/registry.test.ts` (no
 `task_split` tool).

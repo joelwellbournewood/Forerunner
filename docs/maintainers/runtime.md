@@ -8235,7 +8235,9 @@ and fixes it as the autonomy level allows. The pieces:
   each change checked again on the tasks now, a change that no longer applies left out and
   named; the approved new tasks join a running session by the admit rule; no answer starts one.
   The card's words: `daemon/task-proposal-words.ts` (import-free; the fake daemon reads it) and
-  `request-words.ts`'s `taskProposalCard`.
+  `request-words.ts`'s `taskProposalCard`. Its Done line agrees with the count ('Changed 1 task;
+  your next Start runs it.', 'the session takes it if it fits'; l4-chat-carried, C4-left-5), and
+  a set that only dropped duplicates promises no Start ('Changed 1 task.').
 - **A crash between the mark and the apply** (l4-chat-carried, C4-left-7): the card is marked
   `outcome: "applying"` with `applying_at` before its changes are made, so a second sync never
   applies it twice. A card found at `applying` that this process is not applying now

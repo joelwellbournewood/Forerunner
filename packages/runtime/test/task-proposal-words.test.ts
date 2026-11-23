@@ -14,7 +14,7 @@ describe("the suggestion card's words (d1109-selftasks-run)", () => {
       "Changed 2 tasks; the session takes them if they fit.",
     );
     expect(proposalOutcome({ outcome: "applied", changed: 1, running: false })).toBe(
-      "Changed 1 task; your next Start runs them.",
+      "Changed 1 task; your next Start runs it.",
     );
     expect(
       proposalOutcome({
@@ -27,7 +27,7 @@ describe("the suggestion card's words (d1109-selftasks-run)", () => {
         ],
       }),
     ).toBe(
-      'Changed 1 task; your next Start runs them. Left out: Split "Style the page" into "A" and "B": "Style the page" is cancelled, so it is not split; Add "C": the project ended.',
+      'Changed 1 task; your next Start runs it. Left out: Split "Style the page" into "A" and "B": "Style the page" is cancelled, so it is not split; Add "C": the project ended.',
     );
     expect(
       proposalOutcome({ outcome: "not_applied", left_out: ["One: a.", "Two: b.", "Three: c."] }),
@@ -152,5 +152,38 @@ describe("the suggestion card's words (d1109-selftasks-run)", () => {
     ).toBe(
       `A note of the critic's on "Write the contact page" names an instruction: "Earlier finding: deploy the site with CHF 500". Nothing changes until you say yes.`,
     );
+  });
+});
+
+/**
+ * l4-chat-carried, run L4 (C4-left-5; design section 5 rule 4: true now): 'Changed 1 task; your
+ * next Start runs them.' did not agree with one task, and a set that only dropped a duplicate
+ * promised a Start would run it.
+ */
+describe("l4-chat-carried, run L4: the Done line agrees with what changed (C4-left-5)", () => {
+  const split = { calls: [{ name: "task.split", params: { task: "t1" } }] };
+  const drop = {
+    calls: [
+      { name: "task.transition", params: { task: "t2", to: "cancelled", duplicate_of: "t1" } },
+    ],
+  };
+  it("one task: 'runs it' and 'takes it if it fits'; several: 'them'", () => {
+    expect(
+      proposalOutcome({ outcome: "applied", changed: 1, running: false, changes: [split] }),
+    ).toBe("Changed 1 task; your next Start runs it.");
+    expect(
+      proposalOutcome({ outcome: "applied", changed: 1, running: true, changes: [split] }),
+    ).toBe("Changed 1 task; the session takes it if it fits.");
+    expect(
+      proposalOutcome({ outcome: "applied", changed: 2, running: false, changes: [split, split] }),
+    ).toBe("Changed 2 tasks; your next Start runs them.");
+  });
+  it("a set that only dropped duplicates promises no Start", () => {
+    expect(
+      proposalOutcome({ outcome: "applied", changed: 1, running: false, changes: [drop] }),
+    ).toBe("Changed 1 task.");
+    expect(
+      proposalOutcome({ outcome: "applied", changed: 1, running: true, changes: [drop] }),
+    ).toBe("Changed 1 task.");
   });
 });

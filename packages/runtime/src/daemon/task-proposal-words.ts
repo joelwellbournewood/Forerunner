@@ -11,6 +11,23 @@ export const TASK_PROPOSAL_OPTIONS = ["Make these changes", "Keep the tasks"] as
 
 type Card = Record<string, unknown>;
 
+/** Whether every call of the card's changes drops a task as a duplicate (nothing left to run). */
+function onlyDrops(card: Card): boolean {
+  const changes = Array.isArray(card.changes) ? card.changes : [];
+  const calls = changes.flatMap((c) =>
+    Array.isArray((c as { calls?: unknown } | null)?.calls)
+      ? (c as { calls: unknown[] }).calls
+      : [],
+  );
+  return (
+    calls.length > 0 &&
+    calls.every((c) => {
+      const call = (c ?? {}) as { name?: unknown; params?: { duplicate_of?: unknown } };
+      return call.name === "task.transition" && typeof call.params?.duplicate_of === "string";
+    })
+  );
+}
+
 /**
  * The card's Done line (design §3.8: what happens next): 'Changed 3 tasks; the session takes them
  * if they fit.' while a session runs, 'Changed 3 tasks; your next Start runs them.' with none; a
@@ -32,8 +49,14 @@ export function proposalOutcome(card: Card): string | null {
       return "Kept the tasks as they are; nothing changed.";
     case "applied": {
       const n = typeof card.changed === "number" ? card.changed : 0;
+      // l4-chat-carried (C4-left-5): the words agree with one task ('runs it'; before, 'Changed
+      // 1 task; your next Start runs them.'), and a set that only dropped duplicates leaves nothing
+      // for a Start to run, so it promises none (design section 5 rules 4 and 9).
+      if (onlyDrops(card)) return `Changed ${n} ${plural(n, "task", "tasks")}.${leftWords}`;
       const next =
-        card.running === true ? "the session takes them if they fit" : "your next Start runs them";
+        card.running === true
+          ? plural(n, "the session takes it if it fits", "the session takes them if they fit")
+          : plural(n, "your next Start runs it", "your next Start runs them");
       return `Changed ${n} ${plural(n, "task", "tasks")}; ${next}.${leftWords}`;
     }
     case "not_applied":
