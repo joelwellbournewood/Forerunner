@@ -3565,6 +3565,8 @@ export function createDaemonApp(
         webAccess: rt.webAccess(),
         runsOn,
         credentials: await rt.chooser.table(),
+        // l4-selftasks-carried (L4-other-1 D-5): the typed words name a file to write.
+        words: [typed.outcome, ...typed.acceptance_criteria],
       }),
     );
   });

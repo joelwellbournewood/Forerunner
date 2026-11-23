@@ -87,9 +87,63 @@ export function writesNoFile(allowedTools: readonly string[]): boolean {
   });
 }
 
-/** D-2: New task's and Edit's line under Who does it for such a specialist (design §5). */
-export function writesNoFileLine(specialist: string): string {
-  return `The ${specialist} writes no file: its findings are its report, which you read in the task's drawer.`;
+/**
+ * D-2: New task's and Edit's line under Who does it for such a specialist (design §5).
+ * l4-selftasks-carried (L4-other-1 D-5): when the task's words ask for a file to be written
+ * (`fileTheWordsWrite`), the line names it: "The reviewer writes no file, so review.md is not
+ * written: its findings are its report, which you read in the task's drawer."
+ */
+export function writesNoFileLine(specialist: string, file: string | null = null): string {
+  return file
+    ? `The ${specialist} writes no file, so ${file} is not written: its findings are its report, which you read in the task's drawer.`
+    : `The ${specialist} writes no file: its findings are its report, which you read in the task's drawer.`;
+}
+
+/** A file name as task words write it: a path ending in a short extension ("review.md"). */
+const FILE = String.raw`[\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4}`;
+/** "<file> lists|holds|... ": the file is the subject the outcome describes, so it is written. */
+const FILE_AS_SUBJECT = new RegExp(
+  String.raw`^\s*(?:(?:a|an|the|new)\s+)*(?:file\s+)?` +
+    "`?(" +
+    FILE +
+    ")`?" +
+    String.raw`(?:\s+file)?\s+(?:lists?|holds?|contains?|has|have|shows?|says|describes?|summari[sz]es|records?|exists|is written|gives|names)\b`,
+  "i",
+);
+/** "write|create|produce|save ... <file>" in one clause: the file is what the task writes. */
+const FILE_WRITTEN = new RegExp(
+  String.raw`\b(?:write|writes|written|create|creates|created|produce|produces|save|saves|saved)\b[^.;,]*?(?:\b(?:to|into|in|as)\s+)?` +
+    "`?(" +
+    FILE +
+    ")`?",
+  "i",
+);
+/** A file the words only read ("found in notes/plan.md", "from data.csv"): never one written. */
+const FILE_READ = new RegExp(
+  String.raw`\b(?:(?:found|listed|named|described|mentioned|given|stated|kept)\s+in|from|of|on|about|read|reads|review|reviews|check|checks|against)\s+` +
+    "`?(" +
+    FILE +
+    ")`?",
+  "gi",
+);
+
+/**
+ * l4-selftasks-carried (L4-other-1 D-5): the file a task's words ask to be written, if any: the
+ * outcome's or a criterion's subject ("review.md lists the gaps ..."), or what a write verb
+ * makes ("write the findings to review.md", "create review.md"). A file the words only read
+ * ("the gaps found in notes/plan.md", "Review README.md") is never it.
+ */
+export function fileTheWordsWrite(texts: readonly string[]): string | null {
+  for (const text of texts) {
+    for (const clause of text.split(/(?<=[.;])\s+|\n/)) {
+      const subject = FILE_AS_SUBJECT.exec(clause);
+      if (subject?.[1]) return subject[1];
+      const written = FILE_WRITTEN.exec(clause);
+      const read = new Set([...clause.matchAll(FILE_READ)].map((m) => m[1]));
+      if (written?.[1] && !read.has(written[1])) return written[1];
+    }
+  }
+  return null;
 }
 
 /** The loop driver's built-in for one Claude Code tool name (without the prefix), if any. */

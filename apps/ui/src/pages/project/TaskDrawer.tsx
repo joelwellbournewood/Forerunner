@@ -620,10 +620,17 @@ function EditTaskForm({
 }) {
   const client = useClient();
   const docker = useDockerReady(true);
-  const who = useWhoChoices(true);
   const [title, setTitle] = useState(task.title);
   const [outcome, setOutcome] = useState(task.outcome);
   const [criteria, setCriteria] = useState(task.acceptanceCriteria.join("\n"));
+  // l4-selftasks-carried (L4-other-1 D-3): Edit asks as New task does, with the task's project
+  // and the words as edited, so its lines under Who does it say what New task's say (where it
+  // runs, a file the reviewer will not write).
+  const who = useWhoChoices(true, task.projectId, {
+    title,
+    outcome,
+    criteria: criteria.split("\n"),
+  });
   const [priority, setPriority] = useState<string>(task.priority ?? DEFAULT_TASK_PRIORITY);
   // The level the person chose; null while they leave it as it is.
   const [tier, setTier] = useState<string | null>(null);

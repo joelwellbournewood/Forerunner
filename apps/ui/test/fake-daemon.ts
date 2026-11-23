@@ -149,6 +149,7 @@ import {
 } from "@forerunner/runtime/daemon/credential-policy-view";
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
 import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
+import { fileTheWordsWrite, writesNoFileLine } from "@forerunner/runtime/registry/tools";
 import {
   comesAfterSentence,
   leftOutSentence,
@@ -5382,6 +5383,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     };
     const words = typed.title || typed.outcome || typed.acceptance_criteria.length ? typed : null;
     for (const sp of view.specialists) sp.runsOn = runsOnFor(sp.name, projectId, words);
+    // l4-selftasks-carried (L4-other-1 D-5), as the daemon: the line of a specialist that writes
+    // no file names a file the typed words ask for.
+    const file = fileTheWordsWrite([typed.outcome, ...typed.acceptance_criteria]);
+    for (const sp of view.specialists)
+      if (sp.writesNoFile) sp.writesNoFile = writesNoFileLine(sp.name, file);
     view.credentials = abilityTable(chooserFactsNow(), savedKinds());
     return c.json(view);
   });

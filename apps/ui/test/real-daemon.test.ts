@@ -26948,7 +26948,13 @@ describe("l4-selftasks-chat, run L4", () => {
         criteria: [],
       });
       const lines = Object.fromEntries(models.specialists.map((s) => [s.name, s.writesNoFile]));
-      expect(lines.reviewer).toBe(NO_FILE);
+      // l4-selftasks-carried (L4-other-1 D-5): the outcome asks for review.md, so the line
+      // names it; NO_FILE stays the line when no words ask for a file.
+      expect(lines.reviewer).toBe(
+        "The reviewer writes no file, so review.md is not written: its findings are its report, which you read in the task's drawer.",
+      );
+      const plain = await a.client.modelSettings(undefined, project.id);
+      expect(plain.specialists.find((s) => s.name === "reviewer")?.writesNoFile).toBe(NO_FILE);
       expect(lines.coder).toBeNull();
       const others = Object.entries(lines).filter(([n]) => n !== "reviewer");
       expect(others.length).toBeGreaterThan(3);
@@ -28622,6 +28628,39 @@ describe("l4-selftasks-carried, run L4", () => {
       });
     } finally {
       await settleSessions(a.rt);
+      await a.rt.close();
+    }
+  }, 60_000);
+  it("L4-other-1 (D-5): GET /settings/models names the file the typed words ask for in the reviewer's line, and keeps the plain line for words that only read a file", async () => {
+    const a = await open("fr-ui-real-l4-stcar-reviewmd-");
+    try {
+      const project = await a.client.createProject({ name: "Launch", goal: "A launch plan" });
+      const lineFor = async (outcome: string, criteria: string[] = []) =>
+        (
+          await a.client.modelSettings(undefined, project.id, {
+            title: "Review the plan",
+            outcome,
+            criteria,
+          })
+        ).specialists.find((s) => s.name === "reviewer")?.writesNoFile;
+      expect(await lineFor("review.md lists the gaps and risks found in notes/plan.md")).toBe(
+        "The reviewer writes no file, so review.md is not written: its findings are its report, which you read in the task's drawer.",
+      );
+      expect(await lineFor("The gaps are listed", ["Write them to findings.md"])).toBe(
+        "The reviewer writes no file, so findings.md is not written: its findings are its report, which you read in the task's drawer.",
+      );
+      expect(await lineFor("The gaps and risks found in notes/plan.md are listed")).toBe(
+        "The reviewer writes no file: its findings are its report, which you read in the task's drawer.",
+      );
+      const coder = (
+        await a.client.modelSettings(undefined, project.id, {
+          title: "Review the plan",
+          outcome: "review.md lists the gaps",
+          criteria: [],
+        })
+      ).specialists.find((s) => s.name === "coder");
+      expect(coder?.writesNoFile).toBeNull();
+    } finally {
       await a.rt.close();
     }
   }, 60_000);
