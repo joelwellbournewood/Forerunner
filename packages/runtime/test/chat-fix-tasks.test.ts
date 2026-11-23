@@ -6,6 +6,7 @@ import {
   CHAT_TASK_RULES,
   ConversationAgent,
   type ConversationDeps,
+  withoutCardTalk,
 } from "../src/conversation/agent.ts";
 import { FIX_TASKS_DESCRIPTION, fixTasksTool } from "../src/conversation/task-fix-tool.ts";
 import { CommandLoop } from "../src/loop/commands.ts";
@@ -1032,5 +1033,64 @@ describe("l4-selftasks-chat, run L4: a note is the person's only when they wrote
     );
     const notes = await w.store.queue.list({ project_id: w.quote } as never, { limit: 10 });
     expect(notes.map((n) => [n.author_human, n.author_agent])).toEqual([[w.human, null]]);
+  });
+});
+
+describe("fixup-l4-selftasks-chat: the card says the change once, and the model's other answers stay (L4-selftasks-126)", () => {
+  // Design §3.9: a change waiting for a yes is said once, by its card. The review found the
+  // backstop dropping real answers: any "confirm that ..." and any sentence with the task's title
+  // and a word starting like the card's verb.
+  const PAUSE = 'Pause "Write the FAQ"? No session runs it until you press Resume.';
+  const CHANGE = 'Change "Publish the page": priority to High?';
+  const kept: [string, string][] = [
+    [PAUSE, "I can confirm that the README task finished yesterday."],
+    [CHANGE, "Publish the page changed hands last week; the coder has it."],
+    [PAUSE, "Two tasks are ready and none has run yet."],
+    [PAUSE, '"Write the FAQ" waits on the README.'],
+    [CHANGE, "The changes to the colours are done."],
+  ];
+  const dropped: [string, string][] = [
+    [
+      PAUSE,
+      'Pausing "Write the FAQ" needs your yes. Press Yes on the read-back to put it on hold; nothing changes until then.',
+    ],
+    [PAUSE, 'I\'ll pause "Write the FAQ" for you.'],
+    [CHANGE, 'Sure, changing "Publish the page" to high priority.'],
+    [CHANGE, "Please confirm it."],
+    [CHANGE, "It waits for your yes."],
+    [CHANGE, "I'll raise it once you confirm."],
+  ];
+
+  it("keeps an answer to anything else, word for word", () => {
+    for (const [readback, line] of kept) expect(withoutCardTalk(line, readback)).toBe(line);
+  });
+
+  it("drops a sentence that speaks about the waiting card", () => {
+    for (const [readback, line] of dropped) expect(withoutCardTalk(line, readback)).toBe("");
+  });
+
+  it("a mixed line keeps its other answer and loses its words about the card", () => {
+    expect(
+      withoutCardTalk(
+        'I can confirm that the README task finished yesterday. Pausing "Write the FAQ" needs your yes.',
+        PAUSE,
+      ),
+    ).toBe("I can confirm that the README task finished yesterday.");
+  });
+
+  it("in chat, the answer to the other question stays above the card's question", async () => {
+    const w = await setup({
+      level: 2,
+      replies: [
+        toolReply("task_pause", { task: "Publish the page" }),
+        textReply(
+          'I can confirm that the README task finished yesterday. Pausing "Publish the page" needs your yes.',
+        ),
+      ],
+    });
+    const r = await w.chat("did the README finish, and put Publish the page on hold");
+    const readback = 'Pause "Publish the page"? No session runs it until you press Resume.';
+    expect(r.pendingConfirmation?.readback).toBe(readback);
+    expect(r.reply).toBe(`I can confirm that the README task finished yesterday. ${readback}`);
   });
 });

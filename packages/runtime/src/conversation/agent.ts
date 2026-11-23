@@ -524,25 +524,34 @@ function lastLine(turns: readonly TranscriptTurn[]): string | undefined {
  * on the read-back to put it on hold; nothing changes until then.' above 'Pause "Write the FAQ"?
  * No session runs it until you press Resume. [Yes] [No]'): a change waiting for a yes is said
  * once, by its card. A sentence of the model's reply that only speaks about the card (it asks for
- * the yes, tells to press Yes, says nothing changes until then, or names the card's task with the
- * card's own verb) is dropped; an answer to anything else in the line stays.
+ * the yes, tells to press Yes or to confirm, says nothing changes until then, or restates the
+ * card's own change: its verb first, or after "I'll", on the card's task) is dropped; an answer to
+ * anything else in the line stays.
+ * fixup-l4-selftasks-chat (review): a sentence that only names the card's task, or says "confirm
+ * that" of something else, is an answer and stays ("I can confirm that the README task finished
+ * yesterday."; 'Publish the page changed hands last week; the coder has it.'). Before, any
+ * "confirm that" and any sentence with the task's title and a word starting like the card's verb
+ * were dropped, so the person's other question got no answer.
  */
 const CARD_TALK_RE =
-  /\b(?:needs?|waits?\s+for|waiting\s+for)\s+(?:your|a|the\s+person's)\s+(?:yes|ok|okay|confirmation|approval)\b|\b(?:press|tap|click|say)\s+(?:the\s+)?["“]?yes\b|\bnothing\s+(?:will\s+)?changes?\s+(?:until|before)\b|\bconfirm\s+(?:it|this|that|the\s+change)\b|\bread-?back\b/i;
+  /\b(?:needs?|waits?\s+for|waiting\s+for)\s+(?:your|a|the\s+person's)\s+(?:yes|ok|okay|confirmation|approval)\b|\b(?:press|tap|click|say)\s+(?:the\s+)?["“]?yes\b|\bnothing\s+(?:will\s+)?changes?\s+(?:until|before)\b|\b(?:please|just|you\s+(?:can|need\s+to|have\s+to|must))\s+(?:confirm|approve)\b|\bonce\s+you\s+(?:confirm|approve|say\s+yes)\b|\bconfirm\s+(?:it|this|the\s+change)\s*[.!]?$|\bread-?back\b/i;
+
+/** "I'll pause ...", "Pausing ...", "Let me pause ...": a sentence that starts by doing the change. */
+const RESTATES_LEAD = String.raw`^\s*(?:(?:ok(?:ay)?|sure|alright|right)[,.!]?\s+)?(?:(?:i(?:'ll|\s+will|\s+can|'m\s+going\s+to|\s+am\s+going\s+to)|let\s+me|going\s+to)\s+)?`;
 
 export function withoutCardTalk(reply: string, readback: string): string {
   const text = reply.trim();
   if (!text) return "";
   const verb = /^\s*([A-Za-z]+)/.exec(readback)?.[1]?.toLowerCase() ?? "";
   const stem = verb.length > 3 ? verb.replace(/e$/, "") : "";
+  const restates = stem ? new RegExp(`${RESTATES_LEAD}${stem}\\w*\\b`, "i") : null;
   const titles = [...readback.matchAll(/"([^"]+)"/g)].map((m) => (m[1] ?? "").toLowerCase());
   const sentences = text.split(/(?<=[.!?])\s+/);
   const kept = sentences.filter((s) => {
     if (CARD_TALK_RE.test(s)) return false;
     const lower = s.toLowerCase();
     const namesTitle = titles.some((t) => t && lower.includes(t));
-    const usesVerb = stem ? new RegExp(`\\b${stem}\\w*`, "i").test(s) : false;
-    return !(namesTitle && usesVerb);
+    return !(namesTitle && restates?.test(s));
   });
   return kept.join(" ").trim();
 }
