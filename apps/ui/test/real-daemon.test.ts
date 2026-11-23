@@ -28428,6 +28428,68 @@ describe("l4-selftasks-carried, run L4", () => {
       await a.rt.close();
     }
   }, 90_000);
+
+  // L4f-left-5: the header beside another card. A chat read-back answered in the Inbox leaves
+  // the header naming only what still waits (the question's task), and a turn that
+  // a card from Settings that lapses (ten minutes) tells the screens as every close does.
+  it("L4f-left-5: after the Inbox answers the chat's card the header names the question that still waits; a Settings card that lapses tells the screens", async () => {
+    const clock = new SimulatedClock("2026-11-23T09:00:00Z");
+    const a = await open("fr-ui-real-l4-stcar-header-", { clock });
+    try {
+      const project = await a.client.createProject({ name: "Help", goal: "A help page" });
+      await a.client.createTask(project.id, taskBody("Write the FAQ"));
+      const stack = await a.client.createTask(project.id, taskBody("Confirm the stack"));
+      await a.rt.store.humanRequest.insert({
+        human_id: a.me.id,
+        project_id: project.id,
+        task_id: stack.id,
+        kind: "decision",
+        why: "Which stack?",
+        steps: [],
+        options: ["Node", "Python"],
+        blocking: false,
+        risk: "low",
+        change_card: null,
+      });
+      const status = async () => (await a.client.project(project.id)).statusLine?.text;
+      // One card names its task; beside the chat's card the line counts both.
+      const ONE_QUESTION = 'Waiting for you: "Confirm the stack"';
+      expect(await status()).toBe(ONE_QUESTION);
+      await a.chat(project.id, 'tool: task_pause {"task": "Write the FAQ"}');
+      expect(await status()).toBe("Waiting for you: 1 question and 1 change to confirm");
+      const card = (await a.client.inbox(a.me.id)).requests.find(
+        (r) => r.status === "open" && r.changeCard,
+      );
+      a.reset();
+      await a.client.answerRequest(card?.id ?? "", { version: card?.version ?? 0, answer: "no" });
+      expect(a.heard.inbox).toBeGreaterThan(0);
+      expect(a.heard.projects).toContain(project.id);
+      expect(await status()).toBe(ONE_QUESTION);
+      expect((await a.client.inbox(a.me.id)).needsYouCount).toBe(1);
+
+      // A card from Settings waits ten minutes. The chat turn after that meets it expired.
+      const settings = await a.client.executeCommands({
+        commands: [{ name: "budget.set", params: { scope: "month", amountChf: 400 } }],
+        wordsUsed: "Monthly cap: CHF 400 (Settings)",
+        source: "ui",
+      });
+      expect(settings.status).toBe("pending");
+      expect((await a.client.inbox(a.me.id)).needsYouCount).toBe(2);
+      // Its lapse is a close like any other (the executor's expirePending, which a chat turn's
+      // sweep reaches too): the screens are told at once, and the next turn finds one card.
+      a.reset();
+      await clock.advance(11 * 60_000);
+      expect(a.heard.inbox).toBeGreaterThan(0);
+      expect((await a.client.inbox(a.me.id)).needsYouCount).toBe(1);
+      expect(await status()).toBe(ONE_QUESTION);
+      await a.chat(project.id, "what is waiting?");
+      expect((await a.client.inbox(a.me.id)).needsYouCount).toBe(1);
+      expect(await status()).toBe(ONE_QUESTION);
+    } finally {
+      await settleSessions(a.rt);
+      await a.rt.close();
+    }
+  }, 90_000);
   // L4f-left-2 (session lead decision 2026-11-23): a 'fix the tasks' read-back's Yes is judged on
   // the tasks its set names (present, status, title, outcome, what they wait for) and on which
   // tasks the list holds, not on the status of tasks it does not name.

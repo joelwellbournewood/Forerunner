@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  CommandExecutor,
-  fixListMoved,
-  namedTaskIds,
-  taskListFingerprint,
-} from "../src/index.ts";
+import { CommandExecutor, fixListMoved, namedTaskIds, taskListFingerprint } from "../src/index.ts";
 import { type World, world } from "./helpers.ts";
 
 /**
@@ -328,5 +323,101 @@ describe("l4-selftasks-carried, run L4: chat's read-back of a reviewer task says
     );
     expect(await ask({ priority: "high" })).toBe('Change "Review the plan": priority to High?');
     await w.store.close();
+  });
+});
+
+/**
+ * L4f-left-5 (L4-selftasks-117's details without their own test): a chat read-back of a
+ * setting, a budget or the autonomy is compared at the Yes with the value in force then (the
+ * card's oldValue); one changed elsewhere since says so in one line and nothing is applied,
+ * also after a restart (the card armed again from the store).
+ */
+describe("l4-selftasks-carried, run L4: a value read back in chat that moved since says so, also after a restart (L4f-left-5)", () => {
+  async function rearm(w: World) {
+    const again = new CommandExecutor({ registry: w.registry, store: w.store, clock: w.clock });
+    const open = await w.store.humanRequest.list({ status: "open", kind: "approval" } as never, {
+      limit: 50,
+    });
+    await again.restorePending(open, async (stored) => ({
+      ...w.ctx(),
+      actor: stored.actor,
+      humanId: stored.humanId,
+      agentId: stored.agentId,
+      activeProjectId: stored.activeProjectId,
+      source: stored.source,
+      wordsUsed: stored.wordsUsed,
+    }));
+    return again;
+  }
+
+  const CASES: Array<{
+    label: string;
+    asked: { name: string; params: Record<string, unknown> };
+    elsewhere: { name: string; params: Record<string, unknown> };
+    line: RegExp;
+  }> = [
+    {
+      label: "the monthly cap",
+      asked: { name: "budget.set", params: { scope: "month", amountChf: 100 } },
+      elsewhere: { name: "budget.set", params: { scope: "month", amountChf: 120 } },
+      line: /^The monthly cap is CHF 120\.00 now, not CHF 150\.00 as I read it back\. Nothing was changed; ask again if you still want it\.$/,
+    },
+    {
+      label: "the email mode",
+      asked: { name: "email.mode.set", params: { mode: "allowlist" } },
+      elsewhere: { name: "email.mode.set", params: { mode: "read_only" } },
+      line: /^The email mode of Alice is Read only now, not Off as I read it back\. Nothing was changed; ask again if you still want it\.$/,
+    },
+  ];
+
+  for (const c of CASES)
+    for (const restart of [false, true])
+      it(`${c.label}${restart ? ", after a restart" : ""}`, async () => {
+        const w = await world();
+        const asked = await w.executor.execute({
+          ...c.asked,
+          ctx: w.ctx({ source: "chat" }),
+        });
+        if (asked.status !== "pending") throw new Error(JSON.stringify(asked));
+        const shownOld = asked.card?.oldValue;
+        // Settings changes the same value with a tap before the person answers the chat card.
+        const moved = await w.executor.execute({
+          ...c.elsewhere,
+          ctx: w.ctx({ source: "ui" }),
+          confirmation: { kind: "device", deviceId: w.phone.id, biometric: true },
+        });
+        expect(moved.status, JSON.stringify(moved)).toBe("done");
+        const executor = restart ? await rearm(w) : w.executor;
+        expect(executor.getPending(asked.pendingId)).toBeDefined();
+        const yes = await executor.confirmFromDevice(asked.pendingId, {
+          deviceId: w.phone.id,
+          biometric: true,
+        });
+        expect(yes.status).toBe("refused");
+        expect((yes as { reason: string }).reason).toMatch(c.line);
+        expect((yes as { details?: { reason?: string } }).details?.reason).toBe("changed_since");
+        // Nothing was applied: the value is the one Settings set.
+        const again = await w.executor.plan(c.asked, w.ctx({ source: "chat" }));
+        expect(again.oldValue).not.toBe(shownOld);
+        await w.store.close();
+      });
+
+  it("a value as it was read back is applied at the Yes, also after a restart", async () => {
+    for (const restart of [false, true]) {
+      const w = await world();
+      const asked = await w.executor.execute({
+        name: "budget.set",
+        params: { scope: "month", amountChf: 100 },
+        ctx: w.ctx({ source: "chat" }),
+      });
+      if (asked.status !== "pending") throw new Error(JSON.stringify(asked));
+      const executor = restart ? await rearm(w) : w.executor;
+      const yes = await executor.confirmFromDevice(asked.pendingId, {
+        deviceId: w.desktop.id,
+        biometric: false,
+      });
+      expect(yes.status, `restart: ${restart}`).toBe("done");
+      await w.store.close();
+    }
   });
 });
