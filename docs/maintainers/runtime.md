@@ -7841,7 +7841,11 @@ no store, git host or file system, so the UI's fake daemon imports it).
   `{together: true}` and writes nothing, `writeSessionStatus` keeps the status in the app, and
   `statusDocRoot` reads it there; Settings lists no Status pull request row for it
   (`settings-view.ts`, L4-github-103) and `settings.set` refuses turning it on in one sentence
-  (`togetherStatusPullRequestSentence`, commands.md). `ownsUnmarkedDocs(store, project, repo, copyMarker)` is
+  (`togetherStatusPullRequestSentence`, commands.md). No line puts a possessive after a quoted
+  name (L4-github-108): `tookOverLine` reads 'it is now the project "Kite flyers".',
+  `heldStatusNote` 'the status pull request of "A"', and the take-out's refusals 'the work of
+  "X"' / 'The project of "X"'; the writing-rules sweep in `writing-rules.test.ts` finds any new
+  one. `ownsUnmarkedDocs(store, project, repo, copyMarker)` is
   W15-01's "the only project linked" through the index (fails closed; a together project is
   never the sole user; the copy's marker must name no other project); `ProjectDocs.copyMarker`
   reads the copy's marker as a file. `statusInApp` records the holder beside the kept status

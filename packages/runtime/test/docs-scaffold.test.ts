@@ -592,7 +592,7 @@ describe("d1109-onerepo-link, run C: a take-over's docs pull request replaces ex
         { head: DOCS_SCAFFOLD_BRANCH },
       );
       expect(pr?.body).toContain(
-        'This repository was the Forerunner project "Kite club"; it is now "Kites"\'s.',
+        'This repository was the Forerunner project "Kite club"; it is now the project "Kites".',
       );
       expect(
         parseInstallMarker((await show(kiteBare, DOCS_SCAFFOLD_BRANCH, INSTALL_MARKER_FILE)) ?? "")
@@ -756,7 +756,11 @@ describe("l4-github-link, run L4: the scaffold's branch starts from the default 
       const id = String((await json(made)).id);
       const open = await w.host.listPullRequests({ owner: "o", name: "kite" }, { state: "open" });
       expect(open.map((p) => p.head.ref)).toEqual(["fr/docs-scaffold-kite-flyers"]);
-      expect(open[0]?.body).toContain(tookOverLine("Kite club", "Kite flyers"));
+      expect(open[0]?.body).toContain(
+        'This repository was the Forerunner project "Kite club"; it is now the project "Kite flyers".',
+      );
+      // L4-github-108: no possessive after a quoted name.
+      expect(open[0]?.body).not.toMatch(/"'s/);
       const branch = "fr/docs-scaffold-kite-flyers";
       expect(
         parseInstallMarker((await show(kite.bare, branch, INSTALL_MARKER_FILE)) ?? "")?.project,

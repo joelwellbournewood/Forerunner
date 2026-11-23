@@ -114,7 +114,8 @@ A parallel item (A.2 intake) drafts doc content and will call `scaffoldDocs`.
    this project's in the project's next docs pull request (the scaffold's or the intake's set;
    `writeInstallMarker` reports `replaced` with the old id and name), and that pull request's
    body says so in one line: 'This repository was the Forerunner project "Kite club"; it is now
-   "Kites"'s.' The old name is cut, scanned and quoted (else "another Forerunner project").
+   the project "Kites".' (worded so since 2026-11-23, L4-github-108: before, 'it is now
+   "Kites"'s.'). The old name is cut, scanned and quoted (else "another Forerunner project").
 2. **A together project writes no docs.** A project worked on together with another Forerunner
    (`settings.together`, D9) writes no marker, no doc set and no scaffold or intake pull request;
    its scaffold only brings this computer's copy along (recorded as `together: true`), and its
@@ -123,3 +124,13 @@ A parallel item (A.2 intake) drafts doc content and will call `scaffoldDocs`.
    tasks (Add to it, the second brief, a together project) writes no document: its proposal has
    no `docs`, its card is `plan_only`, and its approval writes the tasks and milestone only. The
    standard set is written once, at the project's first plan.
+
+## Amendment 2026-11-23: the scaffold's branch and the take-over's words (l4-github-link, run L4)
+
+1. **No possessive after a quoted name** (L4-github-108, design section 5 rule 1): the take-over
+   line reads 'This repository was the Forerunner project "Kite club"; it is now the project
+   "Kite flyers".' (live check 4 showed 'it is now "Kite flyers"'s.').
+2. **The scaffold's branch** starts from the default branch whenever no scaffold pull request of
+   this project is open, and is never a branch Forerunner did not write for this project: an old
+   `fr/docs-scaffold` that is not this project's own is left as it is and the set opens on
+   `fr/docs-scaffold-<project name>` (ADR 0117, amendment of 2026-11-23, point 2).

@@ -12585,7 +12585,7 @@ describe("w15-merge, wave 15", () => {
         // d1109-onerepo-link (OR-09, L3-github-5): why, in words; never "(Settings turns it on)",
         // which was untrue while the setting is on.
         expect(row?.note).toBe(
-          `Kept in the app while "Shared A"'s status pull request is open on GitHub.`,
+          `Kept in the app while the status pull request of "Shared A" is open on GitHub.`,
         );
         const text = (await client.doc(b.id, "docs/status.md")).content;
         expect(text).toContain("Write the notes in b-notes.md");
@@ -18365,7 +18365,7 @@ describe("d1109-onerepo-link, run C", () => {
       );
       const docsPr = await host.openPullRequestAs(repo, "alice", {
         title: "docs: scaffold the standard project doc set",
-        body: `This repository was the Forerunner project "Kite club"; it is now "Kites"'s.\n\n<!-- forerunner:pr project=${made.id} -->`,
+        body: `This repository was the Forerunner project "Kite club"; it is now the project "Kites".\n\n<!-- forerunner:pr project=${made.id} -->`,
         head: "fr/docs-scaffold",
         updatedAt: new Date(Date.parse(tookOverAt) + 60_000).toISOString(),
       });

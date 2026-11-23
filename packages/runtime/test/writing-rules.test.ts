@@ -983,3 +983,47 @@ describe("w15-run, wave 15: the result says what the person cancelled (W15-59)",
     expect(lines.join(" ")).not.toContain("You cancelled");
   });
 });
+
+describe("l4-github-link, run L4", () => {
+  it("L4-github-108: no person-facing line puts a possessive after a quoted name; the take-over and held-status lines read 'the project \"X\"' and 'the status pull request of \"X\"'", async () => {
+    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const { join } = await import("@forerunner/platform");
+    const { heldStatusNote } = await import("../src/sources/repository-words.ts");
+    const { tookOverLine } = await import("../src/sources/repository-use.ts");
+    expect(tookOverLine("Kite club", "Kite flyers")).toBe(
+      'This repository was the Forerunner project "Kite club"; it is now the project "Kite flyers".',
+    );
+    expect(tookOverLine(null, "Kite flyers")).toBe(
+      'This repository was another Forerunner project; it is now the project "Kite flyers".',
+    );
+    expect(heldStatusNote({ projectName: "Kite club", marked: true })).toBe(
+      'Kept in the app while the status pull request of "Kite club" is open on GitHub.',
+    );
+    // The sweep: a template that quotes a name and then adds "'s" (live check 4: 'it is now
+    // "Kite flyers"'s.'). Comments are left out. join-words.ts' settingAppliesLine is
+    // l4-github-merge's (L4-github-113, same sub-run): it rewrites that function.
+    const handedOver = new Set(["join-words.ts"]);
+    const roots = ["packages", "apps/ui/src"].map((r) => join(process.cwd(), r));
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        if (name === "node_modules" || name === "test" || name === "dist") continue;
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (/\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)) files.push(path);
+      }
+    };
+    for (const root of roots) walk(root);
+    const found: string[] = [];
+    for (const file of files) {
+      if (handedOver.has(file.split(/[\\/]/).pop() ?? "")) continue;
+      readFileSync(file, "utf8")
+        .split(/\r?\n/)
+        .forEach((line, i) => {
+          if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+          if (/"\$\{[^}]+\}"'s\b|quoted\([^)]*\)\}'s\b/.test(line)) found.push(`${file}:${i + 1}`);
+        });
+    }
+    expect(found).toEqual([]);
+  });
+});

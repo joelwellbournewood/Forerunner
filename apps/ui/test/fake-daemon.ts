@@ -2967,7 +2967,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const n = record?.pr_number;
       return refused(
         n
-          ? `#${n} is not merged, so ${title}'s work is not in main: close #${n} on GitHub if you do not want it.`
+          ? `#${n} is not merged, so the work of ${title} is not in main: close #${n} on GitHub if you do not want it.`
           : `${title} has no pull request, so there is nothing to take out of main.`,
       );
     }

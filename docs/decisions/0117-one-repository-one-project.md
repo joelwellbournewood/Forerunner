@@ -80,7 +80,8 @@ the app with a note that blamed the setting.
    take-over records `settings.took_over` {projects, name, at}; the project's next docs pull
    request (the scaffold's or the intake's set) replaces exactly that marker
    (`writeInstallMarker(..., {replace})`, status `replaced`) and its body says so in one line
-   ('This repository was the Forerunner project "Kite club"; it is now "Kites"'s.'); any other
+   ('This repository was the Forerunner project "Kite club"; it is now the project "Kites".',
+   worded so since 2026-11-23, L4-github-108); any other
    project's marker is never overwritten. A marker naming the person's own removed project frees
    the repository the same way (`removed: true`). Nothing of the other project's on GitHub is
    pushed to, commented on, closed or listed.
@@ -112,7 +113,8 @@ the app with a note that blamed the setting.
     project's only when the index says it is the repository's only user, a together project is
     never its sole user, and this computer's copy's marker names no other project
     (`ownsUnmarkedDocs`, fails closed). The Docs row of a status kept in the app says why:
-    'Kept in the app while "A"'s status pull request is open on GitHub.' (unmarked: '... another
+    'Kept in the app while the status pull request of "A" is open on GitHub.' (worded so since
+    2026-11-23, L4-github-108; unmarked: '... another
     status pull request ...; close it there to have this one's there.').
 11. **Repository text is data**: the marker and pull request bodies are parsed strictly (schema
     1, a URI-encoded mark), a marker's name is cut at 60 characters, control characters removed,

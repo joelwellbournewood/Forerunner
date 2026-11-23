@@ -452,13 +452,14 @@ export function markerNameOf(name: string | null | undefined): string | null {
 /**
  * The line a take-over's docs pull request says (ADR 0058 amended): which Forerunner project the
  * repository was, and whose it is now. The old name is the marker's own, cleaned as data
- * (`markerNameOf`); unknown or flagged, "another Forerunner project".
+ * (`markerNameOf`); unknown or flagged, "another Forerunner project". No possessive after a
+ * quoted name (L4-github-108: live, 'it is now "Kite flyers"'s.').
  */
 export function tookOverLine(wasName: string | null | undefined, name: string): string {
   const was = markerNameOf(wasName);
   return was
-    ? `This repository was the Forerunner project "${was}"; it is now "${name}"'s.`
-    : `This repository was another Forerunner project; it is now "${name}"'s.`;
+    ? `This repository was the Forerunner project "${was}"; it is now the project "${name}".`
+    : `This repository was another Forerunner project; it is now the project "${name}".`;
 }
 
 /** The project ids a pull request names (the hidden mark, the intake branch, the L-16 line). */

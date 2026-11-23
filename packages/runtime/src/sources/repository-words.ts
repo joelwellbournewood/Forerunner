@@ -238,7 +238,7 @@ export const TOGETHER_OVERVIEW_DETAILS =
  */
 export function heldStatusNote(holder: { projectName: string | null; marked: boolean }): string {
   if (holder.projectName)
-    return `Kept in the app while "${holder.projectName}"'s status pull request is open on GitHub.`;
+    return `Kept in the app while the status pull request of "${holder.projectName}" is open on GitHub.`;
   return holder.marked
     ? "Kept in the app while another project's status pull request is open on GitHub; close it there to have this one's there."
     : "Kept in the app while another status pull request is open on GitHub; close it there to have this one's there.";
