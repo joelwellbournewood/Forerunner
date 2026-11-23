@@ -1,0 +1,115 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "I ran a bench from this worktree at 7879fa3: review-l4-github-merge, daemon 49071, UI 2671, `--provider bench --githost 49073`, watcher poll 15 s. Screenshots and page texts are in /tmp/frbench/review-l4-github-merge/steps/01..25. To set up, I made \"Kite club\" on bench/seeded with the status pull request on and five tasks: A (#2), B (#6, waits on A), C (#3, 'Write kite/ferry.txt about the ferry trip to \"Seal Bay\"'), D (#4) and E (#5). One stand-in session ran them all.\n\n(1) L4-github-112. I closed A and merged B on the fake GitHub. A poll later (steps/01-03):\n- A's Tasks row read \"Merged through #6\", with Take this work out.\n- The Inbox had one card: '\"Write kite/club.txt with one line\" reached main through pull request #6'. Its body read \"#2 was closed, but its change reached main through #6.\" It had two buttons, each with its one-line explanation: Take this work out and Keep it.\n- Nothing had been written to GitHub: still 7 pull requests, and A stayed closed.\n\nI pressed Take this work out in the Inbox (steps/04-07). It opened #8 \"Take out: ...\" with \"(#2, closed, its change merged through #6)\". Its branch drops kite/club.txt and keeps kite/club-day.txt. The row read \"Taken out in #8 (waiting for you to merge)\", and the card went under Answered.\n\n(2) L4-creds-22 and L4-github-118. I pushed a commit to C's branch and pressed Merge on the Overview right away. The red line \"#3 changed after the review: ...\" showed at once, with one card. The card's 55-character title was whole (L4-github-123) (steps/08). I posted a failing ci/test check on D and pressed Merge. \"A check failed on #4 (ci/test): fix it, or merge it on GitHub.\" showed at once, the row lost Merge, and nothing merged (steps/09-11). The fake GitHub's pull head lag has no bench switch, so the lag case is only in the tests.\n\n(3) L4-github-117 and L4-chat-110. I closed C on GitHub. Within 6 s C's card moved to Answered with \"Closed: #3 was closed on GitHub.\" and the row read \"Accepted · pull request closed\" (steps/12-14). I redid and cancelled E, then closed #5 on GitHub. The facts the stand-in chat model got list both under \"Closed without merging\", with no \"Left open on GitHub\" (steps/15).\n\n(4) Restart. After a daemon restart the rows and the answered cards stayed (steps/16).\n\n(5) Make one project. I paired \"Site\" on the same repository; this was setup only, done with a direct database write and a restart. The dialog (steps/17-18):\n- names \"Status pull request: On\" and \"Off\" for the two projects;\n- counts \"2 open pull requests\" for Kite club (#4 and take-out #8; the closed #3 is not counted);\n- reads 'Status pull request: the setting of \"Site\" applies to the moved work: off.'\n\nAfter the join (steps/19-22):\n- Site's Overview lists \"Project status (docs/status.md) · pull request #7\" with Open and Merge.\n- Kite club's page names \"Kite club\" in the header and reads 'Its files are in \"Site\".' and 'Its tasks went on in \"Site\".'\n- The card's folder is null.\n- Site's Costs By task reads \"1 · 1 / 1 (100%)\" for each moved task.\n\nAll of this was the same after another restart (steps/23-25).\n\nThe journey matches the design for these screens: one job per card, every action has its explanation, CHF only, no ids. Bench stopped with stop.mjs; its home, githost and browser profile are deleted.\n\nTests:\n- I put the base sources (claude/nifty-knuth-f9udt0) back into packages/runtime/src and packages/capabilities/src and ran the area's tests. 13 of 14 failed: all of the dependent-branches-merge cases except L4-github-119 (which passes on the base, as the fixer said), l3-merge L4-github-123, and both github.test L4-github-120 cases. With the fix restored, all pass.\n- On the branch: pnpm test passed (559 files, 6081 tests), the UI suite passed (103 files, 1447 tests), Playwright passed (38), test:e2e passed (13 files, 25 tests), test:integration passed (5 files, 30 tests; Postgres ones skip). Lint, path lint, typecheck and secrets:scan are clean, and docs-check passes with --base claude/nifty-knuth-f9udt0.\n- Mutation check for L4-money-301: I made tries equal runs in views.ts. All cost tests stayed green.",
+ "blocking": [
+  {
+   "issue": "L4-money-301 is reported fixed, but no test checks its rule: a run that paused and that a later run continued counts as one try. The fake daemon also does not carry CostBucket.tries.",
+   "where": "packages/runtime/src/daemon/views.ts:1439-1478 (taskRunFacts), :1500-1560 (costFacts tries); apps/ui/test/fixtures.ts:559-584; apps/ui/test/project.test.tsx:917",
+   "evidence": "I changed `tries` to equal `runs` in taskRunFacts, the specialist count and triesByModel. Every cost test stayed green: packages/runtime views, loop-routes, task-budget-all and executor-context (30 tests), plus the real-daemon describes 'the task drawer after a session ran its tasks' and 'l4-github-merge, run L4'.\n\nThe failing tests the fixer cites cannot catch it:\n- The real-daemon join case has one run, so tries equals runs either way.\n- project.test.tsx writes `tries: 1` into the fake fixture by hand.\n\nNo test creates a Run with outcome 'paused' followed by a later run. apps/ui/test/fixtures.ts' cost buckets have no `tries` field, though the acceptance says 'CostBucket.tries is in both daemons'. Validation rules 3 and 8 are not met. The logic does read right: the live check's rows for that task are researcher 'paused', then 'completed', then the critic's accept.",
+   "expected": "A real-daemon case beside 'Costs: tasks by title...', as the acceptance asks. A task's first work run pauses (Run outcome paused, as a wrap-up writes it). The task is continued, and the second run finishes and is accepted. GET /costs?projectId= then reads byTask {runs 2, accepted 1, tries 1}. The specialist's and the model's buckets leave the paused run out of tries. The existing 'Broken page check' case still reads 1 / 2. The fake daemon's cost fixtures carry `tries`, and the UI test reads them from the fake rather than writing them by hand."
+  },
+  {
+   "issue": "L4-github-121 (Postgres case for Make one project) is in not_done with a reason the area's cut line does not allow.",
+   "where": "packages/commands/src/commands/project-join.ts (no *.integration.test.ts case); fixer's not_done",
+   "evidence": "The spec's cut line allows 'L4-github-121 (only if CI has no Postgres for it)'. CI has Postgres:\n- .github/workflows/ci.yml:23-35 runs a postgres:16 service with FORERUNNER_TEST_PG;\n- the Windows job starts PostgreSQL at :105-113;\n- AGENTS.md:64-65 says 'CI provides it'.\n\nThe fixer's reason is only that this machine has no Postgres. The triage note says the case should skip with a visible reason locally and run in CI.",
+   "expected": "An integration case that runs project.join and its Undo on the Postgres adapter. It counts every table's rows for both projects before and after, as OJ-02's SQLite case does. It skips locally without FORERUNNER_TEST_PG and runs in CI."
+  },
+  {
+   "issue": "L4-github-124 (a) is in not_done, but the cut line allows only (b) and (c). After a press-time check, the closed dependency's row stays untrue until the next poll.",
+   "where": "packages/runtime/src/daemon/pull-requests.ts:757 and :814 (buildsOnGone)",
+   "evidence": "Acceptance: 'the closed dependency's row is true right after the press'. The cut line names only 'L4-github-124 (b) and (c)'. The fixer's not_done says '(a) is unchanged: ... the row is true within one poll'. The new L4-github-119 test checks B's row only, not A's.",
+   "expected": "When the press finds that a dependency's pull request is no longer open, it reads that pull request once and settles its record the way closedOnHost or mergedOnHost would. A's Tasks row then reads closed (or merged through) right after the press, with no poll. Add the composed case the spec names in dependent-branches-merge.test.ts."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "L4-github-112: A closed and B merged on GitHub gives A merged/merged_through, row 'Merged through #B', one card with Take this work out and Keep it, in either read order and across a restart; Take this work out removes only A's change; nothing is written to GitHub before the press",
+   "holds": true,
+   "note": "3 composed cases fail on the base and pass on the branch. On the bench, the press opened #8; its branch drops kite/club.txt and keeps kite/club-day.txt. There is no real-daemon press of Take this work out (fixer's own not_done)."
+  },
+  {
+   "claim": "L4-github-117 with L4-chat-110: merge cards close with 'Closed: #N was closed on GitHub.'; a cancelled task's pull request closed on GitHub reads 'Closed without merging' in chat facts",
+   "holds": true,
+   "note": "Composed cases fail on the base. On the bench, the card closed 6 s after the close on GitHub, stayed answered after a restart, and the chat facts showed 'Closed without merging'."
+  },
+  {
+   "claim": "L4-github-118 with L4-creds-22: the press reads the branch head, mergeable state and checks once and refuses at once",
+   "holds": true,
+   "note": "The composed failed-check, conflict and pull-head-lag cases fail on the base. On the bench, the failed-check press showed the red line at once."
+  },
+  {
+   "claim": "L4-github-119: a boundary test for the 'could not check' refusal",
+   "holds": true,
+   "note": "The test exists, asserts the exact sentence and passes on the base, as stated."
+  },
+  {
+   "claim": "L4-github-122: a rebuild card's Merge after a merge on GitHub reads '#N was merged on GitHub already.' and records merged_on_host",
+   "holds": true,
+   "note": "The composed case fails on the base. There is no real-daemon case, though the acceptance lists one."
+  },
+  {
+   "claim": "L4-github-123: a 55-character title with a quoted part stays whole",
+   "holds": true,
+   "note": "The unit case fails on the base; the bench card showed the whole title."
+  },
+  {
+   "claim": "L4-github-120: a stalled body gives the retryable 'did not answer in time' error with no token",
+   "holds": true,
+   "note": "Both github.test cases fail on the base."
+  },
+  {
+   "claim": "L4-github-113/114/115/125: dialog status line and open count; status pull request listed after the join; header, files and Last result of the joined project; same after a restart",
+   "holds": true,
+   "note": "Real-daemon join case plus the bench walk and restart."
+  },
+  {
+   "claim": "L4-github-116: a moved task reads runs 1, accepted 1",
+   "holds": true,
+   "note": "Holds on the bench and in the real-daemon case. The 'Redo after the join reads 2 / 2' part has no test."
+  },
+  {
+   "claim": "L4-money-301: a paused and continued run is one try, for By task, specialist and model",
+   "holds": false,
+   "note": "The code reads right, but no test checks the rule: the tries-equals-runs mutation stays green. The fake daemon fixtures lack tries."
+  },
+  {
+   "claim": "L4-creds-28: the held-start refusal is one sentence under 100 characters",
+   "holds": true,
+   "note": "Pinned in project-join.test.ts."
+  },
+  {
+   "claim": "Validation: pnpm check pieces, integration, e2e, UI suite and Playwright are green",
+   "holds": true,
+   "note": "I re-ran them. Unit: 559 files, 6081 tests. UI: 1447 tests. Playwright: 38. e2e: 25. Integration: 30. Lint, typecheck, secrets and docs-check (with --base) are clean."
+  },
+  {
+   "claim": "not_done L4-github-121: the cut line allows it because this machine has no Postgres",
+   "holds": false,
+   "note": "The cut line allows it only if CI has no Postgres, and CI has it."
+  },
+  {
+   "claim": "not_done L4-github-124 (a): the row is true within one poll",
+   "holds": false,
+   "note": "The cut line lists only (b) and (c)."
+  },
+  {
+   "claim": "No test weakened",
+   "holds": true,
+   "note": "The only removed assertion lines are reworded sentences (settingAppliesLine's possessive, joinRefusedHeldStart), with the same intent."
+  }
+ ],
+ "non_blocking": [
+  "L4-github-130: the owner decided on 2026-11-18 (owner-decisions-2026-11-09.md:229): 'add a Close button. One press closes that pull request on GitHub (it can be reopened there); the Overview's 'Cancelled, still open on GitHub' list offers it beside Open.' It is not built. The cut line allows that, but the session lead should schedule it. ADR 0105 point 4 still says 'Not added: a Close button'.",
+  "Sibling of the merged_through state: after A was closed and its change reached main through #6, the Overview's Last result reads 'Since then: merged #2 and #6.' and the chat facts list #2 among the merged pull requests (seen on the bench, steps/03 and part 5). mergedSinceLine (views.ts:391) and repositoryFacts read state 'merged'; they could say 'merged through #6'.",
+  "A merged-through record whose change reached main through no named pull request (through null) keeps merge_sha null for good. Take this work out then always answers 'Forerunner is still reading where the change of #N reached main. Try again in a minute.', a promise the app never keeps. That refusal also closes the card (applyTakeOut marks it taken_out), so only the Tasks row's button is left.",
+  "The joined project's Last result keeps the stored 'Left 5 reviewed pull requests for you to merge.'; only the 'ready to continue' clause is removed (steps/21).",
+  "Costs with a period: views.ts:1311 now takes a known task's runs from runs created inside the period (taskRunFacts), not from runs whose ledger rows fall in it. A run that started before the period and was billed inside it reads runs 0 next to a cost.",
+  "joinRefusedHeldStart says 'starts by itself soon', which may not be true when quiet hours hold the start for hours. The old 'waits to start by itself' was accurate. The spec suggested the new words.",
+  "The watcher now reads every cancelled task's open pull request on each poll until GitHub says closed or merged. A cancelled task's pull request merged on GitHub now runs mergedOnHost (record merged, merge.merged fires, dependents are rebuilt). No test covers that path.",
+  "There is no real-daemon case for L4-github-122 (acceptance: composed; real-daemon) and none for the L4-github-116 Redo-after-join count.",
+  "Shell.tsx: if GET /projects/:id fails for an archived project, the header shows an empty name.",
+  "L4c-left-4 (the doubled 'Waiting for you: approve the plan') is left to the session lead. shared_files gives planBanner and IntakeBanner's condition to l4-money-pause, so the reason holds.",
+  "By specialist and By model of the kept project are empty for moved tasks after a join. That follows BA-9/OJ-07 (the project's own ledger) and may surprise a person.",
+  "pnpm docs:check needs origin/main here; `node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0` passes."
+ ]
+}

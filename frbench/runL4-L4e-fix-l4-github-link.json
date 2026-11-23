@@ -1,0 +1,250 @@
+{
+ "area": "l4-github-link",
+ "branch": "fix/l4-github-link",
+ "head_sha": "fac9519ef9688a538405ec17372e725fda1582ff",
+ "commits": [
+  {
+   "sha": "6188e680e1e936c7adb1f64e4c7fd8f8c1606908",
+   "subject": "one repository: a removed project's take-over no longer counts (L4-github-101, U-091)"
+  },
+  {
+   "sha": "7081d6f58f27dd1d9c52ae078be0c0be41ed0822",
+   "subject": "docs scaffold: starts from main on its own branch, rebuilds for a take-over, says when it did not open (L4-github-102, U-091)"
+  },
+  {
+   "sha": "0185b8798c2df159eb2bf913cf43172e04b737c2",
+   "subject": "together projects: no status pull request switch, refused in one sentence (L4-github-103, U-087)"
+  },
+  {
+   "sha": "25f2c8ef40e32b733ce3c0eda537f16345a9a844",
+   "subject": "intake: a first plan without its decision record is asked for it once (L4-github-104)"
+  },
+  {
+   "sha": "83e183d5a60c273379aaf3b55302462274ed3abc",
+   "subject": "words: no possessive after a quoted name (L4-github-108)"
+  },
+  {
+   "sha": "0669e00e0a28ba6480ae895c89ff4de85305c944",
+   "subject": "words: the offer's lines stay within 100 characters; the other-host refusal names this install's host (L4-github-109)"
+  },
+  {
+   "sha": "34db3a4ab1d8b82f2ca7b2abcaeb7b30dfe4c456",
+   "subject": "one repository: Work together stamps the daemon's clock; a folder's marker is read through the scan's reader (L4-github-105)"
+  },
+  {
+   "sha": "6ff4439d5a687eaf00221475210c942c18367a91",
+   "subject": "fake daemon: a together project's Docs say who writes them; the import refuses a repository another project uses (L4-creds-23)"
+  },
+  {
+   "sha": "fac9519ef9688a538405ec17372e725fda1582ff",
+   "subject": "intake: the plan's docs branch reads like a task's and its pull request carries the mark; the unreachable comment path is gone (L4-github-111, L4-github-107)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "L4-github-101: after a take-over was undone (the project removed), the removed project's settings.took_over still made the repository's project id known, so the next New project on that repository was made without the offer.",
+   "u_ids": [
+    "L4-github-101",
+    "U-091"
+   ],
+   "failing_test_before": "packages/runtime/test/repository-use.test.ts \"l4-github-link, run L4\" > L4-github-101; apps/ui/test/real-daemon.test.ts \"l4-github-link, run L4\" (101 case)",
+   "how": "RepositoryIndex.knows(id) skips removed projects (isRemovedProject) before reading their took_over, so verdictOf answers elsewhere again. A kept or joined project's take-over still counts.",
+   "check_in_the_app": "New project on a repository whose main names another Forerunner project > Take it over > Changes > Undo the New project row > New project on the same repository again: the offer (Work together / Take it over) shows again, and no project is made without it."
+  },
+  {
+   "problem": "L4-github-102: after Take it over, the docs pull request did not open when GitHub kept an old fr/docs-scaffold branch from a closed pull request (the push was refused). The app still showed the take-over as landed (Overview silent, Docs '8 of 8 present'). A take-over while this project's own scaffold PR was open did not rebuild it.",
+   "u_ids": [
+    "L4-github-102",
+    "U-091"
+   ],
+   "failing_test_before": "packages/runtime/test/docs-scaffold.test.ts \"l4-github-link, run L4\" (stale branch case, C4L-2 rebuild case); apps/ui/test/real-daemon.test.ts \"l4-github-link, run L4\" (push refused case); apps/ui/test/project-tabs.test.tsx \"L4-github-102\"; packages/runtime/test/intake.test.ts \"L4-github-102 (sibling)\"",
+   "how": "The scaffold starts from the default branch on its own branch. scaffoldBranchFor tries fr/docs-scaffold, then fr/docs-scaffold-<name slug>, then that name plus 8 characters of the id. It takes a free branch or one whose marker names this project. It skips a branch with another project's open PR and never writes there (W15-01). Force pushes use a lease, never on the default branch, and only over this project's own branch. rebuildForTakeOver moves this project's open scaffold PR onto main. writeMarker answers failed when no PR names the project, and the Overview and Docs show the no-PR sentence (scaffoldLeftNoMarker). The intake's push uses the same own-branch rule.",
+   "check_in_the_app": "Seed a repository whose main names \"Kite club\" and that keeps an old fr/docs-scaffold branch of a closed PR > New project on it > Take it over: GitHub shows one open PR on fr/docs-scaffold-<name>, started from main, whose body ends 'This repository was the Forerunner project \"Kite club\"; it is now the project \"<name>\".' If GitHub refuses it, Overview and Docs say 'Took over ... but the docs pull request that names this project could not be opened, so GitHub still names \"Kite club\".'"
+  },
+  {
+   "problem": "L4-github-103: a project made with Work together showed the Status pull request switch in Settings. Turning it on was accepted, but no status pull request ever opens for a together project (D9).",
+   "u_ids": [
+    "L4-github-103",
+    "U-087"
+   ],
+   "failing_test_before": "packages/commands/test/together-settings.test.ts; apps/ui/test/settings-all.test.tsx \"l4-github-link, run L4\"; apps/ui/test/real-daemon.test.ts \"l4-github-link, run L4\" (103 case)",
+   "how": "settings-view.ts lists the row only for a repository project that is not together. settings.set gets SettingSpec.refuseFor: status_pull_request set to on for a together project is refused with togetherStatusPullRequestSentence (cause together), the same in Settings, chat and voice. Turning it off still works. The fake daemon mirrors both.",
+   "check_in_the_app": "New project on a repository another Forerunner works on > Work together > Settings: there is no Status pull request row. In chat, 'turn on the status pull request' answers 'You work on \"<name>\" together with another Forerunner, so its status stays in the app (Docs, Status); no status pull request is opened.'"
+  },
+  {
+   "problem": "L4-github-104: a first plan whose reply had no decision record (docs/decisions/0001-*.md) was taken as it was. A reply cut off at the output limit was retried with a problem line that did not say how to make it fit.",
+   "u_ids": [
+    "L4-github-104"
+   ],
+   "failing_test_before": "packages/runtime/test/intake.test.ts \"l4-github-link, run L4\" > L4-github-104 (both tests)",
+   "how": "callModel adds MISSING_DECISION_PROBLEM when a first plan has no decision record (hasDecisionRecord) and asks again once with the exact line. A cut-off reply gets CUT_OFF_PROBLEM, or CUT_OFF_PLAN_ONLY_PROBLEM for the plan-only form. A plan-only reply without docs is taken at once.",
+   "check_in_the_app": "New project with a brief, with a model that leaves out the decision record > the plan card in the Inbox lists docs/decisions/0001-<slug>.md among its docs (the retry brought it)."
+  },
+  {
+   "problem": "L4-github-108: the take-over line and other sentences put a possessive after a quoted name ('it is now \"Kite flyers\"'s.', 'the status pull request of \"A\"'s ...').",
+   "u_ids": [
+    "L4-github-108"
+   ],
+   "failing_test_before": "packages/runtime/test/writing-rules.test.ts (L4-github-108 sweep); packages/runtime/test/docs-scaffold.test.ts (take-over line words)",
+   "how": "tookOverLine reads 'This repository was the Forerunner project \"X\"; it is now the project \"Y\".' heldStatusNote reads 'Kept in the app while the status pull request of \"A\" is open on GitHub.' take-out.ts uses 'the work of \"T\"'. A sweep test now catches any quoted name followed by 's.",
+   "check_in_the_app": "Take it over on a marked repository > open the docs pull request on GitHub: the line reads 'it is now the project \"<name>\".' with no 's after a quote."
+  },
+  {
+   "problem": "L4-github-109: with a 60-character marker name, the lines under Work together and Take it over ran to 123 and 144 characters (the limit is 100). The other-host refusal always named github.com, also on a GitHub Enterprise install.",
+   "u_ids": [
+    "L4-github-109"
+   ],
+   "failing_test_before": "apps/ui/test/onerepo-link.test.tsx \"l4-github-link, run L4\" > L4-github-109; packages/runtime/test/repository-use.test.ts \"l4-github-link, run L4\" > L4-github-109",
+   "how": "withNameFitted keeps each line within CONSEQUENCE_LINE_MAX (100): the name whole when it fits, else cut at a word with an ellipsis. Take it over then uses the shorter 'GitHub then names this project; choose it only if nobody uses \"...\" now.' otherHostSentence(host, configuredWebHost(hosts)) names the install's own host. The fake daemon reads the same functions.",
+   "check_in_the_app": "New project on a repository whose marker name is 60 characters: the two lines under Work together and Take it over each fit on one line (at most 100 characters), with the name cut at a word."
+  },
+  {
+   "problem": "L4-github-105: Work together stamped settings.together.at with the wall clock (new Date()), not the daemon's clock, both at the press and when a removed together project was brought back. A folder source's marker was read with readFileSync, outside the scan's injected reader.",
+   "u_ids": [
+    "L4-github-105"
+   ],
+   "failing_test_before": "packages/runtime/test/onerepo-together.test.ts \"l4-github-link, run L4\" (together.at was the wall clock's 2026-11-23 for a press at the simulated 2026-03-05T09:15, also after B starts again and on a revive); packages/runtime/test/sources.test.ts \"l4-github-link, run L4\" (the folder candidate's details were {} for a marker only the injected reader had)",
+   "how": "CreateProjectDeps.clock: POST /projects passes the runtime, and Sources' accept passes compose's clock (one-line compose change). linkSettings and reviveTogether use clock.nowIso(). SourceFs gains readText (node:fs/promises readFile by default), which folderFound uses for the marker. The readFileSync import is gone.",
+   "check_in_the_app": "Not visible on its own. On the bench (simulated clock), Work together: the project's settings.together.at in GET /projects/:id/settings is the bench's time, not the computer's."
+  },
+  {
+   "problem": "L4-creds-23: the fake daemon did not mirror two of the daemon's onerepo answers. A Work-together project's Docs rows ('who writes it', notWrittenHere) were missing, and the Data tab's GitHub import of a repository another project uses succeeded where the daemon answers 409 (validation rule 3).",
+   "u_ids": [
+    "L4-creds-23"
+   ],
+   "failing_test_before": "apps/ui/test/onerepo-link.test.tsx \"l4-github-link, run L4\" > L4-creds-23 (both tests); apps/ui/test/contracts.test.ts \"l4-github-link, run L4 (L4-creds-23)\"",
+   "how": "The fake's linkInUse (the in-use check POST /projects had inline) also guards POST /projects/:id/data/import: 409 conflict with inUseSentence and {cause: repository_in_use, projectId, projectName}. Work together sets the together Overview line. GET /projects/:id/docs of a together project without fixture rows answers the standard set, each row with togetherDocNote and notWrittenHere. contracts.test.ts parses both with the daemon's DocView and ErrorBody (real-daemon.test.ts C2-left-13 and OR-04 already assert the daemon's own).",
+   "check_in_the_app": "Test-only (fake daemon). On the real app: Work together > Docs: each doc it does not have reads 'The other Forerunner of \"<name>\" writes this doc on GitHub; this project does not write docs.' Data > Import from GitHub of another project's repository reads 'o/x is already the project \"X\". Open it, or add this to it as new work.'"
+  },
+  {
+   "problem": "L4-github-111: the plan's docs pull request branch carried the project's whole id (fr/intake-01a1e80e-6201-...-docs on GitHub), because detection read the id from the branch name: the intake PR's body had no hidden mark.",
+   "u_ids": [
+    "L4-github-111"
+   ],
+   "failing_test_before": "packages/runtime/test/intake.test.ts \"l4-github-link, run L4\" > L4-github-111; intake.test.ts \"the docs branch carries the id's random end and the name (R-branch's form, L4-github-111)\"",
+   "how": "intakeDocsBranch(project) is now fr/intake-<8 characters of the id's random end>-<name>-docs, the same form as taskBranchName. intakeBranchFor takes it when GitHub has no such branch, or when the branch is provably this project's (a PR on it whose hidden mark names the project, or its marker file). Otherwise it uses the whole id's legacyIntakeDocsBranch, so a force push still goes only over this project's own branch. The PR body ends with forerunnerMarker({project}). isProjectDocsPr reads the mark on an intake branch (a short branch without it fails closed) and still reads the whole-id form. projectIdsNamedBy and the take-over Undo check read the mark. The unused intakeBranchOf is removed.",
+   "check_in_the_app": "New project with a brief on a GitHub repository > approve the plan > on GitHub the docs PR reads 'wants to merge ... from fr/intake-<8 characters>-<project name>-docs', with no full id visible in the branch or the body."
+  },
+  {
+   "problem": "L4-github-107: the comment Forerunner adds to an open intake docs PR ('Updated by Forerunner from the project's brief: ...') had no test.",
+   "u_ids": [
+    "L4-github-107"
+   ],
+   "failing_test_before": "none: the path cannot run, so it was removed instead of tested. intake.test.ts W15B-13 still pins that a second plan writes no comment and opens no second PR.",
+   "how": "The path is unreachable. Only a first plan writes the doc set (planOnlyFor: a project with no task). Tasks are never deleted (no task.delete anywhere), the approval writes its tasks in a transaction before its docs, and only one intake request is open at a time. So no first plan finds its own intake PR open. The existingPr branch and its comment were removed; runtime.md and the ADR 0117 amendment (point 6) say why.",
+   "check_in_the_app": "Not visible. Add to it on a project with a first plan: no comment appears on its docs PR and no second docs PR opens."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L4-github-106: 'Add to it' waits on 'Adding…' for the whole planning call (2.4 s on the bench stand-in with 2.5 s delay; 10.5 s live), and the project page never shows 'Drafting the plan…'.",
+   "why": "Cut-line item, deferred. Root cause: packages/runtime/src/daemon/server.ts:1189 POST /projects/:id/intake awaits rt.intake.propose() and only then answers 202 IntakeProposalView with requestId. apps/ui/src/pages/NewProjectDialog.tsx addTo awaits client.proposeIntake before land(). The fix the spec names is an answer at once in 'drafting' with planning in the background (as POST /projects with intake: true does through rt.intake.enqueue). That changes the route's contract: 42 call sites in 5 test files (intake.test.ts 29, intake-live.test.ts 8, intake-owner-content.test.ts 2, real-daemon.test.ts 2, effort-offset.test.ts 1) read requestId from the synchronous answer. A background answer also has to keep the 409 refusal of a new brief while a plan is open (enqueue's catch would record it as 'Planning failed'). This needs its own area or an additive route. Evidence: /tmp/frbench/fix-l4-github-link-evidence/before/12-before-21-after-add-press.png ('Adding…' 2.4 s after the press) and 13-before-22-landed.png."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0: lint, paths, typecheck, unit 560 files / 6078 passed / 7 skipped, docs links, secret scan clean (2258 files). Inside check, docs:check could not diff against origin/main (not in this worktree)."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base 77bb4fa",
+   "result": "docs-check: ok (32 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed / 6 skipped; 30 tests passed / 81 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files passed; 25 tests passed / 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 103 files, 1450 tests passed"
+  },
+  {
+   "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts)",
+   "result": "exit 0: 38 passed (1.4 m); the local config was removed afterwards, never committed"
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "empty"
+  },
+  {
+   "command": "bench after walk (stand-in --provider bench, githost 49061): walk-takeover.cjs and walk-together.cjs, label after",
+   "result": "PASS first New project gets the offer; PASS Take it over opens one docs PR ([2 fr/docs-scaffold-kite-flyers open], [1 fr/docs-scaffold closed]; body ends with the new take-over line and the hidden mark); PASS New project after Undo gets the same offer; PASS together project has no Status pull request row; PASS settings.set status_pull_request on a together project refused with the sentence. Bench stopped with scripts/bench/stop.mjs; home, githost, browser profile and seed folders deleted."
+  },
+  {
+   "command": "cargo (apps/desktop/src-tauri)",
+   "result": "not run: no desktop shell file changed"
+  }
+ ],
+ "new_problems": [
+  "A GitHub Enterprise install still accepts github.com links: repoHostsFor's default gitRemoteBase includes github.com, so RepositoryUse.identities never refuses them. Only the refusal's words were fixed (L4-github-109).",
+  "The fake daemon's data import mirrors only the in-use refusal. The daemon's import (checkHere -> identities) also refuses a link on another host (other_host). The existing UI test project-tabs.test.tsx 'imports a repository through the daemon's import' uses https://example.test/org/legacy, which the daemon would refuse, so it was left alone.",
+  "L4-github-104 has no real-daemon Inbox case showing the decision line on the plan card. The composed test asserts the card's proposal docs.",
+  "join-words.ts settingAppliesLine still puts a possessive after a quoted name (L4-github-113, another area). The 108 sweep in writing-rules.test.ts excludes that file through its handedOver set; drop the exclusion when 113 is fixed."
+ ],
+ "notes_for_other_areas": [
+  "New exports in packages/runtime/src/loop/docs.ts: isScaffoldBranch(branch), scaffoldBranchesOf(project), docsPullRequestNamesProject(outcome). pull-requests.ts docsTitle (l4-github-merge) should use isScaffoldBranch, so fr/docs-scaffold-<slug> PRs read \"The project's standard docs\".",
+  "New exports in packages/runtime/src/sources/repository-words.ts: scaffoldLeftNoMarker(project), togetherStatusPullRequestSentence(name), CONSEQUENCE_LINE_MAX, configuredWebHost(hosts), otherHostSentence(host, configured). The fake daemon now imports TOGETHER_OVERVIEW_LINE, TOGETHER_OVERVIEW_DETAILS and togetherDocNote.",
+  "packages/commands SettingSpec.refuseFor(value, project) -> {sentence, cause} | null: a per-project refusal at settings.set (validation, details {key, cause}).",
+  "packages/runtime/src/session/intake.ts: intakeDocsBranch now takes the project row ({id, name}). New exports: legacyIntakeDocsBranch(id), MISSING_DECISION_PROBLEM, CUT_OFF_PROBLEM, CUT_OFF_PLAN_ONLY_PROBLEM, hasDecisionRecord. The intake PR body ends with forerunnerMarker({project}). intakeBranchOf was removed from repository-use.ts.",
+  "CreateProjectDeps.clock is required (Pick<Clock,'nowIso'>). SourceFs.readText(path) is required for an injected fs.",
+  "The fake daemon has linkInUse(entry, except), shared by POST /projects and POST /projects/:id/data/import.",
+  "Suggested U-entry check-in lines: U-091 (take-over: one docs PR on fr/docs-scaffold-<name> from main, or the Overview/Docs no-PR sentence; the offer comes back after Undo) and U-087 (a together project has no Status pull request row; the chat refusal sentence)."
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-l4-github-link-evidence/before/01-before-01-offer.png",
+   "/tmp/frbench/fix-l4-github-link-evidence/before/02-before-02-overview-after-take-over.png",
+   "/tmp/frbench/fix-l4-github-link-evidence/before/03-before-03-docs.png",
+   "/tmp/frbench/fix-l4-github-link-evidence/before/05-before-05-changes-after-undo.png",
+   "/tmp/frbench/fix-l4-github-link-evidence/before/06-before-06-second-new-project.png",
+   "/tmp/frbench/fix-l4-github-link-evidence/before/09-before-12-settings-status-pr.png",
+   "/tmp/frbench/fix-l4-github-link-evidence/before/10-before-13-settings-advanced-status-pr.png",
+   "/tmp/frbench/fix-l4-github-link-evidence/before/12-before-21-after-add-press.png",
+   "/tmp/frbench/fix-l4-github-link-evidence/before/13-before-22-landed.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-l4-github-link-evidence/after/01-after-01-offer.png",
+   "/tmp/frbench/fix-l4-github-link-evidence/after/02-after-02-overview-after-take-over.png",
+   "/tmp/frbench/fix-l4-github-link-evidence/after/03-after-03-docs.png",
+   "/tmp/frbench/fix-l4-github-link-evidence/after/05-after-05-changes-after-undo.png",
+   "/tmp/frbench/fix-l4-github-link-evidence/after/06-after-06-second-new-project.png",
+   "/tmp/frbench/fix-l4-github-link-evidence/after/07-after-10-together-offer.png",
+   "/tmp/frbench/fix-l4-github-link-evidence/after/08-after-11-together-overview.png",
+   "/tmp/frbench/fix-l4-github-link-evidence/after/09-after-12-settings-status-pr.png"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "apps/ui/test/real-daemon.test.ts OR-07 take-over case (Overview line after a failed take-over)",
+   "why": "The Overview now says the docs PR that names the project could not be opened (L4-github-102, design section 5 rule 9). It was null before."
+  },
+  {
+   "test": "packages/runtime/test/docs-scaffold.test.ts take-over line assertion",
+   "why": "New tookOverLine words without a possessive (L4-github-108)."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts held-status assertion and the docsPr fixture body",
+   "why": "heldStatusNote now reads 'Kept in the app while the status pull request of \"A\" is open on GitHub.' (L4-github-108)."
+  },
+  {
+   "test": "packages/runtime/test/credential-limits.test.ts SMALL_PLAN fixture",
+   "why": "A first plan without its decision record is now asked for again (L4-github-104), so the fixture carries docs/decisions/0001-plain-page.md to keep its two-call count."
+  },
+  {
+   "test": "packages/runtime/test/intake.test.ts 'the docs branch carries the whole project id' (now 'carries the id's random end and the name')",
+   "why": "The intake branch is fr/intake-<8 characters>-<name>-docs (L4-github-111). The legacy whole-id form is asserted beside it."
+  },
+  {
+   "test": "packages/runtime/test/intake.test.ts W15B-13 body assertion",
+   "why": "The intake PR body now carries the hidden mark naming the project (as the scaffold and status PRs do). The test asserts the mark and that what a person reads (the body without HTML comments) has no id."
+  },
+  {
+   "test": "packages/runtime/test/intake.test.ts repository intake case (intakePr head) and the L4-github-102 sibling",
+   "why": "intakeDocsBranch takes the project row. The sibling's old closed PR carries the mark, as this version opens it."
+  }
+ ]
+}

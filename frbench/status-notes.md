@@ -162,3 +162,10 @@
 - L4e built on 77bb4fa and launched: wf_216f18cc-8d9, task w9gjid0rw (l4-github-link, l4-github-merge).
 2026-11-23T04:07:10Z workstate merge 77bb4fa pushed after full validation green (check, integration, e2e, ui 1441/1441).
 2026-11-23T04:50:33Z CI 331 + Desktop 87 green at 77bb4fa. Desktop 86 (0288a46) failed on Windows UI unit tests: real-daemon 'start session with a note' 404 (bounded wait race); placed as CI-flake-1 into l4-starts-sessions (L4g).
+2026-11-23T05:32:20Z L4e fix l4-github-link done at fac9519 (10 fixed, all suites green; L4-github-106 not done: POST /projects/:id/intake contract change, needs own area). Review running.
+2026-11-23T06:13:53Z L4e review l4-github-link: fix-needed (1 blocking: L4-github-104 untested at the person's boundary; 11 non-blocking). Fixup running (69e5ba0). Usage 27% at 06:13.
+2026-11-23T06:54:44Z L4e fixup l4-github-link done at 9b2b9c5 (all suites green); fix/l4-github-link moved there; worktrees -1/-3 removed. fix:l4-github-merge running (wt -4).
+2026-11-23T08:21:45Z L4e fix l4-github-merge done at 7879fa3 (13 fixed; all suites green). Not done: L4-github-130 owner's Close button for a cancelled task's open PR (MUST go to a later area), 121 Postgres case, 124 a/b/c, 112 real-daemon press, L4c-left-4, bench walks. Review running (wt -5).
+2026-11-23T09:03:05Z L4e review l4-github-merge saved; fixup running (wt -6).
+2026-11-23T09:45:32Z L4e fixup l4-github-merge done at 35d47d5 (fixup moved the branch itself); merge stage running: local merges 2e9c466 (link), 7f58308 (merge), 7eaf59c (merge fix); worktrees -4/-6 removed.
+2026-11-23T10:08:01Z L4e merged+pushed at 7eaf59c (merge report saved; all signed; validation + smoke 25/25 green). Leftovers: new area l4-github-carried in L4h (15 items, L4-github-130 never cut), OQ-L4e-1 added, rest in leftovers-L4e.json. L4f args built.

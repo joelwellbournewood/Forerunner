@@ -1,0 +1,133 @@
+{
+ "area": "l4-github-link",
+ "branch": "fix/l4-github-link",
+ "head_sha": "9b2b9c5af8c9133626c7eb787e76e383b6ca4aaa",
+ "commits": [
+  {
+   "sha": "69e5ba0",
+   "subject": "intake: the plan card's Decision line after the retry is tested where the person reads it (L4-github-104)"
+  },
+  {
+   "sha": "9b2b9c5af8c9133626c7eb787e76e383b6ca4aaa",
+   "subject": "intake: the plan's docs branch of a name with dots is one git accepts; the user guide says what ends the no-PR take-over line (L4-github-111, L4-github-102)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Blocking finding (L4-github-104): the item was claimed fixed, but no test checked what the person sees. The only test asserted the stored card field change_card.proposal.docs. Its retry record had no 'Decision:' line, so decisionLine() returned null for it, and the test passed whether or not the plan card showed a decision. This broke validation rule 2 and the spec rule that a card field is never asserted alone.",
+   "u_ids": [
+    "L4-github-104"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts \"l4-github-link, run L4\" > \"L4-github-104: a first plan whose reply has no docs is asked once for its decision record ...\". I set packages/runtime/src and packages/commands/src back to 77bb4fa and kept the test: it failed with 'expected [ ... ] to have a length of 2 but got 1' (the reply without docs was taken at once, so the card had no decision record and no decision line). It passes on the fix.",
+   "how": "(1) apps/ui/src/pages/InboxPage.tsx: new exported intakeDecisionLine(card) returns the line the plan card renders ('Decision: ...', or null). The card itself uses it, so the rendered text is unchanged (inbox.test.tsx still pins it). This follows the intakeTotalLine pattern, so the real-daemon test reads the daemon's own card through what the card shows. (2) The bench stand-in has a new FORERUNNER_BENCH_INTAKE_BAD=no-docs (testenv/src/bench/role-player.ts). It plays the live model's first plan with no docs (run C's CL-6); the retry gets the plan with its record. (3) The new real-daemon case runs under 'l4-github-link, run L4' and checks, against the daemon's own Inbox card: a first plan's reply without docs makes exactly one retry, whose request carries MISSING_DECISION_PROBLEM word for word; the card from client.inbox() is a first-plan card, its decision record comes first, and intakeDecisionLine reads 'Decision: a plain page in three files (index.html, styles.css, script.js), opened straight from the folder; no framework, no build step.'; Add to it's plan-only reply without docs is taken with exactly one call and its card has no decision line; both cards read the same after the daemon starts again (composed twice on one home). (4) The composed case in packages/runtime/test/intake.test.ts: the retry now brings a record with a 'Decision:' line, and the test asserts the stored record whole. The exact-text assertions are kept. (5) testenv/test/bench-role-player.test.ts covers the no-docs kind and its retry. Docs: apps.md, runtime.md, testing.md, scripts/bench/README.md.",
+   "check_in_the_app": "Bench (stand-in): start with --env FORERUNNER_BENCH_INTAKE_BAD=no-docs > New project 'Quote page' with the brief 'A one-page website that shows a random quote. Plain HTML, CSS and JavaScript.' and no repository > Inbox: the plan card reads 'Decision: a plain page in three files (index.html, styles.css, script.js), opened straight from the folder; no framework, no build step.' under the total. The model-call log has two intake calls; the second one's last message is the 'Forerunner could not use your reply: - docs: the decision record is missing: ...' line. Walked: /tmp/frbench/fixup-l4-github-link-evidence/14-fx-p2-inbox-plan-card.png, review-plan.json. live_check for the session lead (real model, final_check F-5): New project with a brief > the plan card in the Inbox has a 'Decision: ...' line. If the model left the record out of its first reply, the model-call log shows a second intake call carrying the missing-record line, and the card still has the decision."
+  },
+  {
+   "problem": "Non-blocking finding from the review (fixed because it is in this area's new code and is a real failure): intakeDocsBranch (new in L4-github-111) kept dots from the project's name. 'Wait... what' gave fr/intake-<8>-wait...-what-docs, which git refuses ('..'), so an approved first plan's docs pull request could not be pushed for such a name. Root cause: intake.ts intakeDocsBranch used safeSegment, which allows dots. scaffoldBranchesOf already replaces them.",
+   "u_ids": [
+    "L4-github-111"
+   ],
+   "failing_test_before": "packages/runtime/test/intake.test.ts \"the docs branch of a name with dots is one git accepts: dots become dashes, as the scaffold's branch does (review of L4-github-111)\". Before the fix: \"expected 'fr/intake-f66a6f86-wait...-what-docs' to be 'fr/intake-f66a6f86-wait--what-docs'\". The test also runs git check-ref-format --branch on five names.",
+   "how": "packages/runtime/src/session/intake.ts intakeDocsBranch turns the name's dots into dashes, as scaffoldBranchesOf does. The L4-github-111 form is new on this branch, so no existing branch name changes. runtime.md says so. User guide (same commit): the take-over's no-pull-request line said it shows 'until that pull request is on GitHub'. In fact it reads only the scaffold's record and this computer's copy of the default branch, and nothing tries the pull request again. It now says what ends the line: a merged pull request that puts the project in .forerunner/project.json, or the Undo on Changes.",
+   "check_in_the_app": "Not visible on its own. live_check (real GitHub, forerunner-sandbox): New project named 'Wait... what' with a brief on a repository > approve the plan > GitHub shows the docs pull request from fr/intake-<8 characters>-wait--what-docs."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "Review non-blocking: the no-pull-request take-over line ('Took over o/kite from \"Kite club\" here, but the docs pull request that names this project could not be opened, so GitHub still names \"Kite club\".') gives no next step (design section 5 rule 8).",
+   "why": "The area's acceptance line dictates this exact sentence, and the app has no retry action it could point to (canTakeOver is false and nothing tries the pull request again). A next step needs a decision on what the app offers. I only corrected the user guide's wrong claim about when the line ends."
+  },
+  {
+   "problem": "Review non-blocking: DocsTab shows any 'elsewhere' line, including OR-07's offer line ('o/kite is also the Forerunner project ...') without its Take it over button, which repeats the Overview (design section 5 rule 10).",
+   "why": "No field tells the take-over outcome line apart from OR-07's line when canTakeOver is false (the 14-day case). Narrowing it safely needs a new view field (api-types, client, contracts, fake) and a decision on whether OR-07's line belongs on Docs. Left for the session lead."
+  },
+  {
+   "problem": "Review non-blocking: a take-over made with a brief defers its docs to the intake. If the intake's docs pull request then fails, the Overview says nothing (scaffoldLeftNoMarker needs a scaffold record).",
+   "why": "Not cheap: the intake's push outcome would need its own record on the project and a composed test with a host refusal. Carried as a sibling of L4-github-102."
+  },
+  {
+   "problem": "L4-github-106 (Add to it waits on 'Adding…' for the whole planning call) stays in not_done, as in the fixer's report.",
+   "why": "Unchanged by this fix-up: it changes POST /projects/:id/intake's contract (42 call sites) and must keep the 409 refusal of a second brief. The area's cut line allows it."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0: lint, lint:paths (1617 files), typecheck, unit 560 files / 6079 passed / 7 skipped, docs links ok (213 files), secret scan clean (2258 files). Inside check, docs:check could not diff against origin/main (not in this worktree)."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base 77bb4fa",
+   "result": "docs-check: ok (37 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed / 6 skipped; 30 tests passed / 81 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files passed; 25 tests passed / 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 103 files, 1451 tests passed (one more than the fixer's 1450: the new L4-github-104 real-daemon case)"
+  },
+  {
+   "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts)",
+   "result": "exit 0: 38 passed (1.2 m). The local config was removed afterwards and never committed."
+  },
+  {
+   "command": "real-daemon L4-github-104 case with packages/runtime/src and packages/commands/src at 77bb4fa",
+   "result": "fails ('to have a length of 2 but got 1'); passes on the fix. Sources restored with git checkout HEAD."
+  },
+  {
+   "command": "pnpm vitest run packages/runtime/test/intake.test.ts",
+   "result": "44 passed. The new branch-name case failed before the intake.ts change."
+  },
+  {
+   "command": "bench fixup-l4-github-link (--provider bench, --githost 49081, --env FORERUNNER_BENCH_INTAKE_BAD=no-docs; daemon 49080, UI 2680), the reviewer's walk re-run",
+   "result": "PASS: the offer on bench/seeded. PASS: Take it over opens exactly one docs PR, #2 on fr/docs-scaffold-kite-flyers; the old fr/docs-scaffold stays at d390e82 and #1 stays closed; the body ends 'This repository was the Forerunner project \"Kite club\"; it is now the project \"Kite flyers\".' plus the hidden mark. PASS: Undo on Changes ('Kite flyers (removed)'), then New project with a brief on the same repository shows the same offer and makes no project. PASS: a Work together project ('Kite club') has 'Who merges accepted work' and no 'Status pull request' row under Advanced. PASS: chat 'tool: settings_set {status_pull_request:true}' answers 'Refused: You work on \"Kite club\" together with another Forerunner, so its status stays in the app (Docs, Status); no status pull request is opened.' PASS: push refused by a pre-receive hook on bench/refused2: no PR opens, and the Overview and Docs both read 'Took over bench/refused2 from \"Glider club\" here, but the docs pull request that names this project could not be opened, so GitHub still names \"Glider club\".' PASS (new, L4-github-104): first plan without docs, two intake calls, the second carrying the missing-record line; the Inbox card shows the Decision line. Seen again: the Overview lists the take-over's PR as '\"The project's docs from the plan\" · pull request #2' (pull-requests.ts docsTitle, l4-github-merge's file). Bench stopped with scripts/bench/stop.mjs; home, githost data and browser profile deleted. Evidence in /tmp/frbench/fixup-l4-github-link-evidence/."
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "empty"
+  },
+  {
+   "command": "cargo (apps/desktop/src-tauri)",
+   "result": "not run: no desktop shell file changed"
+  }
+ ],
+ "new_problems": [
+  "Sibling of the intake branch fix, in l4-github-merge's PR executor (not touched): packages/capabilities/src/githost/pr-executor.ts:519 taskBranchName keeps dots from a task's title. 'Update yarn.lock' gives fr/<8>-update-yarn.lock and 'Wait... what' gives fr/<8>-wait...-what. git check-ref-format --branch refuses both (checked here), so such a task's branch cannot be made or pushed. The fix is the same: turn dots into dashes, as scaffoldBranchesOf and now intakeDocsBranch do.",
+  "Still to make sure at the L4e merge (the reviewer's note, seen again on this bench): packages/runtime/src/daemon/pull-requests.ts:72 docsTitle recognises only DOCS_SCAFFOLD_BRANCH, so the take-over's docs PR on fr/docs-scaffold-<slug> shows on the Overview as '\"The project's docs from the plan\" · pull request #2' although there was no plan. l4-github-merge owns that file and should use isScaffoldBranch (exported from loop/docs.ts by this area). Evidence: /tmp/frbench/fixup-l4-github-link-evidence/02-rv-a2-overview.png.",
+  "Carried from the fixer and the review, unchanged: a GitHub Enterprise install still accepts github.com links (repoHostsFor's default gitRemoteBase); the fake daemon's data import mirrors only the in-use refusal, not other_host; join-words.ts settingAppliesLine's possessive after a quoted name (L4-github-113, l4-github-merge; drop the writing-rules sweep's exclusion once it is fixed); rebuildForTakeOver can replace main's newer version of a file the scaffold branch also changed; after Undo of a successful take-over its docs PR stays open on GitHub (run C decision 14); two concurrent first-plan POSTs are not refused atomically; the offer's first sentence cuts the marker name at 60 characters mid-word (markerNameOf, older code)."
+ ],
+ "notes_for_other_areas": [
+  "apps/ui/src/pages/InboxPage.tsx exports intakeDecisionLine(card: IntakeCardView): string | null. It returns the plan card's 'Decision: ...' line exactly as rendered (data-testid intake-decision-line), or null for a plan-only card or a record without a decision. Real-daemon tests should read the daemon's card through it, as they do with intakeTotalLine.",
+  "Bench stand-in: FORERUNNER_BENCH_INTAKE_BAD=no-docs (testenv/src/bench/role-player.ts INTAKE_BAD_KINDS) makes the first reply of each draft a plan with no docs key. A first plan is then asked once more (MISSING_DECISION_PROBLEM) and gets the plan with its decision record; a plan-only (Add to it) reply is taken at once.",
+  "The real-daemon describe 'l4-github-link, run L4' world().compose now takes the stand-in's knobs: compose({ FORERUNNER_BENCH_INTAKE_BAD: 'no-docs' }). Called with no argument it behaves as before.",
+  "intakeDocsBranch now turns the project name's dots into dashes (fr/intake-<8>-wait--what-docs), like scaffoldBranchesOf. taskBranchName (l4-github-merge's PR executor) should get the same rule (see new_problems).",
+  "Suggested line for the session lead (UPDATE-LOG / U-091 is unchanged): 'A first plan whose reply left out its decision record is asked for it once, and the plan card in the Inbox shows its Decision line (tested against the daemon's own card; bench knob FORERUNNER_BENCH_INTAKE_BAD=no-docs).'"
+ ],
+ "screenshots": {
+  "before": [],
+  "after": [
+   "/tmp/frbench/fixup-l4-github-link-evidence/14-fx-p2-inbox-plan-card.png",
+   "/tmp/frbench/fixup-l4-github-link-evidence/13-fx-p1-project-after-plan.png",
+   "/tmp/frbench/fixup-l4-github-link-evidence/01-rv-a1-offer.png",
+   "/tmp/frbench/fixup-l4-github-link-evidence/02-rv-a2-overview.png",
+   "/tmp/frbench/fixup-l4-github-link-evidence/05-rv-b3-changes-after-undo.png",
+   "/tmp/frbench/fixup-l4-github-link-evidence/06-rv-b4-offer-again.png",
+   "/tmp/frbench/fixup-l4-github-link-evidence/08-rv-c2-together-overview.png",
+   "/tmp/frbench/fixup-l4-github-link-evidence/11-fx-c5-settings-advanced.png",
+   "/tmp/frbench/fixup-l4-github-link-evidence/12-rv-chat-status-pr.png",
+   "/tmp/frbench/fixup-l4-github-link-evidence/16-rv-r2-overview.png",
+   "/tmp/frbench/fixup-l4-github-link-evidence/17-rv-r3-docs.png"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/intake.test.ts \"l4-github-link, run L4\" > L4-github-104 (first test)",
+   "why": "Strengthened, not weakened. The retry's decision record now carries a 'Decision:' line and the stored record is asserted whole, instead of toContain('# 0001'). The old fixture's record had no decision the card could show. The exact problem-line and call-count assertions are kept."
+  }
+ ]
+}

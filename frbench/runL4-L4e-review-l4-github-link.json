@@ -1,0 +1,97 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "I walked this on bench \"review-l4-github-link\": the daemon on 49070, the UI on 2670 and the stand-in GitHub on 49071, all started from my worktree on fix/l4-github-link at fac9519 with --provider bench. I seeded the repositories through the stand-in GitHub's API only (no git commands). bench/seeded's main got Kite club's marker and doc set. Its old fr/docs-scaffold branch (cae5c98) got a third project's marker, and that branch's pull request #1 was closed without merging. My walk scripts are in the scratchpad (review-l4link-walk.cjs, review-l4link-settings.cjs, review-l4link-long.cjs, seed*.mts). Screenshots and texts are in /tmp/frbench/review-l4-github-link/steps/.\n\n(1) L4-github-101 and 102. New project \"Kite flyers\" on bench/seeded showed the offer: 'bench/seeded is already the Forerunner project \"Kite club\" ... Work together / Take it over' (01-rv-a1-offer). I pressed Take it over. GitHub then had exactly one open pull request, #2 on fr/docs-scaffold-kite-flyers. Its body ends with 'This repository was the Forerunner project \"Kite club\"; it is now the project \"Kite flyers\".' and the hidden mark. fr/docs-scaffold stayed at cae5c98 and #1 stayed closed (review-a.json). The Overview showed no take-over line, which is right because the take-over landed (02-rv-a2-overview.png). It did list the pull request as '\"The project's docs from the plan\" · pull request #2' (see non-blocking). Docs showed 8 of 8 present and no repository line (rv-docs). On Changes I pressed Undo on 'Created the project Kite flyers'; the row became 'Kite flyers (removed)' (rv-b3). New project \"Kite flyers again\" with a brief on the same repository showed the same offer again ('Works on \"Kite club\" too and plans your brief as its new work.' / Take it over), and no project was made (08-rv-b4-offer-again.png).\n\n(2) L4-github-102, push refused. bench/refused2's main names \"Glider club\", and I added a pre-receive hook that refuses every push. New project, Take it over: no pull request opened. The Overview (18-rv-r2-overview.png) and the Docs tab above '8 of 8 present' (19-rv-r3-docs.png) both read 'Took over bench/refused2 from \"Glider club\" here, but the docs pull request that names this project could not be opened, so GitHub still names \"Glider club\".'\n\n(3) L4-github-103. Work together on bench/seeded made \"Kite club\". Its Overview says 'Shared on GitHub with another Forerunner: each keeps its own tasks.' and each Docs row says who writes it. Settings with Advanced open has 'Who merges accepted work' for Kite club and no 'Status pull request' row (rv-c5-settings-advanced). In chat, 'tool: settings_set {\"key\":\"status_pull_request\",\"value\":true}' answered 'Refused: You work on \"Kite club\" together with another Forerunner, so its status stays in the app (Docs, Status); no status pull request is opened.' (rv-chat-status-pr).\n\n(4) L4-github-109. On bench/longname, whose marker name is 61 characters, the lines under the buttons were 98 and 99 characters without a brief, and 95 and 99 with one. Each cut the name at a word with an ellipsis (rv-l1/l2-long-offer).\n\nWork keeps going by itself where it must: nothing in this area starts or stops sessions. I stopped the bench with scripts/bench/stop.mjs and deleted its home, the stand-in GitHub's data and the browser profile.\n\nTests before and after the fix. With packages/runtime/src and packages/commands/src set back to claude/nifty-knuth-f9udt0 and the fix's test files kept, these fail:\n- the docs-scaffold 'l4-github-link, run L4' cases ('expected [] to deeply equal [\"fr/docs-scaffold-kite-flyers\"]'; C4L-2: main not an ancestor)\n- the real-daemon L4-github-101, 102 and 103 cases\n- together-settings L4-github-103\n- onerepo-together and sources L4-github-105\n- the writing-rules L4-github-108 sweep\n- repository-use L4-github-101, also when only knows()'s one line is reverted\n\nAll pass on fac9519.\n\nMy own validation on fac9519:\n- targeted runtime and commands files: 8 files, 121 tests passed\n- UI files named by the fixer: 60 tests passed, plus the real-daemon l4-github-link, d1109-onerepo-link and w15-merge cases\n- full UI vitest suite: 103 files, 1450 passed\n- pnpm lint and pnpm typecheck: exit 0\n- pnpm test: 560 files, 6078 passed, 7 skipped\n- pnpm test:e2e: 13 files, 25 passed, 1 skipped\n- docs-check --base 77bb4fa: ok (32 files)\n- no conflict markers\n\nI did not run Playwright or test:integration. No apps/ui/src change besides DocsTab, and the fixer reports both green.",
+ "blocking": [
+  {
+   "issue": "L4-github-104 is claimed fixed, but nothing tests what the person sees. The area's acceptance line is '(exact text, real-daemon) ... the card lands with its \"Decision: ...\" line'. The only test checks the stored card field change_card.proposal.docs. Its fixture record shows no decision line at all, so the test would pass even if the person saw nothing. This breaks validation rule 2 (an internal shape asserted with no second assertion on the visible result) and the spec's fix_scope line 'a stored figure or card field is never asserted alone: also assert what the person reads from it'. The fixer lists the missing real-daemon Inbox case under new_problems instead of fixing it or putting L4-github-104 in not_done.",
+   "where": "packages/runtime/test/intake.test.ts (describe 'l4-github-link, run L4', L4-github-104 first test: `expect(docs[\"docs/decisions/0001-stack.md\"]).toContain(\"# 0001\")`); fixture at packages/runtime/test/intake.test.ts:136-137; apps/ui/src/lib/plan-card.ts decisionLine",
+   "evidence": "The retry's record in that test is '# 0001 — Stack\\n\\nDate: 2026-03-05\\nStatus: accepted\\n\\n## Context\\n\\nSmall team.\\n'. I ran the UI's own decisionLine() on that text with tsx and it returns null, so the plan card for this test's proposal has no decision line. No case under real-daemon.test.ts 'l4-github-link, run L4' covers the retry, and no UI test covers it either. The new_problems entry reads: 'L4-github-104 has no real-daemon Inbox case showing the decision line on the plan card. The composed test asserts the card's proposal docs.'",
+   "expected": "Add a real-daemon case under 'l4-github-link, run L4' in apps/ui/test/real-daemon.test.ts, or extend the composed test with a check on what the person reads. Set it up so the first reply has no docs and the retry brings docs/decisions/0001-<slug>.md with a 'Decision: ...' line. Then assert three things: the retry's request carries MISSING_DECISION_PROBLEM exactly; the Inbox card the person reads, via client.inbox() and requestView or a rendered InboxPage, shows 'Decision: <that text>' (data-testid intake-decision-line); and the plan-only reply without docs is still taken with one call. Keep the existing exact-text assertions."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "L4-github-101: a removed project's took_over no longer makes the id known, so New project after the Undo gets the offer again",
+   "holds": true,
+   "note": "repository-use and real-daemon cases fail on base and pass on the fix; the real-daemon case also passes after composing twice. On the bench, Undo on Changes followed by New project again showed the Work together / Take it over offer (08-rv-b4-offer-again.png)."
+  },
+  {
+   "claim": "L4-github-102: the scaffold starts from main on its own branch, never writes over another's, and the old branch is untouched",
+   "holds": true,
+   "note": "Bench: pull request #2 on fr/docs-scaffold-kite-flyers, the old fr/docs-scaffold still at cae5c98, #1 still closed with no comment. The composed test fails on base with 'expected [] to deeply equal [fr/docs-scaffold-kite-flyers]'. By reading the code: a force-push happens only when the branch is on the remote and is this project's own (marker or open pull request), always with --force-with-lease, and GitOps refuses the default branch."
+  },
+  {
+   "claim": "L4-github-102: when no docs pull request opens, the Overview and Docs say so",
+   "holds": true,
+   "note": "Bench with a pre-receive hook refusing pushes: both screens show the tookOverNoPullRequestSentence. The real-daemon case fails on base (null) and passes after restart."
+  },
+  {
+   "claim": "C4L-2: a take-over while this project's own scaffold pull request is open rebuilds the branch on main and comments the take-over line",
+   "holds": true,
+   "note": "The composed test fails on base (main not an ancestor) and passes on the fix. I did not walk it on the bench."
+  },
+  {
+   "claim": "L4-github-103: a together project has no Status pull request row, and settings.set to on is refused in one sentence (Settings, chat)",
+   "holds": true,
+   "note": "Bench: no row under Advanced; the chat tool call answered with the exact sentence. together-settings and the real-daemon case (after restart) fail on base."
+  },
+  {
+   "claim": "L4-github-104: a first plan without the decision record is asked again once, and the card lands with its Decision line",
+   "holds": false,
+   "note": "The retry and its exact problem line are tested and work. The visible Decision line is not tested, and with the test's own fixture decisionLine() returns null. See blocking."
+  },
+  {
+   "claim": "L4-github-105: Work together's settings.together.at uses the daemon's clock, and a folder's marker is read through the injected SourceFs",
+   "holds": true,
+   "note": "onerepo-together and sources cases fail on base and pass on the fix. Every createProjectRecord caller (server.ts x2 with rt, compose.ts Sources accept) passes a clock."
+  },
+  {
+   "claim": "L4-github-107: the comment path cannot be reached, so it was removed",
+   "holds": true,
+   "note": "Verified: store.task.delete is only called in a capabilities test; Undo of task.create cancels; planOnlyFor counts cancelled tasks; the doc set is written only for a non-plan_only card after its tasks transaction; propose() reuses or refuses while a card is open. The only remaining way in is a race between two first-plan POSTs, which is non-atomic and minor."
+  },
+  {
+   "claim": "L4-creds-23: the fake daemon mirrors a together project's Docs notWrittenHere and the import's 409",
+   "holds": true,
+   "note": "The onerepo-link UI tests click through the dialog, Docs and the Data import and assert the sentences; contracts.test.ts parses both."
+  },
+  {
+   "claim": "L4-github-108: no possessive after a quoted name",
+   "holds": true,
+   "note": "Bench pull request body reads 'it is now the project \"Kite flyers\".' The sweep fails on base. Remaining matches are join-words.ts:183, handed to l4-github-merge, and non-quoted possessives ('the writer's task', '#12's changes')."
+  },
+  {
+   "claim": "L4-github-109: the offer's lines stay within 100 characters, and the other-host refusal names the configured host",
+   "holds": true,
+   "note": "Bench with a 61-character marker name: 98/99 and 95/99 characters, each cut at a word. The Enterprise-host words are unit-tested. github.com links are still accepted on an Enterprise install (the fixer's new_problem, confirmed in repoHostsFor)."
+  },
+  {
+   "claim": "L4-github-111: the intake branch is fr/intake-<8 hex>-<name>-docs and the pull request carries the hidden mark",
+   "holds": true,
+   "note": "intake.test.ts cases pass; isProjectDocsPr and projectIdsNamedBy read both forms; the take-over Undo check uses projectIdsNamedBy (mark first)."
+  },
+  {
+   "claim": "L4-github-106 in not_done, with its reason",
+   "holds": true,
+   "note": "The area's cut line allows it. The root cause (server.ts POST /projects/:id/intake awaits propose) is accurate."
+  },
+  {
+   "claim": "Validation commands are green",
+   "holds": true,
+   "note": "Re-run on fac9519: UI suite 1450 passed; pnpm test 6078 passed; test:e2e 25 passed; lint and typecheck clean; docs-check ok."
+  }
+ ],
+ "non_blocking": [
+  "Seen on the bench in the acceptance journey: the Overview lists the take-over's docs pull request on fr/docs-scaffold-kite-flyers as '\"The project's docs from the plan\" · pull request #2' (02-rv-a2-overview.png). That is wrong, because there was no plan. The cause is packages/runtime/src/daemon/pull-requests.ts:72 docsTitle, which recognises only DOCS_SCAFFOLD_BRANCH. pull-requests.ts belongs to l4-github-merge, and the fixer handed this over in notes_for_other_areas. The session lead must make sure docsTitle uses isScaffoldBranch at the L4e merge, otherwise this ships.",
+  "The no-pull-request take-over line on the Overview and Docs gives no next step (design section 5 rule 8): canTakeOver is false, nothing in the app tries the docs pull request again, and the only way out (Undo on Changes) is not mentioned. The user guide also says the line shows 'until that pull request is on GitHub'. In fact scaffoldLeftNoMarker reads only summary_cache.docs, so a pull request opened by hand does not clear it; only a merged marker on main or the Undo does.",
+  "Sibling not listed: a take-over made with a brief (intake: true) defers its docs to the intake. If the intake's docs pull request then fails, the Overview says nothing, because without a scaffold record scaffoldLeftNoMarker is false.",
+  "DocsTab shows any 'elsewhere' line, not only the take-over one. For example OR-07's 'o/kite is also the Forerunner project ...' appears there without its Take it over button, which repeats the Overview (design section 5 rule 10).",
+  "intakeDocsBranch keeps '..' from a project name, as taskBranchName already does: safeSegment allows dots, so 'Wait... what' gives fr/intake-xxxxxxxx-wait...-what-docs, which git refuses. scaffoldBranchesOf already replaces dots. This class already exists in task branches.",
+  "The offer's first sentence still shows the marker name cut at 60 characters in the middle of a word ('... of the lower lake distric\"', bench rv-l1-long-offer). This comes from markerNameOf, is pre-existing, and is not the line L4-github-109 fixed.",
+  "rebuildForTakeOver writes the branch's version of every file the branch changed since its merge-base. If main later changed the same file, main's newer version is replaced by the branch's older one. Rare.",
+  "After Undo of a successful Take it over, the removed project's docs pull request (#2) stays open on GitHub. The next Take it over opens a second pull request that also replaces the marker. This is by design (run C decision 14), but the person could merge the wrong one.",
+  "Two concurrent first-plan POSTs are not refused atomically: pendingFor is checked before the model call. Without the removed existingPr path, the second approval would push over the first's open intake branch and createPullRequest would fail. Unlikely through the UI.",
+  "The writing-rules sweep only catches the `\"${x}\"'s` and `quoted(...)}'s` forms. It misses other helpers, e.g. a future `${quote(x)}'s`. Drop the join-words.ts exclusion once L4-github-113 is merged.",
+  "live_check suggestion for the session lead (real GitHub, forerunner-sandbox): keep an old fr/docs-scaffold branch of a closed pull request whose marker names another project, with main naming \"Kite club\". New project > Take it over: exactly one new open pull request on fr/docs-scaffold-<name>, started from main, whose only change is .forerunner/project.json and whose body ends 'it is now the project \"<name>\".'. Then Undo on Changes > New project again: the offer shows again."
+ ]
+}

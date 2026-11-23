@@ -1,0 +1,145 @@
+{
+ "area": "l4-github-merge",
+ "branch": "fix/l4-github-merge",
+ "head_sha": "35d47d5b6b23dfbb8f45eb809bae7bd76d142c79",
+ "commits": [
+  {
+   "sha": "294759d",
+   "subject": "costs: a paused run and the run a Continue started read as one try, pinned at the daemon and in the fake (L4-money-301)"
+  },
+  {
+   "sha": "f017ca2",
+   "subject": "join: Make one project and its Undo run on Postgres too, with the same counts as SQLite (L4-github-121)"
+  },
+  {
+   "sha": "35d47d5",
+   "subject": "merge press: a pull request the chain builds on, found closed, is settled at the press (L4-github-124)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Review blocking 1 (L4-money-301): no test checked the rule that a paused run plus the run a Continue started count as one try. The fake daemon's Costs fixture had no `tries`. With `tries` made equal to `runs` in views.ts, every cost test stayed green.",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts, describe 'the task drawer after a session ran its tasks (design §3.5)' > 'fixup-l4-github-merge (L4-money-301): Costs reads a run that paused and the run a Continue started as one try ...'. Each of the reviewer's three mutations fails it on its own (taskRunFacts tries: 'expected {...} to match object'; the specialist count: coder tries 2 vs 1; triesByModel: [[2,1,2]] vs [[2,1,1]]). The restored code passes. apps/ui/test/project.test.tsx 'l4-github-merge, run L4' > 'L4-money-301: By task, By specialist and By model ...' and project-tabs.test.tsx 'shows the cost per accepted task' both fail when CostsTab reads runs instead of tries.",
+   "how": "Tests only; the views.ts logic was already right. (1) The drawer describe gets FORERUNNER_BENCH_LONG='Write the guide'. A new case gives 'Write the guide in guide.md' a USD 0.045 budget, so its first run hears the wrap-up and pauses. Continue is answered with the Inbox card's own label, the second run finishes and the critic accepts. GET /costs then reads: the task {runs 2, accepted 1, tries 1}, the coder {2, 1, 1}, the model [[2, 1, 1]]. The critic has no tries. Each grouping still sums to the total. (2) The 'Broken page check' case (failed, then fixed) also asserts tries 2, the licence task tries 1 and the coder {3, 2, 3}. (3) The fake's COSTS fixture (apps/ui/test/fixtures.ts) carries `tries` as the daemon gives it. It adds 'Write the members guide' (runs 2, tries 1, accepted 1), and the coder's and Sonnet's runs are one above their tries. So the existing '7 / 9 (78%)' (project-tabs and Playwright project-extras) is now read against tries. project.test.tsx reads the By task, By specialist and By model rows from the fake and no longer writes a bucket by hand.",
+   "check_in_the_app": "Bench (done, steps 06-07 in /tmp/frbench/fixup-l4-github-merge/steps): start with --env 'FORERUNNER_BENCH_LONG=Write the guide'. Make a project 'Guide' with a coder task 'Write the guide in guide.md' and a budget of CHF 0.036, then Start. In the Inbox, press 'Continue (CHF 0.04 more)' on the paused card and wait until the task is done. More > Costs then reads: By task 'Write the guide in guide.md · 2 · 1 / 1 (100%)'; By specialist 'the coder 2 · 1 / 1 (100%)' and 'the critic 1 · —'; By model '2 · 1 / 1 (100%)'. Live (phase F): the same with the live researcher task of L4-pause-4 (a run paused at the session budget, then continued and accepted) reads '1 / 1 (100%)' on By task, the researcher row and the model row, never '1 / 2 (50%)'."
+  },
+  {
+   "problem": "Review blocking 2 (L4-github-121): Make one project had no Postgres integration case. The fixer's reason was that this machine had no Postgres. The cut line allows that only if CI has no Postgres, and CI has it (ci.yml postgres:16 service; Windows starts PostgreSQL).",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "None: it was a missing test. The new packages/commands/test/project-join.integration.test.ts was run here against a private PostgreSQL 16 cluster (the binaries are installed on this machine): 1 passed. Without FORERUNNER_TEST_PG it is skipped, with the reason in its name.",
+   "how": "seedPair, joinPort, counts, TABLES and join moved unchanged from project-join.test.ts into packages/commands/test/join-world.ts, so the SQLite and Postgres cases share one seed. test/helpers.ts world({ store }) takes a store the case opened. The integration case walks OJ-02's journey on SQLite and then on Postgres (its own schema, dropped in afterAll): seed, join keeping Site, a card made on Site since, Undo. It asserts: every table's rows per project are equal on both adapters before, after the join and after Undo; OJ-02's moved numbers (5 tasks, 2 milestones, 3 cards, 1 note, 1 merge record, 1 decision, 1 proposal); what stays (sessions, ledger, chat, lessons); the data asset listing both projects; the sentences 'Made one project: \"Kite club\" joined \"Site\".' and '\"Kite club\" is its own project again.'; and the closed and reopened project rows.",
+   "check_in_the_app": "Not visible in the app; this is a test-adapter case. CI runs it on Linux and Windows with FORERUNNER_TEST_PG; check that 'l4-github-merge, run L4: project.join on Postgres (L4-github-121)' passes, not skips, in the integration job log. Locally: FORERUNNER_TEST_PG=postgres://... pnpm test:integration (here: 11 files passed, 108 tests)."
+  },
+  {
+   "problem": "Review blocking 3 (L4-github-124 (a)): after a press-time check found that a dependency's pull request had been closed on GitHub, the dependency's Tasks row kept reading 'Accepted · waiting for you to merge' until the watcher's next poll.",
+   "u_ids": [
+    "merge-in-app entry (ADR 0111; U-id named by the session lead)"
+   ],
+   "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'l4-github-merge, run L4' > 'L4-github-124 (a): A closed on GitHub, then Merge pressed on B before any poll ...' (A's record was not left_to_you/closed) and the new assertion in the 'L4-github-119' case (A's row read 'Accepted · waiting for you to merge'). apps/ui/test/real-daemon.test.ts 'l4-github-merge, run L4' > 'fixup-l4-github-merge (L4-github-124 (a)) ...' fails with the compose wiring removed ('expected { key: done ... } to match object') and passes with it. apps/ui/test/project-overview.test.tsx 'l4-github-merge, run L4 (fixup)'.",
+   "how": "daemon/pull-requests.ts: goneUnder (was buildsOnGone) names the tasks a pressed chain builds on whose pull request is not listed open and not merged on its record. After the chain's own branch check, settleClosedAtPress reads each of them once with getPullRequest, also when that check refuses (the two early returns now break out first). One closed without a merge goes to the new closedAtPress port. session/dependent-branches.ts: closedAtPress runs closedOnHost with rebuild: false. It sets the record to '#1 was closed without merging.' (or merged through another), closes its merge cards and settles the row, as the watcher's report would. What built on it is not rebuilt there: the press's check already rebuilt the chain, and the next poll, which reads the close again, rebuilds the rest. So the press writes to GitHub only for what the person pressed. An open dependency (task redone or cancelled) or one merged on GitHub is left to that poll, whose report tells the merge's listeners once. A failed read is logged and left to the poll. compose.ts wires the port and emits a project event. The fake daemon's pullRequestPressFinds takes closedDependency and settles that task's record the same way.",
+   "check_in_the_app": "Bench (done, steps 01-05 in /tmp/frbench/fixup-l4-github-merge/steps, watcher poll set to 1 h so no poll ran): make a repository project 'Kite club' on bench/seeded with A 'Write kite/club.txt with one line' and B (waits for A), then run them. Close A (#2) on the fake GitHub. On the Overview, press Merge on B (#3): the red line reads '#3 was rebuilt without #2, which was closed. ...'. Open Tasks: A reads 'Accepted · pull request closed' (detail '#2 was closed without merging.') and B reads 'Accepted · rebuilt: look before you merge', with one card for B. Nothing was written to GitHub for A. Restart the daemon: A's row is the same. Live (phase F, forerunner-sandbox): close A's pull request on github.com, press Merge on B within a few seconds, before any poll, then open Tasks at once: A reads 'Accepted · pull request closed'."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L4-github-130 (owner 2026-11-18): a Close button for a cancelled task's pull request that is still open on GitHub.",
+   "why": "Not in the review's blocking list: the reviewer marked it non-blocking because the cut line allows it as a minor. The fixer's design note still stands: POST /projects/:id/pull-requests/:n/close, allowed only for kind 'cancelled' rows, using the project's token and keeping the branch, with the line 'Closes this pull request on GitHub; you can reopen it there.'. ADR 0105 point 4 still says it is not added. The session lead should schedule it."
+  },
+  {
+   "problem": "L4-github-124 (b) and (c): the cancelled block's plural for one pull request; a pull request rebuilt without its dependency is still listed under 'Reviewed by the critic'.",
+   "why": "The spec's cut line allows these two. This fixup built only part (a), which the cut line does not allow to be left out."
+  },
+  {
+   "problem": "A dependency that was merged on GitHub (not closed) shortly before the press still reads 'waiting for you to merge' until the watcher's next poll.",
+   "why": "This was done on purpose. Settling a merge at the press would either start the merge's listeners there (copy refresh, card closing, and rebuilds of other dependents, which are GitHub writes the person did not press) or leave them unheard, because the poll skips a record already marked merged. The item and its acceptance name the closed dependency, and that case is fixed. ADR 0111's 2026-11-23 amendment, point 5, says so."
+  },
+  {
+   "problem": "The reviewer's other non-blocking items: the merged_through sibling in mergedSinceLine and repositoryFacts; a merged-through record with no named PR keeps merge_sha null, so 'still reading' repeats; the joined project's Last result keeps 'Left 5 reviewed pull requests ...'; Costs with a period gives runs 0 next to a cost; joinRefusedHeldStart's 'soon' under quiet hours; a cancelled task's pull request merged on GitHub has no test; no real-daemon case for L4-github-122 or for the Redo-after-join count; Shell.tsx shows an empty name if GET /projects/:id fails; L4c-left-4.",
+   "why": "Out of this fixup's scope (blocking findings only). Each is listed with its evidence in the review; the session lead should place them."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0. Lint, path lint and typecheck are clean. Unit tests: 559 files, 6083 passed, 7 skipped. docs:links ok (213 files). secrets:scan clean (2259 files). docs:check cannot diff here because origin/main is missing; 'node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0' is ok (44 files)."
+  },
+  {
+   "command": "FORERUNNER_TEST_PG=postgres://fr@127.0.0.1:55481/frtest flock /tmp/frbench/heavy.lock pnpm test:integration (private PostgreSQL 16 cluster, stopped and deleted after)",
+   "result": "11 files passed, 1 skipped (Docker); 108 tests passed, 4 skipped. This includes the new project-join Postgres case and the state and memory Postgres suites."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "5 files passed, 7 skipped (Postgres and Docker; the new file is skipped with its reason); 30 tests passed, 82 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "13 files passed; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "103 files, 1450 tests passed"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "38 passed"
+  },
+  {
+   "command": "vitest dependent-branches-merge, merge-in-app-restart, pull-requests-view, dependent-branches, dependent-branches-restart, l3-merge, githost-watcher, loop-merge, merge-record",
+   "result": "9 files, 161 tests passed. The siblings include the l3-merge describe's L3-github-1 cases with the settle wired."
+  },
+  {
+   "command": "mutation checks",
+   "result": "tries=runs in taskRunFacts, the specialist count and triesByModel each fails the new real-daemon case on its own. CostsTab reading runs fails project.test and project-tabs. closedAtPress unwired in compose fails the new real-daemon L4-github-124 case."
+  },
+  {
+   "command": "bench fixup-l4-github-merge (daemon 49081, UI 2681, githost 49083, --provider bench)",
+   "result": "Press walk: A's row read 'Accepted · pull request closed' right after the press, and again after a daemon restart. Costs walk: '2 · 1 / 1 (100%)' for the task, the coder and the model. No console problems. The bench is stopped and its home, githost and browser profile are deleted; the steps are kept in /tmp/frbench/fixup-l4-github-merge/steps."
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "nothing"
+  }
+ ],
+ "new_problems": [
+  "A paused run that no run has continued yet counts as one try in Costs. While the task waits on its Continue card, By task reads '0 / 1 (0%)' (views.ts taskRunFacts adds a run to `continued` only once a later run exists). ADR 0112 point 5 says a paused run is no failed try. A paused run should probably count no try until it is continued or cancelled. The new test does not pin either behaviour (it asserts only runs 1, accepted 0 before Continue).",
+  "The press's settle reads each gone dependency once with getPullRequest. That is one more read-only GET per closed dependency per press, and only when the chain builds on a pull request that is no longer listed open."
+ ],
+ "notes_for_other_areas": [
+  "ProjectPullRequestsDeps.closedAtPress?: (task, info) => Promise<void> (daemon/pull-requests.ts). Compose wires it to DependentBranches.closedAtPress and emits a project event. Composed tests that build ProjectPullRequests for the press should pass `closedAtPress: (t, i) => m.dependents.closedAtPress(t, i)`, as the l3-merge and l4-github-merge describes now do.",
+  "DependentBranches.closedAtPress(task, info) is public. closedOnHost takes { rebuild?: boolean } (rebuild: false only at the press). pull-requests.ts buildsOnGone is renamed goneUnder and returns the tasks instead of a boolean.",
+  "packages/commands/test/join-world.ts exports seedPair, joinPort, counts, TABLES and join. test/helpers.ts world({ store }) takes a store opened by the case (the Postgres integration case uses it).",
+  "The fake daemon's pullRequestPressFinds entries take closedDependency: { taskId, number }. The COSTS fixture carries tries and a new byTask row task_guide 'Write the members guide' (runs 2, tries 1, accepted 1). Sonnet is now runs 10 / tries 9 and the coder runs 7 / tries 6; the Accepted figures '7 / 9 (78%)' and '5 / 6 (83%)' are unchanged.",
+  "The drawer describe in real-daemon.test.ts now sets FORERUNNER_BENCH_LONG='Write the guide'. Its other tasks do not match that title.",
+  "Suggested UPDATE-LOG lines for the session lead: L4-money-301 is now pinned at the daemon (paused plus continued reads 1 / 1) and in the fake. L4-github-121: the Postgres case added and run here against a private cluster. L4-github-124 (a): the closed dependency's row is true right after the press (ADR 0111 amendment of 2026-11-23, point 5)."
+ ],
+ "screenshots": {
+  "before": [],
+  "after": [
+   "/tmp/frbench/fixup-l4-github-merge/steps/01-press-01-tasks-before-close.png",
+   "/tmp/frbench/fixup-l4-github-merge/steps/03-press-03-overview-after-press.png",
+   "/tmp/frbench/fixup-l4-github-merge/steps/04-press-04-tasks-after-press.png",
+   "/tmp/frbench/fixup-l4-github-merge/steps/05-press-05-tasks-after-restart.png",
+   "/tmp/frbench/fixup-l4-github-merge/steps/06-costs-01-inbox-paused.png",
+   "/tmp/frbench/fixup-l4-github-merge/steps/07-costs-02-costs-after-continue.png"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "apps/ui/test/project.test.tsx 'l4-github-merge, run L4' > L4-money-301 case",
+   "why": "It now reads the By task, By specialist and By model rows from the fake daemon's own Costs fixture instead of writing a bucket by hand, as the review asked. Its intent is unchanged: a paused and continued run reads '1 / 1 (100%)'."
+  },
+  {
+   "test": "packages/commands/test/project-join.test.ts",
+   "why": "Its seed and helpers moved unchanged into test/join-world.ts so the Postgres case can share them. No assertion changed."
+  },
+  {
+   "test": "apps/ui/test/fixtures.ts COSTS.proj_atlas",
+   "why": "The buckets carry tries, as the daemon gives them, and there is one more byTask row. Sonnet's and the coder's runs each grew by one; the existing Accepted assertions ('7 / 9 (78%)') are unchanged and are now read against tries."
+  }
+ ]
+}

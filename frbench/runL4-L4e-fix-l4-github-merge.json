@@ -1,0 +1,249 @@
+{
+ "area": "l4-github-merge",
+ "branch": "fix/l4-github-merge",
+ "head_sha": "7879fa3676ca2fa7539de8af36fc2dc84dcc6fd6",
+ "commits": [
+  {
+   "sha": "35d1006",
+   "subject": "merge path: merged-through, closed on GitHub, the press reads the PR, GitHub's own merge (L4-github-112, L4-github-117, L4-chat-110, L4-github-118, L4-creds-22, L4-github-119, L4-github-122)"
+  },
+  {
+   "sha": "bd42f24",
+   "subject": "card titles: a quoted part the word cut would drop whole stays (L4-github-123)"
+  },
+  {
+   "sha": "330cdc8",
+   "subject": "githost: a GitHub body that comes slowly reads as GitHub not answering in time (L4-github-120)"
+  },
+  {
+   "sha": "bfd96ac",
+   "subject": "joins, costs, header: what a joined project and its dialog say is true now (L4-github-113, L4-github-114, L4-github-115, L4-github-116, L4-money-301, L4-github-125, L4-creds-28)"
+  },
+  {
+   "sha": "0f1edc4",
+   "subject": "docs: merges and joined projects say what is true now (ADR 0111 and 0117 amended 2026-11-23; L4-github-112 to -125, L4-money-301, L4-creds-22, L4-creds-28)"
+  },
+  {
+   "sha": "82575ff",
+   "subject": "format: Biome over this area's changes"
+  },
+  {
+   "sha": "7879fa3",
+   "subject": "githost test: the token marker is no secret-shaped string (secret scan)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "L4-github-112 [major]: B merged on GitHub while it held closed A: A still read '#A was closed without merging.' and nothing offered to take A's change out.",
+   "u_ids": [
+    "merge-in-app entry (ADR 0111; U-id named by the session lead)"
+   ],
+   "failing_test_before": "packages/runtime/test/dependent-branches-merge.test.ts 'l4-github-merge, run L4' > three L4-github-112 cases (one poll; B's merge read before A's close; A's close read first, then B merged and read by a daemon started again). apps/ui/test/real-daemon.test.ts 'l4-github-merge, run L4' > 'L4-github-112, L4-github-117 ...' (written with the fix; the root cause was confirmed failing in the composed cases)",
+   "how": "dependent-branches.ts: closedOnHost asks PrTaskExecutor.reachedBase whether A's reviewed commit is on main. If it is, mergedThrough moves the record to merged with last_outcome merged_through (no migration) and the sentence '#1 was closed, but its change reached main through #2.'. mergedOnHost runs closedReachedThrough for the closed tasks B built on, and fills in B's merge commit. Both read orders and a restart give the same record. A's other merge cards close, and mergedThroughCard files one card with 'Take this work out' and 'Keep it'. pr-answers.ts applies both answers. 'Take this work out' calls TaskTakeOut.takeOut, which now has a through mode: PrTaskExecutor.takeOut with through and throughPlan reverts only A's own commits, from B's merge commit's first parent up to A's reviewed head. task-words.ts mergedDisplay labels the row 'Merged through #2' with the sentence as its detail. Nothing is written to GitHub before the person presses.",
+   "check_in_the_app": "Bench with --githost: make a repository project with tasks A and B, where B waits for A, and run them. On the fake GitHub, close A's pull request, then merge B's. Wait one watcher poll (about 60 s). Tasks: A's row reads 'Merged through #<B>'. Inbox: one card '\"A\" reached main through pull request #<B>' with Take this work out and Keep it. Press Take this work out: one 'Take out: A' pull request opens, and its branch lacks A's file but keeps B's. Restart the daemon: the row and the answered card stay. Live (phase F): the same on forerunner-sandbox, closing A and merging B on github.com before any poll."
+  },
+  {
+   "problem": "L4-github-117 with L4-chat-110: merge cards stayed open after their pull request was closed on GitHub, and a cancelled task's pull request closed there still read 'Left open on GitHub' in chat's facts.",
+   "u_ids": [
+    "U-028",
+    "U-092"
+   ],
+   "failing_test_before": "dependent-branches-merge.test.ts 'l4-github-merge, run L4' > 'L4-github-117: a changed after the review card closes ...' and both 'L4-chat-110' cases. real-daemon.test.ts 'l4-github-merge, run L4' > first case (card under Answered, kept after a restart) and second case (the chat model's request)",
+   "how": "closedOnHost calls closeMergeCards(task, url, 'closed'). request-words.ts gives the Answered line 'Closed: #N was closed on GitHub.'. The sweep also closes a card an earlier version left open for a closed record. The watcher now reads each cancelled task's pull request for its state only (cancelledPullRequests: once, and no event fires). A close records the merge record as left_to_you/closed; a cancelled task that had no record gets one (recordCancelledClose). repositoryFacts then lists it under 'Closed without merging'.",
+   "check_in_the_app": "Push a commit to an accepted task's branch on the fake GitHub, then press Merge: a 'changed after the review' card appears. Close that pull request on GitHub and wait one poll: the card moves to Answered with 'Closed: #N was closed on GitHub.', and stays closed after a restart. Then cancel a done task whose pull request is open, close the pull request on GitHub, wait one poll, and ask chat what happened to it: the reply's facts say 'Closed without merging'."
+  },
+  {
+   "problem": "L4-github-118 with L4-creds-22: a Merge pressed on a pull request whose check had failed, that no longer merged cleanly, or that got a push a moment ago first answered 'Merging #N.' and was refused seconds later.",
+   "u_ids": [
+    "merge-in-app entry"
+   ],
+   "failing_test_before": "dependent-branches-merge.test.ts 'l4-github-merge, run L4' > 'L4-github-118: a check that failed ...', 'L4-github-118: a pull request that stopped merging cleanly ...', 'L4-creds-22: Merge pressed right after a push ...'. real-daemon.test.ts 'l4-github-merge, run L4' > first case (press after a push with the lag on) and second case (failed check refused through client.mergePullRequest)",
+   "how": "ReviewedPrMerge.headMovedNow is now the press's single read of each pull request in the chain. It reads the branch head (getBranchHead, never only the listing's lagging head), the mergeable state, and the checks on the reviewed head. If the head moved, the PR conflicts, or a check failed, the press is refused at once in the merge step's own sentence, and the record, the row and one card are settled the way the merge step settles them. pull-requests.ts runs it for every task in the chain. Running checks keep 'merges when its checks pass'. The merge PUT stays pinned to the sha. The fake GitHub gains RepoOps.pullHeadLag.",
+   "check_in_the_app": "Live (phase F, forerunner-sandbox, the owner's L3-github-3 at person speed): push a commit to an accepted task's branch on github.com and press Merge within a few seconds. The red line '#N changed after the review: ...' shows at once, nothing merges, and one card appears. Make a check fail on an accepted pull request and press Merge: 'A check failed on #N (ci/test): fix it, or merge it on GitHub.' shows at once."
+  },
+  {
+   "problem": "L4-github-119: the press's 'could not check' refusal had no test at the boundary the person meets it.",
+   "u_ids": [
+    "merge-in-app entry"
+   ],
+   "failing_test_before": "none: it was a missing test. The new dependent-branches-merge.test.ts 'L4-github-119: ... folder is busy at the press' passed at the base, as expected",
+   "how": "Composed case through ProjectPullRequests.merge with B's folder lock held. It asserts the exact sentence '#2 is not merged yet: Forerunner first checks what it holds of the work it builds on. Press Merge again in a minute.', that nothing merges, and that the row keeps its Merge.",
+   "check_in_the_app": "Hard to reach by hand. The test covers it."
+  },
+  {
+   "problem": "L4-github-122: a rebuild card's Merge pressed just after a merge on GitHub said 'Merged #59.'.",
+   "u_ids": [
+    "merge-in-app entry"
+   ],
+   "failing_test_before": "dependent-branches-merge.test.ts 'l4-github-merge, run L4' > 'L4-github-122: ...'",
+   "how": "merge.ts finish records a merge GitHub made first (alreadyMerged) as last_outcome merged_on_host and sets MergeOutcome.alreadyMerged (ports.ts, append-only). applyRebuildMerge then words it '#59 was merged on GitHub already.'.",
+   "check_in_the_app": "Close A so that B gets a rebuild card. Merge B on GitHub, then press the card's Merge before the next poll. The Answered line reads '#B was merged on GitHub already.'."
+  },
+  {
+   "problem": "L4-github-123: the head-moved card cut a 55-character title before its quoted part.",
+   "u_ids": [
+    "U-028"
+   ],
+   "failing_test_before": "packages/runtime/test/l3-merge.test.ts 'l4-github-merge, run L4' > 'L4-github-123: ...'",
+   "how": "quoted-title.ts balancedCut: when the word cut dropped a quoted part of the title whole, the whole title is kept if it overruns by at most the slack. Callers with slack 0 are unchanged.",
+   "check_in_the_app": "Give a task the title 'Write kite/ferry.txt about the ferry trip to \"Seal Bay\"', push a commit to its branch and press Merge. The card title shows the whole task title."
+  },
+  {
+   "problem": "L4-github-120: a GitHub answer whose body came slowly failed as a plain abort.",
+   "u_ids": [],
+   "failing_test_before": "packages/capabilities/test/github.test.ts 'l4-github-merge, run L4' (REST and GraphQL)",
+   "how": "github.ts: every body is read through json(), under the same guard as the request. An abort becomes the retryable 'GitHub API at <origin> did not answer in time'; a body cut short otherwise reads as unreachable. The token never appears.",
+   "check_in_the_app": "Not visible on the stand-in. Unit-tested."
+  },
+  {
+   "problem": "L4-github-113: after Make one project, the closed project's open status pull request was listed nowhere, and the dialog never named the setting.",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "real-daemon.test.ts 'l4-github-merge, run L4' > the join case (ifKept settings were []; no docs row). onerepo-join.test.tsx (dialog lines)",
+   "how": "join-preview.ts adds 'Status pull request: On/Off' to each repository project that is not a together project. settingAppliesLine now reads 'the setting of \"Site\"' (no possessive). pull-requests.ts isJoinedStatusPr lists a joined project's marked, open fr/status pull request as the kept project's docs row with Merge, whatever the kept project's own setting. The status writer in docs.ts is unchanged.",
+   "check_in_the_app": "Make two projects on one repository. Turn Status pull request on for the one to close, and let it open fr/status. Open Make one project: the dialog lists 'Status pull request: On/Off' and 'Status pull request: the setting of \"<kept>\" applies to the moved work: off.'. Join: the kept project's Overview lists the status pull request with Open and Merge, also after a restart."
+  },
+  {
+   "problem": "L4-github-114: the dialog counted a pull request closed on GitHub as open.",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "real-daemon.test.ts 'l4-github-merge, run L4' > the join case ('1 open pull request', which read 2 before)",
+   "how": "openPullRequests skips merged records and records closed on GitHub (isClosedRecord in merge-mode.ts), and counts an open take-out pull request.",
+   "check_in_the_app": "Close one of a project's two accepted pull requests on GitHub and wait one poll. Make one project's dialog reads '2 tasks done' and '1 open pull request'."
+  },
+  {
+   "problem": "L4-github-115: a joined project's header named another project, and Your files showed the docs clone's path with an id.",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "onerepo-join.test.tsx 'l4-github-merge, run L4' (header and files). real-daemon.test.ts join case (card.folder null)",
+   "how": "Shell.tsx reads the viewed project's card when it is not in the active list. views.ts gives a joined project no folder. SummaryTab shows 'Its files are in \"<kept>\".' with a link. The fake daemon matches.",
+   "check_in_the_app": "After a join, open the closed project's page: the header names it, and Your files reads 'Its files are in \"<kept>\".' with no worktrees path."
+  },
+  {
+   "problem": "L4-github-116 with L4-money-301: Costs > By task read '6 · 0 / 6' for a moved task that ran once, and '1 / 2 (50%)' for a task whose paused first run was continued and then accepted.",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "real-daemon.test.ts join case (byTask of the moved task {runs:1, accepted:1, tries:1}, after a restart too). project.test.tsx 'l4-github-merge, run L4' (By task row '1 / 1 (100%)')",
+   "how": "One task-run helper in views.ts, taskRunFacts, gives each task its own work runs, its tries, and the runs the critic accepted, wherever the ledger rows are booked. A paused run that a later run continued counts as one try with it. CostBucket.tries (append-only) feeds By task, By specialist and By model. CostsTab renders accepted / tries with the tooltip 'Accepted by the critic / tries; a run paused and continued is one try'. No money figure changes.",
+   "check_in_the_app": "After a join, Costs of the kept project: the moved task reads '1 · 1 / 1 (100%)'. A task whose first run paused at the session budget and was continued reads '1 / 1 (100%)' (bench: FORERUNNER_BENCH_LONG with a small budget, then Continue)."
+  },
+  {
+   "problem": "L4-github-125: a joined project's Last result offered a moved task as ready to continue.",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "real-daemon.test.ts join case (summary.lastSession)",
+   "how": "projectSummary for a joined project removes the stored '... is ready to continue.' sentence (withoutReadyClause), adds 'Its tasks went on in \"<kept>\".' as a since line, and empties Next.",
+   "check_in_the_app": "After a join, the closed project's Overview Last result reads 'Its tasks went on in \"<kept>\".' and offers no ready task."
+  },
+  {
+   "problem": "L4-creds-28: the held hands-off join refusal was about 130 characters.",
+   "u_ids": [
+    "U-091"
+   ],
+   "failing_test_before": "packages/commands/test/project-join.test.ts 'l4-github-merge, run L4'",
+   "how": "joinRefusedHeldStart now reads 'A session of \"Kite club\" starts by itself soon: make one project after it ran.' (one sentence, under 100 characters).",
+   "check_in_the_app": "With 'When work is ready' set to start by itself and a start held, Make one project shows that one sentence."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L4-github-130 (owner 2026-11-18): a Close button for a cancelled task's pull request that is still open on GitHub.",
+   "why": "This needs a new write route, the fake daemon, a real-daemon case, a UI click test and the ADR 0105 amendment. It was the last minor in the cut line, and I ran out of time to build it well. The row still offers Open only. Next area: build POST /projects/:id/pull-requests/:n/close, allowed only for kind 'cancelled' rows, using the project's token, keeping the branch, with the consequence line 'Closes this pull request on GitHub; you can reopen it there.'. Once the watcher reads the close, it records it as closed through this area's closedOnHost."
+  },
+  {
+   "problem": "L4-github-121: Make one project has no Postgres integration case.",
+   "why": "There is no Postgres on this machine (FORERUNNER_TEST_PG is unset), so a case written here could not be run. The cut line allows it."
+  },
+  {
+   "problem": "L4-github-124 (a), (b), (c): the closed dependency's row is settled only at the watcher's next poll after a press-time check; the cancelled block's words are plural for one pull request; a pull request rebuilt without its dependency is listed under 'Reviewed by the critic'.",
+   "why": "(b) and (c) are in the cut line. (a) is unchanged: the press still leaves A's record to the next closedOnHost, which now also does the merged-through check, so the row is true within one poll."
+  },
+  {
+   "problem": "L4-github-112 real-daemon 'Take this work out' press through the Inbox.",
+   "why": "The Inbox card and its 'Keep it' answer are tested through client.inbox and answerRequest. The take-out of a commit range is tested in the composed case, which opens the pull request and checks its branch. The real-daemon Take this work out press was not added."
+  },
+  {
+   "problem": "L4c-left-4: 'Waiting for you: approve the plan' shows twice after Add to (ProjectPage planBanner and IntakeBanner).",
+   "why": "This is outside this area's files (ProjectPage.tsx and IntakeBanner.tsx belong to the plan and intake screens), and no test was written. Left to the session lead."
+  },
+  {
+   "problem": "Bench walks before and after with screenshots.",
+   "why": "Not done. The pull head lag has no bench switch, so the press after a push and the merged-through chain could only be walked partly, and I spent the time on the composed and real-daemon cases at the person's boundary. The live_check steps are in check_in_the_app."
+  },
+  {
+   "problem": "One commit per item.",
+   "why": "Items that share functions in dependent-branches.ts, merge.ts and pr-answers.ts are in one commit with a body per item (35d1006). The join, costs and header items are in bfd96ac. The docs are in their own commit (0f1edc4) rather than in each item's commit."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "lint, path lint, typecheck and unit tests green (559 files, 6081 tests). docs:check failed only because origin/main is missing here. 'node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0' is ok (38 files). docs:links ok. secrets:scan clean after 7879fa3."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "5 files passed, 6 skipped (Postgres and Docker not here); 30 tests passed, 81 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "13 files passed; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "103 files, 1447 tests passed"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "38 passed"
+  },
+  {
+   "command": "vitest dependent-branches-merge 'l4-github-merge' with the base sources checked out",
+   "result": "10 of 11 failed before the fix (L4-github-119 passed, as expected); 11 of 11 pass after"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "nothing"
+  }
+ ],
+ "screenshots": {
+  "before": [],
+  "after": []
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'd1109-onerepo-join, run C' OJ-05 preview case",
+   "why": "The dialog now names 'Status pull request: Off' for each repository project, and settingAppliesLine reads 'the setting of \"Site\"' without the possessive (L4-github-113 and L4-github-108's words)."
+  },
+  {
+   "test": "apps/ui/test/onerepo-join.test.tsx PREVIEW fixture and the dialog's join-setting assertion",
+   "why": "The same reworded line, plus the new Status pull request line."
+  },
+  {
+   "test": "packages/commands/test/project-join.test.ts held hands-off start refusal",
+   "why": "L4-creds-28: the refusal is one sentence under 100 characters."
+  }
+ ],
+ "new_problems": [
+  "The watcher now reads each cancelled task's open pull request once per poll until GitHub says it is closed or merged. That is one more GET per such pull request per poll.",
+  "A merged-through record only gets its merge commit once B's merge is read. If Take this work out is pressed before that, it refuses with 'Forerunner is still reading where the change of #A reached main. Try again in a minute.'.",
+  "I could not use isScaffoldBranch from l4-github-link's notes for docsTitle, because that branch is not in this base. The merge should apply it in pull-requests.ts docsTitle."
+ ],
+ "notes_for_other_areas": [
+  "New exports in loop/merge-mode.ts: MERGED_THROUGH, mergedThroughSentence(pr, through), throughNumberOf(record), isClosedRecord(record).",
+  "dependent-branches.ts exports MERGED_THROUGH_OPTIONS and the MergeCardsClosed type. closeMergeCards takes a reason, and cards carry closed: 'merged' | 'closed' | 'merged_through'.",
+  "PrTaskExecutor.reachedBase(task, sha) is read-only. takeOut accepts through: true, and throughPlan is exported. TaskTakeOut handles merged_through records.",
+  "MergeOutcome.alreadyMerged (ports.ts, append-only). A merge GitHub made first is now recorded as merged_on_host by the merge step too.",
+  "CostBucket.tries (api-types.ts, append-only, optional), with taskRunFacts(store, taskIds, period) exported from daemon/views.ts.",
+  "daemon/views.ts also exports tasksWentOnLine(kept) and withoutReadyClause(text).",
+  "pull-requests.ts exports isJoinedStatusPr(project, pr). join-words.ts settingAppliesLine reads 'the setting of \"X\"'.",
+  "RepoOps.pullHeadLag in the fake GitHub (testenv): the API shows the old pull request head for N reads after a push.",
+  "task-words.ts mergedDisplay: a minimal change (the 'Merged through #N' label).",
+  "PrAnswersDeps.takeOut is wired in compose.ts.",
+  "Merge order: l4-github-link touched take-out.ts lines next to mine (the refusal words). Keep both."
+ ]
+}

@@ -1,205 +1,192 @@
-// l4-cred-screens bench walk (before and after): node walk.cjs <label> <repo>
-// Bench: --provider bench-api --api-key ok --subscription (no real key, no money).
-const path = require("node:path");
+// fixup-l4-github-merge bench walk: L4-github-124 (a) and L4-money-301 at person speed.
+// Usage: node walk.cjs <repo> <bench name> <part: press|costs|restart>
+const repo = process.argv[2];
+const name = process.argv[3];
+const part = process.argv[4];
 const fs = require("node:fs");
-const label = process.argv[2] || "before";
-const repo = process.argv[3];
+const path = require("node:path");
 const R = require(path.join(repo, "scripts/bench/recorder.cjs"));
-const { DatabaseSync } = require("node:sqlite");
-const N = "fix-l4-cred-screens";
-const bench = JSON.parse(fs.readFileSync(`/tmp/frbench/${N}/bench.json`, "utf8"));
-const db = new DatabaseSync(path.join(bench.home, "data", "state.sqlite"));
-db.exec("PRAGMA busy_timeout = 5000");
-const out = { label, checks: {} };
-const save = () =>
-  fs.writeFileSync(`/tmp/frbench/${N}/steps/${label}-walk.json`, JSON.stringify(out, null, 1));
+const gh = JSON.parse(fs.readFileSync(`/tmp/frbench/${name}/githost.json`, "utf8"));
+const out = `/tmp/frbench/${name}/walk-${part}.json`;
+const ghApi = async (method, route, body) => {
+  const r = await fetch(`${gh.url}${route}`, {
+    method,
+    headers: {
+      authorization: `token ${gh.token}`,
+      accept: "application/vnd.github+json",
+      "content-type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await r.text();
+  return { status: r.status, body: text ? JSON.parse(text) : null };
+};
+const prOf = (url) => Number(/\/pull\/(\d+)/.exec(url ?? "")?.[1]);
 
-const sources = () => db.prepare("select id, kind, limits from billing_source").all();
-const src = (kind) => sources().find((s) => s.kind === kind);
-function setLimits(kind, fn) {
-  const s = src(kind);
-  const limits = fn(JSON.parse(s.limits || "{}"));
-  db.prepare("update billing_source set limits = ? where id = ?").run(JSON.stringify(limits), s.id);
-}
-function setHuman(fn) {
-  const h = db.prepare("select id, notify_prefs from human").get();
-  const prefs = fn(JSON.parse(h.notify_prefs || "{}"));
-  db.prepare("update human set notify_prefs = ?, timezone = 'Europe/Zurich' where id = ?").run(
-    JSON.stringify(prefs),
-    h.id,
-  );
-}
-const iso = (ms) => new Date(ms).toISOString();
-
-async function project(name, titles, deps = {}) {
-  const p = await R.api(N, "POST", "/projects", { name, goal: `${name} goal` });
-  const ids = {};
-  for (const t of titles) {
-    const r = await R.api(N, "POST", `/projects/${p.id}/tasks`, {
-      title: t,
-      outcome: `${t} is written`,
-      acceptanceCriteria: ["the file exists"],
-      priority: "medium",
-      dependsOn: (deps[t] || []).map((d) => ids[d]),
+async function press() {
+  const result = {};
+  let project = (await R.api(name, "GET", "/projects")).find((p) => p.name === "Kite club");
+  let aId;
+  let bId;
+  if (!project) {
+    project = await R.api(name, "POST", "/projects", {
+      name: "Kite club",
+      goal: "The club's pages",
+      repos: ["bench/seeded"],
     });
-    ids[t] = r.task?.id ?? r.taskId ?? r.id;
+    const a = await R.api(name, "POST", `/projects/${project.id}/tasks`, {
+      title: "Write kite/club.txt with one line",
+      outcome: "kite/club.txt holds one line",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    aId = a.task?.id ?? a.id;
+    const b = await R.api(name, "POST", `/projects/${project.id}/tasks`, {
+      title: "Write kite/club-day.txt after the club file",
+      outcome: "kite/club-day.txt names the club day",
+      riskTier: 1,
+      specialist: "coder",
+      dependsOn: [aId],
+    });
+    bId = b.task?.id ?? b.id;
+    const started = await R.startSession(name, project.id);
+    await R.waitForSession(name, started.session?.id ?? started.id, 240_000);
+  } else {
+    const ts = await R.api(name, "GET", `/projects/${project.id}/tasks`);
+    aId = ts.find((t) => t.title.startsWith("Write kite/club.txt")).id;
+    bId = ts.find((t) => t.title.startsWith("Write kite/club-day.txt")).id;
   }
-  return { id: p.id, ids };
-}
-
-async function openStartDialog(page, projectId, what) {
-  await page.goto(`${bench.uiUrl}/projects/${projectId}`, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(1500);
-  const start = page.getByRole("button", { name: /^(Start|Start session|Continue)$/ }).first();
-  if (await start.count()) await start.click().catch(() => undefined);
-  await page.waitForTimeout(1500);
-  return R.step(page, what);
-}
-
-(async () => {
-  const { browser, page } = await R.openApp(N);
-  await R.skipSetup(page);
-  const reset = Date.now() + 2 * 3600_000;
-  // A: subscription first, then ask; the subscription at its limit (LC-C24's figures).
-  setHuman((p) => ({ ...p, credential_policy: "subscription_then_ask" }));
-  setLimits("subscription", (l) => ({ ...l, restingUntil: iso(reset) }));
-  const a = await project("Quote page", ["Write the intro in intro.md", "Write the outro in outro.md"], {
-    "Write the outro in outro.md": ["Write the intro in intro.md"],
-  });
-  out.projectA = a;
-  const check0 = await R.api(N, "GET", `/projects/${a.id}/start-check`);
-  out.checks.startCheckBefore = { credential: check0.credential, runnable: check0.runnable, later: check0.later };
-  await openStartDialog(page, a.id, `${label}-a-start-dialog-ask`);
-  await page.keyboard.press("Escape").catch(() => undefined);
-  const started = await R.startSession(N, a.id);
-  out.checks.started = started;
-  await R.until(
-    async () => {
-      const inbox = await R.api(N, "GET", "/inbox");
-      return inbox.requests.find((r) => (r.title || "").startsWith("Use your API key")) || null;
-    },
-    60_000,
-    1000,
-    "the ask card",
-  ).catch((e) => (out.checks.askCardError = String(e)));
-  const inbox = await R.api(N, "GET", "/inbox");
-  const card = inbox.requests.find((r) => (r.title || "").startsWith("Use your API key"));
-  out.checks.askCard = card ? { title: card.title, body: card.body, choices: card.choices } : null;
-  const check1 = await R.api(N, "GET", `/projects/${a.id}/start-check`);
-  out.checks.startCheckAtCard = { credential: check1.credential, blocked: check1.blocked };
-  await page.goto(`${bench.uiUrl}/inbox`, { waitUntil: "domcontentloaded" });
-  await R.step(page, `${label}-a-inbox-ask-card`, { waitMs: 1500 });
-  await openStartDialog(page, a.id, `${label}-a-start-dialog-at-card`);
-  await page.keyboard.press("Escape").catch(() => undefined);
-  await page.goto(`${bench.uiUrl}/settings`, { waitUntil: "domcontentloaded" });
-  await R.step(page, `${label}-a-settings-under-ask`, { waitMs: 1500 });
-  // The person presses Use API key on the card.
-  if (card) {
-    await page.goto(`${bench.uiUrl}/inbox`, { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(1500);
-    const use = page.getByRole("button", { name: card.choices?.[0]?.label || "Use API key" }).first();
-    await use.click().catch((e) => (out.checks.useClick = String(e)));
+  const tasks = await R.api(name, "GET", `/projects/${project.id}/tasks`);
+  const ta = tasks.find((t) => t.id === aId);
+  const tb = tasks.find((t) => t.id === bId);
+  const [prA, prB] = [prOf(ta.prUrl), prOf(tb.prUrl)];
+  result.prs = { prA, prB };
+  result.before = { a: ta.display?.label, b: tb.display?.label };
+  const { browser, page } = await R.openApp(name, { freshProfile: true });
+  try {
+    await page.goto(`${JSON.parse(fs.readFileSync(`/tmp/frbench/${name}/bench.json`, "utf8")).uiUrl}/projects/${project.id}/tasks`);
     await page.waitForTimeout(3000);
-    await R.step(page, `${label}-a-after-use-api-key`);
+    if (await page.getByText("Set up later").count()) await R.skipSetup(page);
+    await page.goto(`${JSON.parse(fs.readFileSync(`/tmp/frbench/${name}/bench.json`, "utf8")).uiUrl}/projects/${project.id}/tasks`);
+    await page.getByTestId("task-row").first().waitFor();
+    result.step1 = await R.step(page, "press-01-tasks-before-close");
+    // The person closes A on GitHub (no poll runs: the watcher polls once an hour here).
+    result.closeA = (await ghApi("PATCH", `/repos/bench/seeded/pulls/${prA}`, { state: "closed" })).status;
+    await page.getByTestId("tab-summary").click();
+    const files = page.getByTestId("your-files");
+    const rowB = files.locator(`[data-testid="pr-waiting"][data-number="${prB}"]`);
+    await rowB.waitFor();
+    result.step2 = await R.step(page, "press-02-overview-before-press");
+    await rowB.getByTestId("pr-merge").click();
+    await files.getByRole("alert").waitFor({ timeout: 30_000 });
+    result.alert = await files.getByRole("alert").innerText();
+    result.step3 = await R.step(page, "press-03-overview-after-press");
+    await page.getByTestId("tab-tasks").click();
+    await page.getByTestId("task-row").first().waitFor();
+    const rowA = page.locator(`[data-testid="task-row"][data-task-id="${aId}"]`);
+    result.rowA = await rowA.getByTestId("task-status").innerText();
+    result.step4 = await R.step(page, "press-04-tasks-after-press");
+    const after = await R.api(name, "GET", `/projects/${project.id}/tasks`);
+    result.apiAfter = {
+      a: after.find((t) => t.id === aId)?.display,
+      b: after.find((t) => t.id === bId)?.display?.label,
+    };
+    result.ghA = (await ghApi("GET", `/repos/bench/seeded/pulls/${prA}`)).body?.state;
+    result.ghB = (await ghApi("GET", `/repos/bench/seeded/pulls/${prB}`)).body?.merged;
+    const me = await R.api(name, "GET", "/me");
+    const inbox = await R.api(name, "GET", `/inbox?humanId=${me.human?.id ?? me.id}`).catch(() => null);
+    result.inboxForB = inbox?.requests
+      ?.filter((r) => r.taskId === bId)
+      .map((r) => ({ title: r.title, status: r.status }));
+    result.inboxForA = inbox?.requests
+      ?.filter((r) => r.taskId === aId)
+      .map((r) => ({ title: r.title, status: r.status }));
+    result.projectId = project.id;
+    result.aId = aId;
+  } finally {
+    await browser.close();
   }
-  await R.until(
-    async () => {
-      const tasks = await R.api(N, "GET", `/projects/${a.id}/tasks`);
-      return tasks.every((t) => t.status === "done") ? tasks : null;
-    },
-    180_000,
-    2000,
-    "project A's tasks done",
-  ).catch((e) => (out.checks.tasksDoneError = String(e)));
-  out.checks.tasksA = (await R.api(N, "GET", `/projects/${a.id}/tasks`)).map((t) => ({
-    title: t.title,
-    status: t.status,
-    display: t.display,
-  }));
-  const sessions = await R.api(N, "GET", `/projects/${a.id}/sessions`).catch(() => null);
-  out.checks.sessionsA = sessions;
-  const sid = started.sessionId || started.id || started.session?.id;
-  if (sid) {
-    await page.goto(`${bench.uiUrl}/sessions/${sid}`, { waitUntil: "domcontentloaded" });
-    await R.step(page, `${label}-a-session-page-zone`, { waitMs: 1500 });
+  fs.writeFileSync(out, JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result, null, 2));
+}
+
+async function restart() {
+  const prev = JSON.parse(fs.readFileSync(`/tmp/frbench/${name}/walk-press.json`, "utf8"));
+  const { browser, page } = await R.openApp(name);
+  const result = {};
+  try {
+    const b = JSON.parse(fs.readFileSync(`/tmp/frbench/${name}/bench.json`, "utf8"));
+    await page.goto(`${b.uiUrl}/projects/${prev.projectId}/tasks`);
+    await page.getByTestId("task-row").first().waitFor();
+    const rowA = page.locator(`[data-testid="task-row"][data-task-id="${prev.aId}"]`);
+    result.rowA = await rowA.getByTestId("task-status").innerText();
+    result.step = await R.step(page, "press-05-tasks-after-restart");
+  } finally {
+    await browser.close();
   }
-  await page.goto(`${bench.uiUrl}/projects/${a.id}/sessions`, { waitUntil: "domcontentloaded" });
-  await R.step(page, `${label}-a-sessions-tab-zone`, { waitMs: 1500 });
-  await page.goto(`${bench.uiUrl}/projects/${a.id}/costs`, { waitUntil: "domcontentloaded" });
-  out.checks.costsText = await R.step(page, `${label}-a-costs`, { waitMs: 1500 });
-  save();
+  fs.writeFileSync(out, JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result, null, 2));
+}
 
-  // B: API key first, then subscription; the key at its limit (LC-C26's dialog).
-  setLimits("subscription", (l) => {
-    const { restingUntil, grant, asking, waiting, ...rest } = l;
-    return rest;
+async function costs() {
+  const result = {};
+  const b = JSON.parse(fs.readFileSync(`/tmp/frbench/${name}/bench.json`, "utf8"));
+  const project = await R.api(name, "POST", "/projects", { name: "Guide", goal: "A guide" });
+  const t = await R.api(name, "POST", `/projects/${project.id}/tasks`, {
+    title: "Write the guide in guide.md",
+    outcome: "guide.md explains the club",
+    acceptanceCriteria: ["guide.md exists"],
+    priority: "medium",
+    status: "ready",
+    dependsOn: [],
+    budgetUsdMicro: 45_000,
+    specialist: "coder",
+    riskTier: 1,
   });
-  setLimits("api_key", (l) => ({ ...l, restingUntil: iso(Date.now() + 3600_000) }));
-  setHuman((p) => ({ ...p, credential_policy: "key_then_subscription" }));
-  const b = await project("Map notes", ["Write the map notes in map.md"]);
-  out.projectB = b;
-  const checkB = await R.api(N, "GET", `/projects/${b.id}/start-check`);
-  out.checks.startCheckKeyFirst = { credential: checkB.credential, runnable: checkB.runnable };
-  await openStartDialog(page, b.id, `${label}-b-start-dialog-key-rests`);
-  await page.keyboard.press("Escape").catch(() => undefined);
-  setLimits("api_key", (l) => {
-    const { restingUntil, ...rest } = l;
-    return rest;
-  });
+  const taskId = t.task?.id ?? t.id;
+  const started = await R.startSession(name, project.id);
+  await R.waitForSession(name, started.session?.id ?? started.id, 240_000);
+  const { browser, page } = await R.openApp(name);
+  try {
+    await page.goto(`${b.uiUrl}/inbox`);
+    const card = page.getByText('"Write the guide in guide.md" paused before its budget ran out').first();
+    await card.waitFor({ timeout: 30_000 });
+    result.step1 = await R.step(page, "costs-01-inbox-paused");
+    const cont = page.getByRole("button", { name: /^Continue \(CHF \d+\.\d\d more\)$/ }).first();
+    result.continueLabel = await cont.innerText();
+    await cont.click();
+    await R.until(
+      async () => {
+        const rows = await R.api(name, "GET", `/projects/${project.id}/tasks`);
+        return rows.find((x) => x.id === taskId)?.status === "done" ? true : null;
+      },
+      240_000,
+      1000,
+      "the guide to be done",
+    );
+    await page.goto(`${b.uiUrl}/projects/${project.id}/costs`);
+    const byTask = page.getByTestId("cost-by-task");
+    await byTask.waitFor();
+    const row = byTask.locator("tr", { hasText: "Write the guide in guide.md" });
+    result.byTaskRow = await row.innerText();
+    result.bySpecialist = await page.getByTestId("cost-by-specialist").innerText();
+    result.byModel = await page.getByTestId("cost-by-model").innerText();
+    result.step2 = await R.step(page, "costs-02-costs-after-continue");
+    const api = await R.api(name, "GET", `/costs?projectId=${project.id}`);
+    result.api = {
+      byTask: api.byTask.map((x) => [x.label, x.runs, x.accepted, x.tries]),
+      bySpecialist: api.bySpecialist.map((x) => [x.key, x.runs, x.accepted, x.tries]),
+      byModel: api.byModel.map((x) => [x.key, x.runs, x.accepted, x.tries]),
+      total: api.totals,
+    };
+  } finally {
+    await browser.close();
+  }
+  fs.writeFileSync(out, JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result, null, 2));
+}
 
-  // C: the subscription refused under ask (the Use API key line's length).
-  setHuman((p) => ({ ...p, credential_policy: "subscription_then_ask" }));
-  setLimits("subscription", (l) => ({ ...l, refusedAt: iso(Date.now()) }));
-  const checkC = await R.api(N, "GET", `/projects/${b.id}/start-check`);
-  out.checks.startCheckRefused = { credential: checkC.credential, blocked: checkC.blocked };
-  await openStartDialog(page, b.id, `${label}-c-start-dialog-sub-refused`);
-  await page.keyboard.press("Escape").catch(() => undefined);
-  setLimits("subscription", (l) => {
-    const { refusedAt, ...rest } = l;
-    return rest;
-  });
-
-  // D: chat's one-off Use API key under wait, the subscription at its limit.
-  setHuman((p) => ({ ...p, credential_policy: "subscription_then_wait" }));
-  setLimits("subscription", (l) => ({ ...l, restingUntil: iso(reset) }));
-  await page.goto(`${bench.uiUrl}/projects/${b.id}/chat`, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(1500);
-  const box = page.getByRole("textbox").last();
-  await box.fill("what is left in this project?");
-  await box.press("Enter");
-  await page.waitForTimeout(4000);
-  await R.step(page, `${label}-d-chat-held`);
-  const oneOff = page.getByRole("button", { name: "Use API key" }).first();
-  if (await oneOff.count()) {
-    await oneOff.click();
-    await page.waitForTimeout(6000);
-  } else out.checks.noOneOff = true;
-  const chatText = await R.step(page, `${label}-d-chat-after-one-off`);
-  out.checks.questionShown = (chatText.match(/what is left in this project\?/g) || []).length;
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(2500);
-  const reloaded = await R.step(page, `${label}-d-chat-after-reload`);
-  out.checks.questionShownAfterReload = (reloaded.match(/what is left in this project\?/g) || []).length;
-  const chatCalls = R.modelCalls(N, "chat");
-  const last = chatCalls[chatCalls.length - 1];
-  out.checks.lastChatRequestUserTurnsWithQuestion = last
-    ? last.messages.filter(
-        (m) => m.role === "user" && JSON.stringify(m.content).includes("what is left in this project?"),
-      ).length
-    : null;
-  out.checks.lastChatRequestHoldReply = last
-    ? last.messages.some((m) => m.role === "assistant" && JSON.stringify(m.content).includes("not answered"))
-    : null;
-  setLimits("subscription", (l) => {
-    const { restingUntil, ...rest } = l;
-    return rest;
-  });
-  save();
-  await browser.close();
-  console.log(JSON.stringify(out.checks, null, 1).slice(0, 6000));
-})().catch((e) => {
-  out.error = String(e && e.stack ? e.stack : e);
-  save();
+({ press, restart, costs })[part]().catch((e) => {
   console.error(e);
   process.exit(1);
 });

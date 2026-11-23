@@ -1,0 +1,43 @@
+{
+ "why": "Run L4 sub-run L4e's leftovers that no run L4 area takes: by design, rare, or for the final check.",
+ "base": "7eaf59c",
+ "items": [
+  {
+   "id": "L4e-rest-1",
+   "severity": "by design",
+   "text": "A dependency merged on GitHub (not closed) shortly before the Merge press reads 'waiting for you to merge' until the watcher's next poll: settling it at the press would start the merge's listeners (copy refresh, card closing, rebuilds of other dependents) without the person's press."
+  },
+  {
+   "id": "L4e-rest-2",
+   "severity": "by design",
+   "text": "After Undo of a take-over, the removed project's docs pull request stays open on GitHub; the next Take it over opens a second one (run C decision 14). The person could merge the wrong one."
+  },
+  {
+   "id": "L4e-rest-3",
+   "severity": "rare",
+   "text": "rebuildForTakeOver writes the branch's version of every file the branch changed since its merge-base; if main later changed the same file, main's newer version is replaced."
+  },
+  {
+   "id": "L4e-rest-4",
+   "severity": "unlikely",
+   "text": "Two concurrent first-plan POSTs are not refused atomically (pendingFor is checked before the model call)."
+  },
+  {
+   "id": "L4e-rest-5",
+   "severity": "tests",
+   "text": "The writing-rules possessive sweep only catches the `\"${x}\"'s` and `quoted(...)}'s` forms."
+  },
+  {
+   "id": "L4e-rest-6",
+   "severity": "follows BA-9/OJ-07",
+   "text": "By specialist and By model of the kept project are empty for moved tasks after a join (the project's own ledger)."
+  }
+ ],
+ "for_session_lead": {
+  "ci_check": "Check that CI runs 'l4-github-merge, run L4: project.join on Postgres (L4-github-121)' on Linux and Windows and that it does not skip.",
+  "live_checks_for_F": [
+   "Real GitHub (forerunner-sandbox): Take it over on a repository with an old fr/docs-scaffold branch of a closed pull request whose marker names another project, main naming 'Kite club': exactly one new open pull request on fr/docs-scaffold-<name>, started from main; the Overview lists it as 'The project's standard docs'.",
+   "The check_in_the_app steps of L4-github-101 to -105, -112 to -125 in runL4-L4e-fix-l4-github-{link,merge}.json, on real GitHub."
+  ]
+ }
+}

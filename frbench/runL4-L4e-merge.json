@@ -1,0 +1,107 @@
+{
+ "merged": [
+  "l4-github-link (fix/l4-github-link at 9b2b9c5: 9 fix commits and 2 fixup commits). Merged into claude/nifty-knuth-f9udt0 as merge commit 2e9c466 (--no-ff, signed). The merge was clean.",
+  "l4-github-merge (fix/l4-github-merge at 35d47d5: 7 fix commits and 3 fixup commits). Merged on top as merge commit 7f58308 (--no-ff, signed). Three files conflicted; all were resolved as described below."
+ ],
+ "head_sha": "7eaf59c10f4d5984108b96be5bc94c89fa9921ea",
+ "pushed": true,
+ "conflicts_resolved": [
+  "apps/ui/test/real-daemon.test.ts: both areas added a describe block at the end of the file. Both are kept whole and in merge order: 'l4-github-link, run L4' first, then 'l4-github-merge, run L4'. I added the closing '});' between them, and no case was changed.",
+  "docs/decisions/0117-one-repository-one-project.md: both areas added an amendment at the end of the ADR. Both are kept in merge order: 'Amendment 2026-11-23: said truly on GitHub and in the app (l4-github-link, run L4)' with its 7 points, then 'Amendment (2026-11-23, run L4): the joined project's status pull request and screens (l4-github-merge)' with its 5 points.",
+  "docs/maintainers/apps.md: both areas added a paragraph at the end of the file. Both are kept: l4-github-link's DocsTab, together Settings and fake-daemon paragraph comes first, then l4-github-merge's 'Joined projects and Costs' tries' section with its two fixup paragraphs.",
+  "Merged without a conflict, then checked by hand: packages/runtime/src/loop/take-out.ts keeps both areas' changes. These are l4-github-link's possessive-free refusals ('the work of \"T\" is not in main', 'The project of \"T\" has no repository.') and l4-github-merge's merged-through take-out. compose.ts, fake-daemon.ts, runtime.md, commands.md, testing.md and user-guide.md also merged without a conflict. git grep -n '^<<<<<<< ' finds nothing."
+ ],
+ "integration_fixes": [
+  "Commit 7eaf59c, 'merge L4e: the take-over's scaffold pull request reads as the standard docs; the possessive sweep covers join-words.ts (L4-github-102, L4-github-108, L4-github-113)'. Both areas' reports asked the merge to make these two changes.",
+  "(1) The problem: after Take it over, the Overview listed the docs pull request on fr/docs-scaffold-<name> as '\"The project's docs from the plan\" · pull request #2', although there was no plan. Both areas' bench walks saw it. The cause: packages/runtime/src/daemon/pull-requests.ts docsTitle compared the branch with DOCS_SCAFFOLD_BRANCH only. The fix: docsTitle now reads isScaffoldBranch, which l4-github-link exports from loop/docs.ts. The test, written first and failing before the fix ('The project's docs from the plan'), is in apps/ui/test/real-daemon.test.ts, describe 'l4-github-link, run L4', case 'merge L4e (L4-github-102 with pull-requests.ts) ...'. It seeds a repository whose old fr/docs-scaffold names a third project and whose pull request was closed. It checks that Take it over opens exactly one pull request, on fr/docs-scaffold-kite-flyers, and that GET /projects/:id/pull-requests lists that pull request as \"The project's standard docs\", also after the daemon starts again. The fake daemon has no such mapping, so it needed no change. docs/maintainers/runtime.md now says so.",
+  "(2) packages/runtime/test/writing-rules.test.ts: the L4-github-108 sweep had left out join-words.ts until l4-github-merge fixed L4-github-113. That fix is now merged, so the exclusion is dropped and the sweep covers every file. This makes the test stronger. I checked it: putting the old '\"${keep}\"'s setting' back into settingAppliesLine fails the sweep at join-words.ts:187, and the source was restored afterwards."
+ ],
+ "validation": [
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "ok; the lockfile did not change"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0. Lint: 42 warnings, all from before this merge. lint:paths ok (1618 files). Typecheck clean. Unit tests: 560 files, 6096 passed, 7 skipped. docs:links ok (213 files). secrets:scan clean (2260 files). Inside check, docs:check could not diff against origin/main, which does not exist here."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base origin/claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (71 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped (Postgres and Docker are not here; the new project-join Postgres case skips with its reason); 30 tests passed, 82 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm --filter @forerunner/live test",
+   "result": "exit 0: 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "exit 0: PASS. 82 cases (59 hostile, 23 controls): 82 passed, 0 failed."
+  },
+  {
+   "command": "HOME=<empty dir, no git identity> FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm test (unit suite, the way CI runs it)",
+   "result": "exit 0: 560 files, 6096 passed, 7 skipped"
+  },
+  {
+   "command": "cd apps/ui && HOME=<empty dir> FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts (UI suite, the way CI runs it)",
+   "result": "exit 0: 103 files, 1461 passed. The test count adds up: base 1402 cases in the files, +10 from link, +9 from merge, +1 new case = 1422 in the files, so every case from both areas is in."
+  },
+  {
+   "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts)",
+   "result": "exit 0: 38 passed (1.3 m). The local config was deleted afterwards and never committed."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm --filter @forerunner/approvals-web test (CI step)",
+   "result": "exit 0: 11 files, 59 passed"
+  },
+  {
+   "command": "pnpm docs:schema && git diff --exit-code -- docs/maintainers/data-model.md (CI step)",
+   "result": "the schema doc is current"
+  },
+  {
+   "command": "pnpm secrets:scan --logs (CI step)",
+   "result": "clean"
+  },
+  {
+   "command": "pnpm vitest run packages/runtime/test/writing-rules.test.ts; real-daemon 'merge L4e' case before and after the fix",
+   "result": "writing-rules: 30 passed. The 'merge L4e' case failed before the docsTitle change and passes after it."
+  },
+  {
+   "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+   "result": "not run: neither area touched apps/desktop (0 files changed there)"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "nothing"
+  },
+  {
+   "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+   "result": "printed nothing: all 24 commits are signed (21 from the two area branches, 2 merge commits, 1 integration fix)"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "fast-forward 77bb4fa..7eaf59c, succeeded on the first try"
+  }
+ ],
+ "smoke": "25/25 checks passed, with 0 findings and 0 recorded problems. Command: node scripts/bench/start.mjs --name merge-w29 --daemon-port 49090 --ui-port 2690 --fresh, then node scripts/bench/journeys/smoke.cjs merge-w29, then node scripts/bench/stop.mjs --name merge-w29. Model calls were intake 1, specialist 9, critic 6 and chat 1, all on the stand-in at USD 0.000. In the run, Approve and start wrote the plan's tasks and started a session, the session ended, and the page linked its stylesheet and script. The Overview showed the project's folder and the Files tab listed index.html. The chat named a task with no markdown, and the critic reviewed the work. The journey script was not changed. The bench was stopped with stop.mjs, and its home and steps were deleted. The result is kept at /tmp/frbench/merge-w29/smoke-result.json, and every validation log is in /tmp/frbench/merge-w29/.",
+ "problems_left": [
+  "The merge broke nothing that is still open. The items below carry over from the two areas' reports (not_done, new_problems and the reviews' non-blocking notes) and are still open.",
+  "l4-github-link not_done: L4-github-106. 'Add to it' waits on 'Adding…' for the whole planning call, because POST /projects/:id/intake awaits propose(). Fixing it changes the route's contract (42 call sites) and must keep the 409 refusal of a second brief.",
+  "l4-github-link not_done: the take-over line shown when no pull request opened gives no next step (design section 5 rule 8), because the app has no retry action yet. DocsTab shows any 'elsewhere' line, including OR-07's offer without its button. A take-over made with a brief is silent when the intake's docs pull request fails.",
+  "l4-github-link new_problems: a GitHub Enterprise install still accepts github.com links (repoHostsFor's default gitRemoteBase). The fake daemon's data import mirrors only the in-use refusal, not other_host. rebuildForTakeOver can replace main's newer version of a file. After Undo of a take-over, its docs pull request stays open on GitHub. Two first-plan POSTs sent at the same moment are not refused atomically. markerNameOf cuts the marker name at 60 characters in the middle of a word.",
+  "Sibling, not fixed (l4-github-merge's file): packages/capabilities/src/githost/pr-executor.ts taskBranchName keeps dots from a task title. 'Update yarn.lock' gives fr/<8>-update-yarn.lock, which git refuses. It needs the same dots-to-dashes rule that intakeDocsBranch and scaffoldBranchesOf now use.",
+  "l4-github-merge not_done: L4-github-130, a Close button for a cancelled task's pull request that is still open on GitHub, which the owner decided on 2026-11-18. ADR 0105 point 4 still says it is not added; the session lead should schedule it.",
+  "l4-github-merge not_done: L4-github-124 (b) and (c): the cancelled block's words are plural for one pull request, and a pull request rebuilt without its dependency is still listed under 'Reviewed by the critic'. A dependency merged on GitHub (not closed) shortly before the press reads 'waiting for you to merge' until the next poll; this is by design (ADR 0111 amendment, point 5).",
+  "l4-github-merge not_done: no real-daemon press of 'Take this work out' for a merged-through task, no real-daemon case for L4-github-122 or for the Redo-after-join count, no bench walk of the pull-head lag, and L4c-left-4 (the doubled 'Waiting for you: approve the plan').",
+  "l4-github-merge new_problems: a paused run that no run has continued yet reads as one try ('0 / 1 (0%)') while its Continue card waits. A merged-through record with no named pull request keeps merge_sha null, so 'still reading' repeats. mergedSinceLine and repositoryFacts do not say 'merged through'. With a period, Costs can show runs 0 next to a cost. joinRefusedHeldStart says 'soon' even under quiet hours. Shell.tsx shows an empty name if GET /projects/:id fails. The watcher makes one more GET per open pull request of a cancelled task per poll, and one more per closed dependency per press.",
+  "Postgres: the new project-join integration case (L4-github-121) skips here because FORERUNNER_TEST_PG is not set. CI runs it on Linux and Windows; check that 'l4-github-merge, run L4: project.join on Postgres (L4-github-121)' passes there and does not skip.",
+  "Live checks for the session lead (real GitHub, forerunner-sandbox): (a) After Take it over on a repository with an old fr/docs-scaffold branch from a closed pull request, the Overview lists the new pull request as \"The project's standard docs\" (this merge's fix). (b) The live_check steps in both areas' check_in_the_app entries: L4-github-101/102/103/104/111 and L4-github-112/117/118/124 (a)."
+ ]
+}
