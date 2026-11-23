@@ -143,7 +143,16 @@ on GitHub.' In chat,
 itself. When the docs pull request that names your project could not be opened (GitHub
 refused it, or this computer's copy could not be made), the take-over says so: 'Took over
 o/kite from "Kite club" here, but the docs pull request that names this project could not be
-opened, so GitHub still names "Kite club".' A project you work on together never writes docs:
+opened, so GitHub still names "Kite club".' The project's Overview and Docs tab say the same
+until that pull request is on GitHub, also when the project was made with Take it over. The docs
+pull request always starts from the default branch: when GitHub still has an old
+`fr/docs-scaffold` branch that is not your project's (a closed pull request's, another project's
+or a person's), Forerunner leaves it as it is and opens its pull request on
+`fr/docs-scaffold-<your project's name>`; it replaces only a branch of your own project's. If you
+take a repository over while your project's own docs pull request is open, that pull request is
+rebuilt on the default branch with the new marker (your edits on it kept) and gets the take-over
+line as a comment. After the **Undo** of a project you made with Take it over, New project on that
+repository offers Work together and Take it over again. A project you work on together never writes docs:
 a doc it does not have reads 'The other Forerunner of "Kite club" writes this doc on GitHub;
 this project does not write docs.' on the Docs tab, with no "missing" mark.
 

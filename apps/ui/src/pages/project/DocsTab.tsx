@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ProjectCard } from "../../api/client.ts";
 import { ExternalLink } from "../../components/ExternalLink.tsx";
 import { RouteMissing } from "../../components/RouteMissing.tsx";
 import { Badge, Button, ErrorBanner, Loading } from "../../components/ui.tsx";
@@ -7,8 +8,13 @@ import { formatDateTime } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
 
-/** Docs tab (spec G.5): the standard doc set with the critic's drift check and a reader. */
-export function DocsTab({ projectId }: { projectId: string }) {
+/**
+ * Docs tab (spec G.5): the standard doc set with the critic's drift check and a reader. A line
+ * about the repository's project comes first (L4-github-102: after a take-over whose docs pull
+ * request could not be opened, GitHub still names the other project), so "8 of 8 present" is
+ * never read as the take-over having landed.
+ */
+export function DocsTab({ projectId, project }: { projectId: string; project?: ProjectCard }) {
   const client = useClient();
   const docs = useAsync((signal) => client.docs(projectId, signal), [client, projectId]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -24,8 +30,16 @@ export function DocsTab({ projectId }: { projectId: string }) {
   const present = rows.filter((d) => d.exists).length;
   const drifted = rows.filter((d) => d.drift).length;
 
+  const repositoryLine =
+    project?.repositoryElsewhere?.kind === "elsewhere" ? project.repositoryElsewhere.text : null;
+
   return (
     <div className="space-y-3" data-testid="docs">
+      {repositoryLine ? (
+        <p className="text-sm" data-testid="docs-repository-line">
+          {repositoryLine}
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Badge testId="docs-present">
           {present} of {rows.length} present

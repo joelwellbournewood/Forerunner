@@ -32,6 +32,7 @@ import {
   nothingToTakeOverSentence,
   otherHostSentence,
   projectIdsOf,
+  scaffoldLeftNoMarker,
   TAKE_OVER_UNDO_MERGED,
   TAKE_OVER_UNDO_OPEN,
   TAKE_OVER_UNDO_UNREADABLE,
@@ -45,6 +46,7 @@ import {
   takeOverLine,
   togetherFolderSentence,
   togetherLine,
+  tookOverNoPullRequestSentence,
   tookOverOf,
 } from "./repository-words.ts";
 
@@ -754,8 +756,12 @@ const OVERVIEW_READ_MS = 5 * 60_000;
 /** The Overview never waits longer than this on GitHub: the line shows, the press checks. */
 const OVERVIEW_WAIT_MS = 4_000;
 
-/** Forerunner's docs branches: the scaffold's and an intake's doc set (`loop/docs.ts`). */
-const DOCS_BRANCH = /^fr\/(?:docs-scaffold|intake-[^/]+-docs)$/;
+/**
+ * Forerunner's docs branches: the scaffold's (`fr/docs-scaffold`, or the project's own
+ * `fr/docs-scaffold-<project>` when that one is another's, L4-github-102) and an intake's doc
+ * set (`loop/docs.ts`).
+ */
+const DOCS_BRANCH = /^fr\/(?:docs-scaffold(?:-[\w-]+)?|intake-[^/]+-docs)$/;
 
 function sameIds(a: readonly string[], b: readonly string[]): boolean {
   const x = [...new Set(a.map((s) => s.toLowerCase()))].sort();
@@ -989,6 +995,25 @@ export class RepositoryUse {
     const parsed = text ? parseInstallMarker(text) : null;
     const id = parsed && PROJECT_ID.test(parsed.project) ? parsed.project.toLowerCase() : null;
     if (!id) return null;
+    // L4-github-102: taken over here, but the default branch still names the other project and
+    // the scaffold left no docs pull request that names this one: said, never "Took over" alone.
+    const took = tookOverOf(project);
+    if (
+      took &&
+      !took.removed &&
+      took.projects.map((p) => p.toLowerCase()).includes(id) &&
+      scaffoldLeftNoMarker(project)
+    )
+      return {
+        kind: "elsewhere",
+        text: tookOverNoPullRequestSentence(repo.locator, {
+          ids: took.projects,
+          name: markerNameOf(took.name) ?? markerNameOf(parsed?.name),
+        }),
+        canTakeOver: false,
+        takeOverLine: null,
+        details: null,
+      };
     const own = new Set([...projectIdsOf(project), ...(tookOverOf(project)?.projects ?? [])]);
     if (own.has(id)) return null;
     const index = await this.index();

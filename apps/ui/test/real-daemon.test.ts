@@ -18342,14 +18342,23 @@ describe("d1109-onerepo-link, run C", () => {
         projects: [KITE_ID],
         name: "Kite club",
       });
-      expect((await client.project(made.id)).repositoryElsewhere ?? null).toBeNull();
+      // L4-github-102 (run L4): the Overview says it too, never nothing (before: no line, as if
+      // GitHub now named this project).
+      const saidOnOverview = {
+        kind: "elsewhere",
+        text: noPr,
+        canTakeOver: false,
+        takeOverLine: null,
+        details: null,
+      };
+      expect((await client.project(made.id)).repositoryElsewhere).toEqual(saidOnOverview);
       // The other project's pull request is untouched (no push, comment or close).
       expect(JSON.stringify(theirs)).toBe(theirsBefore.replace(daysAgo(3), daysAgo(20)));
       expect(await host.listPullRequestComments(repo, theirs.number)).toEqual([]);
       // The daemon starts again; this project's docs pull request (with its marker) is open.
       await rt.close();
       ({ rt, client } = await compose());
-      expect((await client.project(made.id)).repositoryElsewhere ?? null).toBeNull();
+      expect((await client.project(made.id)).repositoryElsewhere).toEqual(saidOnOverview);
       // Opened (on GitHub's clock) after the take-over, with this project's mark.
       const tookOverAt = String(
         ((await rt.store.project.mustGet(made.id)).settings.took_over as { at: string }).at,
@@ -26006,6 +26015,46 @@ describe("l4-github-link, run L4", () => {
       await rt.close();
       ({ rt, client } = await w.compose());
       expect((await client.project(before.id)).repositoryElsewhere).toMatchObject(line);
+      await settleSessions(rt);
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+
+  it('L4-github-102: Take it over whose docs pull request GitHub refuses (the push is refused): the project is made, and its Overview says GitHub still names "Kite club" because that pull request could not be opened; the same after the daemon starts again', async () => {
+    const w = world();
+    const { bare } = await w.seeded("kite", {
+      "README.md": "# kite\n",
+      ".forerunner/project.json": kiteMarker,
+    });
+    // GitHub refuses every push to the repository (a branch rule, a token without write).
+    writeFileSync(join(bare, "hooks", "pre-receive"), "#!/bin/sh\necho refused >&2\nexit 1\n", {
+      mode: 0o755,
+    });
+    let { rt, client } = await w.compose();
+    try {
+      const made = await client.createProject({
+        name: "Kite flyers",
+        goal: "Fly kites",
+        repos: ["o/kite"],
+        switch: true,
+        takeOver: { projects: [KITE_ID] },
+      });
+      expect(await w.host.listPullRequests({ owner: "o", name: "kite" }, { state: "all" })).toEqual(
+        [],
+      );
+      const said = {
+        kind: "elsewhere",
+        text: 'Took over o/kite from "Kite club" here, but the docs pull request that names this project could not be opened, so GitHub still names "Kite club".',
+        canTakeOver: false,
+        takeOverLine: null,
+        details: null,
+      };
+      expect((await client.project(made.id)).repositoryElsewhere).toEqual(said);
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      expect((await client.project(made.id)).repositoryElsewhere).toEqual(said);
       await settleSessions(rt);
     } finally {
       await rt.close();

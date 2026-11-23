@@ -79,6 +79,28 @@ export function tookOverOf(project: Pick<ProjectRow, "settings">): TookOverFacts
   };
 }
 
+/**
+ * L4-github-102: the project's last scaffold run (`summary_cache.docs`, written by the
+ * scaffold) left no docs pull request that names this project: it failed, opened nothing, or
+ * left another project's marker. Read only for a take-over (`overviewOf`): the Overview then
+ * says GitHub still names the other project. False with no record (the intake writes the docs
+ * of a project created with a brief).
+ */
+export function scaffoldLeftNoMarker(project: Pick<ProjectRow, "summary_cache">): boolean {
+  const docs = (project.summary_cache as JsonObject | null | undefined)?.docs;
+  if (!docs || typeof docs !== "object" || Array.isArray(docs)) return false;
+  const d = docs as JsonObject;
+  if (typeof d.error === "string") return true;
+  if (d.together === true || typeof d.scaffolded_at !== "string") return false;
+  const marker = d.marker;
+  const other =
+    !!marker &&
+    typeof marker === "object" &&
+    !Array.isArray(marker) &&
+    (marker as JsonObject).status === "other_project";
+  return !(typeof d.pr_url === "string" && d.pr_url) || other;
+}
+
 /** A project whose creation was undone (W15-36): archived, with its old name kept. */
 export function isRemovedProject(project: Pick<ProjectRow, "status" | "settings">): boolean {
   return project.status === "archived" && typeof settingsOf(project)[REMOVED_NAME_KEY] === "string";

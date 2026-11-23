@@ -7810,7 +7810,28 @@ no store, git host or file system, so the UI's fake daemon imports it).
   only refreshes this computer's copy.
 - **Docs and status** (`loop/docs.ts`): `mark()` passes `replace: tookOverOf(project).projects`
   to `writeInstallMarker` (`replaced` then, and the scaffold's pull request body gets
-  `tookOverLine`); the intake's doc set the same (`session/intake.ts`). A together project:
+  `tookOverLine`); the intake's doc set the same (`session/intake.ts`). The scaffold's branch
+  (L4-github-102, D-L4-24, ADR 0117 amended 2026-11-23): `scaffoldBranchFor` takes the first of
+  `scaffoldBranchesOf(project)` (`fr/docs-scaffold`, `fr/docs-scaffold-<name slug>`, that with
+  8 characters of the id) that holds this project's open scaffold pull request, is not on GitHub,
+  or is this project's own (its marker names the project); `fr/docs-scaffold` with another
+  project's open pull request stays `foreign` (W15-01, nothing written); null means no branch.
+  `checkout(project, target, pick, {ours, fresh: (open) => !open})` starts from the default branch
+  whenever no pull request of this project is open, and the push replaces a branch already on
+  GitHub with `--force-with-lease` (only the project's own; `GitOps.push` refuses the default
+  branch). `rebuildForTakeOver` (C4L-2): with this project's own scaffold pull request open and
+  its marker one the project took over, the copy goes to the default branch with the files the
+  branch added (its marker left out), the marker is replaced and the branch force-pushed with a
+  lease; the pull request gets 'Rebuilt on main for project <name>: …' with `tookOverLine`. The
+  copy is settled back on the default branch also when a step throws (before, a refused push left
+  it on the scaffold branch, so `copyMarker` read this project's own marker). `isScaffoldBranch`
+  reads both names (`isDocsBranch`, `isProjectDocsPr`, the take-over Undo's `DOCS_BRANCH`). The
+  intake's `fr/intake-<id>-docs` carries the project's id, so one GitHub kept is its own:
+  without an open pull request the set starts from the default branch and is pushed with a lease
+  (before: refused as not a fast-forward). `docsPullRequestNamesProject(outcome)` (a pull
+  request and no other project's marker) is what `repositoryTakeOver.writeMarker` answers
+  `failed` on; `scaffoldLeftNoMarker(project)` reads the same from `summary_cache.docs` for the
+  Overview. A together project:
   `isProjectDocsPr` and `isProjectStatusPr` are false, `scaffoldProject` records
   `{together: true}` and writes nothing, `writeSessionStatus` keeps the status in the app, and
   `statusDocRoot` reads it there. `ownsUnmarkedDocs(store, project, repo, copyMarker)` is
@@ -7830,7 +7851,10 @@ no store, git host or file system, so the UI's fake daemon imports it).
 - **The Overview's line** (`RepositoryUse.overviewOf`, `ProjectCard.repositoryElsewhere` through
   `ProjectCardFacts.repositoryElsewhere`): `together` for a together project; `elsewhere` when
   this computer's copy's marker (`deps.copyMarker`) names an id that is not this project's, not
-  taken over by it, not a row here and not known; the 14-day rule from a read reused for five
+  taken over by it, not a row here and not known; also `elsewhere`, with no button, when the
+  project took that id over but its last scaffold left no docs pull request that names it
+  (`scaffoldLeftNoMarker`): the text is `tookOverNoPullRequestSentence` (L4-github-102), and the
+  Docs tab shows the same line above its count; the 14-day rule from a read reused for five
   minutes (`OVERVIEW_READ_MS`) and never waited on longer than four seconds
   (`OVERVIEW_WAIT_MS`); `alsoElsewhereSentence`.
 - **Take it over on an existing project** (`repo.take_over`, commands.md): the

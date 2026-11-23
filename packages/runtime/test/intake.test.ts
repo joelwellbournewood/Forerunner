@@ -30,7 +30,7 @@ import {
 } from "../src/session/intake.ts";
 import { type PlannerContext, StaticPlanner } from "../src/session/runner.ts";
 import { WEB_ACCESS_SETTING } from "../src/wiring/web-access.ts";
-import { ScriptedProvider, type ScriptReply } from "./helpers.ts";
+import { removeHomes, ScriptedProvider, type ScriptReply } from "./helpers.ts";
 
 /** A coder task's plan estimate at the top of its calibrated band ('cost', L-22). */
 const CODER_BAND = Math.round((STARTING_ESTIMATES_USD_MICRO.coder as number) * PLAN_ESTIMATE_BOUND);
@@ -1929,6 +1929,103 @@ describe("d1109-onerepo-link, run C: a new brief for a project with work plans o
       expect(milestones.map((m) => m.name)).toEqual(["Everything"]);
     } finally {
       await rt.close();
+    }
+  }, 60_000);
+});
+
+describe("l4-github-link, run L4", () => {
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+  /** A composed daemon with a scripted planner and o/site, a real bare repository. */
+  const world = async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-intake-l4-link-"));
+    homes.push(home);
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const replies: ScriptReply[] = [];
+    const provider = new ScriptedProvider(replies, clock);
+    const host = new MemoryGitHost("alice");
+    const bare = join(home, "site.git");
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seedDir = join(home, "seed");
+    const seed = new GitOps({
+      cwd: seedDir,
+      identity: { name: "Seed", email: "seed@example.test" },
+    });
+    await seed.clone(bare);
+    writeFileSync(join(seedDir, "README.md"), "# site\n");
+    await seed.commitAll("seed");
+    await seed.push("main");
+    await host.createRepo({ owner: "o", name: "site", private: true, cloneUrl: bare });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider,
+      gitHost: host,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const req = (path: string, init: RequestInit = {}) =>
+      app.request(path, {
+        ...init,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          ...(init.headers ?? {}),
+        },
+      });
+    const answer = async (requestId: string, value: string) => {
+      const row = await rt.store.humanRequest.mustGet(requestId);
+      const res = await req(`/requests/${requestId}/answer`, {
+        method: "POST",
+        body: JSON.stringify({ version: row.version, answer: value }),
+      });
+      expect(res.status).toBe(200);
+    };
+    const project = await rt.store.project.insert({
+      name: "Site",
+      goal: "A site",
+      repos: ["o/site"],
+    });
+    return { rt, req, answer, replies, provider, host, bare, seed, seedDir, project };
+  };
+  const git = (bare: string, ...args: string[]) =>
+    run(["git", "--git-dir", bare, ...args], { allowFailure: true });
+
+  it("L4-github-102 (sibling): the first plan's docs branch on GitHub from an earlier, closed pull request is this project's own, so the approved doc set replaces it from main with a lease and its pull request opens", async () => {
+    const w = await world();
+    try {
+      const branch = intakeDocsBranch(w.project.id);
+      // An earlier plan's docs pull request of this project, closed unmerged; GitHub keeps its branch.
+      await run(["git", "-C", w.seedDir, "checkout", "-q", "-b", branch]);
+      writeFileSync(join(w.seedDir, "OLD.md"), "an old draft\n");
+      await w.seed.commitAll("old docs");
+      await w.seed.push(branch, { defaultBranch: "main" });
+      const old = await w.host.createPullRequest(
+        { owner: "o", name: "site" },
+        { title: "docs: old", body: "old", head: branch, base: "main" },
+      );
+      await w.host.updatePullRequest({ owner: "o", name: "site" }, old.number, { state: "closed" });
+      w.replies.push({ text: JSON.stringify(proposal()) });
+      const planned = await json(
+        await w.req(`/projects/${w.project.id}/intake`, { method: "POST", body: "{}" }),
+      );
+      await w.answer(String(planned.requestId), "approve");
+      const open = await w.host.listPullRequests({ owner: "o", name: "site" }, { state: "open" });
+      expect(open.map((p) => p.head.ref)).toEqual([branch]);
+      expect((await git(w.bare, "merge-base", "--is-ancestor", "main", branch)).code).toBe(0);
+      expect((await git(w.bare, "show", `${branch}:OLD.md`)).code).not.toBe(0);
+      expect((await git(w.bare, "show", `${branch}:docs/overview.md`)).stdout).toContain(
+        "Ship the thing",
+      );
+    } finally {
+      await w.rt.close();
     }
   }, 60_000);
 });

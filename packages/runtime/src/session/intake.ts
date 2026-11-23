@@ -2530,7 +2530,12 @@ export class IntakeService {
     );
     if (!commit.committed && !existingPr)
       return { target: "repository", repo: fullName, branch, prUrl: null, ...r };
-    await git.push(branch, { force: !!existingPr, defaultBranch: info.defaultBranch });
+    // L4-github-102 (D-L4-24): the branch carries this project's id, so one GitHub kept from an
+    // earlier, closed pull request is this project's own: without an open pull request the set
+    // started from the default branch and replaces it with a lease (before: the push was
+    // refused as not a fast-forward and no pull request opened). Never the default branch.
+    const onHost = await git.hasRef(`origin/${branch}`);
+    await git.push(branch, { force: !!existingPr || onHost, defaultBranch: info.defaultBranch });
     if (existingPr) {
       await host.commentOnPullRequest(
         repo,

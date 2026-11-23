@@ -313,6 +313,26 @@ describe("Docs tab", () => {
     expect(runbook).toHaveTextContent(note);
   });
 
+  it("L4-github-102 (l4-github-link, run L4): after a take-over whose docs pull request could not be opened, Docs says GitHub still names the other project before its count", async () => {
+    // Live check 4: Docs read "8 of 8 present" as if the take-over had landed.
+    const harness = createHarness();
+    const text =
+      'Took over org/atlas from "Kite club" here, but the docs pull request that names this project could not be opened, so GitHub still names "Kite club".';
+    harness.daemon.state.repositoryOverview.proj_atlas = {
+      kind: "elsewhere",
+      text,
+      canTakeOver: false,
+      takeOverLine: null,
+      details: null,
+    };
+    renderApp("/projects/proj_atlas/docs", harness);
+    const docs = await screen.findByTestId("docs");
+    expect(within(docs).getByTestId("docs-repository-line")).toHaveTextContent(text);
+    expect(docs.textContent?.indexOf(text)).toBeLessThan(
+      docs.textContent?.indexOf("present") ?? -1,
+    );
+  });
+
   it("degrades when the docs route is missing", async () => {
     renderApp(
       "/projects/proj_atlas/docs",

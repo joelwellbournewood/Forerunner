@@ -287,3 +287,27 @@ should be able to work seamlessly in the same git."
    repository still named "Kite club", and from then on the 14-day rule was skipped and the
    Overview showed no line. A joined project still counts through its keeper, and a marker
    naming the person's own removed project still frees the repository (run C decision 14).
+2. **The scaffold's branch starts from the default branch and is never another's**
+   (L4-github-102, D-L4-24). Live, Take it over on a repository whose old `fr/docs-scaffold` (a
+   closed pull request's branch, kept by GitHub) carried a third project's marker started the
+   copy from that branch, found every doc present, kept that marker and opened nothing, and no
+   screen said so. With no open scaffold pull request of this project the scaffold now starts
+   from the default branch, as `fr/status` does. Forerunner never writes over a branch it did
+   not write for this project: when `fr/docs-scaffold` on GitHub is not this project's own
+   (another project's marker, or none), the docs pull request opens on
+   `fr/docs-scaffold-<project name>` (then that with 8 characters of the id) without force and
+   the old branch and its closed pull request stay as they are; a force-push, with a lease on the
+   head just fetched and never on the default branch, replaces only this project's own scaffold
+   or intake branch. Another project's open pull request is never touched (W15-01): the scaffold
+   then writes nothing. A take-over while this project's own scaffold pull request is open
+   rebuilds that branch on the default branch with the files it added before the replaced marker
+   is written, and comments the take-over line on it (C4L-2).
+3. **A take-over that did not land says so** (L4-github-102, design section 5 rule 9). When no
+   docs pull request that names the project opened (GitHub refused the push, another project's
+   scaffold pull request is open, or the marker stayed another's), `repo.take_over` answers
+   'Took over o/kite from "Kite club" here, but the docs pull request that names this project
+   could not be opened, so GitHub still names "Kite club".', and the Overview (and the Docs tab
+   above its count) shows the same sentence, also for a project made with Take it over, until
+   that pull request is on GitHub. The point-7 Consequence "a take-over after this project's own
+   `fr/docs-scaffold` pull request was opened still leaves that pull request without the
+   take-over line" no longer holds.

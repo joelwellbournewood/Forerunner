@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { GitOps, MemoryGitHost } from "@forerunner/capabilities";
-import { docFile, parseDocFrontmatter, STANDARD_DOCS } from "@forerunner/memory";
+import { docFile, parseDocFrontmatter, STANDARD_DOCS, scaffoldDocs } from "@forerunner/memory";
 import { appDirs, fromPosix, join, run, SimulatedClock } from "@forerunner/platform";
 import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -16,7 +16,8 @@ import {
   WORKSPACE_DIR,
 } from "../src/loop/docs.ts";
 import { INSTALL_MARKER_FILE, parseInstallMarker } from "../src/sources/marker.ts";
-import { ScriptedProvider } from "./helpers.ts";
+import { tookOverLine } from "../src/sources/repository-use.ts";
+import { removeHomes, ScriptedProvider } from "./helpers.ts";
 
 /**
  * The standard doc set is scaffolded at project creation (spec G.5): with a linked
@@ -644,4 +645,221 @@ describe("d1109-onerepo-link, run C: a take-over's docs pull request replaces ex
       await rt.close();
     }
   }, 60_000);
+});
+
+describe("l4-github-link, run L4: the scaffold's branch starts from the default branch and is never another's (L4-github-102, D-L4-24)", () => {
+  const KITE = "01a1a000-0000-7000-8000-00000000c1ab";
+  const OTHER = "01a1a000-0000-7000-8000-00000000d2cd";
+  const mk = (id: string, name: string) =>
+    `${JSON.stringify({ schema: 1, project: id, name }, null, 2)}\n`;
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  /** A composed daemon over a memory git host whose repositories are real bare ones. */
+  async function world() {
+    const root = mkdtempSync(join(tmpdir(), "fr-docs-l4-link-"));
+    homes.push(root);
+    const host = new MemoryGitHost("alice");
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const home = join(root, "home");
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault(),
+      provider: new ScriptedProvider([{ text: "Noted." }], clock),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.1.0-test",
+      gitHost: host,
+      data: { projectsRoot: join(root, "projects") },
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const post = (path: string, body: unknown) =>
+      app.request(path, {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      });
+    /** o/<name>: a bare repository with a seed clone; files written through `commit`. */
+    const repo = async (name: string) => {
+      const bare = join(root, `${name}.git`);
+      await run(["git", "init", "--bare", "-b", "main", bare]);
+      const seedDir = join(root, `${name}-seed`);
+      const seed = new GitOps({ cwd: seedDir, identity });
+      await seed.clone(bare);
+      await host.createRepo({ owner: "o", name, private: true, cloneUrl: bare });
+      const commit = async (branch: string, files: Record<string, string>, message: string) => {
+        for (const [path, text] of Object.entries(files)) {
+          await mkdir(join(seedDir, fromPosix(path.slice(0, path.lastIndexOf("/") + 1) || ".")), {
+            recursive: true,
+          });
+          writeFileSync(join(seedDir, fromPosix(path)), text);
+          if (branch === "main")
+            await host
+              .putFile({ owner: "o", name }, { path, content: text, message, branch })
+              .catch(() => undefined);
+        }
+        await seed.commitAll(message);
+        await seed.push(branch, { defaultBranch: "main" });
+      };
+      return { bare, seedDir, seed, commit };
+    };
+    return { root, host, rt, post, repo };
+  }
+  const head = async (bare: string, ref: string) =>
+    (await run(["git", "--git-dir", bare, "rev-parse", ref], { allowFailure: true })).stdout.trim();
+  const isAncestor = async (bare: string, a: string, b: string) =>
+    (
+      await run(["git", "--git-dir", bare, "merge-base", "--is-ancestor", a, b], {
+        allowFailure: true,
+      })
+    ).code === 0;
+  const diffNames = async (bare: string, a: string, b: string) =>
+    (await run(["git", "--git-dir", bare, "diff", "--name-only", a, b])).stdout
+      .split(/\r?\n/)
+      .filter(Boolean);
+
+  it("Take it over on a repository whose old fr/docs-scaffold (a closed pull request's branch) names a third project: one docs pull request on fr/docs-scaffold-<project> from main, whose only change is the marker, with the take-over line; the old branch is untouched", async () => {
+    const w = await world();
+    try {
+      const kite = await w.repo("kite");
+      await kite.commit("main", { "README.md": "# kite\n" }, "first");
+      // An earlier project's scaffold (another Forerunner's): its pull request closed unmerged,
+      // its branch kept on GitHub, not in main.
+      await run(["git", "-C", kite.seedDir, "checkout", "-q", "-b", DOCS_SCAFFOLD_BRANCH]);
+      await scaffoldDocs(kite.seedDir, { name: "Sandbox hello", goal: "g", repos: ["o/kite"] });
+      await kite.commit(
+        DOCS_SCAFFOLD_BRANCH,
+        { [INSTALL_MARKER_FILE]: mk(OTHER, "Sandbox hello") },
+        "docs: scaffold the standard doc set",
+      );
+      const old = await w.host.createPullRequest(
+        { owner: "o", name: "kite" },
+        { title: "docs: scaffold", body: "old", head: DOCS_SCAFFOLD_BRANCH, base: "main" },
+      );
+      await w.host.updatePullRequest({ owner: "o", name: "kite" }, old.number, {
+        state: "closed",
+      });
+      await run(["git", "-C", kite.seedDir, "checkout", "-q", "main"]);
+      // main: Kite club's doc set and marker.
+      await scaffoldDocs(kite.seedDir, { name: "Kite club", goal: "g", repos: ["o/kite"] });
+      await kite.commit("main", { [INSTALL_MARKER_FILE]: mk(KITE, "Kite club") }, "Kite club");
+      const oldHead = await head(kite.bare, DOCS_SCAFFOLD_BRANCH);
+      const body = { name: "Kite flyers", goal: "g", repos: ["o/kite"] };
+      expect((await w.post("/projects", body)).status).toBe(409);
+      const made = await w.post("/projects", { ...body, takeOver: { projects: [KITE] } });
+      expect(made.status).toBe(201);
+      const id = String((await json(made)).id);
+      const open = await w.host.listPullRequests({ owner: "o", name: "kite" }, { state: "open" });
+      expect(open.map((p) => p.head.ref)).toEqual(["fr/docs-scaffold-kite-flyers"]);
+      expect(open[0]?.body).toContain(tookOverLine("Kite club", "Kite flyers"));
+      const branch = "fr/docs-scaffold-kite-flyers";
+      expect(
+        parseInstallMarker((await show(kite.bare, branch, INSTALL_MARKER_FILE)) ?? "")?.project,
+      ).toBe(id);
+      expect(await isAncestor(kite.bare, "main", branch)).toBe(true);
+      expect(await diffNames(kite.bare, "main", branch)).toEqual([INSTALL_MARKER_FILE]);
+      // The old branch and its closed pull request are left as they are (never force-pushed).
+      expect(await head(kite.bare, DOCS_SCAFFOLD_BRANCH)).toBe(oldHead);
+      expect(
+        await w.host.listPullRequestComments({ owner: "o", name: "kite" }, old.number),
+      ).toEqual([]);
+      expect((await w.rt.store.project.mustGet(id)).summary_cache.docs).toMatchObject({
+        pr_url: open[0]?.htmlUrl,
+        marker: { status: "replaced" },
+      });
+      // This project's own scaffold branch, its pull request closed: the next scaffold starts it
+      // again from main and replaces it with a lease (as fr/status), in the same branch.
+      await w.host.updatePullRequest({ owner: "o", name: "kite" }, open[0]?.number ?? 0, {
+        state: "closed",
+      });
+      await kite.commit("main", { "CONTRIBUTING.md": "Be kind.\n" }, "contributing");
+      await w.rt.docs.scaffoldProject(await w.rt.store.project.mustGet(id));
+      const again = await w.host.listPullRequests({ owner: "o", name: "kite" }, { state: "open" });
+      expect(again.map((p) => p.head.ref)).toEqual([branch]);
+      expect(await isAncestor(kite.bare, "main", branch)).toBe(true);
+      expect(await diffNames(kite.bare, "main", branch)).toEqual([INSTALL_MARKER_FILE]);
+      expect(await head(kite.bare, DOCS_SCAFFOLD_BRANCH)).toBe(oldHead);
+    } finally {
+      await w.rt.close();
+    }
+  }, 90_000);
+
+  it("C4L-2: a take-over while this project's own scaffold pull request is open rebuilds that branch on main (a person's edit on it kept) with the replaced marker and comments the take-over line on it", async () => {
+    const w = await world();
+    try {
+      const kite = await w.repo("kite2");
+      await kite.commit(
+        "main",
+        { "README.md": "# kite\n", [INSTALL_MARKER_FILE]: mk(KITE, "Kite club") },
+        "Kite club",
+      );
+      // Made before the rule (or while GitHub could not be read): its scaffold pull request
+      // carries the docs and leaves Kite club's marker as it is.
+      const project = await w.rt.store.project.insert({
+        name: "Kites",
+        goal: "g",
+        repos: ["o/kite2"],
+        author_human: w.rt.human.id,
+      });
+      const first = await w.rt.docs.scaffoldProject(project);
+      expect(first.marker).toMatchObject({ status: "other_project", project: KITE });
+      const [pr] = await w.host.listPullRequests({ owner: "o", name: "kite2" }, { state: "open" });
+      expect(pr?.head.ref).toBe(DOCS_SCAFFOLD_BRANCH);
+      // A person edits a doc on the pull request; main moves on meanwhile.
+      await kite.seed.fetch();
+      await run([
+        "git",
+        "-C",
+        kite.seedDir,
+        "checkout",
+        "-q",
+        "-B",
+        DOCS_SCAFFOLD_BRANCH,
+        `origin/${DOCS_SCAFFOLD_BRANCH}`,
+      ]);
+      await kite.commit(
+        DOCS_SCAFFOLD_BRANCH,
+        { "docs/overview.md": "# Overview\n\nOurs.\n" },
+        "edit",
+      );
+      await run(["git", "-C", kite.seedDir, "checkout", "-q", "main"]);
+      await run(["git", "-C", kite.seedDir, "reset", "-q", "--hard", "origin/main"]);
+      await kite.commit("main", { "CONTRIBUTING.md": "Be kind.\n" }, "contributing");
+      const taken = await w.post("/commands/execute", {
+        commands: [{ name: "repo.take_over", params: { project: project.id } }],
+        wordsUsed: "Take it over (Overview)",
+        source: "ui",
+        projectId: project.id,
+        confirm: "tap",
+      });
+      const out = await json(taken);
+      expect(out.status).toBe("done");
+      expect(out.sentence).toBe('Took over o/kite2 from "Kite club".');
+      const open = await w.host.listPullRequests({ owner: "o", name: "kite2" }, { state: "open" });
+      expect(open.map((p) => p.number)).toEqual([pr?.number]);
+      expect(await isAncestor(kite.bare, "main", DOCS_SCAFFOLD_BRANCH)).toBe(true);
+      expect(
+        parseInstallMarker((await show(kite.bare, DOCS_SCAFFOLD_BRANCH, INSTALL_MARKER_FILE)) ?? "")
+          ?.project,
+      ).toBe(project.id);
+      expect(await show(kite.bare, DOCS_SCAFFOLD_BRANCH, "docs/overview.md")).toBe(
+        "# Overview\n\nOurs.\n",
+      );
+      expect(await diffNames(kite.bare, "main", DOCS_SCAFFOLD_BRANCH)).toContain(
+        INSTALL_MARKER_FILE,
+      );
+      const comments = await w.host.listPullRequestComments(
+        { owner: "o", name: "kite2" },
+        pr?.number ?? 0,
+      );
+      expect(comments.map((c) => c.body).join("\n")).toContain(tookOverLine("Kite club", "Kites"));
+    } finally {
+      await w.rt.close();
+    }
+  }, 90_000);
 });
