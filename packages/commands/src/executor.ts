@@ -827,7 +827,8 @@ export class CommandExecutor {
             emailToken: typeof json.email_token === "string" ? json.email_token : "",
             readback: readbackOf(card, decision, ctx.source),
             wordsUsed: stored.wordsUsed,
-            perform: () => this.performUndo(undoOf, ctx),
+            // l4-selftasks-carried (L4f-left-3): the card as read back says what comes back.
+            perform: () => this.performUndo(undoOf, ctx, card),
             redecide: () => this.redecideUndo(undoOf, card, ctx),
             cancelTimer: () => undefined,
             inFlight: false,
@@ -1633,8 +1634,15 @@ export class CommandExecutor {
     };
   }
 
-  /** The undo itself, once confirmed: the row is read again, since the card may be minutes old. */
-  private async performUndo(changeLogId: string, ctx: CommandContext): Promise<ExecuteResult> {
+  /**
+   * The undo itself, once confirmed: the row is read again, since the card may be minutes old.
+   * `shown` is the Undo's own card as it was read back (armed again after a restart).
+   */
+  private async performUndo(
+    changeLogId: string,
+    ctx: CommandContext,
+    shown?: ChangeCard,
+  ): Promise<ExecuteResult> {
     const row = await this.store.changeLog.get(changeLogId);
     const card = this.cards.get(changeLogId) ?? null;
     if (!row) return { status: "refused", card, reason: "no such change", code: "not_found" };
@@ -1664,7 +1672,13 @@ export class CommandExecutor {
           ? each
           : card
             ? `Undone: ${card.what} is back to ${card.oldValue}.`
-            : `Undone: ${row.sentence.replace(/\s*Undo\.$/, "")}`,
+            : // l4-selftasks-carried (L4f-left-3): after a restart the change's card is gone, but
+              // the Undo read back in chat kept what it puts back ("the monthly cap" back to
+              // "CHF 150.00"), so the confirmation says it as it does without a restart. Before:
+              // "Undone: Lowered the monthly cap from CHF 150.00 to CHF 100.00."
+              shown && shown.newValue !== UNDO_UNKNOWN_BEFORE
+              ? `Undone: ${shown.what} is back to ${shown.newValue}.`
+              : `Undone: ${row.sentence.replace(/\s*Undo\.$/, "")}`,
       ...added,
     ].join(" ");
     const undoRow = await this.store.changeLog.record({
@@ -1901,6 +1915,9 @@ function stepWords(
  * Before, `what` was "undo: <what>" with no question, so the Inbox and Home titled the card
  * "undo" (the first sentence ended at the colon) with raw "yes"/"no".
  */
+/** An Undo card's value when the change's own card was not at hand (`undoCardOf`). */
+const UNDO_UNKNOWN_BEFORE = "as it was before this change";
+
 function undoCardOf(
   row: ChangeLogRow,
   card: ChangeCard | null,
@@ -1918,7 +1935,7 @@ function undoCardOf(
     command: "undo",
     what,
     oldValue: card?.newValue ?? "as it is now",
-    newValue: card?.oldValue ?? "as it was before this change",
+    newValue: card?.oldValue ?? UNDO_UNKNOWN_BEFORE,
     scope: row.scope,
     risk,
     sentence: `Undo ${restores}.`,

@@ -205,3 +205,51 @@ describe("l4-selftasks-carried, run L4: the redirect guards judge a note by who 
     await w.store.close();
   });
 });
+
+/**
+ * L4f-left-3: an Undo read back in chat is confirmed with the same sentence before and after a
+ * restart: "Undone: the monthly cap is back to CHF 150.00." (after a restart it read the change
+ * log row's "Undone: Lowered the monthly cap from CHF 150.00 to CHF 100.00.").
+ */
+describe("l4-selftasks-carried, run L4: an Undo read back in chat says what is back, also after a restart (L4f-left-3)", () => {
+  it("the same confirmation without a restart and after one", async () => {
+    for (const restart of [false, true]) {
+      const w = await world();
+      const lowered = await w.executor.execute({
+        name: "budget.set",
+        params: { scope: "month", amountChf: 100 },
+        ctx: w.ctx(),
+        confirmation: { kind: "tap", by: { kind: "human", id: w.human.id } },
+      });
+      if (lowered.status !== "done") throw new Error(JSON.stringify(lowered));
+      const asked = await w.executor.undo(lowered.changeLogId, w.ctx({ source: "chat" }));
+      if (asked.status !== "pending") throw new Error(JSON.stringify(asked));
+      let executor = w.executor;
+      if (restart) {
+        executor = new CommandExecutor({ registry: w.registry, store: w.store, clock: w.clock });
+        const open = await w.store.humanRequest.list(
+          { status: "open", kind: "approval" } as never,
+          { limit: 50 },
+        );
+        await executor.restorePending(open, async (stored) => ({
+          ...w.ctx(),
+          actor: stored.actor,
+          humanId: stored.humanId,
+          agentId: stored.agentId,
+          activeProjectId: stored.activeProjectId,
+          source: stored.source,
+          wordsUsed: stored.wordsUsed,
+        }));
+      }
+      const r = await executor.confirmFromDevice(asked.pendingId, {
+        deviceId: w.desktop.id,
+        biometric: false,
+      });
+      expect(r.status, `restart: ${restart}`).toBe("done");
+      expect((r as { sentence: string }).sentence, `restart: ${restart}`).toBe(
+        "Undone: the monthly cap is back to CHF 150.00.",
+      );
+      await w.store.close();
+    }
+  });
+});
