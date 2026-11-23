@@ -518,4 +518,61 @@ describe("l4-github-link, run L4", () => {
       'GitHub then names this project; choose it only if nobody uses "The neighbourhood kite flying…" now.',
     );
   });
+
+  it("L4-creds-23: Work together through the dialog, then Docs: each doc the project does not have says the other Forerunner writes it, with no missing mark", async () => {
+    // The fake had no notWrittenHere: a together project's Docs was empty against it.
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const KITE = "01a1a000-0000-7000-8000-00000000c1ab";
+    harness.daemon.state.repositoryElsewhere["o/kite"] = {
+      ids: [KITE],
+      name: "Kite club",
+      lastActive: null,
+      otherAccount: null,
+      canWorkTogether: true,
+      canTakeOver: false,
+    };
+    renderApp("/", harness);
+    await screen.findAllByTestId("project-card");
+    await user.click(screen.getByTestId("new-project"));
+    const dialog = await screen.findByTestId("new-project-dialog");
+    await user.type(within(dialog).getByLabelText("Name"), "Kites");
+    await user.type(within(dialog).getByLabelText(/Goal/), "Kites");
+    await user.type(within(dialog).getByLabelText(/Repository link/), "o/kite");
+    await user.click(within(dialog).getByTestId("create-project"));
+    const offer = await within(dialog).findByTestId("link-offer");
+    await user.click(within(offer).getByTestId("offer-together"));
+    expect(await screen.findByTestId("project-header")).toHaveTextContent("Kite club");
+    await user.click(screen.getByTestId("tab-docs"));
+    const docs = await screen.findByTestId("docs");
+    const rows = await within(docs).findAllByTestId("doc-row");
+    expect(rows.length).toBe(8);
+    for (const row of rows) {
+      expect(row).toHaveTextContent(
+        'The other Forerunner of "Kite club" writes this doc on GitHub; this project does not write docs.',
+      );
+      expect(row).not.toHaveTextContent("missing");
+      expect(row).not.toHaveTextContent("not written yet");
+    }
+  });
+
+  it("L4-creds-23: the Data tab's import of a repository another project uses shows the daemon's sentence and imports nothing", async () => {
+    // The fake imported Atlas's repository into Beacon; the daemon answers 409 with the offer.
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_beacon/data", harness);
+    await screen.findByTestId("data");
+    await user.selectOptions(screen.getByTestId("import-source"), "github");
+    await user.type(screen.getByTestId("import-locator"), "https://github.com/org/atlas");
+    await user.click(screen.getByTestId("import-run"));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/projects/proj_beacon/data/import")).toHaveLength(1),
+    );
+    expect(
+      await screen.findByText(
+        'org/atlas is already the project "Atlas". Open it, or add this to it as new work.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("import-result")).toBeNull();
+  });
 });
