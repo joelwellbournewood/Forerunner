@@ -326,7 +326,13 @@ export { CANCEL_WAIT_EXPLAIN } from "./run-wait-words.ts";
  * work waits for the person's next Start: no session of the project took it, none starts for it
  * by itself. "stopped_all" is not one (Start is refused until sessions are allowed again).
  */
-const START_OFFER_OUTCOMES: ReadonlySet<string> = new Set(["waits_start", "stopping", "failed"]);
+// l4-starts-sessions (L4-money-203): a task too large for the session runs at the next Start.
+const START_OFFER_OUTCOMES: ReadonlySet<string> = new Set([
+  "waits_start",
+  "stopping",
+  "too_large",
+  "failed",
+]);
 
 /**
  * d1109-run-visible (V-6): whether an answered card's Done line offers Start (the person's start

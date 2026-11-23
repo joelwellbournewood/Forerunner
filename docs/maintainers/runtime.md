@@ -7980,7 +7980,8 @@ Only the person starts a session; everything else prepares work. The pieces:
   session") and `plan.promise`.
 - **`prepareWork`** (`session/prepared-work.ts`, `PrepareDeps`, `PreparePort`): the work an
   action made runnable joins the project's live session (`LiveSessions.forProject(...).admit`) if
-  it fits, else waits (`waits_start`), or waits for the person's continuation
+  it fits (the admit answers `joined`, `no_room`, `too_large` for a task above the whole work
+  budget, which never joins, l4-starts-sessions L4-money-203, or `stopping`), else waits (`waits_start`), or waits for the person's continuation
   (`waits_continuation`), or, with `start_by_itself` on and `by` not `agent`, starts a
   `hands_off` session (kept on `summary_cache.start_pending` when it cannot start now;
   `sweepStartPending` asks again; a hands-off start that begins drops it). `preparedLine`,

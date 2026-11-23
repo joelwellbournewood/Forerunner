@@ -209,3 +209,16 @@ left, else your next Start." while a session of the project runs), read-only; on
 runnable is prepared as any move that makes a task ready (it joins the running session if it fits,
 else "It runs at your next Start."). The Tasks drawer's **Change what it waits for** runs the same
 command, so it says the same. A paused, draft or done task gets no line.
+
+## Amendment 2026-11-23 (l4-starts-sessions, run L4, L4-money-203): a task too large for the session
+
+The admit of a running session (option C) has a fourth answer, `too_large`: a task whose
+estimate alone is more than the session's whole work budget never joins it (D4: it runs in its
+turn at the person's next Start), so its line never says it may join. Before, it got the same
+`no_room` as a task that only lacked room now, and Make ready on a CHF 1.10 draft during a CHF
+1.00 session said "It joins this session if budget is left after its own tasks, else your next
+Start." (live check 4, LC-C18). Now: '"X" is ready. It is larger than this session's budget, so
+it runs at your next Start.' (`preparedLine('too_large')`); an answer's Done line says the same,
+and its Start offer shows once no session of the project runs. Several tasks answered at once
+read `too_large` only when none of them joined or may join.
+

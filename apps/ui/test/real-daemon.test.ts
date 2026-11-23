@@ -27737,4 +27737,95 @@ describe("l4-starts-sessions, run L4", () => {
       await rt.close();
     }
   }, 120_000);
+
+  // L4-money-203 (live check 4, LC-C18): in a CHF 1.00 session Make ready on a draft priced about
+  // CHF 1.10 said '... is ready. It joins this session if budget is left after its own tasks,
+  // else your next Start.'; it could never join (the admit gave 'no_room' to a task above the
+  // whole work budget and to one that only lacked room now).
+  it("L4-money-203: Make ready on a draft larger than the running session's budget says it runs at your next Start, and the session never runs it", async () => {
+    let reached: () => void = () => undefined;
+    const reachedP = new Promise<void>((r) => {
+      reached = r;
+    });
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let armed = true;
+    const player = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({
+          file: join(mkdtempSync(join(tmpdir(), "fr-l4starts-203-")), "c.jsonl"),
+        }),
+      ),
+    );
+    const stream = player.stream.bind(player);
+    player.stream = (req) => {
+      if (!armed || detectRole(req).role !== "specialist") return stream(req);
+      armed = false;
+      return (async function* () {
+        reached();
+        await released;
+        yield* stream(req);
+      })();
+    };
+    const { rt, client } = await composeWithRolePlayer({}, { provider: player });
+    try {
+      const project = await client.createProject({ name: "Garden club", goal: "A club page" });
+      const intro = await readyTask(client, project.id, "Write the intro");
+      await rt.store.task.patch(intro.id, { est_cost_usd_micro: 50_000 });
+      // CHF 1.00 a session at the stand-in's rate of 0.8 (its work budget a fifth less).
+      const capUsdMicro = 1_250_000;
+      const started = await client.startSession({
+        agentId: rt.agent.id,
+        projectId: project.id,
+        budgetUsdMicro: capUsdMicro,
+      });
+      const sessionId = started.session?.id ?? "";
+      await reachedP;
+      const draft = await client.createTask(project.id, {
+        title: "Research local garden suppliers",
+        outcome: "suppliers.md lists five suppliers",
+        acceptanceCriteria: ["it lists five"],
+        priority: "medium",
+        status: "draft",
+        dependsOn: [],
+        budgetUsdMicro: 0,
+        specialist: "coder",
+        riskTier: 0,
+      });
+      // Priced above the CHF 0.80 work budget however the learned estimate weighs it.
+      await rt.store.task.patch(draft.id, { est_cost_usd_micro: 5_000_000 });
+      const row = await rt.store.task.mustGet(draft.id);
+      const made = await client.taskAction(draft.id, {
+        version: row.version,
+        action: "make_ready",
+      });
+      expect(made.change?.sentence).toBe(
+        '"Research local garden suppliers" is ready. It is larger than this session\'s budget, so it runs at your next Start.',
+      );
+      expect(made.change?.sentence).not.toMatch(/joins/);
+      release();
+      await ended(client, sessionId, "the CHF 1.00 session");
+      await settleSessions(rt);
+      // It never ran here, and the session stayed within its budget.
+      expect(
+        (await client.task(draft.id)).runs,
+        JSON.stringify((await rt.store.event.list(sessionId)).map((e) => [e.type, e.payload])),
+      ).toEqual([]);
+      expect((await client.task(draft.id)).task.status).toBe("ready");
+      const s = await client.session(sessionId);
+      expect(s.summary ?? "").toMatch(
+        /Left for your next Start: "Research local garden suppliers" \(about CHF \d+\.\d{2}\)/,
+      );
+      expect((await rt.store.session.mustGet(sessionId)).spent_usd_micro).toBeLessThanOrEqual(
+        capUsdMicro,
+      );
+    } finally {
+      release();
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
 });

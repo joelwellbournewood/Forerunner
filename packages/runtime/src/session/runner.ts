@@ -2090,7 +2090,10 @@ export class SessionRunner {
                 // at the next Start).
                 if (est > workBudgetUsdMicro || est > room) {
                   asked.set(row.id, { title: row.title, estimateUsdMicro: est });
-                  out.set(row.id, "no_room");
+                  // L4-money-203: a task above the whole work budget never fits here, so its
+                  // line never says it may join (live check 4's "It joins this session if
+                  // budget is left ..." for a CHF 1.10 task in a CHF 1.00 session).
+                  out.set(row.id, est > workBudgetUsdMicro ? "too_large" : "no_room");
                   // D7: a step added before a promised task that does not fit takes that task
                   // out of the promise with it; both wait for the next Start.
                   const next = context?.before;

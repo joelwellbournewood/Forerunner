@@ -13,11 +13,13 @@ export type PrepareBy = "person" | "system" | "agent";
 
 /**
  * What a session answered for one task: it runs in this session (`joined`), it does not fit now
- * (`no_room`: it joins if budget is left after the session's own tasks, else the next Start), or
- * the session takes no new work (`stopping`: Stop after this task, the wrap-up, its end review
- * or its last look found nothing; the task waits for the next Start and does not run here).
+ * (`no_room`: it joins if budget is left after the session's own tasks, else the next Start),
+ * it is larger than the session's whole work budget (`too_large`, l4-starts-sessions
+ * L4-money-203: it never joins this session and runs in its turn at the next Start, D4), or the
+ * session takes no new work (`stopping`: Stop after this task, the wrap-up, its end review or its
+ * last look found nothing; the task waits for the next Start and does not run here).
  */
-export type AdmitOutcome = "joined" | "no_room" | "stopping";
+export type AdmitOutcome = "joined" | "no_room" | "too_large" | "stopping";
 
 /**
  * How a task relates to the session's promise (D7, d1109-selftasks-run builds on it): a part of

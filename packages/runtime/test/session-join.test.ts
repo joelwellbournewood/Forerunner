@@ -245,7 +245,14 @@ describe("d1109-starts-engine, run C: a running session keeps its promise and ta
       },
     });
     await start();
-    expect(answers.map((a) => a?.outcome)).toEqual(["joined", "no_room"]);
+    // L4-money-203: the task above the whole work budget is told it never joins (it read "it
+    // joins this session if budget is left after its own tasks"); the line is what the person
+    // reads.
+    expect(answers.map((a) => a?.outcome)).toEqual(["joined", "too_large"]);
+    expect(answers.map((a) => a?.line)).toEqual([
+      "It joins the session that is running.",
+      "Ready: it is larger than this session's budget, so it runs at your next Start.",
+    ]);
     expect(ran).toEqual(["Task A", "Task D"]);
   });
 
