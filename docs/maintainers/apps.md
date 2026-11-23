@@ -571,7 +571,10 @@ page's Current task reads the bar's entry for the session while no task's run is
 (`currentWords`: 'The critic checks "X"', "Plans the session", "Picks the next task"; it read
 "Choosing the next task…" during a review); the Overview's Last result during a project's first
 session reads "Running now: Open the session" (`last-result-running`, from the card's `working`),
-not "No session yet.". Tests: `test/run-indicator.test.tsx` "l4-starts-sessions, run L4",
+not "No session yet."; while a start of the project waits behind another project's session
+(the card's `startsAfter`, L4-money-209) the header offers no Start session, the line's Cancel
+(its title the action's `explain`) drops it, and the Start dialog says the daemon's sentence
+for a start already in line. Tests: `test/run-indicator.test.tsx` "l4-starts-sessions, run L4",
 `e2e/smoke.spec.ts` (one Cancel outside the bar at 1280 and 375 px; the fake daemon's
 `POST /__test/waiting` seeds the wait, its `runReview` the critic's review).
 The Inbox's Done line offers **Start** (V-6, `DoneStart`) when the

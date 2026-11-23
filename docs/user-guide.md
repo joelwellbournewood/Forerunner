@@ -1656,7 +1656,9 @@ session) say "...; then it runs at your next Start." instead of "then your sessi
 at once, with no reload of the page. The project's line also says what waits to start: "Starts at
 15:40" for a Start you pressed while Claude was out (with Cancel), "Starts after your quiet
 hours", 'Starts after the session on "Quote page"' (as soon as you press Start there, no reload
-needed), or "Ready: 3 tasks wait for your Start".
+needed; with **Cancel**, and the project offers no second **Start session** while it waits: a
+second press elsewhere keeps the one start and says 'A session of Bird notes already starts
+after the session on "Quote page".'), or "Ready: 3 tasks wait for your Start".
 
 After an answer in the Inbox that readied work for your next Start, its Done line offers
 **Start**, which opens that project's Start dialog; it is not shown while a session of that

@@ -8134,7 +8134,14 @@ sentences from it); `daemon/run-indicator.ts` reads the store and re-exports the
   goes on" (its Cancel is the run indicator entry's since l4-starts-sessions, L4-money-208, D8:
   one Cancel per wait beside the bar; it had action kind `cancel`), "Starts at 15:40 (your subscription's limit)"
   with Cancel (a kept Start), "Starts after your quiet hours" (a held hands-off start), 'Starts
-  after the session on "Quote page"' (a waiting person start), and rule 4 reads "Ready: 3 tasks
+  after the session on "Quote page"' (a waiting person start; since l4-starts-sessions,
+  L4-money-209, with Cancel, `explain` "Cancel: it does not start after that session; its tasks
+  wait for your Start.", which `POST /projects/:id/continuation/cancel` honours by dropping that
+  start from the scheduler's line, `personStartInLine`; the card's `startsAfter` names the
+  project it waits behind, and a second `POST /sessions` for it while it waits behind another
+  project's session answers the same start, `result: "queued"`, with 'A session of X already
+  starts after the session on "Y".', where before each press queued one more; behind the
+  project's own session the starts keep their order, U-043), and rule 4 reads "Ready: 3 tasks
   wait for your Start"; a session that ended to wait has `SessionView.waitBlock` (`{state:
   goes_on | starts_again | stopped, text, action: cancel | continue, explain, projectId,
   budgetLeft}`), and once nothing goes on by itself its stored result says "...; then it runs

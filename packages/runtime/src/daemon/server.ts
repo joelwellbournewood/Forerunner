@@ -981,6 +981,16 @@ export function createDaemonApp(
    */
   /** Where the subscription's allowance is raised (Settings), as the share's wait links it. */
   const ALLOWANCE_TO = "/settings#plan-allowance";
+  /** L4-money-209: the person's start (or their session going on) of a project waiting in line. */
+  const personStartInLine = (projectId: string) =>
+    rt.scheduler
+      .pendingStarts(rt.agent.id)
+      .find(
+        (e) =>
+          e.result === "queued" &&
+          e.req.projectId === projectId &&
+          (startByOf(e.req) === "person" || startByOf(e.req) === "continuation"),
+      );
   const startsWaitOf = async (projectId: string): Promise<StartsWait | null> => {
     const now = () => rt.billing.waits.now(projectId).catch(() => null);
     if (await keptContinuationOf(rt.store, projectId)) {
@@ -1900,11 +1910,19 @@ export function createDaemonApp(
   app.post("/projects/:id/continuation/cancel", async (c) => {
     const project = await rt.store.project.mustGet(c.req.param("id"));
     const cancelled = await rt.continuations.cancel(project.id);
+    // l4-starts-sessions (L4-money-209): else the person's start (or their session going on)
+    // that waits in line behind another project's session: dropped, nothing runs for it.
+    const inLine = cancelled ? undefined : personStartInLine(project.id);
+    const dropped = inLine
+      ? !!rt.scheduler.cancelPending(rt.agent.id, "cancelled by you", inLine.id)
+      : false;
     const view: ContinuationCancelView = {
-      cancelled,
+      cancelled: cancelled || dropped,
       sentence: cancelled
         ? "Cancelled: nothing goes on by itself; its tasks run at your next Start."
-        : "Nothing waits to go on for this project.",
+        : dropped
+          ? `Cancelled: the session of ${project.name} does not start; its tasks wait for your Start.`
+          : "Nothing waits to go on for this project.",
     };
     rt.events.emit("project", { id: project.id });
     return c.json(view);
@@ -2076,6 +2094,36 @@ export function createDaemonApp(
           return c.json(view, 202);
         }
       }
+    }
+    // l4-starts-sessions (L4-money-209): a start of this project already waits in line behind
+    // another project's session: a second press keeps that one start (before, each press queued
+    // one more), said in one sentence.
+    // Only behind another project's session: starts behind the project's own session keep
+    // their order, one after the other (U-043).
+    const behindId = rt.scheduler.activeStart(body.agentId)?.req.projectId;
+    const already =
+      body.projectId &&
+      !body.continues &&
+      body.agentId === rt.agent.id &&
+      behindId &&
+      behindId !== body.projectId
+        ? personStartInLine(body.projectId)
+        : undefined;
+    if (already && body.projectId) {
+      const name = (await rt.store.project.get(body.projectId))?.name ?? "This project";
+      const behind = behindId
+        ? (await rt.store.project.get(behindId).catch(() => undefined))?.name
+        : undefined;
+      const view: StartSessionView = {
+        result: "queued",
+        startId: already.id,
+        session: null,
+        ahead: rt.scheduler.waitingAhead(body.agentId, already.id) ?? 0,
+        sentence: behind
+          ? `A session of ${name} already starts after the session on "${shortTitle(behind, 40)}".`
+          : `A session of ${name} already waits to start.`,
+      };
+      return c.json(view, 202);
     }
     // "Use API key": every refusal has passed; the yes for this stop, then the start.
     if (yesForStop) await writeYes(yesForStop);

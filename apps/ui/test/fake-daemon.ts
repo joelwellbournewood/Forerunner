@@ -2224,6 +2224,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     return {
       ...p,
       statusLine,
+      // L4-money-209, as the daemon: the project whose session this one's start waits behind.
+      startsAfter:
+        !working && state.startsWait[p.id]?.kind === "queued"
+          ? ((state.startsWait[p.id] as { behind: string }).behind ?? null)
+          : null,
       progress: progressOf(tasks.map((t) => ({ status: t.status as never }))),
       working,
       folder,
@@ -3567,15 +3572,25 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         sess.waitBlock = state.waitBlockAfterCancel[sess.id] ?? null;
         delete state.waitBlockAfterCancel[sess.id];
       }
-    // d1109-run-visible: a continuation or a kept Start on the project's line goes with it.
+    // d1109-run-visible: a continuation or a kept Start on the project's line goes with it;
+    // l4-starts-sessions (L4-money-209): so does a person's start waiting in line.
     const startsWait = state.startsWait[project.id];
-    if (startsWait?.kind === "continuation" || startsWait?.kind === "kept_start") {
+    if (
+      startsWait?.kind === "continuation" ||
+      startsWait?.kind === "kept_start" ||
+      startsWait?.kind === "queued"
+    ) {
       delete state.startsWait[project.id];
       state.runningExtra = state.runningExtra.filter(
         (r) => !(r.state === "waiting" && r.projectId === project.id),
       );
       emit("project.changed", { id: project.id });
       emitRunning();
+      if (startsWait.kind === "queued")
+        return c.json({
+          cancelled: true,
+          sentence: `Cancelled: the session of ${project.name} does not start; its tasks wait for your Start.`,
+        });
       if (!state.credentialWaitNow[project.id]?.kept)
         return c.json({
           cancelled: true,

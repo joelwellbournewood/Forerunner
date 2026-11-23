@@ -571,17 +571,23 @@ describe("d1109-run-visible, run C: what waits to start, on the project's line (
       text: "Starts after your quiet hours",
       action: null,
     });
+    // l4-starts-sessions (L4-money-209): the start waiting in line is the person's own; Cancel
+    // drops it (before: no button, and the header still offered Start session).
+    const queuedCancel = {
+      ...CANCEL,
+      explain: "Cancel: it does not start after that session; its tasks wait for your Start.",
+    };
     expect(line({ kind: "queued", behind: "Quote page" })).toEqual({
       kind: "paused",
       text: 'Starts after the session on "Quote page"',
-      action: null,
+      action: queuedCancel,
     });
     // l4-cred-screens (L4a-left-4, L4-creds-9 part 3): the person's own session that waited for
     // its credential goes on after the other project's session, said as such.
     expect(line({ kind: "queued", behind: "Map notes", goesOn: true })).toEqual({
       kind: "paused",
       text: 'Goes on after the session on "Map notes"',
-      action: null,
+      action: queuedCancel,
     });
     // Nothing waits: the ready line, which says the work waits for the person's Start.
     expect(line(null)).toEqual({

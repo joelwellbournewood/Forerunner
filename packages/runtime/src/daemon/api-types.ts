@@ -199,10 +199,21 @@ export const ProjectCard = z.object({
           kind: z.enum(["link", "start", "retry", "cancel"]),
           label: z.string(),
           to: z.string().nullable(),
+          /**
+           * l4-starts-sessions (L4-money-209): what pressing it does, when it differs from a
+           * wait's Cancel ("Cancel: it does not start after that session; ...").
+           */
+          explain: z.string().optional(),
         })
         .nullable(),
     })
     .optional(),
+  /**
+   * l4-starts-sessions (L4-money-209): the project whose session this project's start waits
+   * behind (a person's Start queued while another project's session runs); the header then
+   * offers no second Start. Null or absent when none waits.
+   */
+  startsAfter: z.string().nullable().optional(),
   /** "3 of 7 done": the tasks not cancelled, and the ones done. */
   progress: z.object({ done: z.number().int(), total: z.number().int() }).optional(),
   /**
@@ -3743,7 +3754,7 @@ export const DAEMON_ROUTES = {
     "POST /sessions (StartSessionBody -> 202 StartSessionView: started, queued behind the agent's running session, or deferred by quiet hours; a started one waits up to 15 s for its session and carries it; a waiting one carries `ahead`, the number of the agent's waiting starts before it, which run in order and are never replaced (U-043); a run that fails before its session begins answers that error; kept, with its sentence, when the Claude credential the work needs is out and no session waits to go on: the Start is kept for the reset and starts once then, d1109-starts-engine S-10; 409 with when it goes on while one waits)",
   session: "GET /sessions/:id",
   cancelContinuation:
-    "POST /projects/:id/continuation/cancel (-> ContinuationCancelView: d1109-starts-engine S-10, the person's session that waits to go on after its Claude credential, or a Start kept for the reset, is dropped and nothing starts at the reset; its tasks wait for the next Start; cancelled false when none waited; 404 for an unknown project)",
+    "POST /projects/:id/continuation/cancel (-> ContinuationCancelView: d1109-starts-engine S-10, the person's session that waits to go on after its Claude credential, or a Start kept for the reset, is dropped and nothing starts at the reset; its tasks wait for the next Start; l4-starts-sessions L4-money-209: else the person's start of the project waiting in line behind another project's session is dropped; cancelled false when none waited; 404 for an unknown project)",
   sessionEvents: "GET /sessions/:id/events?afterSeq= (JSON) | Accept: text/event-stream (SSE)",
   stopSession:
     "POST /sessions/:id/stop (SessionView; Stop now: ends the session's runs and freezes nothing, a kill in force stays; the task goes back to ready with 'Stopped by you'; a session nothing in this process runs is ended there, design §4.10)",

@@ -196,6 +196,9 @@ export function ProjectPage() {
                 Create a repository
               </Button>
             ) : null}
+            {/* l4-starts-sessions (L4-money-209): while a start of this project waits behind
+                another project's session (`startsAfter`), its line says so with Cancel and the
+                header offers no second Start. */}
             {view.working ? (
               <Link
                 to={`/sessions/${encodeURIComponent(view.working.sessionId)}`}
@@ -204,7 +207,7 @@ export function ProjectPage() {
               >
                 Open running session
               </Link>
-            ) : closed ? null : (
+            ) : closed || view.startsAfter ? null : (
               <Button
                 variant="primary"
                 onClick={() => setStartOpen(true)}

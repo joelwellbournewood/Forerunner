@@ -28018,4 +28018,82 @@ describe("l4-starts-sessions, run L4", () => {
       await rt.close();
     }
   }, 120_000);
+
+  it("L4-money-209: a start waiting behind another project's session is one start, said on its project, and Cancel drops it", async () => {
+    // Live check 4 / run C (C5L-17): the header still offered Start session while the start
+    // waited, and each press queued one more.
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4starts-209-"));
+    homes.push(home);
+    const model = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    let release = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const stream = model.stream.bind(model);
+    model.stream = (req) =>
+      detectRole(req).role === "specialist"
+        ? (async function* () {
+            await gate;
+            yield* stream(req);
+          })()
+        : stream(req);
+    const { rt, client } = await composeWithRolePlayer({}, { provider: model });
+    let firstId = "";
+    try {
+      const club = await client.createProject({ name: "Club site", goal: "A note" });
+      await readyTask(client, club.id, "Write the club motto");
+      const birds = await client.createProject({ name: "Bird notes", goal: "A note" });
+      await readyTask(client, birds.id, "Write notes/wren.md");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const first = await client.startSession({ agentId, projectId: club.id });
+      expect(first.result, JSON.stringify(first)).toBe("started");
+      firstId = first.session?.id ?? "";
+      const queued = await client.startSession({ agentId, projectId: birds.id });
+      expect(queued.result, JSON.stringify(queued)).toBe("queued");
+      const card = await client.project(birds.id);
+      expect(card.startsAfter).toBe("Club site");
+      expect(card.statusLine).toEqual({
+        kind: "paused",
+        text: 'Starts after the session on "Club site"',
+        action: {
+          kind: "cancel",
+          label: "Cancel",
+          to: null,
+          explain: "Cancel: it does not start after that session; its tasks wait for your Start.",
+        },
+      });
+      // A second press keeps the one start.
+      const again = await client.startSession({ agentId, projectId: birds.id });
+      expect(again).toMatchObject({
+        result: "queued",
+        startId: queued.startId,
+        session: null,
+        sentence: 'A session of Bird notes already starts after the session on "Club site".',
+      });
+      const inLine = () =>
+        rt.scheduler.pendingStarts(rt.agent.id).filter((e) => e.req.projectId === birds.id);
+      expect(inLine()).toHaveLength(1);
+      // Cancel on its line drops it; nothing starts for it when the other session ends.
+      expect(await client.cancelContinuation(birds.id)).toEqual({
+        cancelled: true,
+        sentence:
+          "Cancelled: the session of Bird notes does not start; its tasks wait for your Start.",
+      });
+      expect(inLine()).toEqual([]);
+      expect((await client.project(birds.id)).startsAfter ?? null).toBeNull();
+      release();
+      await ended(client, firstId, "the session of Club site");
+      await settleSessions(rt);
+      expect(await client.sessions({ projectId: birds.id })).toEqual([]);
+    } finally {
+      release();
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
 });

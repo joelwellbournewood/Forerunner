@@ -927,4 +927,32 @@ describe("l4-starts-sessions, run L4: a running or waiting session is said once 
     );
     expect(screen.queryByText("No session yet.")).toBeNull();
   });
+
+  it("L4-money-209: while a start waits behind another project's session, the header offers no Start session; its line's Cancel drops it", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const beaconTask = harness.daemon.state.tasks.find((t) => t.id === "task_4");
+    if (!beaconTask) throw new Error("fixture changed");
+    beaconTask.status = "ready";
+    harness.daemon.state.startsWait.proj_beacon = { kind: "queued", behind: "Atlas" };
+    renderApp("/projects/proj_beacon", harness);
+    const header = await screen.findByTestId("project-header");
+    await waitFor(() =>
+      expect(within(header).getByTestId("project-status")).toHaveTextContent(
+        /^Starts after the session on "Atlas"$/,
+      ),
+    );
+    expect(within(header).queryByTestId("start-session")).toBeNull();
+    const cancel = within(header).getByTestId("project-status-action");
+    expect(cancel).toHaveTextContent("Cancel");
+    expect(cancel).toHaveAttribute(
+      "title",
+      "Cancel: it does not start after that session; its tasks wait for your Start.",
+    );
+    await user.click(cancel);
+    await waitFor(() =>
+      expect(postedCalls(harness, "/projects/proj_beacon/continuation/cancel")).toHaveLength(1),
+    );
+    await waitFor(() => expect(within(header).getByTestId("start-session")).toBeInTheDocument());
+  });
 });

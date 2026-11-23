@@ -262,3 +262,12 @@ does not show it). A working project's line is the bar's `what` with the count (
 on "Create index.html" (0 of 7 done)'); the session page's Current task reads the bar's entry
 while no task's run is in flight; the Overview's Last result during the first session reads
 "Running now: Open the session". The engine does nothing new: the words come from the bar.
+
+## Amendment 2026-11-23 (l4-starts-sessions, run L4, L4-money-209): one start waits in line, with Cancel
+
+A person's Start of a project while another project's session runs waits in line ('Starts after
+the session on "Quote page"'). Its project's header no longer offers a second Start session, the
+line offers Cancel (it drops that start; nothing runs for it), and a second press from another
+place keeps the one start and says so ('A session of Bird notes already starts after the session
+on "Quote page".'). Starts behind the project's own session keep their order (U-043).
+

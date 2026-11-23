@@ -147,6 +147,9 @@ export type StartsWait =
 
 /** Cancel on a wait that goes on or starts by itself (POST /projects/:id/continuation/cancel). */
 const CANCEL_WAIT = { kind: "cancel", label: "Cancel", to: null } as const;
+/** l4-starts-sessions (L4-money-209): Cancel on a person's start that waits in line. */
+export const QUEUED_CANCEL_EXPLAIN =
+  "Cancel: it does not start after that session; its tasks wait for your Start.";
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -406,7 +409,9 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
       text: fitStatus(
         `${sw.goesOn ? "Goes on" : "Starts"} after the session on "${shortTitle(sw.behind, 40)}"`,
       ),
-      action: null,
+      // l4-starts-sessions (L4-money-209): the start that waits in line is the person's own;
+      // Cancel drops it (the bar names it only as ' · then <project>').
+      action: { ...CANCEL_WAIT, explain: QUEUED_CANCEL_EXPLAIN },
     };
   if (sw?.kind === "held")
     return { kind: "paused", text: "Starts after your quiet hours", action: null };

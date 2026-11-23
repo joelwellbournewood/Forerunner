@@ -274,6 +274,8 @@ export async function projectCard(
     facts?.credentialWaitNow && tasks.some((t) => displays.get(t.id)?.key === "ready")
       ? await facts.credentialWaitNow(p.id).catch(() => null)
       : null;
+  const startsWait =
+    !working && facts?.startsWait ? await facts.startsWait(p.id).catch(() => null) : null;
   const statusLine = projectStatusLine({
     projectId: p.id,
     tasks,
@@ -293,8 +295,7 @@ export async function projectCard(
         : null,
     folder,
     joinedInto: joined ? { text: joined.text, projectId: joined.projectId } : null,
-    startsWait:
-      !working && facts?.startsWait ? await facts.startsWait(p.id).catch(() => null) : null,
+    startsWait,
   });
   return {
     id: p.id,
@@ -322,6 +323,8 @@ export async function projectCard(
     defaultRiskTier: defaultRiskTier(p),
     repos: p.repos,
     statusLine,
+    // L4-money-209: the project whose session this project's start waits behind.
+    startsAfter: startsWait?.kind === "queued" ? startsWait.behind : null,
     progress: progressOf(tasks),
     working,
     folder,
