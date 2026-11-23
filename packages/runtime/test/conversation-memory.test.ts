@@ -2156,3 +2156,48 @@ describe("l4-chat-carried, run L4: the forged app line in any case (L4c-left-6)"
     await w.store.close();
   });
 });
+
+/**
+ * l4-chat-carried, run L4 (L4d-left-5): the app's own hold reply ("Your Claude subscription is at
+ * its limit until 15:40, so I have not answered. I can still add and change tasks.") never
+ * reaches the model's history as its own words, also as stored before the `hold` mark and
+ * without the one-off press (no other credential could answer).
+ */
+describe("l4-chat-carried, run L4: an old hold reply stays out of the history (L4d-left-5)", () => {
+  it("every form chatHoldReply writes is a hold reply, unmarked and without a press too", async () => {
+    const { isHoldReply } = await import("../src/conversation/transcript.ts");
+    const { chatHoldReply } = await import("../src/session/credential-words.ts");
+    const forms = [
+      chatHoldReply({ reason: "limit", kind: "subscription", stop: null } as never, "15:40"),
+      chatHoldReply({ reason: "refused", kind: "api_key", stop: null } as never, null),
+      chatHoldReply({ reason: "refused", kind: "subscription", stop: null } as never, null),
+      chatHoldReply({ reason: "needs", kind: "subscription", stop: "share" } as never, "18:00"),
+    ];
+    for (const text of forms) expect(isHoldReply({ text, notice: true } as never), text).toBe(true);
+    // The model's own answer is no hold reply.
+    expect(isHoldReply({ text: "The FAQ task is ready.", notice: false } as never)).toBe(false);
+  });
+
+  it("a stored row from before the mark: the next turn's history holds the person's line alone, not the hold reply", async () => {
+    const w = await setup([textReply("ok", { ttftMs: 0 })]);
+    const sessionId = await w.agent.conversationSessionId(w.alice, w.quote);
+    await w.store.event.append(sessionId, "chat.human", {
+      transcriptId: "held",
+      text: "what failed yesterday?",
+      source: "text",
+      conversationProjectId: w.quote,
+    } as never);
+    await w.store.event.append(sessionId, "chat.reply", {
+      transcriptId: "held",
+      text: "Your Claude subscription is at its limit until 15:40, so I have not answered. I can still add and change tasks.",
+      conversationProjectId: w.quote,
+      notice: true,
+      actions: [],
+    } as never);
+    await w.chat("and now?");
+    const sent = w.messages(0);
+    expect(sent.map((m) => m.content).join("\n")).not.toContain("so I have not answered");
+    expect(sent.filter((m) => m.role === "assistant")).toEqual([]);
+    await w.store.close();
+  });
+});

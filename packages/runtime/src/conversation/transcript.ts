@@ -172,8 +172,22 @@ function replyOf(p: Record<string, unknown>): TranscriptReply {
  * press (only a hold reply carries it).
  */
 export function isHoldReply(reply: TranscriptReply): boolean {
-  return reply.hold === true || (reply.notice && !!reply.oneOff);
+  return (
+    reply.hold === true ||
+    (reply.notice && !!reply.oneOff) ||
+    // l4-chat-carried (L4d-left-5): a row stored before the mark and without the press (no other
+    // credential could answer) is the hold reply's own sentence (`chatHoldReply`).
+    HOLD_REPLY_RE.test(reply.text.trim())
+  );
 }
+
+/**
+ * The sentence `chatHoldReply` (session/credential-words.ts) writes: '<what stopped>, so I have
+ * not answered. I can still add and change tasks.', or '...; until then I can still add and
+ * change tasks.' for a refused credential. A test keeps the two in step.
+ */
+const HOLD_REPLY_RE =
+  /, so I have not answered\. (?:.+; until then )?I can still add and change tasks\.$/i;
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 

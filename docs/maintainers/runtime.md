@@ -8571,7 +8571,8 @@ log's lines stay in `session/credential-words.ts`); the shapes are in
   fixup-l4-cred-screens: every hold reply is the app's own words, never an assistant turn of the
   history. Both hold forms (held before the call, held on the way) write `hold: true` on their
   `chat.reply` row (`TranscriptReply.hold`; a notice with `oneOff` reads as one on older rows,
-  `isHoldReply`), and `historyMessages` treats a held turn as the person's line alone (merged
+  and so does a row whose text is `chatHoldReply`'s sentence, stored before the mark and without
+  the press: l4-chat-carried, L4d-left-5; `isHoldReply`), and `historyMessages` treats a held turn as the person's line alone (merged
   with the next, dropped when it is the last). The conversation view still shows it. Before,
   two held questions and the press on the newest showed the model the first one's "... so I
   have not answered. I can still add and change tasks." as its own reply (real-daemon "with two
