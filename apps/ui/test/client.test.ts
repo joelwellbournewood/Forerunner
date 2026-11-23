@@ -251,10 +251,11 @@ describe("daemon client", () => {
     await expect(
       client.transitionTask(task.id, { version: task.version, to: "ready", reason: "stale" }),
     ).rejects.toMatchObject({ code: "conflict" });
-    // Its only task is paused: a start is refused with the start check's sentence (later #38).
+    // Its only task is paused: a start is refused with the start check's sentence (later #38),
+    // a 400 "validation" as the daemon answers it (l4-cred-screens, L4-creds-21).
     await expect(
       client.startSession({ agentId: "agent_alice", projectId: project.id }),
-    ).rejects.toMatchObject({ code: "conflict", message: "Nothing can run: no task is ready." });
+    ).rejects.toMatchObject({ code: "validation", message: "Nothing can run: no task is ready." });
     await client.createTask(project.id, { title: "Second task", outcome: "It is there" });
     const started = await client.startSession({ agentId: "agent_alice", projectId: project.id });
     expect(started.result).toBe("started");
