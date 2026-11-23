@@ -160,3 +160,5 @@
 - 03:5x UTC: L4d DONE: merged + pushed at 0288a46 (full validation incl. injection 82/82, unit 6046, UI 1440, Playwright 38, smoke 25/25). Results runL4-L4d-{result,merge}.json; leftovers placed (place-l4d-leftovers.cjs): 5 into l4-starts-sessions, l4-chat-carried; 4 in leftovers-L4d.json. Decision L4d-left-2: a start under a refused credential is refused in words outright (owner can overrule). Worktrees removed.
 - fix/l4c-workstate merged at 77bb4fa (signed); validation running in background (task bypzpp17i, log /tmp/frbench/workstate-merge-validation.log); push after green.
 - L4e built on 77bb4fa and launched: wf_216f18cc-8d9, task w9gjid0rw (l4-github-link, l4-github-merge).
+2026-11-23T04:07:10Z workstate merge 77bb4fa pushed after full validation green (check, integration, e2e, ui 1441/1441).
+2026-11-23T04:50:33Z CI 331 + Desktop 87 green at 77bb4fa. Desktop 86 (0288a46) failed on Windows UI unit tests: real-daemon 'start session with a note' 404 (bounded wait race); placed as CI-flake-1 into l4-starts-sessions (L4g).
