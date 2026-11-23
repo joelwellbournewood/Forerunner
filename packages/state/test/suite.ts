@@ -2010,7 +2010,9 @@ export function defineStateSuite(target: SuiteTarget): void {
               ...fields,
             });
             const on = await store.session.setStatus(row.id, row.version, "running");
-            await store.session.setStatus(on.id, on.version, "stopped", { handoff: handoff as never });
+            await store.session.setStatus(on.id, on.version, "stopped", {
+              handoff: handoff as never,
+            });
             return row;
           };
           // The person's Start that met only a refused key: stopped at once to wait.
