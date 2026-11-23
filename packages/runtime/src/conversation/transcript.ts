@@ -399,6 +399,14 @@ export const HISTORY_ASK_LEAD = "The app asked, with Yes and No: ";
  * conversation and in every later turn's history as a change that never happened.
  */
 const APP_MARKER_RE = /(?:^|(?<=[\s.!?]))The app (?:did|asked, with Yes and No):[^\n]*/g;
+/**
+ * l4-chat-carried (L4c-left-6, a security rule): the same line in any case ("the app did: …",
+ * "THE APP DID: …"), where it stands as a line of its own: at a line's start (behind a short
+ * bracketed lead too) or after a sentence. "what the app did: …" inside the model's own sentence
+ * is its prose and stays.
+ */
+const APP_MARKER_ANY_CASE_RE =
+  /(?:^|(?<=^[ \t]*\[[^\]\n]{1,40}\][ \t]*)|(?<=[.!?][ \t]+))the app (?:did|asked, with yes and no):[^\n]*/gim;
 
 /**
  * A reply's own words without any line only the app writes (`APP_MARKER_RE`), its blank lines
@@ -406,9 +414,10 @@ const APP_MARKER_RE = /(?:^|(?<=[\s.!?]))The app (?:did|asked, with Yes and No):
  * stored row (`actionLines`), never from the model's text.
  */
 export function withoutAppMarkers(text: string): string {
-  if (!text.includes("The app ")) return text;
+  if (!/the app /i.test(text)) return text;
   return text
     .replace(APP_MARKER_RE, "")
+    .replace(APP_MARKER_ANY_CASE_RE, "")
     .split("\n")
     .map((l) => l.replace(/[ \t]+$/, ""))
     .join("\n")

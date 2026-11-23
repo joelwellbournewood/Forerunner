@@ -4992,7 +4992,10 @@ in one project cancelled a task in another. Now:
   which is nudged once more while the turn's calls last. Only the app writes its lines: the reply
   the person sees and the stored row leave out any "The app did: …" or "The app asked, with Yes
   and No: …" line the model wrote (`withoutAppMarkers`, a security rule: a forged change line can
-  no longer pose as a change in the conversation or a later turn's history), and the history says
+  no longer pose as a change in the conversation or a later turn's history; l4-chat-carried,
+  L4c-left-6: in any case, at a line's start, behind a short bracketed lead or after a sentence,
+  so "the app did: …" is left out too and is a change claim; "what the app did: …" inside the
+  model's own sentence stays its prose), and the history says
   an earlier read-back as the app's question, "The app asked, with Yes and No: <read-back>"
   (`HISTORY_ASK_LEAD`, `replyInHistory`), never as the model's own prose it would copy. A set to
   the value already in force goes back to the model as "Nothing to change: <what> is already

@@ -322,3 +322,10 @@ A Stop pressed while the claim guard's nudge runs ends the turn as stopped, as a
 point of the turn does: "You stopped this answer: CHF … spent." with what the turn cost, and never
 the guard's "Nothing changed, and nothing waits for your yes." line (C3-left-11). The claim the
 model streamed was already taken back when the nudge began; nothing changes.
+
+## Amendment 2026-11-23 (l4-chat-carried, run L4): the app's lines in any case
+
+Only the app writes "The app did: …" and "The app asked, with Yes and No: …": a line the model
+writes in any letter case ("the app did: …"), at a line's start, behind a short bracketed lead or
+after a sentence, is left out of the reply, the stored row and every later turn's history, and
+is a change claim the guard nudges (L4c-left-6). Before, the check was case-sensitive.
