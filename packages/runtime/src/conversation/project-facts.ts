@@ -256,11 +256,15 @@ export function lastSessionBlock(project: ProjectRow, chfPerUsd = 1): string {
     if (out.needsYou?.length) lines.push(`Needs the person: ${names(out.needsYou).join(", ")}`);
     // budget-resume: paused at a budget, its card offers Continue or Cancel; a run that heard the
     // wrap-up paused before the limit ran out, as the Result line says (L3-research-2).
+    // l4-chat-carried (L4c-left-5, L4-money-111's sibling): a task whose work is done and whose
+    // review waits for room is no pause at its budget, as the Result line and its card say.
     for (const p of out.paused ?? [])
       lines.push(
-        p.before
-          ? `Paused: ${quote(p.title)} before ${p.limit} ran out`
-          : `Paused: ${quote(p.title)} at ${p.limit}`,
+        p.reviewWaits
+          ? `Review waits: ${quote(p.title)} is done; its review waits for room in ${p.limit}`
+          : p.before
+            ? `Paused: ${quote(p.title)} before ${p.limit} ran out`
+            : `Paused: ${quote(p.title)} at ${p.limit}`,
       );
     if (out.leftOver?.length) lines.push(`Not reached: ${names(out.leftOver).join(", ")}`);
     if (out.waitingForDocker?.length)

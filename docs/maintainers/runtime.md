@@ -10012,6 +10012,13 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   and conversation-agent 1.5.2 say the card speaks for the change. compose wires the executor's
   `onExpired`: `events.emit("inbox")`, `ChatTurns.touched(projectId)` (conversation.changed) and
   one Update (`lapsedCardUpdate`, loop/answered-cards.ts).
+- **A review that waits, in the chat's facts (l4-chat-carried, L4c-left-5).** The `# Last
+  session` block (`lastSessionBlock`, project-facts.ts) says 'Review waits: "X" is done; its
+  review waits for room in its budget of CHF 0.40' for a paused item with `reviewWaits` (the
+  Result line and the card say the work is done), never 'Paused: "X" at its budget'.
+  conversation-agent 1.5.3 names the line in its facts list. Tests:
+  `test/chat-carried-sentences.test.ts`, which also asserts every "fix the tasks" sentence and
+  the suggestion card's Done lines word for word (SC-10).
 - **The criterion of a task with no criteria (L4-other-1, ADR 0109).** `outcomeCriterion(outcome,
   { writesNoFile })`: for a specialist none of whose tools writes a file (`writesNoFile` in
   registry/tools.ts, today the reviewer) 'The report shows this outcome (this specialist writes

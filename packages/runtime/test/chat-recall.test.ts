@@ -609,7 +609,7 @@ describe("d1109-chat-recall, run C: CR-9 the prompt and the turn's room", () => 
     // d1109-chat-depth (C3) bumped it to 1.4.0 ('Thinking longer'); the lookup lines stay.
     // l4-chat-depth (L4b) made 1.5.0 ('Thinking longer': who writes the ask); l4-chat-answers (L4c)
     // made 1.5.1: it looks a record up in the turn instead of offering to (L4-chat-101).
-    expect(ROLE?.version).toBe("1.5.2");
+    expect(ROLE?.version).toBe("1.5.3");
     expect(ROLE?.prompt).toContain("## What you look up");
     expect(ROLE?.prompt).not.toContain("I don't have that here");
     expect(ROLE?.prompt).toContain(
