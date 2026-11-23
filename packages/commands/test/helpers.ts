@@ -61,9 +61,17 @@ export interface World {
   ctx(overrides?: Partial<CommandContext>): CommandContext;
 }
 
-export async function world(): Promise<World> {
+/**
+ * The commands' test world over a fresh SQLite store in memory, or (`store`, L4-github-121) over
+ * the store a Postgres integration case opened in its own schema.
+ */
+export async function world(
+  opts: { store?: (clock: SimulatedClock) => Promise<StateStore> } = {},
+): Promise<World> {
   const clock = new SimulatedClock(START);
-  const store = await openStore({ url: "sqlite::memory:", clock });
+  const store = opts.store
+    ? await opts.store(clock)
+    : await openStore({ url: "sqlite::memory:", clock });
   const human = await store.human.insert({
     name: "Joel",
     email: "joel@example.test",
