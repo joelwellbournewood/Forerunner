@@ -520,7 +520,9 @@ export function createDaemonApp(
         err.code === "not_found"
           ? 404
           : err.code === "validation" &&
-              (err.details?.reason === "bad_query" || err.details?.reason === NOT_AN_OPTION)
+              (err.details?.reason === "bad_query" ||
+                err.details?.reason === NOT_AN_OPTION ||
+                err.details?.reason === START_REFUSED)
             ? 400
             : err.code === "validation" ||
                 err.code === "version_conflict" ||
@@ -1011,13 +1013,21 @@ export function createDaemonApp(
     }
     const pending = rt.scheduler.pendingStarts(rt.agent.id);
     const active = rt.scheduler.activeStart(rt.agent.id)?.req.projectId;
-    if (
-      active &&
-      active !== projectId &&
-      pending.some((e) => e.req.projectId === projectId && startByOf(e.req) === "person")
-    ) {
+    // l4-cred-screens (L4a-left-4, L4-creds-9 part 3): the person's own session going on after
+    // its credential wait (by "continuation") waits in line too, and its line says it goes on.
+    const inLine = pending.find(
+      (e) =>
+        e.req.projectId === projectId &&
+        (startByOf(e.req) === "person" || startByOf(e.req) === "continuation"),
+    );
+    if (active && active !== projectId && inLine) {
       const behind = (await rt.store.project.get(active).catch(() => undefined))?.name;
-      if (behind) return { kind: "queued", behind };
+      if (behind)
+        return {
+          kind: "queued",
+          behind,
+          ...(startByOf(inLine.req) === "continuation" ? { goesOn: true } : {}),
+        };
     }
     const held = pending.some((e) => e.req.projectId === projectId && e.result === "deferred");
     const project = await rt.store.project.get(projectId).catch(() => undefined);
@@ -1886,6 +1896,12 @@ export function createDaemonApp(
     return c.json(view);
   });
 
+  /**
+   * l4-cred-screens (L4-creds-21, C6L-9): a start refused in words (nothing to run, a refused
+   * credential, "Use API key" not offered) answers 400 with code `validation`, as a bad request
+   * does; before, the generic mapping answered 409 "conflict" for a refusal that is no conflict.
+   */
+  const START_REFUSED = "start_refused";
   app.post("/sessions", async (c) => {
     const body = await parse(c, StartSessionBody);
     // S-10: a session's Continue goes on with the ended session: the rest of its promise and of
@@ -1936,11 +1952,13 @@ export function createDaemonApp(
           });
         const blocked = await startBlocked(check, body.projectId, body.agentId);
         if (blocked?.kind === "nothing_runnable" && !runsWork(check))
-          throw new ForerunnerError("validation", blocked.sentence, { details: { blocked } });
+          throw new ForerunnerError("validation", blocked.sentence, {
+            details: { blocked, reason: START_REFUSED },
+          });
         throw new ForerunnerError(
           "validation",
           "Use API key is not offered for this start now: open Start again to see what it does.",
-          { details: { cause: "use_other_not_offered" } },
+          { details: { cause: "use_other_not_offered", reason: START_REFUSED } },
         );
       }
       // The money checks come before the yes: a start refused for its budget writes no yes for
@@ -1971,6 +1989,26 @@ export function createDaemonApp(
         return c.json(view, 202);
       }
     }
+    // l4-cred-screens (L4a-left-1): a refused credential the work needs is said first, in the
+    // Start dialog's and chat's sentence ("Nothing can run until you save a new API key in
+    // Settings."), also while the person's session is kept to go on; before, a start from the
+    // API, the phone or the session page's Continue got the kept session's "goes on by itself
+    // once its Claude credential is back", which names no step.
+    if (body.projectId && !yesForStop) {
+      const check = await rt.startCheck(body.projectId, body.budgetUsdMicro);
+      const refused = await startBlocked(check, body.projectId, body.agentId, {
+        credentialWait: true,
+      });
+      if (
+        refused?.kind === "nothing_runnable" &&
+        !refused.startable &&
+        refused.action?.kind === "link" &&
+        refused.action.to === "/setup"
+      )
+        throw new ForerunnerError("validation", refused.sentence, {
+          details: { blocked: refused, cause: "credential_refused", reason: START_REFUSED },
+        });
+    }
     // S-10: one wait per project: while the person's session waits to go on (or a Start was kept
     // for the reset), a Start keeps nothing new and starts nothing; it says when it goes on. The
     // wake runs first, so a stop that has ended goes on now.
@@ -1994,7 +2032,7 @@ export function createDaemonApp(
       const blocked = await startBlocked(check, body.projectId, body.agentId);
       if (blocked?.kind === "nothing_runnable")
         throw new ForerunnerError("validation", blocked.sentence, {
-          details: { blocked },
+          details: { blocked, reason: START_REFUSED },
         });
       // S-10 (ADR 0118), "Start at 15:40": the Claude credential the work needs is out (its usage
       // limit) and nothing is kept for the project, so the person's Start is kept for the reset:

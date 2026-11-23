@@ -1172,6 +1172,10 @@ page says so with **Answer**, and the card names what the waiting work costs on 
 CHF 0.40"). If your choice moves work onto the key by itself, you get one notification for that
 stop with its cost.
 
+If Anthropic refused your key or sign-in, every Start (the dialog, Continue, the phone) says the
+same: "Nothing can run until you save a new API key in Settings.", and a session waiting to go on
+says it goes on once you save a new one.
+
 When your subscription has used its share for the month, **Start on 1 Dec** keeps your start for
 the month's start: no session runs before, and one starts then by itself. **Change the allowance**
 is beside the wait on the run bar, the project's status line and the session page.

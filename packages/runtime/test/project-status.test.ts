@@ -574,6 +574,13 @@ describe("d1109-run-visible, run C: what waits to start, on the project's line (
       text: 'Starts after the session on "Quote page"',
       action: null,
     });
+    // l4-cred-screens (L4a-left-4, L4-creds-9 part 3): the person's own session that waited for
+    // its credential goes on after the other project's session, said as such.
+    expect(line({ kind: "queued", behind: "Map notes", goesOn: true })).toEqual({
+      kind: "paused",
+      text: 'Goes on after the session on "Map notes"',
+      action: null,
+    });
     // Nothing waits: the ready line, which says the work waits for the person's Start.
     expect(line(null)).toEqual({
       kind: "ready",

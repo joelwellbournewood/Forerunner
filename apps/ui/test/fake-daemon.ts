@@ -3605,8 +3605,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           continuing: fakeContinuing(state.requests),
         },
       );
+      // l4-cred-screens (L4-creds-21), as the daemon: a refusal in words is a 400 "validation".
       if (check.blocked?.kind === "nothing_runnable")
-        return errorBody(c, 409, "conflict", check.blocked.sentence);
+        return errorBody(c, 400, "validation", check.blocked.sentence);
     }
     const startId = nextId("start");
     const outcome = options.startOutcome ?? "started";

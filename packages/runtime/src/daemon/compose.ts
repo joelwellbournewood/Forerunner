@@ -4291,9 +4291,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       if (ends) at = ends;
     }
     const words = { timezone: await zoneNow(), nowMs: clock.now() };
+    // l4-cred-screens (L4a-left-2, design §5 rule 8): a refused credential's wait names the
+    // person's step (before: "once its Claude credential is back", which named none).
+    const refused =
+      typeof (source?.limits as { refusedAt?: unknown } | undefined)?.refusedAt === "string";
     const when = at
       ? `at ${clockTime(at, words.timezone, words.nowMs)}`
-      : "once its Claude credential is back";
+      : refused
+        ? source?.kind === "subscription"
+          ? "once you sign in again in Settings"
+          : "once you save a new API key in Settings"
+        : "once its Claude credential is back";
     return { found, when, words, at };
   };
   const continuations: RuntimeApp["continuations"] = {

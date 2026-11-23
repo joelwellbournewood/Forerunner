@@ -1200,6 +1200,15 @@ monthly cap, a `needs` wait read as its stop), so "Start on 1 Dec" makes no sess
 the project's status line (`startsWaitOf`'s `save`) and in the session page's `waitBlock.answer`
 (server.ts, `ALLOWANCE_TO`).
 
+**`POST /sessions` refusals (L4a-left-1, L4-creds-21).** A refused credential the work needs is
+checked first (`startBlocked(..., { credentialWait: true })` with a `/setup` link and not
+startable), before the one-wait rule's kept-session sentence. Refusals in words carry
+`details.reason: "start_refused"`, which `app.onError` maps to 400 `validation` (others keep the
+generic mapping). compose.ts' `keptWait` says a refused credential's step ("once you save a new
+API key in Settings", "once you sign in again in Settings"). `startsWaitOf` reports a person's
+continuation queued behind another project's session as `queued` with `goesOn` ("Goes on after
+the session on ...").
+
 **Crash recovery (`session/recovery.ts`, design §4.10).** A daemon that died while a session ran
 left the row `running`, its run `running` and its task held under a claim nobody renews; the
 one-session rule then refused every later start ("agent Alice already has an active session

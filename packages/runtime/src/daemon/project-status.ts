@@ -126,7 +126,11 @@ export type StartsWait =
   | { kind: "continuation"; head: string; save?: { label: string; to: string } | null }
   | { kind: "kept_start"; head: string }
   | { kind: "held" }
-  | { kind: "queued"; behind: string };
+  /**
+   * l4-cred-screens (L4a-left-4): `goesOn`, the person's own session that waited for its
+   * credential goes on after the other project's session ("Goes on after ..."), not a new start.
+   */
+  | { kind: "queued"; behind: string; goesOn?: boolean };
 
 /** Cancel on a wait that goes on or starts by itself (POST /projects/:id/continuation/cancel). */
 const CANCEL_WAIT = { kind: "cancel", label: "Cancel", to: null } as const;
@@ -362,7 +366,9 @@ export function projectStatusLine(input: ProjectStatusInput): ProjectStatusLine 
   if (sw?.kind === "queued")
     return {
       kind: "paused",
-      text: fitStatus(`Starts after the session on "${shortTitle(sw.behind, 40)}"`),
+      text: fitStatus(
+        `${sw.goesOn ? "Goes on" : "Starts"} after the session on "${shortTitle(sw.behind, 40)}"`,
+      ),
       action: null,
     };
   if (sw?.kind === "held")

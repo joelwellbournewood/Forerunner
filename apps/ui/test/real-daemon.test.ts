@@ -21826,7 +21826,7 @@ describe("d1109-run-visible, run C: the page of a session that ended to wait (V-
         state: "goes_on",
         text: 'Waiting until 11:40 (your subscription\'s limit), then it goes on with "Write note A" and 1 more.',
         action: "cancel",
-        explain: "Nothing starts when Claude is back; its tasks wait for your Start.",
+        explain: "Cancel: nothing starts when Claude is back; its tasks wait for your Start.",
         projectId: project.id,
       });
       expect(ended.summary.split("\n")[0]).toBe(
@@ -25494,6 +25494,69 @@ describe("l4-cred-screens, run L4", () => {
       expect(block?.action).toBe("cancel");
     } finally {
       await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
+
+  // L4a-left-1, L4a-left-2 (l4-cred-engine's leftovers): with the subscription refused and the
+  // person's session kept to go on, a start from the API, the phone or Continue gets the Start
+  // dialog's sentence (not the kept session's), and the kept wait names the person's step.
+  it("L4a-left-1/2: a refused sign-in with the session kept: POST /sessions says the dialog's sentence (400 validation); the kept wait names the step", async () => {
+    const { rt, client, raw } = await composeL4();
+    try {
+      const sub = (await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })).find(
+        (r) => r.kind === "subscription",
+      );
+      if (!sub) throw new Error("no subscription row");
+      await rt.store.billingSource.update(sub.id, sub.version, {
+        limits: { ...(sub.limits as Record<string, unknown>), refusedAt: rt.clock.nowIso() } as never,
+      });
+      const project = await client.createProject({ name: "Quote page", goal: "A quote" });
+      await addTask(client, project.id, "Style the page");
+      await rt.runner.start({
+        agentId: rt.agent.id,
+        projectId: project.id,
+        trigger: "manual",
+        by: "person",
+        budgetCapUsdMicro: 5_000_000,
+        grant: await rt.sessionGrant(project.id),
+      });
+      await settleSessions(rt);
+      expect(await rt.continuations.waiting(project.id)).toBe(
+        "Your session of 09:00 goes on by itself once you sign in again in Settings.",
+      );
+      const dialog = (await client.startCheck(project.id)).blocked?.sentence;
+      expect(dialog).toBe("Nothing can run until you save a new Claude sign-in in Settings.");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const refused = await raw("/sessions", { agentId, projectId: project.id });
+      expect(refused.status).toBe(400);
+      expect(refused.body).toMatchObject({ code: "validation", message: dialog });
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
+
+  // L4-creds-21 (C6L-9): a start refused for nothing to run answers 400 "validation" (before:
+  // 409 "conflict"), with the Start dialog's sentence.
+  it("L4-creds-21: POST /sessions with nothing to run answers 400 validation with the dialog's sentence", async () => {
+    const { rt, client, raw } = await composeL4();
+    try {
+      const project = await client.createProject({ name: "Empty", goal: "Nothing yet" });
+      const sentence = (await client.startCheck(project.id)).blocked?.sentence;
+      expect(sentence).toBeTruthy();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const refused = await raw("/sessions", { agentId, projectId: project.id });
+      expect(refused.status).toBe(400);
+      expect(refused.body).toMatchObject({ code: "validation", message: sentence });
+      // The UI's client reads the same sentence.
+      const err = await client
+        .startSession({ agentId, projectId: project.id })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).status).toBe(400);
+      expect((err as ApiError).message).toBe(sentence);
+    } finally {
       await rt.close();
     }
   }, 60_000);

@@ -6,4 +6,4 @@
  * (apps/ui/test/browser-imports.test.ts).
  */
 export const CANCEL_WAIT_EXPLAIN =
-  "Nothing starts when Claude is back; its tasks wait for your Start.";
+  "Cancel: nothing starts when Claude is back; its tasks wait for your Start.";

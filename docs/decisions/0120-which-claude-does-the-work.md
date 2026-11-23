@@ -224,3 +224,11 @@ answer 3 ("For all work.": the yes covers all work until the stop ends) and his 
    (`continuations.keepStart` takes the stop of a `needs` wait too), and the wake starts it once,
    also after a restart. "Change the allowance" is wherever the share's wait shows: the run bar,
    the project's status line and the session page's wait block.
+6. **A refused credential is said first, with its step (L4a-left-1, -2; L4-creds-21).**
+   `POST /sessions` answers a refused credential the work needs with the Start dialog's sentence
+   ("Nothing can run until you save a new API key in Settings."), also while the person's session
+   is kept to go on; a kept wait on a refused credential says the step ("goes on by itself once
+   you save a new API key in Settings"). A start refused in words answers 400 `validation`.
+   Cancel's line on a waiting session reads as the button's ("Cancel: nothing starts when Claude
+   is back; its tasks wait for your Start."), and a continuation queued behind another project's
+   session reads "Goes on after the session on "Map notes"" on its own status line.
