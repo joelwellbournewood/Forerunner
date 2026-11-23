@@ -470,13 +470,20 @@ as the same as another, while the session ran is **replaced**, never planned and
 correct fix of the task list must not lower the grade. `replacedDuring(store, session)` reads the
 project's change log rows made between the session's start and end that were not undone
 (`task.split`'s task, `task.transition` with `duplicate_of`), whoever made them (the session's
-check, chat's "fix the tasks", the person). `sessionChecks` takes them out of the measured planned
-set (`plannedTasks`, the done count, the failed, sent-back and waiting counts, and the "spent and
+check, chat's "fix the tasks", the person), each with how (`ReplacedTask.by`: `split` or
+`duplicate`; `SessionReviewData.replaced`). A dropped task is replaced. A split keeps the task as
+its first part (the plan's id), so a split task is replaced only while that part has not run in
+the session (draft or ready, no work run, not sent back or paused at a budget); once it ran it is
+measured as it ran, done, failed, sent back or waiting, like any planned task (review of
+2026-11-23: a first part that failed read "accepted (grade 100, 0 findings)"). `sessionChecks`
+takes the replaced ones out of the measured planned set (`plannedTasks`, the done count, the failed, sent-back and waiting counts, and the "spent and
 no task reached done" finding, which a session whose other planned tasks are done or paused no
 longer gets) and counts them in `metrics.replacedTasks`; the honesty check still accepts a count
 over the whole plan. The summary says so: 'Session review: 1 done task (1/1 planned, 1 replaced),
-…' or '(1 planned task replaced)' when nothing else was planned. Tests: session-review.test.ts
-"l4-chat-carried, run L4".
+…' or '(1 planned task replaced)' when nothing else was planned, and so does the session page's
+Details line (`critic.session_review_metrics` in runtime's views.ts): 'Session review measured: 1
+of 1 planned task done, 1 replaced; …' or '1 planned task replaced; …'. Tests:
+session-review.test.ts and the runtime's event-lines.test.ts "l4-chat-carried, run L4".
 
 `reviewSession({ store, sessionId, criticAgentId })` runs three deterministic checks against the
 store and persists a `Review` with `session_id` set and `task_id` null:

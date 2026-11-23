@@ -914,7 +914,10 @@ findings)."): answer the card in the Inbox and the work goes on. A session revie
 back: when it notes something, such as the planned tasks costing more than their estimate, its
 line says what it noted, and under **More ▾ → Reviews → Session checks** it reads "noted" (or
 "accepted", "needs you"), its findings "noted", with no "To fix" line: there is nothing for you
-to fix there.
+to fix there. A planned task that the session split, or dropped as the same as
+another, counts as replaced, not as planned work left undone ("Session review measured: 1 of 1
+planned task done, 1 replaced; …"); once the first part of a split task has run, it counts as it
+ran, done, failed or waiting for you.
 
 **Every session of a project** is listed under **More ▾ → Sessions** (also **All 3 sessions** on
 the Overview's Last result, and **All sessions** on every session page). The heading is the

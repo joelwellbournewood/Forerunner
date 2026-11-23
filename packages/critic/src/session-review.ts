@@ -70,10 +70,11 @@ export interface SessionReviewData {
   plannedTasksUsdMicro?: number;
   /**
    * l4-chat-carried (SC-13): tasks split, or dropped as the same as another, while the session ran
-   * (a change of the task list not undone): replaced, never planned and left undone. Absent:
+   * (a change of the task list not undone), with how (`replacedDuring`). A dropped one is
+   * replaced; a split one only while its kept first part has not run (`sessionChecks`). Absent:
    * none.
    */
-  replacedTaskIds?: string[];
+  replaced?: ReplacedTask[];
 }
 
 export interface SessionMetrics {
@@ -310,8 +311,15 @@ export async function loadSessionReviewData(
     ledgerUsdMicro: ledger.entries > 0 ? ledger.usd_micro : null,
     ledgerChfMicro: ledger.entries > 0 ? ledger.chf_micro : null,
     ...(countsAll ? { countsAll: true, plannedTasksUsdMicro } : {}),
-    ...(replaced.length ? { replacedTaskIds: replaced } : {}),
+    ...(replaced.length ? { replaced } : {}),
   };
+}
+
+/** A task a change of the task list replaced while the session ran, and how. */
+export interface ReplacedTask {
+  taskId: string;
+  /** `split`: the task `task.split` split (kept as its first part); `duplicate`: dropped. */
+  by: "split" | "duplicate";
 }
 
 /**
@@ -324,11 +332,11 @@ export async function loadSessionReviewData(
 export async function replacedDuring(
   store: Pick<StateStore, "changeLog">,
   session: Pick<SessionRow, "project_id" | "started_at" | "ended_at" | "created_at">,
-): Promise<string[]> {
+): Promise<ReplacedTask[]> {
   if (!session.project_id) return [];
   const since = session.started_at ?? session.created_at;
   const until = session.ended_at;
-  const out = new Set<string>();
+  const out = new Map<string, ReplacedTask["by"]>();
   for (const row of await store.changeLog.forProject(session.project_id, { limit: 500 })) {
     if (row.undo_state === "undone") continue;
     if (row.created_at < since || (until && row.created_at > until)) continue;
@@ -338,12 +346,13 @@ export async function replacedDuring(
       const name = (cmd as { name?: unknown } | null)?.name;
       const after = (afters[i] ?? {}) as { task_id?: unknown; duplicate_of?: unknown };
       if (typeof after.task_id !== "string") continue;
-      if (name === "task.split") out.add(after.task_id);
+      // A task dropped once is dropped, whatever split it before.
+      if (name === "task.split" && !out.has(after.task_id)) out.set(after.task_id, "split");
       if (name === "task.transition" && typeof after.duplicate_of === "string")
-        out.add(after.task_id);
+        out.set(after.task_id, "duplicate");
     }
   }
-  return [...out];
+  return [...out].map(([taskId, by]) => ({ taskId, by }));
 }
 
 /** d1116-budget-all: whether a plan's estimates hold each task's review (`counts: "all"`). */
@@ -471,8 +480,27 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
   }
   // l4-chat-carried (SC-13): a planned task split, or dropped as the same as another, while the
   // session ran is replaced: out of the measure's planned tasks, never planned and left undone (a
-  // correct fix of the task list must not lower the grade). Its parts are counted as they ran.
-  const replaced = new Set((data.replacedTaskIds ?? []).filter((id) => planned.has(id)));
+  // correct fix of the task list must not lower the grade). A split keeps the task as its first
+  // part (the plan's id), so a split task is replaced only while that part has not run here
+  // (draft or ready, no work run, not sent back or paused): once it ran it is measured as it ran,
+  // done, failed, sent back or waiting (review of 2026-11-23: a first part that failed read
+  // "accepted (grade 100, 0 findings)"). The new parts were never planned.
+  // A task paused at a budget (ADR 0112) ran here; the measure below reads the same set.
+  const paused = new Set(pausedOf(session.handoff));
+  const notRunHere = (id: string) => {
+    const status = data.tasks.get(id)?.status;
+    return (
+      (status === "draft" || status === "ready") &&
+      !ranHereBefore.has(id) &&
+      !sentBackHere.has(id) &&
+      !paused.has(id)
+    );
+  };
+  const replaced = new Set(
+    (data.replaced ?? [])
+      .filter((r) => planned.has(r.taskId) && (r.by === "duplicate" || notRunHere(r.taskId)))
+      .map((r) => r.taskId),
+  );
   const measured = [...planned].filter((id) => !replaced.has(id));
   const actual = data.ledgerUsdMicro ?? session.spent_usd_micro;
   // W15-18 (live check 2, RUN-16): the estimate counts the work only, so the overrun compares
@@ -545,7 +573,6 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
   }
   // A task paused at a budget (ADR 0112) is neither done nor failed nor a question for the
   // person: a session whose every planned task that is not done paused did what its budget held.
-  const paused = new Set(pausedOf(session.handoff));
   const onlyPaused =
     (paused.size > 0 || replaced.size > 0) &&
     measured.every((id) => paused.has(id) || data.tasks.get(id)?.status === "done");

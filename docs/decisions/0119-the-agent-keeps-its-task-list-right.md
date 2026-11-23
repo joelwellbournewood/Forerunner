@@ -236,3 +236,13 @@ reaching the next brief is unchanged.
   dropped as the same as another, while the session ran as replaced, never as planned and left
   undone ("1/1 planned, 1 replaced"): a correct fix must not lower the session's grade. An undone
   change counts as before.
+
+## Amendment 2026-11-23 (fixup-l4-chat-carried, run L4): a split task's first part that ran is measured
+
+Point 9 above held a split task as replaced for the whole session. A split keeps the task as its
+first part, so a first part that then ran and failed, or waits for the person, left every measure
+and a session whose only planned work failed read "accepted (grade 100, 0 findings)". A split task
+is replaced only while its first part has not run in the session (draft or ready, no work run, not
+sent back or paused); once it ran it is measured as it ran. A task dropped as the same as another
+stays replaced. The session page's line names the count: "Session review measured: 1 of 1 planned
+task done, 1 replaced; …", or "1 planned task replaced; …" when that was the whole plan.

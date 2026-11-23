@@ -572,3 +572,59 @@ describe("l4-starts-sessions, run L4: the session page's first line says who sta
     expect(line(p)).toBe(expected);
   });
 });
+
+/**
+ * l4-chat-carried, run L4 (SC-13, review of 2026-11-23): the session page's Details line is the
+ * session review the person reads. A plan task split, or dropped as the same as another, while
+ * the session ran is replaced and out of the planned count; the line said nothing of it, and a
+ * session whose only planned task was replaced read "0 of 0 planned tasks done".
+ */
+describe("l4-chat-carried, run L4: the measured line names the replaced tasks (SC-13)", () => {
+  const measured = (metrics: Record<string, number>) =>
+    describeEvent("critic.session_review_metrics", { metrics }, 0.8);
+
+  it("with planned tasks left, the replaced count follows the done count", () => {
+    expect(
+      measured({
+        plannedDoneTasks: 1,
+        plannedTasks: 1,
+        replacedTasks: 1,
+        actualUsdMicro: 100_000,
+        workUsdMicro: 100_000,
+        reviewsUsdMicro: 0,
+        estimateUsdMicro: 200_000,
+      }),
+    ).toBe(
+      "Session review measured: 1 of 1 planned task done, 1 replaced; the work cost CHF 0.08 against an estimate of CHF 0.16.",
+    );
+  });
+
+  it("with every planned task replaced, it says so, never '0 of 0 planned tasks done'", () => {
+    expect(
+      measured({
+        plannedDoneTasks: 0,
+        plannedTasks: 0,
+        replacedTasks: 2,
+        actualUsdMicro: 25_000,
+        workUsdMicro: 25_000,
+        reviewsUsdMicro: 0,
+        estimateUsdMicro: 200_000,
+      }),
+    ).toBe(
+      "Session review measured: 2 planned tasks replaced; the work cost CHF 0.02 against an estimate of CHF 0.16.",
+    );
+    // A review written before the count (no replacedTasks) reads as written.
+    expect(
+      measured({
+        plannedDoneTasks: 0,
+        plannedTasks: 1,
+        actualUsdMicro: 0,
+        workUsdMicro: 0,
+        reviewsUsdMicro: 0,
+        estimateUsdMicro: 200_000,
+      }),
+    ).toBe(
+      "Session review measured: 0 of 1 planned task done; the work cost CHF 0.00 against an estimate of CHF 0.16.",
+    );
+  });
+});

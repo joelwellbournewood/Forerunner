@@ -1288,6 +1288,101 @@ describe("l4-chat-carried, run L4: a split or dropped task counts as replaced (S
     }
   });
 
+  /**
+   * Review of 2026-11-23 (blocking 2): task.split keeps the task as its first part, so the plan's
+   * id is that part. Before, it counted as replaced for the whole session, and a first part that
+   * then ran and failed (or waits for the person) left every measure: "accepted (grade 100, 0
+   * findings)" for a session whose only planned work failed. Replaced only while that part has
+   * not run here; once it ran, it is measured as it ran, as any planned task.
+   */
+  async function splitThenRan(
+    w: Awaited<ReturnType<typeof world>>,
+    status: "failed" | "needs_human" | "done",
+  ) {
+    w.clock.advance(1_000);
+    const style = await w.newTask({ status, title: "Style the page: layout" });
+    const colours = await w.newTask({ status: "failed", title: "Style the page: colours" });
+    await w.store.session.patch(w.ids.session, {
+      reason: "planned for the test",
+      author_agent: w.ids.owner,
+      plan: {
+        items: [{ taskId: style.id, title: "Style the page", estimateUsdMicro: 100_000 }],
+        estimateUsdMicro: 100_000,
+        summary: "",
+      },
+      summary: "Worked on the page.",
+      status: "completed",
+      spent_usd_micro: 150_000,
+    });
+    w.clock.advance(1_000);
+    await changed(
+      w,
+      [{ name: "task.split", params: { task: style.id, parts: [], order: "in_turn" } }],
+      [
+        {
+          task_id: style.id,
+          title: "Style the page: layout",
+          parts: [{ task_id: colours.id, title: colours.title, attempt: 0 }],
+        },
+      ],
+    );
+    // Both parts ran in the session after the split.
+    for (const t of [style, colours])
+      await w.store.run.insert({
+        session_id: w.ids.session,
+        task_id: t.id,
+        specialist: "coder",
+        model: "fake-sonnet",
+      });
+    return { style, colours };
+  }
+
+  it("a split whose kept first part then ran and failed is measured as it ran: the failure and the planned count stay, nothing replaced", async () => {
+    const w = await world();
+    try {
+      await splitThenRan(w, "failed");
+      const out = await review(w);
+      expect(out.findings.map((f) => f.description)).toEqual([
+        "Session spent CHF 0.12 and no task reached done",
+        "No planned task was done: 1 of 1 failed",
+      ]);
+      expect(out).toMatchObject({ verdict: "revise", grade: 70 });
+      expect(out.summary).toBe(
+        "Session review: 0 done tasks (0/1 planned), cost CHF 0.12 against an estimate of CHF 0.08; 2 findings.",
+      );
+      const data = await loadSessionReviewData(w.store, w.ids.session);
+      const metrics = sessionChecks(data).metrics;
+      expect(metrics).toMatchObject({ plannedTasks: 1, plannedDoneTasks: 0 });
+      expect(metrics.replacedTasks).toBeUndefined();
+    } finally {
+      await w.close();
+    }
+  });
+
+  it("a split whose kept first part then ran and waits for the person is measured as waiting; one that ran to done counts as planned and done", async () => {
+    const w = await world();
+    try {
+      await splitThenRan(w, "needs_human");
+      const out = await review(w);
+      expect(out.findings.map((f) => f.description)).toEqual([
+        "Session spent CHF 0.12 and no task reached done",
+        "No planned task was done: 1 of 1 waits for the person",
+      ]);
+      expect(out.summary).toMatch(/^Session review: 0 done tasks \(0\/1 planned\), /);
+    } finally {
+      await w.close();
+    }
+    const v = await world();
+    try {
+      await splitThenRan(v, "done");
+      const out = await review(v);
+      expect(out.findings.map((f) => f.description)).toEqual([]);
+      expect(out.summary).toMatch(/^Session review: 1 done task \(1\/1 planned\), /);
+    } finally {
+      await v.close();
+    }
+  });
+
   it("a split or drop made before the session started, or of another project's task, is no replacement in it", async () => {
     const w = await world();
     try {
