@@ -108,8 +108,9 @@ const NOTHING = new RegExp(
  * - that nothing is left: "nothing remains", "so nothing is left", "no work left", "no further
  *   work needed", "no outstanding items" (`NONE_LEFT`).
  * A part with a qualifier or a hedge ("mostly", "half", "80%", "some", "two of the three", "only",
- * "a draft", "the main parts", "probably", "seems", "I think"), an exception or a condition ("apart from", "other than", "save for", "bar", "minus",
- * "without", "once", "after", "when", "if", "until", "unless", "as soon as"), a future ("to be",
+ * "a draft", "the main parts", "probably", "seems", "I think"), an exception or a condition
+ * ("apart from", "other than", "save for", "bar", "minus", "without", "once", "after", "when",
+ * "if", "until", "unless", "as soon as"), a future ("to be",
  * "will", "can", "next", "later", "awaiting", "to add"), work still to come ("remain", "pending",
  * "left", "need to", "then"), a "nothing" or "no one" as what is done ("nothing is done", "nobody
  * checked"), or an order ("check that all are met") is none of these, so the line is an item.
