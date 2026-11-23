@@ -25006,6 +25006,36 @@ describe("l4-chat-answers, run L4", () => {
       await a.rt.close();
     }
   }, 60_000);
+  // l4-chat-carried, run L4 (L4c-left-10): "there" read the registry's active project whenever an
+  // earlier turn of this conversation had switched, so after a later switch in the header it
+  // meant the header's project, not the one this conversation named.
+  it("POST /chat in Notes' Chat tab: after 'switch to Site' here and a header switch to Shop, 'add a task there: …' adds to Site, the project this conversation named", async () => {
+    const a = await open("fr-ui-real-l4-chat-carried-there-");
+    try {
+      const notes = await a.client.createProject({ name: "Notes", goal: "A notes page" });
+      const site = await a.client.createProject({ name: "Site", goal: "A shop site" });
+      const shop = await a.client.createProject({ name: "Shop", goal: "A shop" });
+      const titles = async (id: string) => (await a.client.tasks(id)).map((t) => t.title);
+      await a.chat(notes.id, "switch to Site");
+      // The header's switcher runs project.switch from the app, outside this conversation.
+      const header = await a.client.executeCommands({
+        commands: [{ name: "project.switch", params: { project: shop.id } }],
+        wordsUsed: "Switch project: Shop",
+        source: "ui",
+      });
+      expect(header.status).toBe("done");
+      expect((await a.client.me()).activeProjectId).toBe(shop.id);
+      const there = await a.chat(notes.id, "add a task there: write the about page");
+      expect(there.reply).toContain('"Write the about page" to Site');
+      expect(await titles(site.id)).toEqual(["Write the about page"]);
+      expect(await titles(shop.id)).toEqual([]);
+      expect(await titles(notes.id)).toEqual([]);
+      expect(a.chatCalls()).toHaveLength(0);
+      await settleSessions(a.rt);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
   // L4-creds-27 (merged into L4-chat-104): chat told the person "open Site with a project
   // switch", because project_create's definition named the command project.switch.
   it("POST /chat: project_create's definition names no command and only tools the model has; the system part holds the rule against naming tools", async () => {

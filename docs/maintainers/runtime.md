@@ -8733,6 +8733,14 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   no task (fix-up of the review: before, every card oldest first, 500 at most, so on an install
   with more cards the stop's card was never found; test `credential-ask-words.test.ts` "... more
   than 500 earlier cards ...").
+- **"there" after a switch in the header** (l4-chat-carried, run L4, 2026-11-23, L4c-left-10).
+  `CommandTurn.namedProjectId` is the project the newest `project.switch` of this conversation
+  made active, read from that action's change-log row (`after.active_project`; a switch undone
+  since does not count; `ConversationAgent.switchedHere`). Before, it was the registry's active
+  project whenever any earlier turn had switched, so after "switch to Site" here and a switch to
+  Shop in the header, "add a task there: …" added to Shop (real-daemon.test.ts "after 'switch to
+  Site' here and a header switch to Shop …"). A reply row kept before actions carried their ids
+  gives the registry's record, as before.
 - **The option pressed under the parser's "Which project: …?"** (review of l4-chat-answers,
   2026-11-22). A parser question with options (the pronoun question of "add a task there: …" or
   "open it" with two or more projects and none named in this conversation) is answered by the

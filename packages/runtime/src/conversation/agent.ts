@@ -1197,6 +1197,7 @@ export class ConversationAgent {
       req.onStep?.(line, opts);
     };
     let quickBudget = 0;
+    const switchedHere = await this.switchedHere(earlier, recorded);
     const turn: CommandTurn = {
       humanId: req.humanId,
       agentId: agent.id,
@@ -1208,11 +1209,11 @@ export class ConversationAgent {
       // "make this a task": the person's own line before this one, in this conversation.
       ...(lastLine(earlier) ? { lastMessage: lastLine(earlier) } : {}),
       // l4-chat-answers (L4-selftasks-119, L4-chat-104): "there", "it", "that project" mean the
-      // project this conversation switched to (the active one the registry recorded since);
-      // with no switch here the parser asks which project, never reads the word as a name.
-      ...(recorded && earlier.some((t) => t.reply?.actions.some((a) => a.kind === "project.switch"))
-        ? { namedProjectId: recorded }
-        : {}),
+      // project this conversation switched to; with no switch here the parser asks which
+      // project, never reads the word as a name. l4-chat-carried (L4c-left-10): the project the
+      // newest switch of this conversation named, not the one the registry holds now (a later
+      // switch in the header is not this conversation's "there").
+      ...(switchedHere ? { namedProjectId: switchedHere } : {}),
     };
     /** Set when a stop cancelled the pending card on its way to the registry (spec O.9). */
     let cancelledForStop = false;
@@ -3001,6 +3002,27 @@ export class ConversationAgent {
    * the reply; else "Nothing changed", with the earlier card that still waits when there is one.
    * Never "nothing waits" above a Yes/No card, nor "Nothing changed" above a change.
    */
+  /**
+   * l4-chat-carried (L4c-left-10): the project the newest project switch of this conversation
+   * made active, read from its change-log row (`after.active_project`); a switch undone since does
+   * not count. A row kept before replies named their change-log ids gives the registry's record,
+   * as before. Null when this conversation never switched.
+   */
+  private async switchedHere(
+    earlier: readonly TranscriptTurn[],
+    recorded: string | null,
+  ): Promise<string | null> {
+    for (const t of [...earlier].reverse())
+      for (const a of [...(t.reply?.actions ?? [])].reverse()) {
+        if (a.kind !== "project.switch") continue;
+        if (!a.id) return recorded;
+        const row = await this.deps.store.changeLog.get(a.id);
+        const to = (row?.after as { active_project?: unknown } | null)?.active_project;
+        if (row && !row.undone_at && typeof to === "string") return to;
+      }
+    return null;
+  }
+
   private trueLine(results: readonly CommandResultView[], did: TurnDid, kind: ReplyClaim["kind"]): string {
     const changes = results
       .filter((r) => r.status === "done" || r.status === "partial")
