@@ -46,6 +46,8 @@ interface World {
   last: (i: number) => string;
   /** A new agent on the same store: what a daemon restart leaves. */
   restart: (replies?: ScriptedReply[]) => ConversationAgent;
+  /** A new command loop and agent on the same store (the cards it can arm, armed again). */
+  restartCommands: () => Promise<void>;
 }
 
 const text = (c: unknown): string =>
@@ -107,15 +109,17 @@ async function setup(
   const quote = await project("Quote Page", "A page that shows a random quote");
   const notes = await project("Notes CLI", "A command line notes tool");
   const provider = new FakeProvider({ replies, clock: h.clock, latency: "none" });
-  const commands = new CommandLoop({
-    store,
-    clock: h.clock,
-    ports: {
-      chfPerUsd: async () => 0.8,
-      startSession: async () => ({ startId: "start-1" }),
-      kill: async () => ({ stoppedRuns: 0, killedProcesses: 0 }),
-    },
-  });
+  const loop = () =>
+    new CommandLoop({
+      store,
+      clock: h.clock,
+      ports: {
+        chfPerUsd: async () => 0.8,
+        startSession: async () => ({ startId: "start-1" }),
+        kill: async () => ({ stoppedRuns: 0, killedProcesses: 0 }),
+      },
+    });
+  let commands = loop();
   await commands.start();
   const make = (p: FakeProvider) =>
     new ConversationAgent({
@@ -157,6 +161,14 @@ async function setup(
         content: text(m.content),
       })),
     last: (i) => text(w.provider.calls[i]?.request.messages.at(-1)?.content),
+    // l4-selftasks-chat: the command loop too, as a daemon restart does (its cards armed again).
+    restartCommands: async () => {
+      commands.stop();
+      commands = loop();
+      await commands.start();
+      w.commands = commands;
+      w.agent = make(w.provider);
+    },
     restart: (more = []) => {
       w.provider = new FakeProvider({ replies: more, clock: h.clock, latency: "none" });
       w.agent = make(w.provider);
@@ -541,11 +553,18 @@ describe("a Yes/No card stays until it is answered (design §3.9)", () => {
     await w.store.close();
   });
 
-  it("'yes' after the card expired says it expired and nothing was changed", async () => {
+  it("'yes' after the card expired says it expired and nothing was changed (a chat read-back waits ten minutes and more: l4-selftasks-chat)", async () => {
     const w = await setup();
     const card = await w.chat("start a session with 30 francs");
     const id = card.pendingConfirmation?.id ?? "";
+    // The owner (2026-11-17): a chat read-back waits until it is answered; ten minutes do not
+    // end it (L4-selftasks-117).
     await w.clock.advance(11 * 60 * 1000);
+    expect(w.commands.pendingCard(id)).not.toBeNull();
+    // An expiry that remains (a card an earlier daemon expired, or one no restart could arm).
+    const row = await w.store.humanRequest.mustGet(id);
+    await w.store.humanRequest.expire(id, row.version);
+    await w.restartCommands();
     expect(w.commands.pendingCard(id)).toBeNull();
     expect((await w.store.humanRequest.mustGet(id)).status).toBe("expired");
     const r = await w.chat("yes");
@@ -1046,7 +1065,8 @@ describe("l3-chat-claims, run L3", () => {
     });
     // The read-back is what the person gets; the claim is not in the reply.
     expect(res.pendingConfirmation?.readback).toBe(READBACK);
-    expect(res.reply).toBe(`That widens research, so it needs your yes. ${READBACK}`);
+    // l4-selftasks-chat (L4-selftasks-126): the model's words about the card are dropped.
+    expect(res.reply).toBe(READBACK);
     expect(res.reply).not.toContain("I've asked");
     // Nothing widened before the yes.
     expect(await webAccess(w)).toEqual({
@@ -1142,7 +1162,8 @@ describe("l3-chat-claims, run L3", () => {
     expect(w.provider.calls).toHaveLength(5);
     expect(asked.pendingConfirmation?.readback).toBe(READBACK);
     expect(asked.reply).toBe(
-      `Widening needs your yes, so I've asked for confirmation. ${READBACK}`,
+      // l4-selftasks-chat (L4-selftasks-126): the card says it once.
+      READBACK,
     );
     expect((await replyRows(w)).at(-1)?.claimGuard).toBeUndefined();
     await w.chat("no");
@@ -1196,7 +1217,7 @@ describe("l3-chat-claims, run L3", () => {
     // l4-chat-depth bumped it to 1.5.0 ("Thinking longer": who writes the ask).
     // l4-chat-answers bumped it to 1.5.1 (a bare yes never reaches the model; only the app
     // writes its lines): the line moved, its words stay.
-    expect(prompt).toContain('version: "1.5.1"');
+    expect(prompt).toContain('version: "1.5.2"');
     expect(prompt).toContain(
       'A reply that changed something ends with the app\'s own line "The app did: …"; a reply without\n  it changed nothing, whatever it says.',
     );
@@ -1345,7 +1366,8 @@ describe("l3-chat-claims, run L3: what the turn did", () => {
       [SAY, READBACK],
       [
         "That widens research, so it needs your yes.",
-        `That widens research, so it needs your yes. ${READBACK}`,
+        // l4-selftasks-chat (L4-selftasks-126): never the model's restating beside the card.
+        READBACK,
       ],
     ] as const) {
       const w = await setup([
@@ -1930,7 +1952,7 @@ describe("l4-chat-answers, run L4", () => {
       new URL("../../../evals/registry/principals/conversation-agent.md", import.meta.url),
       "utf8",
     );
-    expect(prompt).toContain('version: "1.5.1"');
+    expect(prompt).toContain('version: "1.5.2"');
     expect(prompt).toContain(
       '- The recent conversation: the person\'s earlier lines and your earlier replies. "It", "that"\n  and "what did I just ask?" refer to them; a bare "yes" never reaches you (the app answers it).\n  A reply that changed something ends with the app\'s own line "The app did: …"; a reply without\n  it changed nothing, whatever it says. A change the app read back shows as "The app asked, with\n  Yes and No: …". Only the app writes these two lines: never write them yourself.',
     );

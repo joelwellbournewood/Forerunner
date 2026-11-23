@@ -154,6 +154,11 @@ export interface ToolBinding {
   execute(call: { name: string; params: unknown; ctx: CommandContext }): Promise<ToolOutcome>;
   /** Builds the command context for a tool call of the conversation agent. */
   ctxFor(tool: ToolExecutionContext, command: string): CommandContext | Promise<CommandContext>;
+  /**
+   * l4-selftasks-chat (L4-selftasks-126): a sentence after "Needs confirmation. The person is
+   * asked: …" for the chat's model (the chat shows the question itself, with Yes and No).
+   */
+  pendingNote?: string;
 }
 
 /** The subset of an ExecuteResult a tool needs to answer the model. */
@@ -220,9 +225,9 @@ export function toToolSpecs(registry: CommandRegistry, binding: ToolBinding): To
               // the pending card's id: the model repeated ids to the person (live walk 2 #10,
               // "request 01a19958"; phase E). The runtime tracks the card itself.
               return {
-                content: `Needs confirmation. The person is asked: ${
+                content: `${`Needs confirmation. The person is asked: ${
                   out.readback ?? (out.card ? renderChangeCard(out.card, { voice: true }) : "")
-                }`.trim(),
+                }`.trim()}${binding.pendingNote ? ` ${binding.pendingNote}` : ""}`,
                 // d1109-onerepo-link: a read-back quoting a repository's text goes as data.
                 ...(out.card?.untrusted ? { untrusted: out.card.untrusted } : {}),
               };

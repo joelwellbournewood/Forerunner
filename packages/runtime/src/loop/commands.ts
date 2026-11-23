@@ -12,11 +12,13 @@ import {
   cardToJson,
   defaultRegistry,
   type ExecuteResult,
+  type ExecutorOptions,
   IntentParser,
   type ModelIntentPort,
   type PendingConfirmation,
   SESSION_CAP_KEY,
   SESSION_OVERRIDE_KEY,
+  type StoredCardContext,
   toToolSpecs,
 } from "@forerunner/commands";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
@@ -68,7 +70,20 @@ export interface CommandLoopDeps {
    * irreversible, before the executor runs anything.
    */
   startUndoState?: SessionCommandPorts["startUndoState"];
+  /**
+   * l4-selftasks-chat (L4-selftasks-117): a confirmation lapsed unanswered (a settings-screen or
+   * email card; chat read-backs wait until answered). The daemon tells the screens and the person.
+   */
+  onExpired?: ExecutorOptions["onExpired"];
 }
+
+/**
+ * L4-selftasks-126: what a chat command tool's "Needs confirmation" adds for the model. Live check
+ * 4's chat restated every read-back in its own words above the card ("Pausing "Write the FAQ"
+ * needs your yes. Press Yes on the read-back ..."), so the person read each change twice.
+ */
+export const CHAT_PENDING_NOTE =
+  "The app shows this question under your reply with Yes and No. Write nothing about it: no restating, no asking for a yes, no 'press Yes'; answer only what else was asked.";
 
 /** The daemon's view of a pending change card. */
 export interface PendingView extends PendingConfirmation {
@@ -110,7 +125,12 @@ export class CommandLoop implements ConversationCommands {
     this.registry = deps.registry ?? defaultRegistry();
     this.executor =
       deps.executor ??
-      new CommandExecutor({ registry: this.registry, store: deps.store, clock: deps.clock });
+      new CommandExecutor({
+        registry: this.registry,
+        store: deps.store,
+        clock: deps.clock,
+        ...(deps.onExpired ? { onExpired: deps.onExpired } : {}),
+      });
     this.parser = new IntentParser(this.registry, deps.model ? { model: deps.model } : {});
   }
 
@@ -155,6 +175,9 @@ export class CommandLoop implements ConversationCommands {
                   planFix: {
                     level: stored.planFix.level,
                     ...(stored.planFix.askFirst ? { askFirst: true } : {}),
+                    ...(stored.planFix.fingerprint
+                      ? { fingerprint: stored.planFix.fingerprint }
+                      : {}),
                   },
                 }
               : {}),
@@ -297,6 +320,8 @@ export class CommandLoop implements ConversationCommands {
     onResult: (r: CommandResultView) => void,
   ): ToolSpec[] {
     return toToolSpecs(this.registry, {
+      // L4-selftasks-126: the chat shows the read-back under the reply with Yes and No.
+      pendingNote: CHAT_PENDING_NOTE,
       execute: async (call) => {
         const r = await this.executor.execute({
           name: call.name,
@@ -325,21 +350,39 @@ export class CommandLoop implements ConversationCommands {
                   ...(r.untrusted ? { untrusted: r.untrusted } : {}),
                 };
       },
-      ctxFor: () => this.contextFor(turn, { actor: { kind: "agent", id: turn.agentId } }),
+      // The model's call is the agent's act (ADR 0030 item 2, security-command-actor.test.ts).
+      // L4-selftasks-116: in a conversation turn that read no record, the change is one the
+      // person named in their own words: once they say yes it is theirs (`onPersonsWords`, set
+      // here in code only). A turn that read a record keeps every change the agent's.
+      ctxFor: () =>
+        this.contextFor(turn, {
+          actor: { kind: "agent", id: turn.agentId },
+          ...(turn.source !== "ui" && !turn.recordsRead ? { onPersonsWords: true } : {}),
+        }),
     });
   }
 
   async planFix(
     changes: readonly (readonly CommandCallLike[])[],
     turn: CommandTurn,
-    opts: { level: number; readBack: boolean; askFirst?: boolean; ask?: string },
+    opts: {
+      level: number;
+      readBack: boolean;
+      askFirst?: boolean;
+      ask?: string;
+      fingerprint?: string;
+    },
   ): Promise<CommandResultView[]> {
     const level = Math.max(0, Math.min(4, Math.round(opts.level))) as 0 | 1 | 2 | 3 | 4;
     // The agent's change (never "by you"), told by chat's reply: no Inbox line (the executor's
     // planFix rule). The planFix context is built here, in code, never from a request.
     const ctx = await this.contextFor(turn, {
       actor: { kind: "agent", id: turn.agentId },
-      planFix: { level, ...(opts.askFirst ? { askFirst: true } : {}) },
+      planFix: {
+        level,
+        ...(opts.askFirst ? { askFirst: true } : {}),
+        ...(opts.fingerprint ? { fingerprint: opts.fingerprint } : {}),
+      },
     });
     const calls = changes.flat() as CommandCall[];
     if (!calls.length) return [];
@@ -382,6 +425,16 @@ export class CommandLoop implements ConversationCommands {
     const calls = rows.flatMap(
       (r) => (r.change_card as unknown as { calls: CommandCall[] }).calls,
     ) as CommandCall[];
+    // L4-selftasks-122: the one card keeps the strictest context of the cards it folds: a fix of
+    // the task list (planFix, its ask-first and its fingerprint) stays one, so its set is read
+    // back and decided by the planFix rules, also after a restart. Each call keeps whose words
+    // it was said in (its stored `onPersonsWords`), so only the person's own changes become
+    // theirs at the yes.
+    const contexts = rows.map(
+      (r) => (r.change_card as { context?: StoredCardContext } | null)?.context ?? null,
+    );
+    const fix = contexts.find((c) => c?.planFix)?.planFix;
+    const askFirst = contexts.some((c) => c?.planFix?.askFirst === true);
     // The separate cards are the conversation's own from here (out of the Inbox and its
     // Answered list), then cancelled: the one composed card is the turn's read-back.
     for (const row of rows) {
@@ -397,7 +450,18 @@ export class CommandLoop implements ConversationCommands {
       }
       await this.executor.cancel(row.id, { kind: "human", id: turn.humanId });
     }
-    const ctx = await this.contextFor(turn, { actor: { kind: "agent", id: turn.agentId } });
+    const ctx = await this.contextFor(turn, {
+      actor: { kind: "agent", id: turn.agentId },
+      ...(fix
+        ? {
+            planFix: {
+              level: fix.level,
+              ...(askFirst ? { askFirst: true } : {}),
+              ...(fix.fingerprint ? { fingerprint: fix.fingerprint } : {}),
+            },
+          }
+        : {}),
+    });
     const r = await this.executor.compose(calls, ctx);
     return viewOf(
       r,
@@ -676,7 +740,8 @@ export function viewOf(r: ExecuteResult, commands: string[]): CommandResultView 
         readback: r.readback,
         pendingId: r.pendingId,
         decision: r.decision,
-        expiresAt: r.expiresAt,
+        // L4-selftasks-117: a chat read-back waits until it is answered: it has no expiry.
+        ...(r.expiresAt ? { expiresAt: r.expiresAt } : {}),
       };
     case "cancelled":
       return { ...base, pendingId: r.pendingId };

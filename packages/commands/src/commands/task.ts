@@ -37,7 +37,8 @@ import {
   type TaskStatus,
 } from "@forerunner/state";
 import { z } from "zod";
-import { buildCard, formatChfShort } from "../change-card.ts";
+import { buildCard, type CardSubject, formatChfShort } from "../change-card.ts";
+import { taskSubject } from "../readback-check.ts";
 import type { CommandContext, CommandDef, CommandOutcome } from "../types.ts";
 import { asObject, authorOf, quote, resolveProject } from "./shared.ts";
 
@@ -108,8 +109,41 @@ const taskRef = {
   task: z.string().min(1),
   project: z.string().optional(),
 };
-/** A person's note for the agent: it goes into the task's next brief. */
-const noteParam = z.string().trim().max(2000).optional();
+/**
+ * A note for the specialist: it goes into the task's next brief. l4-selftasks-chat
+ * (L4-selftasks-120; live check 4, L4-chat-20: the chat model wrote "Put on hold by the person."
+ * on a pause the person never noted): its description tells the chat model to pass only the
+ * person's own words, and a note the model passes is read back before it is made.
+ */
+export const NOTE_PARAM_DESCRIPTION =
+  "Only words the person gave for the specialist, quoted as they said them; leave it out when they gave none. Never a summary of the move.";
+const noteParam = z.string().trim().max(2000).optional().describe(NOTE_PARAM_DESCRIPTION);
+
+/**
+ * L4-selftasks-120: a note is the person's only when the person wrote it: their own command (the
+ * Tasks tab, the drawer, chat's patterns), never one the chat's model passed, also after their
+ * yes (the executor runs that yes as them and marks it `onPersonsWords`).
+ */
+function personsNote(ctx: CommandContext): boolean {
+  return ctx.actor.kind === "human" && ctx.onPersonsWords !== true;
+}
+
+/** The note a read-back shows when the model passed it ('Note for its next brief: "…"'). */
+function noteClause(ctx: CommandContext, note: string | undefined): string {
+  const text = note?.trim();
+  // fixup-l4-selftasks-chat: a note that ends its own sentence gets no second period after
+  // the quote (before: 'Note for its next brief: "Put on hold by the person.".').
+  const end = text && /[.!?]$/.test(text) ? "" : ".";
+  return text && !personsNote(ctx) ? ` Note for its next brief: ${quote(text)}${end}` : "";
+}
+
+/** The note's end of a sentence: the person's own, or one the agent passed. */
+function noteGoes(ctx: CommandContext, cancelled = false): string {
+  const whose = personsNote(ctx) ? "Your note" : "The note";
+  return cancelled
+    ? ` ${whose} goes into its brief if you reopen it.`
+    : ` ${whose} goes into its next brief.`;
+}
 
 /** A title as two tasks are compared by it: trimmed, lower case, one space between words. */
 const sameTitle = (title: string) => title.trim().toLowerCase().replace(/\s+/g, " ");
@@ -240,6 +274,17 @@ function sameTitleRefusal(title: string, tags: readonly { tag: string }[]): Fore
   );
 }
 
+/**
+ * L4-selftasks-117: the task a change names, as it is now (`CommandDef.subjects`): a read-back
+ * keeps it, and its Yes is compared with the task then (`changedSince`).
+ */
+async function taskSubjects(
+  params: { task: string; project?: string | undefined },
+  ctx: CommandContext,
+): Promise<CardSubject[]> {
+  return [taskSubject(await findTask(params, ctx))];
+}
+
 async function findTask(
   params: { task: string; project?: string | undefined },
   ctx: CommandContext,
@@ -323,7 +368,10 @@ async function queueNote(
     text: taskNoteText(task, text),
     priority: 0,
     status: "queued",
-    author_human: ctx.actor.kind === "human" ? ctx.actor.id : ctx.humanId,
+    // L4-selftasks-120: the person's note is theirs; one the chat's model passed is the agent's.
+    ...(personsNote(ctx)
+      ? { author_human: ctx.actor.id }
+      : { author_agent: ctx.actor.kind === "agent" ? ctx.actor.id : (ctx.agentId ?? null) }),
   });
   return row.id;
 }
@@ -555,6 +603,8 @@ export function moveSentence(
   extra: {
     withdrawn?: number;
     noted?: boolean;
+    /** L4-selftasks-120: whose note it is ("Your note" only for the person's own). */
+    notedByAgent?: boolean;
     stuck?: readonly string[];
     redo?: boolean;
     /** W15-04: the redo answered the task's merge card, so the next run starts from main. */
@@ -594,11 +644,13 @@ export function moveSentence(
       extra.stuck.length === 1 ? "is" : "are"
     } stuck now.`;
   // A cancelled task has a next brief only once it is reopened (design §5 rule 9).
-  if (extra.noted)
+  if (extra.noted) {
+    const whose = extra.notedByAgent ? "The note" : "Your note";
     s +=
       to === "cancelled"
-        ? " Your note goes into its brief if you reopen it."
-        : " Your note goes into its next brief.";
+        ? ` ${whose} goes into its brief if you reopen it.`
+        : ` ${whose} goes into its next brief.`;
+  }
   return s;
 }
 
@@ -704,6 +756,7 @@ async function personMove(
     sentence: moveSentence(task, from, moved.status, {
       withdrawn: withdrawn.length,
       noted: noteId !== null,
+      notedByAgent: !personsNote(ctx),
       stuck,
       redo: from === "done",
       fromMain: redone.ids.length > 0,
@@ -1232,6 +1285,7 @@ export function transitionUndoable(from: TaskStatus, to: TaskStatus): boolean {
 
 export const taskTransition: CommandDef<TaskTransitionParams> = {
   name: "task.transition",
+  subjects: taskSubjects,
   description:
     "Move a task along its workflow: ready (make ready, try again; it joins the running session if it fits, else waits for the person's next Start), needs_human (pause), cancelled; agents also use in_progress, in_review, done and failed. Prefer task.pause, task.resume and task.reopen for those moves.",
   params: transitionParams,
@@ -1405,6 +1459,7 @@ export type TaskPauseParams = z.infer<typeof pauseParams>;
 
 export const taskPause: CommandDef<TaskPauseParams> = {
   name: "task.pause",
+  subjects: taskSubjects,
   description:
     "Pause a task: no session runs it until the person resumes it. A running task's run stops now (Stop); the session goes on with the other tasks.",
   params: pauseParams,
@@ -1442,6 +1497,7 @@ export type TaskResumeParams = z.infer<typeof resumeParams>;
 
 export const taskResume: CommandDef<TaskResumeParams> = {
   name: "task.resume",
+  subjects: taskSubjects,
   description:
     "Resume a paused task, or let a task that waits for the person's answers go ahead without them: it is ready again and joins the running session if it fits, else waits for the person's next Start. Its open Inbox cards are withdrawn.",
   params: resumeParams,
@@ -1502,6 +1558,7 @@ export type TaskReopenParams = z.infer<typeof reopenParams>;
 
 export const taskReopen: CommandDef<TaskReopenParams> = {
   name: "task.reopen",
+  subjects: taskSubjects,
   description:
     "Reopen a cancelled task (Reopen), or a done task to redo it (Redo): it is ready again and joins the running session if it fits, else waits for the person's next Start; the person's note says what to fix and goes into its brief.",
   params: reopenParams,
@@ -1639,12 +1696,21 @@ async function moveCard(
     newValue: statusWords(to),
     scope: "project",
     risk: "low",
-    sentence: moveSentence(task, task.status, to, { noted: !!params.note?.trim() }),
+    sentence: moveSentence(task, task.status, to, {
+      noted: !!params.note?.trim(),
+      notedByAgent: !personsNote(ctx),
+    }),
     reversible: true,
     projectId: project.id,
     projectName: project.name,
     usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
-    ask: await withPreview(ctx, moveAsk(task, task.status, to), task, to),
+    // L4-selftasks-120: a note the model passed is read back, so the yes covers it.
+    ask: await withPreview(
+      ctx,
+      `${moveAsk(task, task.status, to)}${noteClause(ctx, params.note)}`,
+      task,
+      to,
+    ),
   });
 }
 
@@ -1784,6 +1850,7 @@ async function editWords(ctx: CommandContext, patch: EditPatch): Promise<string>
 
 export const taskUpdate: CommandDef<TaskUpdateParams> = {
   name: "task.update",
+  subjects: taskSubjects,
   description:
     "Edit a task that is not running, done or cancelled: its title, outcome, acceptance criteria, priority, review level (1 light review; 2 full review: needs Docker; 3 full review and sign-off), budget or specialist ('person' for the person).",
   params: updateParams,
@@ -1808,7 +1875,7 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
       projectId: project.id,
       projectName: project.name,
       usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
-      ask: `Change ${quote(task.title)}: ${(await editWords(ctx, patch)) || "nothing"}?`,
+      ask: `Change ${quote(task.title)}: ${(await editWords(ctx, patch)) || "nothing"}?${noteClause(ctx, params.note)}`,
     });
   },
   async run(params, ctx) {
@@ -1854,7 +1921,7 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
         ...(noteId ? { note_id: noteId } : {}),
       },
       sentence: `${fields.length ? `Changed ${quote(task.title)}: ${words}.` : `Noted for ${quote(task.title)}.`}${
-        noteId ? " Your note goes into its next brief." : ""
+        noteId ? noteGoes(ctx) : ""
       }`,
       projectId: task.project_id,
       reversible: true,
@@ -2025,6 +2092,7 @@ async function wantedDependencies(
 
 export const taskDependencies: CommandDef<TaskDependenciesParams> = {
   name: "task.dependencies",
+  subjects: taskSubjects,
   description:
     "Change what a task waits for: the tasks (by title) that must be done before it runs (depends_on: the whole list; an empty list lets it run on its own), or add: tasks to wait for besides what it waits for now. Refused for a cancelled task, the task itself or a cycle.",
   params: dependenciesParams,
@@ -2054,7 +2122,7 @@ export const taskDependencies: CommandDef<TaskDependenciesParams> = {
       projectId: project.id,
       projectName: project.name,
       usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
-      ask: await dependenciesAsk(ctx, task, params, titles),
+      ask: `${await dependenciesAsk(ctx, task, params, titles)}${noteClause(ctx, params.note)}`,
     });
   },
   async run(params, ctx) {
@@ -2098,7 +2166,7 @@ export const taskDependencies: CommandDef<TaskDependenciesParams> = {
     );
     return {
       ...said,
-      sentence: `${said.sentence}${noteId ? " Your note goes into its next brief." : ""}`,
+      sentence: `${said.sentence}${noteId ? noteGoes(ctx) : ""}`,
     };
   },
   async undoBlocked(_params, _before, after, ctx) {
@@ -2207,6 +2275,7 @@ function shares(whole: number, parts: readonly { acceptance_criteria: string[] }
 
 export const taskSplit: CommandDef<TaskSplitParams> = {
   name: "task.split",
+  subjects: taskSubjects,
   description:
     "Split a draft or ready task that is two or more jobs: the task stays as its first part (its folder, branch and earlier work carry on) and one to three new tasks hold the rest; every acceptance criterion goes word for word into one part; the parts wait for each other in turn or run side by side; the tasks that waited for it wait for all its parts; its own budget is shared, never raised.",
   params: splitParams,

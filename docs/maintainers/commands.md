@@ -1036,3 +1036,46 @@ C.5 with the runtime (`specialist.propose`, the PM's proposal reaching the appro
 chat turn, `packages/runtime/test/specialist-propose-tool.test.ts`).
 
 l4-money-pause, run L4 (2026-11-22, L4-money-109): `SETTING_SPECS.session_reserve_share.description`, the settings description chat reads, says what the reserve is kept for: "Share of each session budget kept for the critic's reviews." (before: "for review and fixes"; work runs, a fix after a send-back included, stop below the reserve).
+
+## l4-selftasks-chat (run L4, 2026-11-23): whose change, and read-backs that wait
+
+- **Whose change (L4-selftasks-116, run C decision 52).** `CommandContext.onPersonsWords` is set
+  only by `CommandLoop.commandToolSpecs` (the chat's command tools) for a conversation turn that
+  read no record; each planned step and each stored call keeps it (`CommandCall.onPersonsWords`,
+  so it survives `restorePending` and `recompose`). It decides nothing: the step is planned,
+  decided and read back as the agent (ADR 0030 item 2). At the person's yes, `perform(steps, ctx,
+  by)` runs such a step as the confirming human (marked `onPersonsWords`), so the row's author,
+  the task's "Changed by you: ..." and Changes' name are the person's, and `post()` files no
+  Inbox Update (`personsWords`); a step that acts at once on the model's call stays the agent's
+  act (security-command-actor.test.ts) and is not echoed either. A set with any other step
+  (fix_tasks' own changes) stays the agent's.
+- **Read-backs wait until answered (L4-selftasks-117; the owner, 2026-11-17).** A pending card
+  from chat or voice has no TTL (`expiresAt: null`, `change_card.until_answered`, no timer) and
+  `restorePending` arms it again after a restart, also one an older version stored with a TTL.
+  Its Yes is decided on the state then: the card keeps what it named (`CommandDef.subjects`:
+  the task's fields, `readback-check.ts` `taskSubject`; a value command's `oldValue`), and
+  `confirm` compares the card as it was read back (`PendingEntry.shown`, the stored card after a
+  restart) with the same request planned now (`changedSince`): '"Write the README" changed since
+  I asked: its priority is low now. Nothing was changed; ask again if you still want it.' A fix
+  of the task list keeps the list's fingerprint (`taskListFingerprint`, `planFix.fingerprint`):
+  'The tasks changed since I checked them; say "fix the tasks" to check again.' Every other
+  confirmation keeps the ten minutes; its lapse calls `ExecutorOptions.onExpired` (with
+  `ExpiredConfirmation.change`, the card's values from `cardChange`).
+  fixup-l4-selftasks-chat (review): a chat or voice read-back whose request no longer plans after
+  a restart (its task was cancelled or finished meanwhile) is armed as it was shown, never left
+  for the orphan sweep; an Undo read back in chat keeps its row (`change_card.undo_of` with its
+  context) and is armed again too. When the request can no longer be planned at the Yes, with or
+  without a restart, `subjectsNow` reads what the card named from the store and `changedSince`
+  says what changed ('"Write the FAQ" changed since I asked: it is cancelled now. Nothing was
+  changed; ask again if you still want it.'); a refusal with nothing named that moved keeps the
+  command's own words, and so does one that already ends "nothing changed." (C-38's
+  '"Write the FAQ" is already done; nothing changed.' for a cancel of a task finished since).
+- **A refused set (L4-selftasks-105 (b)).** A composed perform refused at one step rolls back and
+  says `composedRefusal`: 'None of the 2 changes was made: one could not be made (...). Ask again
+  if you still want them.' (a fix set: 'Say "fix the tasks" to check again.').
+- **Notes (L4-selftasks-120).** `NOTE_PARAM_DESCRIPTION` on every task note parameter; a note
+  the model passed is read back ('Note for its next brief: "..."'), said as "The note goes into
+  its next brief." and queued with `author_agent`; "Your note" only for the person's own.
+- **The chat's tool result (L4-selftasks-126).** `ToolBinding.pendingNote` (the chat's
+  `CHAT_PENDING_NOTE`) follows "Needs confirmation. The person is asked: ...".
+- `CommandDef.undo` returns `Promise<unknown>` (noConfusingVoidType, L4-selftasks-125).

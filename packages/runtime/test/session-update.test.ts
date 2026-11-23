@@ -72,7 +72,11 @@ describe("a session's Update", () => {
       sessionCapChfMicro: 5_000_000,
       openTasks: 2,
     });
-    expect(lines[0]).toBe('"Style the page in styles.css" needs your decision (Inbox).');
+    // fixup-l4-selftasks-chat (L4-selftasks-130): what waits on it is said right after it; the
+    // Update drops both.
+    expect(lines[0]).toBe(
+      '"Style the page in styles.css" needs your decision (Inbox). "Check every file loads" waits on it.',
+    );
     expect(sessionUpdateLine("Quote page", lines, ["Style the page in styles.css"])).toBe(
       'Quote page: did 2 tasks: "Create the page skeleton in index.html" and "Show a random quote on every load in script.js".',
     );
@@ -321,6 +325,126 @@ describe("d1109-selftasks-chat, run C: an edit is named as edited, never reworde
   it("the result line says 'edited' for an edit", () => {
     expect(tasksChangedLine([{ kind: "reworded", title: "Publish the page" }])).toBe(
       'Changed 1 task: edited "Publish the page".',
+    );
+  });
+});
+
+describe("fixup-l4-selftasks-chat, run L4: what waits on a decision is said beside it (L4-selftasks-130)", () => {
+  // Live check 4 (L4-selftasks-8): '"Write menu.html with five teas in CHF" needs your decision
+  // (Inbox). Did 3 tasks: ... Changed 2 tasks: added "Write book.html"; added "Write thanks.html".
+  // 1 task waits on it. CHF 0.17.': the "it" was three sentences from what it named.
+  const MENU = { id: "menu", title: "Write menu.html with five teas in CHF" };
+  const STYLES = { id: "styles", title: "Write styles.css and link it from every page" };
+  const facts = (outcome: Partial<Parameters<typeof sessionResultLines>[0]["outcome"]>) => ({
+    outcome: {
+      done: [
+        { id: "a", title: "Write index.html" },
+        { id: "b", title: "Write about.html" },
+        { id: "c", title: "Write contact.html" },
+      ],
+      failed: [],
+      needsYou: [],
+      leftOver: [],
+      waiting: [],
+      waitingForDocker: [],
+      stopReason: "completed",
+      spentChfMicro: 170_000,
+      ...outcome,
+    },
+    inReview: [],
+    leftOutForBudget: [],
+    tasksChanged: [
+      { kind: "added" as const, title: "Write book.html" },
+      { kind: "added" as const, title: "Write thanks.html" },
+    ],
+    sessionCapChfMicro: 3_000_000,
+    openTasks: 4,
+  });
+
+  it("the live scenario: line 1 names what waits on the decision, right after it; no count of it on line 3", () => {
+    const lines = sessionResultLines(
+      facts({
+        needsYou: [MENU],
+        waiting: [
+          {
+            ...STYLES,
+            waitsOn: [`"${MENU.title}", needs your decision`],
+            waitsOnIds: [MENU.id],
+          },
+        ],
+      }),
+    );
+    expect(lines[0]).toBe(
+      '"Write menu.html with five teas in CHF" needs your decision (Inbox). "Write styles.css and link it from every page" waits on it.',
+    );
+    expect(lines.join("\n")).not.toMatch(/\d+ tasks? waits? on it/);
+    expect(lines[2]).toBe("CHF 0.17.");
+    // The Update leaves the card's sentence and its clause to the card.
+    expect(sessionUpdateLine("Tea shop", lines, [MENU.title])).toBe(
+      'Tea shop: did 3 tasks: "Write index.html", "Write about.html" and "Write contact.html". Changed 2 tasks: added "Write book.html"; added "Write thanks.html".',
+    );
+    expect(
+      sessionUpdateLine(
+        "Tea shop",
+        lines,
+        [MENU.title],
+        [
+          { kind: "added", title: "Write book.html" },
+          { kind: "added", title: "Write thanks.html" },
+        ],
+      ),
+    ).toBe("Tea shop: did 3 tasks; changed 2 tasks.");
+  });
+
+  it("two tasks that need the person: each waiting task names the one it waits on, never 'it'", () => {
+    const NOTES = { id: "notes", title: "Write the notes" };
+    const lines = sessionResultLines(
+      facts({
+        needsYou: [MENU],
+        failed: [{ ...NOTES, reason: "Claude did not answer." }],
+        waiting: [
+          { ...STYLES, waitsOn: [`"${MENU.title}", needs your decision`], waitsOnIds: [MENU.id] },
+          {
+            id: "print",
+            title: "Print the notes",
+            waitsOn: [`"${NOTES.title}", failed`],
+            waitsOnIds: [NOTES.id],
+          },
+        ],
+      }),
+    );
+    expect(lines[0]).toBe(
+      '"Write menu.html with five teas in CHF" needs your decision (Inbox). "Write the notes" failed: Claude did not answer. "Write styles.css and link it from every page" waits on "Write menu.html with five teas in CHF". "Print the notes" waits on "Write the notes".',
+    );
+    expect(lines.join("\n")).not.toContain("on it");
+  });
+
+  it("a task waiting only on a ready task left for next time is not counted as waiting on the decision", () => {
+    const lines = sessionResultLines(
+      facts({
+        needsYou: [MENU],
+        leftOver: [{ id: "left", title: "Write the footer" }],
+        waiting: [
+          {
+            id: "after",
+            title: "Check the footer",
+            waitsOn: ['"Write the footer", ready'],
+            waitsOnIds: ["left"],
+          },
+        ],
+      }),
+    );
+    expect(lines[0]).toBe('"Write menu.html with five teas in CHF" needs your decision (Inbox).');
+    expect(lines.join("\n")).toContain("1 task waits on other tasks.");
+    expect(lines.join("\n")).not.toContain("on it");
+  });
+
+  it("an outcome kept before the ids names its waiting task by title", () => {
+    const lines = sessionResultLines(
+      facts({ needsYou: [MENU], waiting: [{ ...STYLES, waitsOn: [`"${MENU.title}"`] }] }),
+    );
+    expect(lines[0]).toBe(
+      '"Write menu.html with five teas in CHF" needs your decision (Inbox). "Write styles.css and link it from every page" waits on it.',
     );
   });
 });

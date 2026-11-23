@@ -122,7 +122,11 @@ import {
   scheduleCalibration,
   syncHandoverSchedules,
 } from "../jobs/index.ts";
-import { expireOrphanedCards, syncAnsweredCards } from "../loop/answered-cards.ts";
+import {
+  expireOrphanedCards,
+  lapsedCardUpdate,
+  syncAnsweredCards,
+} from "../loop/answered-cards.ts";
 import { CommandLoop, sessionCapFromSettings, sessionCommandPorts } from "../loop/commands.ts";
 import { CriticLoop } from "../loop/critic.ts";
 import {
@@ -210,7 +214,7 @@ import {
   WEB_SEARCH_TOOL,
 } from "../registry/index.ts";
 import { canonicalSpecialistName } from "../registry/specialist-names.ts";
-import { WEB_FETCH_TOOL } from "../registry/tools.ts";
+import { WEB_FETCH_TOOL, writesNoFile } from "../registry/tools.ts";
 import { CLAUDE_CODE_PREFIX } from "../registry/types.ts";
 import { DesktopPresence, RemoteCommandWatcher, registerDesktopDevice } from "../remote/index.ts";
 import type { EngineDetection } from "../sandbox/detect.ts";
@@ -2527,6 +2531,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     clock,
     tokens,
     driver,
+    // L4-other-1 (D-4): the brief's and the review's criterion for a specialist that writes no file.
+    writesNoFile: (name) => {
+      const d =
+        registry.specialists.get(name) ?? registry.specialists.get(canonicalSpecialistName(name));
+      return d ? writesNoFile(d.allowed_tools ?? []) : false;
+    },
     // The critic's calls follow the person's order for purpose `critic` (ADR 0100).
     providers: criticProviders,
     providerName: criticProvider?.name ?? "none",
@@ -4924,6 +4934,22 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     store,
     clock,
     startUndoState,
+    // l4-selftasks-chat (L4-selftasks-117): a confirmation that still lapses (a settings-screen or
+    // email card; a chat read-back waits until it is answered) is told: the Inbox count and the
+    // open conversations follow at once, and one Update says nothing changed.
+    onExpired: async (card) => {
+      events.emit("inbox", {});
+      conversation.turnsOf().touched(card.projectId);
+      await store.message.send({
+        from_agent_id: agent.id,
+        to_human_id: card.humanId,
+        project_id: card.projectId,
+        type: "warning",
+        body: lapsedCardUpdate(card.what, card.change),
+        requires_ack: false,
+        author_agent: agent.id,
+      });
+    },
     ports: {
       chfPerUsd: async () => chfPerUsd(),
       // The prices in force for an effect that quotes one (fast_mode, ADR 0057).

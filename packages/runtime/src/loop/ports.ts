@@ -438,7 +438,14 @@ export interface ConversationCommands {
   planFix?(
     changes: readonly (readonly CommandCallLike[])[],
     turn: CommandTurn,
-    opts: { level: number; readBack: boolean; askFirst?: boolean; ask?: string },
+    opts: {
+      level: number;
+      readBack: boolean;
+      askFirst?: boolean;
+      ask?: string;
+      /** Run C decision 53: the task list's fingerprint when the check read it. */
+      fingerprint?: string;
+    },
   ): Promise<CommandResultView[]>;
   /**
    * d1109-selftasks-chat (SC-5): the task changes of one chat turn that each wait for a yes, as

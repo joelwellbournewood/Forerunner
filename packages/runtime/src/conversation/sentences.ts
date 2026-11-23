@@ -67,7 +67,10 @@ export function completeSentencesOf(text: string): string {
 // --- d1109-selftasks-chat: "fix the tasks" (design §5: one to three plain sentences) ----------
 
 /** Without Claude: the check is a planning call. */
-export const FIX_NEEDS_CLAUDE = "Fixing the tasks needs Claude.";
+// fixup-l4-selftasks-chat (L4-selftasks-127; design §5 rule 8): it says what to do, and where
+// ("Which Claude does the work" is under Settings, Basics). Before: "Fixing the tasks needs
+// Claude." and nothing else.
+export const FIX_NEEDS_CLAUDE = "Fixing the tasks needs Claude: connect it in Settings, Basics.";
 
 /** The waiting line while the check runs (design §3.9: what chat is doing while you wait). */
 export function fixCheckingStep(project: string): string {

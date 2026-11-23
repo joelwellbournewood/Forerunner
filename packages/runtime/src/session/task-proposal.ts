@@ -94,10 +94,14 @@ function fingerprintOf(lines: readonly string[]): string {
  * named by who wrote it (l4-selftasks-112 (d)): a line of a report, a note of the critic's, or
  * the agent's check's own entry, never "a line of the coder's report" for the model's words; it
  * shows the line's request (`requestPart`), cut at a word.
+ * fixup-l4-selftasks-chat (L4-selftasks-129): why the set asks first ("Asks you first: ...") is
+ * said here, before "Nothing changes until you say yes."; before, it was a bullet of the card's
+ * change list, read as one more change.
  */
 export function proposalBody(
   notes: readonly TaskListNote[],
   quotes: readonly CheckQuote[],
+  reasons: readonly string[] = [],
 ): string {
   const cut = (s: string) => (s.length > 100 ? `${s.slice(0, 99).replace(/\s+\S*$/, "")}…` : s);
   // Quoted once: the line's own double quotes become single ones and its end mark goes, so the
@@ -132,7 +136,8 @@ export function proposalBody(
           ? `${whose.charAt(0).toUpperCase()}${whose.slice(1)} ${says}: ${quoted(line)}.`
           : `${whose.charAt(0).toUpperCase()}${whose.slice(1)} found the task list needs changes.`;
       })();
-  return `${why} Nothing changes until you say yes.`;
+  const asks = reasons.map((r) => ` Asks you first: ${r.trim().replace(/[.\s]+$/, "")}.`).join("");
+  return `${why}${asks} Nothing changes until you say yes.`;
 }
 
 export interface FileProposalInput {
@@ -211,8 +216,8 @@ export async function fileTaskProposal(
     project_id: project.id,
     session_id: input.sessionId,
     kind: "decision",
-    why: proposalBody(input.notes, fence.quotes),
-    steps: [...changes.map((c) => c.line), ...reasons.map((r) => `Asks you first: ${r}.`)],
+    why: proposalBody(input.notes, fence.quotes, reasons),
+    steps: changes.map((c) => c.line),
     options: [...TASK_PROPOSAL_OPTIONS],
     blocking: false,
     risk: "low",

@@ -37,8 +37,12 @@ export interface LastSessionOutcome {
   needsYou: NamedTask[];
   /** Ready tasks the session did not get to (the budget, a stop), or that became ready late. */
   leftOver: NamedTask[];
-  /** Tasks that wait on another one that is not done, with what they wait on. */
-  waiting: (NamedTask & { waitsOn: string[] })[];
+  /**
+   * Tasks that wait on another one that is not done, with what they wait on; `waitsOnIds` the
+   * ids of those tasks (fixup-l4-selftasks-chat: the result names which wait on a decision; an
+   * outcome kept before it has none and is matched by title).
+   */
+  waiting: (NamedTask & { waitsOn: string[]; waitsOnIds?: string[] })[];
   /** Full-review tasks waiting for the Docker sandbox. */
   waitingForDocker: NamedTask[];
   stopReason: string;
@@ -363,6 +367,14 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
     },
   },
   {
+    // fixup-l4-selftasks-chat (L4-selftasks-130, live check 4): what waits on a task that needs
+    // the person or failed is said right after it ('"B" waits on it.'), never three sentences
+    // later as "1 task waits on it."; with two such tasks it names the one it waits on.
+    name: "waits on what needs you",
+    line: 1,
+    build: (_f, o) => waitsOnBlockerSentences(o),
+  },
+  {
     name: "waiting for Docker",
     line: 1,
     build: (_f, o) =>
@@ -564,13 +576,14 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
   {
     name: "waiting on other tasks",
     line: 3,
+    // L4-selftasks-130: only what waits on no task line 1 names (a task waiting on a ready one
+    // left for next time is no task waiting on the decision).
     build: (_f, o) => {
-      const blocked = o.waiting.length;
-      if (blocked && (o.failed.length || o.needsYou.length))
-        return [`${blocked} ${plural(blocked, "task waits", "tasks wait")} on it.`];
-      if (blocked)
-        return [`${blocked} ${plural(blocked, "task waits", "tasks wait")} on other tasks.`];
-      return [];
+      const blockers = blockersOf(o);
+      const blocked = o.waiting.filter((w) => !blockers.some((b) => waitsOnTask(w, b))).length;
+      return blocked
+        ? [`${blocked} ${plural(blocked, "task waits", "tasks wait")} on other tasks.`]
+        : [];
     },
   },
   {
@@ -702,6 +715,43 @@ export function sessionResultLines(f: ResultFacts, told?: ToldByCards): string[]
     .slice(0, 3);
 }
 
+/** The tasks a result names as needing the person or failed: what other tasks may wait on. */
+function blockersOf(o: LastSessionOutcome): NamedTask[] {
+  return [...o.needsYou, ...o.failed];
+}
+
+/** Whether a waiting task waits on `t` (by id; an outcome kept before `waitsOnIds`, by title). */
+function waitsOnTask(w: LastSessionOutcome["waiting"][number], t: NamedTask): boolean {
+  if (w.waitsOnIds) return w.waitsOnIds.includes(t.id);
+  const named = `"${t.title}"`;
+  return w.waitsOn.some((s) => s === named || s.startsWith(`${named},`));
+}
+
+/**
+ * L4-selftasks-130: the sentences for the tasks that wait on one the result says needs the person
+ * or failed, right after it on line 1: '"Write styles.css" waits on it.' when one task blocks;
+ * with two or more, each group names the ones it waits on ('"C" waits on "A".'), never "it".
+ */
+export function waitsOnBlockerSentences(o: LastSessionOutcome): string[] {
+  const blockers = blockersOf(o);
+  if (!blockers.length) return [];
+  const groups = new Map<string, { on: string[]; waiters: string[] }>();
+  for (const w of o.waiting) {
+    const on = blockers.filter((b) => waitsOnTask(w, b));
+    if (!on.length) continue;
+    const key = on.map((b) => b.id).join("\u0000");
+    const g = groups.get(key) ?? { on: titlesOf(on), waiters: [] };
+    g.waiters.push(w.title);
+    groups.set(key, g);
+  }
+  return [...groups.values()].map(
+    (g) =>
+      `${namesOf(g.waiters)} ${plural(g.waiters.length, "waits", "wait")} on ${
+        blockers.length === 1 ? "it" : namesOf(g.on)
+      }.`,
+  );
+}
+
 /**
  * The result's sentence for the tasks that wait on the person's decision: '"Style the page in
  * styles.css" needs your decision (Inbox).' A card in the Needs you list says the same (design
@@ -768,8 +818,15 @@ export function sessionUpdateLine(
 ): string | null {
   const card = needsYou.length ? needsYouSentence(needsYou) : null;
   const changedLine = tasksChangedLine(changed);
+  // L4-selftasks-130: the clause that follows the card's sentence ('"B" waits on it.') goes with it.
+  const cardWithClause = card
+    ? new RegExp(
+        `${escapeRegExp(card)}(?:\\s+(?:(?:"[^"]*"|\\d+ more)(?:, | and )?)+ waits? on it\\.)?`,
+        "g",
+      )
+    : null;
   const withoutCard = (l: string) =>
-    (card ? l.split(card).join(" ") : l)
+    (cardWithClause ? l.replace(cardWithClause, " ") : l)
       .split(changedLine ?? "\u0000")
       .join(" ")
       .replace(/\s{2,}/g, " ")
@@ -787,6 +844,10 @@ export function sessionUpdateLine(
       : `${cutGist(head, UPDATE_GIST_MAX - 30)} ${count.charAt(0).toUpperCase()}${count.slice(1)}.`;
   }
   return projectName ? `${projectName}: ${lowerFirstIfDid(gist)}` : gist;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function lowerFirstIfDid(s: string): string {
@@ -857,10 +918,11 @@ export async function closeFinishedWork(
 }
 
 /** A waiting task as the outcome names it: its dependencies in words. */
-export function waitingOf(w: WaitingTask): NamedTask & { waitsOn: string[] } {
+export function waitingOf(w: WaitingTask): NamedTask & { waitsOn: string[]; waitsOnIds: string[] } {
   return {
     id: w.task.id,
     title: w.task.title,
+    waitsOnIds: w.waitsOn.map((d) => d.id),
     waitsOn: w.waitsOn.map((d) =>
       d.title === null ? "a task that does not exist" : `"${d.title}", ${stateWords(d.status)}`,
     ),

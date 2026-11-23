@@ -51,6 +51,21 @@ export interface ChangeCard {
    * name): its read-back reaches the chat model inside the data envelope (ADR 0114).
    */
   untrusted?: CommandOutcome["untrusted"];
+  /**
+   * l4-selftasks-chat (L4-selftasks-117): what the card names, as the person saw it when it was
+   * read back (a task's fields), so a Yes days later is compared with the state then
+   * (`changedSince` in readback-check.ts). Set by the executor from `CommandDef.subjects`.
+   */
+  subjects?: CardSubject[];
+}
+
+/** A record a read-back names, with the fields compared at its Yes (`readback-check.ts`). */
+export interface CardSubject {
+  kind: "task";
+  id: string;
+  /** Its title when it was read back: the line about what changed quotes it. */
+  title: string;
+  fields: Record<string, string>;
 }
 
 export const SCOPE_LABELS: Record<CommandScope, string> = {

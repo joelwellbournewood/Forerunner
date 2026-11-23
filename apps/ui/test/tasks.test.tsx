@@ -2276,3 +2276,59 @@ describe("l4-cred-screens, run L4: a task only the API key can do says why it wa
     );
   });
 });
+
+describe("l4-selftasks-chat, run L4: a reviewer task says the reviewer writes no file (L4-other-1)", () => {
+  // ADR 0109 and live check 4 (L4-l3-4): New task said nothing under Who does it for the reviewer,
+  // and a review asking for review.md failed for a file the reviewer may not write.
+  const LINE =
+    "The reviewer writes no file: its findings are its report, which you read in the task's drawer.";
+
+  it("New task: choosing reviewer shows the line, coder does not; Add task sends the same body and the task is added", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await user.click(await screen.findByTestId("new-task"));
+    const dialog = await screen.findByTestId("new-task-dialog");
+    const who = within(dialog).getByTestId("task-who") as HTMLSelectElement;
+    await waitFor(() => expect([...who.options].map((o) => o.value)).toContain("reviewer"));
+    await user.selectOptions(who, "reviewer");
+    expect(within(dialog).getByTestId("task-who-writes-no-file")).toHaveTextContent(LINE);
+    await user.selectOptions(who, "coder");
+    expect(within(dialog).queryByTestId("task-who-writes-no-file")).toBeNull();
+    await user.selectOptions(who, "reviewer");
+    await user.type(within(dialog).getByTestId("task-title"), "Review the plan");
+    await user.type(
+      within(dialog).getByTestId("task-outcome"),
+      "review.md lists the gaps and risks found in README.md",
+    );
+    expect(within(dialog).getByTestId("task-who-writes-no-file")).toHaveTextContent(LINE);
+    await user.click(within(dialog).getByTestId("create-task"));
+    await waitFor(() => expect(postedCalls(harness, "/projects/proj_atlas/tasks")).toHaveLength(1));
+    expect(postedCalls(harness, "/projects/proj_atlas/tasks")[0]?.body).toMatchObject({
+      title: "Review the plan",
+      outcome: "review.md lists the gaps and risks found in README.md",
+      specialist: "reviewer",
+    });
+  });
+
+  it("Edit: choosing reviewer under edit-who shows the same line; Save sends the same body", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    addTask(harness, "task_review", "Review the plan", { status: "ready", specialist: "coder" });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await user.click(within(await rowOf("task_review")).getByTestId("task-title"));
+    const drawer = await screen.findByTestId("task-drawer");
+    await user.click(await within(drawer).findByTestId("drawer-action-edit"));
+    const form = await within(drawer).findByTestId("edit-task-form");
+    const who = within(form).getByTestId("edit-who") as HTMLSelectElement;
+    await waitFor(() => expect([...who.options].map((o) => o.value)).toContain("reviewer"));
+    expect(within(form).queryByTestId("edit-who-writes-no-file")).toBeNull();
+    await user.selectOptions(who, "reviewer");
+    expect(within(form).getByTestId("edit-who-writes-no-file")).toHaveTextContent(LINE);
+    await user.click(within(form).getByTestId("save-task"));
+    await waitFor(() => expect(postedCalls(harness, "/tasks/task_review")).toHaveLength(1));
+    expect(postedCalls(harness, "/tasks/task_review")[0]?.body).toMatchObject({
+      specialist: "reviewer",
+    });
+  });
+});

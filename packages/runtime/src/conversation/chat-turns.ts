@@ -104,6 +104,20 @@ export class ChatTurns {
     return true;
   }
 
+  /**
+   * l4-selftasks-chat (L4-selftasks-117): something a conversation shows changed outside a turn
+   * (a card it read back lapsed or was answered elsewhere): its screens read it again.
+   */
+  touched(conversationProjectId: string | null): void {
+    for (const l of this.listeners) {
+      try {
+        l(conversationProjectId);
+      } catch {
+        // A listener's failure never stops the others.
+      }
+    }
+  }
+
   on(listener: ChatTurnListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

@@ -2793,17 +2793,31 @@ export function createDaemonApp(
    * What a chat turn changed, said to the screens as `POST /commands/execute` says it (W15-29):
    * each change's project (its change log row) is `project.changed`, a card waiting for a yes is
    * `inbox.changed`. Before, a site rule changed in Talk reached the Overview only on a reload.
+   * fixup-l4-selftasks-chat: a card the turn answered (a yes, a no, or a Yes refused because
+   * what it named changed) is `inbox.changed` and its project's `project.changed` too: before,
+   * the open page kept "Waiting for you: 1 change to confirm" and the Inbox badge until a reload.
    */
+  const waitingCards = (humanId: string) =>
+    new Map(rt.commands.pending(humanId).map((p) => [p.id, p.card.projectId ?? null]));
   const heardChat = async (
     r: Awaited<ReturnType<NonNullable<RuntimeApp["conversation"]>["chat"]>>,
+    before: ReadonlyMap<string, string | null>,
+    humanId: string,
   ) => {
     const projects = new Set<string>();
     for (const a of r.actions) {
       const row = a.id ? await rt.store.changeLog.get(a.id).catch(() => undefined) : undefined;
       if (row?.project_id) projects.add(row.project_id);
     }
+    const after = waitingCards(humanId);
+    let answered = false;
+    for (const [id, projectId] of before)
+      if (!after.has(id)) {
+        answered = true;
+        if (projectId) projects.add(projectId);
+      }
     for (const id of projects) rt.events.emit("project", { id });
-    if (r.pendingConfirmation) rt.events.emit("inbox", {});
+    if (r.pendingConfirmation || answered) rt.events.emit("inbox", {});
   };
 
   app.post("/chat", async (c) => {
@@ -2811,6 +2825,7 @@ export function createDaemonApp(
     const refused = notYourConversation(c, body.humanId);
     if (refused) return refused;
     if (!rt.conversation) throw new ForerunnerError("provider_auth", NO_MODEL_CREDENTIAL);
+    const waiting = waitingCards(body.humanId);
     const r = await rt.conversation.chat({
       humanId: body.humanId,
       agentId: body.agentId,
@@ -2824,7 +2839,7 @@ export function createDaemonApp(
       // l4-cred-screens (L4-creds-19): the held turn the one-off press answers in its place.
       ...(body.oneOff && body.heldTurn ? { heldTurn: body.heldTurn } : {}),
     });
-    await heardChat(r);
+    await heardChat(r, waiting, body.humanId);
     return c.json(chatReplyView(r));
   });
 
@@ -2834,6 +2849,7 @@ export function createDaemonApp(
     if (refused) return refused;
     if (!rt.conversation) throw new ForerunnerError("provider_auth", NO_MODEL_CREDENTIAL);
     const conv = rt.conversation;
+    const waiting = waitingCards(body.humanId);
     return streamSSE(c, async (stream) => {
       // d1109-chat-depth: a dropped stream (a reload, a closed Talk panel) never stops the turn:
       // its frames go nowhere and the reply is stored as always. A write to a closed stream is
@@ -2873,7 +2889,7 @@ export function createDaemonApp(
           .catch(() => undefined);
         return;
       }
-      await heardChat(r);
+      await heardChat(r, waiting, body.humanId);
       await stream
         .writeSSE({ event: "reply", data: JSON.stringify(chatReplyView(r)) })
         .catch(() => undefined);

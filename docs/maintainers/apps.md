@@ -3130,3 +3130,11 @@ that task's merge record as the daemon's `closedAtPress` does ("#N was closed wi
 `last_outcome` closed) and emits `project.changed`, so its Tasks row reads "Accepted · pull
 request closed" right after the refused press (`project-overview.test.tsx`, "l4-github-merge, run
 L4 (fixup)").
+
+## l4-selftasks-chat (run L4, 2026-11-23)
+
+- New task and the drawer's Edit show `specialists[].writesNoFile` from `GET /settings/models`
+  under Who does it (`task-who-writes-no-file`, `edit-who-writes-no-file`), beside the runs-on or
+  limitation line; nothing is refused.
+- The store reads every shown conversation with a waiting card again on `inbox.changed`, so a
+  card answered in the Inbox (or one that lapsed) drops its Yes and No in an open chat.

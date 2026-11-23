@@ -1,7 +1,11 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
+import type { EventSourceLike } from "../src/api/sse.ts";
 import { seedFromMessage } from "../src/pages/project/NewTaskDialog.tsx";
+import { AppRoutes } from "../src/routes.tsx";
+import { AppProvider } from "../src/store/context.tsx";
 import { createStore } from "../src/store/store.ts";
 import { createHarness, postedCalls, renderApp } from "./helpers.tsx";
 
@@ -486,5 +490,61 @@ describe("l4-chat-answers, run L4, fixup: the option pressed under 'Which projec
         .filter((t) => t.title === "Write the about page")
         .map((t) => t.projectId),
     ).toEqual(["proj_beacon"]);
+  });
+});
+
+describe("l4-selftasks-chat, run L4: the open chat follows a card answered in the Inbox (L4-selftasks-117)", () => {
+  it("after inbox.changed the chat reads the conversation again: Yes and No are gone without a reload", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    // The daemon's /events stream from the fake daemon's listeners, open at once.
+    const factory = (_url: string): EventSourceLike => {
+      const listeners = new Map<string, Array<(ev: MessageEvent) => void>>();
+      const fromDaemon = (event: string, data: unknown) => {
+        for (const l of listeners.get(event) ?? [])
+          l({ data: JSON.stringify(data) } as MessageEvent);
+      };
+      const es: EventSourceLike & { readyState: number } = {
+        readyState: 0,
+        onerror: null,
+        onopen: null,
+        addEventListener(type, listener) {
+          listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+        },
+        close() {
+          es.readyState = 2;
+          harness.daemon.state.listeners.delete(fromDaemon);
+        },
+      };
+      harness.daemon.state.listeners.add(fromDaemon);
+      queueMicrotask(() => {
+        es.readyState = 1;
+        es.onopen?.(new Event("open"));
+      });
+      return es;
+    };
+    render(
+      <AppProvider
+        client={harness.client}
+        store={harness.store}
+        streamOptions={{ eventSource: factory, setTimer: () => 0, clearTimer: () => {} }}
+      >
+        <MemoryRouter initialEntries={["/projects/proj_atlas/chat"]}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AppProvider>,
+    );
+    const input = await screen.findByTestId("chat-input");
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "please start a session");
+    await user.click(screen.getByTestId("chat-send"));
+    const card = await screen.findByTestId("pending-confirmation");
+    expect(within(card).getByTestId("confirm-yes")).toBeEnabled();
+    // The card is answered in the Inbox: the daemon's conversation no longer shows it waiting,
+    // and the stream says the Inbox changed (no conversation.changed for this one).
+    harness.daemon.state.pendingConfirmation = null;
+    for (const l of harness.daemon.state.listeners)
+      l("inbox.changed", { blockingCount: 0, needsYouCount: 0 });
+    await waitFor(() => expect(screen.queryByTestId("confirm-yes")).toBeNull());
   });
 });

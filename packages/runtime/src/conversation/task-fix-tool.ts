@@ -1,4 +1,5 @@
 import { DEFAULT_CHF_PER_USD } from "@forerunner/billing";
+import { taskListFingerprint } from "@forerunner/commands";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type { ProjectRow, StateStore } from "@forerunner/state";
 import { z } from "zod";
@@ -171,6 +172,9 @@ export async function fixTasksInChat(input: ChatTaskFixInput): Promise<ChatTaskF
   input.onStep?.(fixCheckingStep(project.name));
   return withTaskCheckLock(project.id, async () => {
     const fresh = (await store.project.get(project.id)) ?? project;
+    // Run C decision 53 (L4-selftasks-117): the list as this check reads it; a read-back's Yes
+    // after it changed applies nothing and offers the check again.
+    const fingerprint = await taskListFingerprint(store, project.id);
     const notes = keptNotesOf(fresh);
     const run = await runTaskCheck(deps.check, {
       session,
@@ -251,6 +255,7 @@ export async function fixTasksInChat(input: ChatTaskFixInput): Promise<ChatTaskF
       const [r] = await planFix(planned, turn, {
         level,
         readBack: true,
+        fingerprint,
         ...(askFirst ? { askFirst: true } : {}),
         ...(fence.changes.length > 1 ? { ask } : {}),
       });

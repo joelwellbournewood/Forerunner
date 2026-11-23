@@ -244,7 +244,8 @@ describe("the PM's specialist.propose tool (spec C.5, ADR 0071)", () => {
     expect(asked.pendingConfirmation?.readback).not.toContain("Translate what the brief names");
     // The model's text, then the card read back for the yes.
     expect(asked.reply).toBe(
-      'I proposed a localizer; say yes to file it for your approval. Propose the specialist "localizer" for your approval? It cannot run until you approve it in the Inbox and its test tasks pass.',
+      // l4-selftasks-chat (L4-selftasks-126): the card says it once; the model's restating goes.
+      'Propose the specialist "localizer" for your approval? It cannot run until you approve it in the Inbox and its test tasks pass.',
     );
     expect(existsSync(proposedDir("localizer"))).toBe(false);
     expect(await specialistRequests("localizer")).toEqual([]);
@@ -309,7 +310,9 @@ describe("the PM's specialist.propose tool (spec C.5, ADR 0071)", () => {
       c.commands.some((x) => (x as { name: string }).name === "specialist.propose"),
     );
     if (!change) throw new Error("no change log row for specialist.propose");
-    expect(change).toMatchObject({ author_agent: rt.agent.id, author_human: null });
+    // l4-selftasks-chat (L4-selftasks-116): proposed on the person's words and confirmed with
+    // their yes, the change is theirs on Changes; the proposal itself still names the agent.
+    expect(change).toMatchObject({ author_human: rt.human.id, agent_id: rt.agent.id });
     expect((change.after as Json).request_id).toBe(request.id);
     const audit = await rt.store.auditLog.list({ humanId: rt.human.id });
     expect(

@@ -5480,9 +5480,16 @@ state as it is and keeps the card's id, email token and expiry), so a Yes/No car
 restart (design §3.9) and its Inbox button and the chat's "yes" work. `expireOrphanedCards`
 runs once when the daemon starts (services on, sync not paused; never in a one-shot, which
 composes beside a running daemon): an open change card of this human that no closure stands
-behind (one written before cards kept their commands, or whose commands no longer plan) is
-expired, so it leaves the Inbox instead of staying as a button that does nothing, and the
-human gets one warning message that the change was not made and to ask again. One daemon per
+behind (one written before cards kept their commands, a settings-screen card whose commands no
+longer plan, one whose ten minutes passed while the daemon was down) is expired, so it leaves
+the Inbox instead of staying as a button that does nothing, and the human gets one warning
+message that the change was not made and to ask again (`orphanedCardUpdate`: a card past its ten
+minutes says "Its card closed after 10 minutes without your yes", any other "Its card could not
+be opened again after Forerunner restarted", each with the card's values). A chat or voice
+read-back is never left to it: it is armed again even when its request no longer plans, and its
+Yes then says what changed (fixup-l4-selftasks-chat; the owner, 2026-11-17: every chat read-back
+waits until the person answers it). Tested by real-daemon.test.ts 'l4-selftasks-chat, run L4'
+(two composes on one home, the orphan sweep run in the daemon's order). One daemon per
 human holds pending cards; a second daemon of the same human on one shared store would
 expire the first one's cards at its start (Known issues). Tests:
 `inbox-change-card.test.ts` (Chat, the Inbox's own option strings through the daemon's answer
@@ -8269,7 +8276,27 @@ hiding what it left out. What changed, item by item:
   (`task-fix-tool.ts`) puts "Asks you first: <reason>." in its footer only when the ask-first
   rule caused the read-back (`askFirst && makesFixesAtOnce(level) && !recordsRead`); at
   Advisor and Assisted, or after records were read, the footer is the cost line alone. The
-  session's suggestion card keeps its reasons as steps of their own, after the changes.
+  session's suggestion card says its reasons in its body, before "Nothing changes until you say
+  yes." (`proposalBody(notes, quotes, reasons)`; fixup-l4-selftasks-chat, L4-selftasks-129: they
+  were steps after the changes, so the Inbox's open list showed "Asks you first: ..." as one more
+  change); its steps are the changes only, and `change_card.reasons` keeps them as before.
+- **What waits on a decision** (fixup-l4-selftasks-chat, L4-selftasks-130): the result's line 1
+  says right after a task that needs the person or failed which tasks wait on it
+  (`RESULT_LINE_BUILDERS` "waits on what needs you", `waitsOnBlockerSentences`: '"B" waits on
+  it.' with one such task, '"C" waits on "A".' with two or more, never "it"); line 3 counts only
+  tasks that wait on something else ("1 task waits on other tasks."), a task waiting on a ready
+  one left for next time among them. `LastSessionOutcome.waiting[].waitsOnIds` (from `waitingOf`)
+  names what each waits on; an outcome kept before it is matched by title. The Update drops the
+  card's sentence together with the clause after it. Before (live check 4): "1 task waits on it."
+  on line 3, two sentences after what "it" was. "fix the tasks" with no Claude says "Fixing the
+  tasks needs Claude: connect it in Settings, Basics." (`FIX_NEEDS_CLAUDE`, L4-selftasks-127; a
+  Connect button under the reply is not built: chat replies have no link offer yet).
+- **A chat turn that answered a card is heard** (fixup-l4-selftasks-chat): `POST /chat` and
+  `POST /chat/stream` note the executor's waiting cards before the turn (`waitingCards`) and,
+  when one is gone after it (a yes, a no, a Yes refused because what it named changed), send
+  `inbox.changed` and the card's project's `project.changed` (`heardChat`). Before, the open page
+  kept "Waiting for you: 1 change to confirm" and the Inbox badge until a reload. Test:
+  real-daemon.test.ts "a chat No, and a Yes refused because the task changed, tell the screens".
 - **Specialists and plans in the person's words** (L4-selftasks-111): the fence's reasons name a
   specialist through `saidByName` ("the writer", "the deployment specialist", never
   "writer-marketing" or "ops-deploy"); "the plan you approved has no task for the writer" only
@@ -9895,3 +9922,23 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 - `daemon/task-words.ts` `mergedDisplay` reads a merged-through record as "Merged through #48";
   `daemon/quoted-title.ts` `balancedCut` keeps a title whole when the word cut dropped its
   quoted part and the overrun is within the slack.
+
+## l4-selftasks-chat (run L4, 2026-11-23): chat changes, read-backs and the reviewer's criterion
+
+- **Chat (L4-selftasks-116/117/122/126).** The chat's command tools set `onPersonsWords` for a
+  turn that read no record; a pass that answers an earlier line (Think it through, Go ahead)
+  sets `turn.wordsUsed` to that line, and fix_tasks gets it as its request. `recompose` keeps
+  the strictest context of the cards it folds (planFix, askFirst, the fingerprint).
+  `fixTasksInChat` takes the task list's fingerprint when the check starts and passes it to
+  `planFix`. `withoutCardTalk` drops the model's sentences about a waiting card; DEFAULT_PROMPT
+  and conversation-agent 1.5.2 say the card speaks for the change. compose wires the executor's
+  `onExpired`: `events.emit("inbox")`, `ChatTurns.touched(projectId)` (conversation.changed) and
+  one Update (`lapsedCardUpdate`, loop/answered-cards.ts).
+- **The criterion of a task with no criteria (L4-other-1, ADR 0109).** `outcomeCriterion(outcome,
+  { writesNoFile })`: for a specialist none of whose tools writes a file (`writesNoFile` in
+  registry/tools.ts, today the reviewer) 'The report shows this outcome (this specialist writes
+  no file, so a file named here is met by its report): <outcome>', in the brief
+  (session/executor.ts) and the critic's evidence (loop/critic.ts, `CriticLoopDeps.writesNoFile`);
+  every other specialist keeps 'The work itself shows this outcome (a file, a page or an output,
+  not only the report): <outcome>'. `GET /settings/models` adds `specialists[].writesNoFile`
+  (`writesNoFileLine`).

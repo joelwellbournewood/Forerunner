@@ -155,13 +155,13 @@ describe("CommandExecutor", () => {
     await w.store.close();
   });
 
-  it("a pending confirmation expires after ten minutes", async () => {
+  it("a pending confirmation from the settings screen expires after ten minutes (a chat read-back waits until answered: l4-selftasks-chat)", async () => {
     const w = await world();
     const p = pending(
       await w.executor.execute({
         name: "budget.set",
         params: { scope: "session", amountChf: 20 },
-        ctx: w.ctx(),
+        ctx: w.ctx({ source: "ui" }),
       }),
     );
     await w.clock.advance(10 * 60 * 1000 + 1);

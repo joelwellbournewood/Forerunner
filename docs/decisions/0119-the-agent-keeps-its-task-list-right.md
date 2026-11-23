@@ -202,3 +202,21 @@ run, it should be able to do things like that."
   changed nothing. The line was kept out of the check's request whole, so the part the quote cuts
   off was never acted on. Run L4's acceptance asked for the line whole; quoting it whole, or with a
   higher cap on that one line, is the session lead's to decide (one constant).
+
+## Amendment 2026-11-23 (l4-selftasks-chat, run L4): chat's part
+
+A change the person names in chat is theirs once they say yes (run C decision 52); the agent's
+own fixes (fix_tasks' set, the session's) stay the agent's. A "fix the tasks" read-back waits
+until it is answered, across a restart; its Yes after the task list changed says so and offers
+the check again (run C decision 53). A merged card of fix_tasks and another change keeps the
+planFix rules. A set refused at one change says that none was made.
+
+## Amendment 2026-11-23 (fixup-l4-selftasks-chat, run L4): the brief has an injection channel
+
+The known gap above (C2-left-14) is closed: `pnpm test:injection` has a `brief` channel that
+plants text in a paused run's note, one item of its "Left to do" list and a failed project check's
+output on its kept work, renders the next run's brief with the real `taskContextBlock` and judges
+that the text is quoted as data on labelled lines and that the obedient specialist's calls are
+refused (brief-001..003, controls 101 and 102). report-008 checks that a task for the researcher
+after the coder's work waits on the card with the reach reason. The reason given with a change
+reaching the next brief is unchanged.

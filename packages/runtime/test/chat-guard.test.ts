@@ -630,7 +630,9 @@ describe("d1109-chat-guard, run C: a change after a record is read back first (C
     expect(switched.pendingConfirmation?.commands).toEqual(["project.switch"]);
     expect(switched.pendingConfirmation?.decision).toBe("needs_yes");
     expect(switched.pendingConfirmation?.readback).toBe("Switch to Shop Page?");
-    expect(switched.reply).toBe("It waits for your yes. Switch to Shop Page?");
+    // l4-selftasks-chat (L4-selftasks-126): the card says the change once; the model's "It
+    // waits for your yes." about it is dropped.
+    expect(switched.reply).toBe("Switch to Shop Page?");
     expect(switched.reply).not.toMatch(card);
     expect((await w.chat("no")).reply).toBe("Cancelled; nothing was changed.");
     const resumed = await w.chat("I think sessions may run again now");

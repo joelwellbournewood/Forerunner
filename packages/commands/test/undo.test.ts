@@ -345,3 +345,47 @@ describe("undo says when it cannot work (U-061)", () => {
     await w.store.close();
   });
 });
+
+describe("fixup-l4-selftasks-chat: an Undo read back in chat waits until it is answered, across a restart", () => {
+  // The owner, 2026-11-17: every chat read-back "stays open in chat and the Inbox until the
+  // person presses Yes or No". Before, an Undo read back in chat kept no command with its card,
+  // so a restart left it unarmed and the orphan sweep closed it.
+  it("the Undo of a lowered monthly cap, read back in chat, is armed again after a restart and its confirmation makes it", async () => {
+    const w = await world();
+    const lowered = done(
+      await w.executor.execute({
+        name: "budget.set",
+        params: { scope: "month", amountChf: 100 },
+        ctx: w.ctx(),
+        confirmation: tap(w.human.id),
+      }),
+    );
+    const p = pending(await w.executor.undo(lowered.changeLogId, w.ctx({ source: "chat" })));
+    expect(p.expiresAt).toBeNull();
+    // A new process on the same store: the executor arms the open cards again.
+    const again = new CommandExecutor({ registry: w.registry, store: w.store, clock: w.clock });
+    const open = await w.store.humanRequest.list({ status: "open", kind: "approval" } as never, {
+      limit: 50,
+    });
+    const armed = await again.restorePending(open, async (stored) => ({
+      ...w.ctx(),
+      actor: stored.actor,
+      humanId: stored.humanId,
+      agentId: stored.agentId,
+      activeProjectId: stored.activeProjectId,
+      source: stored.source,
+      wordsUsed: stored.wordsUsed,
+    }));
+    expect(armed).toEqual([p.pendingId]);
+    expect(again.getPending(p.pendingId)?.readback).toBe(p.readback);
+    const r = done(
+      await again.confirmFromDevice(p.pendingId, { deviceId: w.desktop.id, biometric: false }),
+    );
+    // After a restart the undo is told from the change log row (the card of the change itself
+    // lived in the process that made it), as the Changes screen's Undo after a restart is.
+    expect(r.sentence).toBe("Undone: Lowered the monthly cap from CHF 150.00 to CHF 100.00.");
+    expect((await w.store.human.mustGet(w.human.id)).monthly_cap_usd_micro).toBe(0);
+    expect((await w.store.changeLog.mustGet(lowered.changeLogId)).undo_state).toBe("undone");
+    await w.store.close();
+  });
+});

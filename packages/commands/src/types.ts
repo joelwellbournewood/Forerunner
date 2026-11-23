@@ -19,7 +19,7 @@ import type {
   StateStore,
 } from "@forerunner/state";
 import type { z } from "zod";
-import type { ChangeCard } from "./change-card.ts";
+import type { CardSubject, ChangeCard } from "./change-card.ts";
 
 /**
  * The command registry types (spec module Q). Every action a button, the palette, the API,
@@ -514,7 +514,27 @@ export interface CommandContext {
    * change of it is read back, a new task too; `askFirst` (the fence asked first: the person's
    * own task, a further reach, a deploy) reads it back at every level.
    */
-  planFix?: { level: AutonomyLevel; askFirst?: boolean };
+  planFix?: {
+    level: AutonomyLevel;
+    askFirst?: boolean;
+    /**
+     * l4-selftasks-chat (run C decision 53): the task list's fingerprint its check judged
+     * (`taskListFingerprint`); a Yes after the list changed says so and applies nothing.
+     */
+    fingerprint?: string;
+  };
+  /**
+   * l4-selftasks-chat (L4-selftasks-116; run C decision 52, the owner's "Changes the person names
+   * in their own words stay the person's instruction"): the change is one the chat model calls on
+   * the person's own words in a conversation turn that read no record. Set only by the command
+   * loop's chat tools (`CommandLoop.commandToolSpecs`), never from a request body or a tool's
+   * input. It decides nothing: the change is planned, decided and read back as the agent's (ADR
+   * 0030 item 2); once the person says yes it runs and is recorded as theirs ("Changed by you",
+   * their name on Changes, no Inbox echo). One that acts at once stays the agent's act on the
+   * Changes screen (security-command-actor.test.ts) and is not echoed in the Inbox either: the
+   * chat's reply shows it with its Undo.
+   */
+  onPersonsWords?: boolean;
 }
 
 export interface CommandOutcome {
@@ -592,7 +612,9 @@ export interface CommandDef<P = unknown> {
     before: JsonValue,
     after: JsonValue,
     ctx: CommandContext,
-  ): Promise<void | string | undefined>;
+    // l4-selftasks-chat (L4-selftasks-125): `unknown`, not `void | string`, so a plain undo that
+    // returns nothing still fits; the executor reads a string result only.
+  ): Promise<unknown>;
   /**
    * The risk of the undo (U-057, ADR 0099): the risk of putting `before` back on the current
    * state. An undo that raises or widens a limit is confirmed like the forward change that
@@ -611,6 +633,11 @@ export interface CommandDef<P = unknown> {
     after: JsonValue,
     ctx: CommandContext,
   ): Promise<string | null>;
+  /**
+   * l4-selftasks-chat (L4-selftasks-117): what the change names as it is now (a task's fields),
+   * kept on its card when it is read back; the Yes compares it with the state then.
+   */
+  subjects?(params: P, ctx: CommandContext): Promise<CardSubject[]>;
   /** The sentence of a done undo, when "<what> is back to <old value>" would not be true. */
   undoSentence?(params: P, before: JsonValue, after: JsonValue): string;
   /**
@@ -629,4 +656,10 @@ export interface CommandDef<P = unknown> {
 export interface CommandCall {
   name: string;
   params: unknown;
+  /**
+   * L4-selftasks-116: the call is a change the person named in their own words (its context's
+   * `onPersonsWords` when it was read back), kept with a stored card so it stays theirs after a
+   * restart or a merge with the agent's own changes (`CommandLoop.recompose`). Code sets it.
+   */
+  onPersonsWords?: boolean;
 }

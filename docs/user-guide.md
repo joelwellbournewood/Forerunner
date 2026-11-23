@@ -515,7 +515,7 @@ them as you left them; an open file or task stays on its own tab.
   these 3 changes to the tasks of Quote page? …"), naming what each change does ('change "Publish
   the page": priority to High'). The line under the reply says what the check
   cost in CHF, booked to the project. Nothing starts a session. It says so instead when it cannot
-  run: "Fixing the tasks needs Claude.", "Fixing the tasks would pass this project's budget;
+  run: "Fixing the tasks needs Claude: connect it in Settings, Basics.", "Fixing the tasks would pass this project's budget;
   nothing changed.", "The agent is checking the tasks of Quote page now; ask again in a moment."
   or, when your rule for Claude waits, "Fixing the tasks waits for Claude: your subscription is at
   its limit until 15:40. Nothing changed." In Talk with no project on screen it asks which
@@ -1815,3 +1815,17 @@ checks the installation and prints what is missing.
   still open. After it, the kept project lists the other's open status pull request with Merge.
   The other project's page names it in the header, says where its files are and where its tasks
   went on, and Costs counts a moved task's own runs.
+
+### Chat changes are yours, and wait for your answer (2026-11-23)
+
+A change you ask for in Chat is read back once with Yes and No. After your Yes it is yours:
+Changes names you as the one who made it, and the Inbox does not repeat it. A read-back
+waits until you answer it, also for days and after Forerunner restarts; if what it names changed
+meanwhile (another change, or the task was cancelled or finished), your Yes changes nothing and
+Chat says what changed, so you can ask again. When you answer it, in Chat or in the Inbox, the
+header's count and the Inbox follow at once. A note
+for a task's next brief is read back too when Chat wrote it for you.
+
+The reviewer reads and runs checks but writes no file: its findings are its report, which you
+read in the task's drawer. New task and Edit say so when you pick it; to have a file written,
+pick another specialist or let the agent choose.

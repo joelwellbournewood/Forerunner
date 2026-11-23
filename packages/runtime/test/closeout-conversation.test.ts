@@ -309,17 +309,16 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
     const log = await w.store.changeLog.list();
     expect(log[0]?.commands.map((c) => (c as { name: string }).name)).toEqual(["task.create"]);
     expect(log[0]?.words_used).toBe(question);
-    // Only the spelled-out change reached the human's inbox so far (spec Q.10), no answer:
-    // the answer is the session's job.
+    // Nothing reached the human's inbox so far: the task the chat added on the person's own
+    // words is in Changes and the chat's reply, never an Inbox echo (design §3.8, §5.11;
+    // l4-selftasks-chat, L4-selftasks-116), and the answer is the session's job.
     const inbox = async () =>
       (await w.store.message.inbox({ humanId: w.human })).filter(
         (m) => m.to_human_id === w.human && m.from_agent_id === w.alice,
       );
     // The session's one-line Update names the project (design §3.8).
     const sessionSummaries = async () => (await inbox()).filter((m) => /^Game: /.test(m.body));
-    expect((await inbox()).map((m) => m.body)).toEqual([
-      'Added "Compare the three renderers" to Game as a draft (no session picks it up).',
-    ]);
+    expect((await inbox()).map((m) => m.body)).toEqual([]);
     expect(await sessionSummaries()).toHaveLength(0);
 
     // The human (or the PM) makes the draft ready; the principal's next session runs it.

@@ -30,6 +30,13 @@ import {
   ConfirmationPolicy,
   PENDING_TTL_MS,
 } from "./confirmation.ts";
+import {
+  changedSince,
+  composedRefusal,
+  subjectsNow,
+  TASKS_CHANGED_REPLY,
+  taskListFingerprint,
+} from "./readback-check.ts";
 import type { CommandRegistry } from "./registry.ts";
 import type {
   Actor,
@@ -80,7 +87,11 @@ export type ExecuteResult =
       card: ChangeCard;
       pendingId: string;
       decision: Exclude<ConfirmationDecision, "act">;
-      expiresAt: string;
+      /**
+       * When the card lapses, or null for a chat or voice read-back, which waits until it is
+       * answered (l4-selftasks-chat, L4-selftasks-117; the owner, 2026-11-17).
+       */
+      expiresAt: string | null;
       /** Token an email reply carries to confirm a medium-risk change. */
       emailToken: string;
       /** What the card says, read out in voice mode. */
@@ -109,16 +120,46 @@ export interface PendingConfirmation {
   card: ChangeCard;
   decision: Exclude<ConfirmationDecision, "act">;
   createdAt: string;
-  expiresAt: string;
+  /** Null: a chat or voice read-back, which waits until it is answered (L4-selftasks-117). */
+  expiresAt: string | null;
   emailToken: string;
   readback: string;
   wordsUsed: string;
 }
 
+/** What the executor tells when a confirmation lapses unanswered (`ExecutorOptions.onExpired`). */
+export interface ExpiredConfirmation {
+  id: string;
+  humanId: string;
+  projectId: string | null;
+  /** What the card would have changed, in its own words. */
+  what: string;
+  /** From and to, when the card changes one value ("CHF 5.00 to CHF 20.00"), else null. */
+  change: string | null;
+  source: CommandSource;
+}
+
+/**
+ * The executor's plan of the same request again on the state now: today's decision and the card
+ * it would read back now, which the Yes compares with the card as it was read back.
+ */
+interface Redecided {
+  decision: ConfirmationDecision;
+  card: ChangeCard;
+}
+
 interface PendingEntry extends PendingConfirmation {
-  perform: () => Promise<ExecuteResult>;
+  /**
+   * Makes the change. `by` is the human whose yes confirmed it: a step said on the person's own
+   * words (`Step.persons`) runs and is recorded as theirs (L4-selftasks-116).
+   */
+  perform: (by?: Actor) => Promise<ExecuteResult>;
   /** Plans the same request again on the current state and returns today's decision. */
-  redecide: () => Promise<ConfirmationDecision>;
+  redecide: () => Promise<Redecided>;
+  /** The card as it was read back: what the Yes compares the state now with (L4-selftasks-117). */
+  shown: ChangeCard;
+  /** A fix of the task list: the list's fingerprint its check judged (run C decision 53). */
+  fingerprint?: { projectId: string; value: string };
   cancelTimer: () => void;
   /** An answer is being checked (a device lookup is in flight); a second answer is refused. */
   inFlight: boolean;
@@ -128,11 +169,16 @@ interface Gate {
   decision: ConfirmationDecision;
   card: ChangeCard;
   ctx: CommandContext;
-  perform: () => Promise<ExecuteResult>;
-  redecide: () => Promise<ConfirmationDecision>;
+  perform: (by?: Actor) => Promise<ExecuteResult>;
+  redecide: () => Promise<Redecided>;
   answer: ConfirmationAnswer | undefined;
   /** The commands, kept with a pending card so it can be armed again after a restart. */
   calls?: CommandCall[];
+  /**
+   * fixup-l4-selftasks-chat: the change log row an Undo read back in chat undoes, kept with its
+   * card (`change_card.undo_of`) so it is armed again after a restart like every chat read-back.
+   */
+  undoOf?: string;
 }
 
 /**
@@ -154,7 +200,7 @@ export interface StoredCardContext {
    * a card armed again after a restart is decided and told as before (no Inbox line after its
    * yes). Written by the daemon only; a request body never sets it.
    */
-  planFix?: { level: AutonomyLevel; askFirst?: boolean };
+  planFix?: { level: AutonomyLevel; askFirst?: boolean; fingerprint?: string };
 }
 
 /**
@@ -206,6 +252,38 @@ interface Step {
   risk: Risk;
   /** Said in words as a command that is read back first (`askFromChat`), then redirected. */
   askedAs?: boolean;
+  /**
+   * l4-selftasks-chat (L4-selftasks-116): the step is a change the person named in their own
+   * words in a conversation (`CommandContext.onPersonsWords`, or its call's mark after a restart
+   * or a merge). Once the person says yes it runs and is recorded as theirs; it never changes
+   * how it is decided (the actor rule of ADR 0030 item 2 reads the agent).
+   */
+  persons?: boolean;
+}
+
+/** A step as a stored call: its command, its parameters and whose words it was said in. */
+function callOf(step: Step): CommandCall {
+  return {
+    name: step.def.name,
+    params: step.params,
+    ...(step.persons ? { onPersonsWords: true } : {}),
+  };
+}
+
+/**
+ * A card's one value from and to ("CHF 5.00 to CHF 20.00"), as the Update of a lapsed card says
+ * it beside what it would have changed, or null for a card that changes no single value.
+ */
+export function cardChange(card: Pick<ChangeCard, "oldValue" | "newValue">): string | null {
+  const from = card.oldValue?.trim() ?? "";
+  const to = card.newValue?.trim() ?? "";
+  if (!from || !to || /^[[{]/.test(from) || /^[[{]/.test(to)) return null;
+  return `${from} to ${to}`;
+}
+
+/** Whether a source's read-back waits until it is answered (chat, Talk and voice). */
+function waitsUntilAnswered(source: CommandSource): boolean {
+  return source === "chat" || source === "voice";
 }
 
 /**
@@ -257,6 +335,12 @@ export interface ExecutorOptions {
   clock: Clock;
   policy?: ConfirmationPolicy;
   pendingTtlMs?: number;
+  /**
+   * l4-selftasks-chat (L4-selftasks-117): a confirmation lapsed unanswered (its ten minutes: a
+   * settings-screen or email card; chat read-backs wait until they are answered). The daemon
+   * tells the open screens and the person (`inbox.changed`, `conversation.changed`, one Update).
+   */
+  onExpired?: (card: ExpiredConfirmation) => void | Promise<void>;
 }
 
 const NO_RE = /^\s*(no|nope|cancel|stop|nein|non|abbrechen)\b/i;
@@ -279,6 +363,7 @@ export class CommandExecutor {
   private readonly store: StateStore;
   private readonly clock: Clock;
   private readonly ttlMs: number;
+  private readonly onExpired: ExecutorOptions["onExpired"];
   private readonly logger = log("commands");
   private readonly pendings = new Map<string, PendingEntry>();
   /** The undo of a change made in this process; it returns the sentences its steps added. */
@@ -292,6 +377,7 @@ export class CommandExecutor {
     this.clock = opts.clock;
     this.policy = opts.policy ?? new ConfirmationPolicy();
     this.ttlMs = opts.pendingTtlMs ?? PENDING_TTL_MS;
+    this.onExpired = opts.onExpired;
   }
 
   // -------------------------------------------------------------------------------------
@@ -315,13 +401,22 @@ export class CommandExecutor {
     const instead = !redirected && def.redirect ? await def.redirect(params, ctx) : null;
     // The answer is read back as the move would have been ("cancel X" on a person's card that
     // asks nothing risky still gets its one-line question first, design §3.9).
+    const persons = call.onPersonsWords ?? ctx.onPersonsWords === true;
     if (instead)
-      return { ...(await this.prepare(instead, ctx, true)), askedAs: def.askFromChat === true };
+      return {
+        ...(await this.prepare({ ...instead, onPersonsWords: persons }, ctx, true)),
+        askedAs: def.askFromChat === true,
+      };
     const risk = typeof def.risk === "function" ? await def.risk(params, ctx) : def.risk;
     const card = def.plan ? await def.plan(params, ctx) : genericCard(def, params, risk);
     card.impact.risk = risk;
+    // L4-selftasks-117: what the card names, as it is now, for the Yes to compare with.
+    if (def.subjects) {
+      const subjects = await def.subjects(params, ctx).catch(() => []);
+      if (subjects.length) card.subjects = subjects;
+    }
     await this.refuseClosedProject(def.name, card);
-    return { def, params, card, risk };
+    return { def, params, card, risk, ...(persons ? { persons: true } : {}) };
   }
 
   /**
@@ -388,11 +483,14 @@ export class CommandExecutor {
       decision: this.decideSteps([step], req.ctx),
       card: step.card,
       ctx: req.ctx,
-      perform: () => this.perform([step], req.ctx),
-      redecide: async () => this.decideSteps([await this.prepare(call, req.ctx)], req.ctx),
+      perform: (by) => this.perform([step], req.ctx, by),
+      redecide: async () => {
+        const again = await this.prepare(call, req.ctx);
+        return { decision: this.decideSteps([again], req.ctx), card: again.card };
+      },
       answer: req.confirmation,
       // The call as planned: a redirected move is stored as the card's answer it became.
-      calls: [{ name: step.def.name, params: step.params }],
+      calls: [callOf(step)],
     });
   }
 
@@ -460,11 +558,20 @@ export class CommandExecutor {
       decision: this.decideSteps(steps, ctx),
       card,
       ctx,
-      perform: () => this.perform(steps, ctx),
-      redecide: async () => this.decideSteps(await this.prepareAll(calls, ctx), ctx),
+      perform: (by) => this.perform(steps, ctx, by),
+      redecide: async () => this.redecideAll(calls, ctx),
       answer: opts.confirmation,
-      calls: steps.map((s) => ({ name: s.def.name, params: s.params })),
+      calls: steps.map(callOf),
     });
+  }
+
+  /** The steps planned again on the state now: today's decision and today's card. */
+  private async redecideAll(calls: CommandCall[], ctx: CommandContext): Promise<Redecided> {
+    const steps = await this.prepareAll(calls, ctx);
+    return {
+      decision: this.decideSteps(steps, ctx),
+      card: steps.length === 1 ? (steps[0] as Step).card : mergeCards(steps.map((s) => s.card)),
+    };
   }
 
   private async gate(g: Gate): Promise<ExecuteResult> {
@@ -510,7 +617,7 @@ export class CommandExecutor {
         ),
         g.card,
       );
-    return this.createPending(g.decision, g.card, g.ctx, g.perform, g.redecide, g.calls);
+    return this.createPending(g.decision, g.card, g.ctx, g.perform, g.redecide, g.calls, g.undoOf);
   }
 
   /** The title of the card a `request.answer` answers, as the Inbox shows it. */
@@ -533,12 +640,24 @@ export class CommandExecutor {
     decision: Exclude<ConfirmationDecision, "act">,
     card: ChangeCard,
     ctx: CommandContext,
-    perform: () => Promise<ExecuteResult>,
-    redecide: () => Promise<ConfirmationDecision>,
+    perform: (by?: Actor) => Promise<ExecuteResult>,
+    redecide: () => Promise<Redecided>,
     calls?: CommandCall[],
+    undoOf?: string,
   ): Promise<ExecuteResult> {
     const now = this.clock.now();
-    const expiresAt = new Date(now + this.ttlMs).toISOString();
+    // l4-selftasks-chat (L4-selftasks-117; the owner, 2026-11-17: "wait until I answer"): a
+    // read-back in chat, Talk or voice waits until it is answered or another read-back of its
+    // conversation replaces it, across a restart; its Yes is decided on the state then. Every
+    // other confirmation (the settings screen, an email reply) keeps ADR 0030's ten minutes.
+    const untilAnswered = waitsUntilAnswered(ctx.source);
+    const expiresAt = untilAnswered ? null : new Date(now + this.ttlMs).toISOString();
+    // Run C decision 53: a fix of the task list keeps the fingerprint of the list it judged.
+    const fingerprint =
+      ctx.planFix && card.projectId
+        ? (ctx.planFix.fingerprint ??
+          (await taskListFingerprint(this.store, card.projectId).catch(() => undefined)))
+        : undefined;
     const emailToken = shortToken(6, "FR-");
     const readback = readbackOf(card, decision, ctx.source);
     // The commands and who asked, so a restarted daemon arms the card again (`restorePending`).
@@ -556,6 +675,7 @@ export class CommandExecutor {
             planFix: {
               level: ctx.planFix.level,
               ...(ctx.planFix.askFirst ? { askFirst: true } : {}),
+              ...(fingerprint ? { fingerprint } : {}),
             },
           }
         : {}),
@@ -582,21 +702,29 @@ export class CommandExecutor {
         decision,
         email_token: emailToken,
         expires_at: expiresAt,
+        ...(untilAnswered ? { until_answered: true } : {}),
         words_used: ctx.wordsUsed,
         ...(chatOnly ? { chat_only: true } : {}),
-        ...(calls ? { calls: JSON.parse(JSON.stringify(calls)), context: stored } : {}),
+        ...(calls
+          ? { calls: JSON.parse(JSON.stringify(calls)), context: stored }
+          : undoOf
+            ? { undo_of: undoOf, context: stored }
+            : {}),
       } as never,
       author_human: ctx.actor.kind === "human" ? ctx.actor.id : null,
       author_agent: ctx.actor.kind === "agent" ? ctx.actor.id : null,
     });
     const id = request.id;
-    const cancelTimer = this.clock.setTimeout(() => {
-      void this.expirePending(id);
-    }, this.ttlMs);
+    const cancelTimer = untilAnswered
+      ? () => undefined
+      : this.clock.setTimeout(() => {
+          void this.expirePending(id);
+        }, this.ttlMs);
     this.pendings.set(id, {
       id,
       humanId: ctx.humanId,
       card,
+      shown: JSON.parse(JSON.stringify(card)) as ChangeCard,
       decision,
       createdAt: new Date(now).toISOString(),
       expiresAt,
@@ -605,6 +733,9 @@ export class CommandExecutor {
       wordsUsed: ctx.wordsUsed,
       perform,
       redecide,
+      ...(fingerprint && card.projectId
+        ? { fingerprint: { projectId: card.projectId, value: fingerprint } }
+        : {}),
       cancelTimer,
       inFlight: false,
     });
@@ -633,13 +764,51 @@ export class CommandExecutor {
       const stored = json.context as StoredCardContext | undefined;
       const decision = json.decision;
       const expiresAt = typeof json.expires_at === "string" ? json.expires_at : null;
+      // L4-selftasks-117: a chat or voice read-back waits until it is answered, also one an
+      // earlier version stored with ten minutes (the owner: none lapses).
+      const untilAnswered = !!stored && waitsUntilAnswered(stored.source);
+      // fixup-l4-selftasks-chat: an Undo read back in chat waits across a restart too.
+      const undoOf = typeof json.undo_of === "string" ? json.undo_of : null;
+      if (
+        undoOf &&
+        stored &&
+        untilAnswered &&
+        (decision === "needs_yes" || decision === "needs_device")
+      ) {
+        try {
+          const ctx = await contextFor(stored);
+          const card = json as unknown as ChangeCard;
+          this.pendings.set(row.id, {
+            id: row.id,
+            humanId: stored.humanId,
+            card,
+            shown: card,
+            decision,
+            createdAt: new Date(now).toISOString(),
+            expiresAt: null,
+            emailToken: typeof json.email_token === "string" ? json.email_token : "",
+            readback: readbackOf(card, decision, ctx.source),
+            wordsUsed: stored.wordsUsed,
+            perform: () => this.performUndo(undoOf, ctx),
+            redecide: () => this.redecideUndo(undoOf, card, ctx),
+            cancelTimer: () => undefined,
+            inFlight: false,
+          });
+          armed.push(row.id);
+        } catch (e) {
+          this.logger.warn("an undo card could not be armed again after a restart", {
+            id: row.id,
+            error: errorMessage(e),
+          });
+        }
+        continue;
+      }
       if (
         !Array.isArray(calls) ||
         !calls.length ||
         !stored ||
         (decision !== "needs_yes" && decision !== "needs_device") ||
-        !expiresAt ||
-        Date.parse(expiresAt) <= now
+        (!untilAnswered && (!expiresAt || Date.parse(expiresAt) <= now))
       )
         continue;
       try {
@@ -649,11 +818,16 @@ export class CommandExecutor {
         // since it was read back is armed as it was shown, so its yes is refused in words by
         // `confirm` (the joined sentence) and changes nothing; before, it was left to expire and
         // the yes after a restart met "it expired" instead of why.
+        // fixup-l4-selftasks-chat (review of L4-selftasks-117): a chat or voice read-back that
+        // cannot be planned any more (its task was cancelled or finished meanwhile) is armed as
+        // it was shown too: it waits until it is answered, and its Yes says what changed and
+        // applies nothing (`confirm`). Before, it was left unarmed and the orphan sweep told the
+        // person the card was lost to the restart.
         let steps: Step[] | null = null;
         try {
           steps = await this.prepareAll(commandCalls, ctx);
         } catch (e) {
-          if (!isClosedProjectRefusal(e)) throw e;
+          if (!untilAnswered && !isClosedProjectRefusal(e)) throw e;
         }
         const card = !steps
           ? (json as unknown as ChangeCard)
@@ -664,24 +838,35 @@ export class CommandExecutor {
         if (steps && steps.length > 1 && typeof json.ask === "string" && json.ask.trim())
           card.ask = json.ask;
         const id = row.id;
-        const cancelTimer = this.clock.setTimeout(
-          () => {
-            void this.expirePending(id);
-          },
-          Math.max(0, Date.parse(expiresAt) - now),
-        );
+        const cancelTimer =
+          untilAnswered || !expiresAt
+            ? () => undefined
+            : this.clock.setTimeout(
+                () => {
+                  void this.expirePending(id);
+                },
+                Math.max(0, Date.parse(expiresAt) - now),
+              );
+        // What the person was shown (the stored card), so the Yes compares with that and not
+        // with the state at this restart (L4-selftasks-117).
+        const shown = json as unknown as ChangeCard;
+        const print = stored.planFix?.fingerprint;
         this.pendings.set(id, {
           id,
           humanId: stored.humanId,
           card,
+          shown,
           decision,
           createdAt: new Date(now).toISOString(),
-          expiresAt,
+          expiresAt: untilAnswered ? null : expiresAt,
           emailToken: typeof json.email_token === "string" ? json.email_token : "",
           readback: readbackOf(card, decision, ctx.source),
           wordsUsed: stored.wordsUsed,
-          perform: async () => this.perform(await this.prepareAll(commandCalls, ctx), ctx),
-          redecide: async () => this.decideSteps(await this.prepareAll(commandCalls, ctx), ctx),
+          perform: async (by) => this.perform(await this.prepareAll(commandCalls, ctx), ctx, by),
+          redecide: async () => this.redecideAll(commandCalls, ctx),
+          ...(print && card.projectId
+            ? { fingerprint: { projectId: card.projectId, value: print } }
+            : {}),
           cancelTimer,
           inFlight: false,
         });
@@ -696,29 +881,51 @@ export class CommandExecutor {
     return armed;
   }
 
-  private async perform(steps: Step[], ctx: CommandContext): Promise<ExecuteResult> {
+  /**
+   * Makes the planned steps. `by`, the human whose yes confirmed them: a step on the person's own
+   * words runs as that human (L4-selftasks-116: "Changed by you", their name on Changes, no Inbox
+   * echo); every other step, and every step that acts at once on the model's call, runs as the
+   * context's actor. The steps were planned and decided as the agent, so nothing it may do widens.
+   */
+  private async perform(steps: Step[], ctx: CommandContext, by?: Actor): Promise<ExecuteResult> {
     const done: DoneStep[] = [];
     const working: CommandContext = { ...ctx };
+    const person = by && by.kind === "human" && by.id === ctx.humanId ? by : null;
     for (const step of steps) {
       let outcome: CommandOutcome;
       try {
-        outcome = await step.def.run(step.params, working);
+        outcome = await step.def.run(
+          step.params,
+          // Marked as on the person's words: a note the model passed stays the agent's.
+          person && step.persons ? { ...working, actor: person, onPersonsWords: true } : working,
+        );
       } catch (e) {
         const rollbackFailures = await this.rollback(done, working);
-        if (rollbackFailures.length === 0)
-          return refusal(
-            e,
-            steps.length === 1 ? (steps[0] as Step).card : mergeCards(steps.map((s) => s.card)),
-          );
+        if (rollbackFailures.length === 0) {
+          const card =
+            steps.length === 1 ? (steps[0] as Step).card : mergeCards(steps.map((s) => s.card));
+          // L4-selftasks-105 (b): a set refused at one change says that none was made, which
+          // and why, and what to do; never the refused change's sentence alone.
+          if (steps.length > 1 && isForerunnerError(e) && e.code !== "internal")
+            return refusal(
+              new ForerunnerError(
+                e.code,
+                composedRefusal(steps.length, e.message, ctx.planFix !== undefined),
+                { details: { ...(e.details ?? {}), composed: true } },
+              ),
+              card,
+            );
+          return refusal(e, card);
+        }
         const note = `Step ${done.length + 1} (${step.def.name}) failed: ${errorMessage(e)}. Rolling back failed for ${rollbackFailures.join(", ")}; the earlier steps stay applied.`;
         const kept = done.filter((d) => !rollbackFailures.includes(d.step.def.name));
-        const result = await this.record(kept, ctx, note);
+        const result = await this.record(kept, ctx, note, person);
         return { ...result, status: "partial", note };
       }
       done.push({ step, outcome });
       if (outcome.activeProjectId !== undefined) working.activeProjectId = outcome.activeProjectId;
     }
-    return this.record(done, ctx, undefined);
+    return this.record(done, ctx, undefined, person);
   }
 
   /** Undo already-applied steps in reverse; returns the names of the steps whose undo failed. */
@@ -740,7 +947,7 @@ export class CommandExecutor {
     params: unknown,
     outcome: CommandOutcome,
     ctx: CommandContext,
-  ): Promise<void | string | undefined> {
+  ): Promise<unknown> {
     if (outcome.undo) return outcome.undo();
     if (def.undo) return def.undo(params, outcome.before, outcome.after, ctx);
     throw new ForerunnerError("not_supported", `${def.name} cannot be undone`);
@@ -748,9 +955,15 @@ export class CommandExecutor {
 
   private async record(
     done: DoneStep[],
-    ctx: CommandContext,
+    given: CommandContext,
     note: string | undefined,
+    person: Actor | null = null,
   ): Promise<Extract<ExecuteResult, { status: "done" }>> {
+    // L4-selftasks-116: changes the person named in their own words and confirmed are theirs:
+    // the row's author, the session line's and the post's (a set with any other step stays the
+    // agent's, as fix_tasks' own changes are).
+    const personsWords = done.length > 0 && done.every((d) => d.step.persons === true);
+    const ctx: CommandContext = person && personsWords ? { ...given, actor: person } : given;
     const reversible = done.every((d) => d.outcome.reversible ?? d.step.def.reversible);
     const expiring = done
       .map((d) => d.outcome.expiresAt)
@@ -803,6 +1016,7 @@ export class CommandExecutor {
       scope: card.scope,
       projectId: projectId ?? null,
       kind: "change",
+      ...(personsWords ? { personsWords: true } : {}),
     });
     // A step whose sentence quotes text the person did not write keeps its mark (d1109-chat-guard).
     const untrusted = done.map((d) => d.outcome.untrusted).find((u) => !!u);
@@ -828,6 +1042,12 @@ export class CommandExecutor {
       scope: string;
       projectId: string | null;
       kind: string;
+      /**
+       * L4-selftasks-116: the change was said in the person's own words in a conversation: the
+       * reply there tells it (with its Undo), so it is no Inbox Update (design §3.8: "never
+       * echoes of the person's own ... chat commands"). The people it is shared with still hear.
+       */
+      personsWords?: boolean;
     },
   ): Promise<void> {
     try {
@@ -853,7 +1073,9 @@ export class CommandExecutor {
       // A change the agent made, or one the app made by itself (a temporary change reverting
       // when its window ends), is news and goes to the person's Inbox.
       const theirOwn =
-        ctx.actor.kind === "human" && ctx.actor.id === ctx.humanId && meta.kind !== "revert";
+        meta.kind !== "revert" &&
+        ((ctx.actor.kind === "human" && ctx.actor.id === ctx.humanId) ||
+          meta.personsWords === true);
       // d1109-selftasks-run (ADR 0119, design §3.8 "What becomes an Update: one line per
       // session"): the agent's own fixes of its task list are told by the session that made them
       // (its log line, its one Update) or by chat's reply, never one Inbox line per change.
@@ -905,14 +1127,17 @@ export class CommandExecutor {
     this.sweepPending();
     return [...this.pendings.values()]
       .filter((p) => humanId === undefined || p.humanId === humanId)
-      .map(({ perform: _p, cancelTimer: _c, ...rest }) => rest);
+      .map(
+        ({ perform: _p, cancelTimer: _c, redecide: _r, shown: _s, fingerprint: _f, ...rest }) =>
+          rest,
+      );
   }
 
   getPending(id: string): PendingConfirmation | undefined {
     this.sweepPending();
     const p = this.pendings.get(id);
     if (!p) return undefined;
-    const { perform: _p, cancelTimer: _c, ...rest } = p;
+    const { perform: _p, cancelTimer: _c, redecide: _r, shown: _s, fingerprint: _f, ...rest } = p;
     return rest;
   }
 
@@ -971,21 +1196,74 @@ export class CommandExecutor {
       await this.answerRequest(pendingId, { verdict, ...answered }, by.id);
       return { status: "cancelled", card: p.card, pendingId };
     }
-    let now: ConfirmationDecision;
-    try {
-      now = await p.redecide();
-    } catch (e) {
-      await this.answerRequest(
-        pendingId,
-        { verdict: "refused", reason: errorMessage(e), ...answered },
-        by.id,
+    // Run C decision 53 (L4-selftasks-117): a fix of the task list applies only the set its check
+    // made of the list as it was then.
+    if (p.fingerprint) {
+      const current = await taskListFingerprint(this.store, p.fingerprint.projectId).catch(
+        () => null,
       );
+      if (current !== p.fingerprint.value) {
+        const reason = TASKS_CHANGED_REPLY;
+        await this.answerRequest(pendingId, { verdict: "refused", reason, ...answered }, by.id);
+        return {
+          status: "refused",
+          card: p.card,
+          reason,
+          code: "validation",
+          pendingId,
+          details: { reason: "changed_since" },
+        };
+      }
+    }
+    let now: ConfirmationDecision;
+    let fresh: ChangeCard;
+    try {
+      ({ decision: now, card: fresh } = await p.redecide());
+    } catch (e) {
+      // fixup-l4-selftasks-chat: the request can no longer be planned (the task it named was
+      // cancelled, finished or removed since). What it named is read as it is now, so the Yes
+      // says in one line what changed ('"Write the FAQ" changed since I asked: it is cancelled
+      // now. ...'); a refusal with nothing named that moved keeps the command's own words, and
+      // so does one that already says in words what the task is and that nothing changed
+      // (C-38's '"Write the FAQ" is already done; nothing changed.').
+      const said = /nothing changed\.$/.test(errorMessage(e));
+      const named = said ? null : await subjectsNow(this.store, p.shown).catch(() => null);
+      const gone = named ? changedSince(p.shown, named) : null;
+      const reason = gone ?? errorMessage(e);
+      await this.answerRequest(pendingId, { verdict: "refused", reason, ...answered }, by.id);
+      if (gone)
+        return {
+          status: "refused",
+          card: p.card,
+          reason: gone,
+          code: "validation",
+          pendingId,
+          details: { reason: "changed_since" },
+        };
       return { ...refusal(e, p.card), pendingId };
     }
     if (DECISION_RANK[now] > DECISION_RANK[p.decision]) {
       const reason = `the change now needs ${DECISION_TEXT[now]}: its risk rose since the card was shown; ask again`;
       await this.answerRequest(pendingId, { verdict: "refused", reason, ...answered }, by.id);
       return { status: "refused", card: p.card, reason, code: "approval_required", pendingId };
+    }
+    // L4-selftasks-117: what the read-back named is compared with the state now; a task changed
+    // elsewhere, or a setting moved, is said in one line, and nothing is applied.
+    const moved = changedSince(p.shown, fresh);
+    if (moved) {
+      await this.answerRequest(
+        pendingId,
+        { verdict: "refused", reason: moved, ...answered },
+        by.id,
+      );
+      return {
+        status: "refused",
+        card: p.card,
+        reason: moved,
+        code: "validation",
+        pendingId,
+        details: { reason: "changed_since" },
+      };
     }
     // l4-chat-depth (L4-chat-204): a project closed by Make one project (or removed) since the
     // card was read back takes no new work: the yes is refused with the joined sentence and
@@ -1000,7 +1278,7 @@ export class CommandExecutor {
       return { ...refusal(closed, p.card), pendingId };
     }
     await this.answerRequest(pendingId, { verdict, ...answered }, by.id);
-    return p.perform();
+    return p.perform(by);
   }
 
   /** A typed or spoken reply: "yes"/"ja" confirms, "no"/"nein" cancels, anything else is neither. */
@@ -1061,7 +1339,7 @@ export class CommandExecutor {
   private sweepPending(): void {
     const now = this.clock.now();
     for (const [id, p] of this.pendings) {
-      if (Date.parse(p.expiresAt) <= now) void this.expirePending(id);
+      if (p.expiresAt && Date.parse(p.expiresAt) <= now) void this.expirePending(id);
     }
   }
 
@@ -1070,11 +1348,32 @@ export class CommandExecutor {
     if (!p) return;
     this.pendings.delete(id);
     p.cancelTimer();
+    let expired = false;
+    let row: Awaited<ReturnType<StateStore["humanRequest"]["get"]>> | undefined;
     try {
-      const row = await this.store.humanRequest.get(id);
-      if (row && row.status === "open") await this.store.humanRequest.expire(id, row.version);
+      row = await this.store.humanRequest.get(id);
+      if (row && row.status === "open") {
+        await this.store.humanRequest.expire(id, row.version);
+        expired = true;
+      }
     } catch (e) {
       this.logger.warn("could not expire the request", { id, error: errorMessage(e) });
+    }
+    // L4-selftasks-117: an expiry that remains is told (before, the card left the Inbox with
+    // no event, no message and a Yes still drawn in the open chat).
+    if (!expired || !this.onExpired) return;
+    try {
+      await this.onExpired({
+        id,
+        humanId: p.humanId,
+        projectId: p.card.projectId ?? row?.project_id ?? null,
+        what: p.card.what,
+        change: cardChange(p.card),
+        source: ((row?.change_card as { context?: { source?: CommandSource } } | null)?.context
+          ?.source ?? "ui") as CommandSource,
+      });
+    } catch (e) {
+      this.logger.warn("could not tell about the lapsed card", { id, error: errorMessage(e) });
     }
   }
 
@@ -1214,20 +1513,34 @@ export class CommandExecutor {
     const decide = (r: Risk) =>
       this.policy.decide(r, ctx.actor, ctx.source, { limitChange: false });
     const decision = decide(risk);
+    const undoCard = undoCardOf(
+      row,
+      card,
+      risk,
+      decision === "act" ? null : await this.undoAskOf(row, ctx).catch(() => null),
+    );
     return this.gate({
       decision,
-      card: undoCardOf(
-        row,
-        card,
-        risk,
-        decision === "act" ? null : await this.undoAskOf(row, ctx).catch(() => null),
-      ),
+      card: undoCard,
       ctx,
       perform: () => this.performUndo(changeLogId, ctx),
-      redecide: async () =>
-        decide(await this.undoRiskOf(await this.store.changeLog.mustGet(changeLogId), ctx)),
+      redecide: () => this.redecideUndo(changeLogId, undoCard, ctx),
       answer: opts.confirmation,
+      undoOf: changeLogId,
     });
+  }
+
+  /** An undo's decision on the state now; it checks its own state when it is made. */
+  private async redecideUndo(
+    changeLogId: string,
+    card: ChangeCard,
+    ctx: CommandContext,
+  ): Promise<Redecided> {
+    const risk = await this.undoRiskOf(await this.store.changeLog.mustGet(changeLogId), ctx);
+    return {
+      decision: this.policy.decide(risk, ctx.actor, ctx.source, { limitChange: false }),
+      card,
+    };
   }
 
   /** The undo itself, once confirmed: the row is read again, since the card may be minutes old. */
