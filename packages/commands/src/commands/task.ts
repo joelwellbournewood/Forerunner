@@ -943,6 +943,27 @@ function noFileClause(
   return ` ${writesNoFileLine(specialist, fileTheWordsWrite(words))}`;
 }
 
+/**
+ * l4-selftasks-carried (L4-other-1 D-6): the line for an edit that gives a task to a specialist
+ * that writes no file, or changes such a task's words; empty for any other edit (a priority).
+ */
+function editNoFile(
+  ctx: CommandContext,
+  patch: { specialist?: string | null; outcome?: string; acceptance_criteria?: string[] },
+  task: Pick<TaskRow, "specialist" | "outcome" | "acceptance_criteria">,
+): string {
+  if (
+    patch.specialist === undefined &&
+    patch.outcome === undefined &&
+    patch.acceptance_criteria === undefined
+  )
+    return "";
+  return noFileClause(ctx, patch.specialist !== undefined ? patch.specialist : task.specialist, [
+    patch.outcome ?? task.outcome,
+    ...(patch.acceptance_criteria ?? task.acceptance_criteria ?? []),
+  ]);
+}
+
 function createSentence(
   p: TaskCreateParams,
   projectName: string,
@@ -1065,11 +1086,13 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
         title: task.title,
         ...(waitedBefore.length ? { before_tasks: waitedBefore } : {}),
       },
-      sentence: createSentence(
+      // l4-selftasks-carried (L4-other-1 D-6): a task made at once says the line too (the
+      // done sentence is this one, not the card's).
+      sentence: `${createSentence(
         params,
         project.name,
         comesBefore.map((t) => t.title),
-      ),
+      )}${noFileClause(ctx, params.specialist, [params.outcome, ...params.acceptance_criteria])}`,
       projectId: project.id,
     };
     // S-9: a task made ready (Make this a task too, ADR 0093) is prepared and its line says so.
@@ -1901,14 +1924,7 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
     const project = await ctx.store.project.mustGet(task.project_id);
     // l4-selftasks-carried (L4-other-1 D-6): an edit that gives the task to a specialist that
     // writes no file, or changes such a task's words, says what New task and Edit say.
-    const p = patch;
-    const noFile =
-      p.specialist !== undefined || p.outcome !== undefined || p.acceptance_criteria !== undefined
-        ? noFileClause(ctx, p.specialist !== undefined ? p.specialist : task.specialist, [
-            p.outcome ?? task.outcome,
-            ...(p.acceptance_criteria ?? task.acceptance_criteria ?? []),
-          ])
-        : "";
+    const noFile = editNoFile(ctx, patch, task);
     return buildCard({
       command: "task.update",
       what: `the task ${quote(task.title)}`,
@@ -1966,7 +1982,7 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
         fields: fieldsOf(updated, fields),
         ...(noteId ? { note_id: noteId } : {}),
       },
-      sentence: `${fields.length ? `Changed ${quote(task.title)}: ${words}.` : `Noted for ${quote(task.title)}.`}${
+      sentence: `${fields.length ? `Changed ${quote(task.title)}: ${words}.${editNoFile(ctx, patch, task)}` : `Noted for ${quote(task.title)}.`}${
         noteId ? noteGoes(ctx) : ""
       }`,
       projectId: task.project_id,

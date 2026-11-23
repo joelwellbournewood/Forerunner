@@ -324,6 +324,47 @@ describe("l4-selftasks-carried, run L4: chat's read-back of a reviewer task says
     expect(await ask({ priority: "high" })).toBe('Change "Review the plan": priority to High?');
     await w.store.close();
   });
+
+  // The bench walk after this area's fix (walk2): at Assisted chat made a reviewer task at once
+  // ("Added ... for the reviewer. It runs at your next Start.") with no line, because the done
+  // sentence is the command's run sentence, not the card's.
+  it("a reviewer task made at once (no read-back) says the line in its done sentence too", async () => {
+    const w = await reviewerWorld();
+    const r = await w.executor.execute({
+      name: "task.create",
+      params: {
+        title: "Review the plan",
+        outcome: "review.md lists the gaps and risks found in notes/plan.md",
+        acceptance_criteria: [],
+        specialist: "reviewer",
+      },
+      ctx: w.ctx({ source: "chat", activeProjectId: w.pharma.id }),
+      confirmation: { kind: "tap", by: { kind: "human", id: w.human.id } },
+    });
+    expect(r.status).toBe("done");
+    expect((r as { sentence: string }).sentence).toContain(
+      `Added "Review the plan" to PharmaWatch, for the reviewer. ${NAMED}`,
+    );
+    // An edit made at once that gives a coder task to the reviewer says it too.
+    await w.store.task.insert({
+      project_id: w.pharma.id,
+      title: "Check the README",
+      outcome: "gaps.md lists what the README leaves out",
+      status: "ready",
+      specialist: "coder",
+    } as never);
+    const edited = await w.executor.execute({
+      name: "task.update",
+      params: { task: "Check the README", specialist: "reviewer" },
+      ctx: w.ctx({ source: "chat", activeProjectId: w.pharma.id }),
+      confirmation: { kind: "tap", by: { kind: "human", id: w.human.id } },
+    });
+    expect(edited.status).toBe("done");
+    expect((edited as { sentence: string }).sentence).toBe(
+      'Changed "Check the README": who does it to reviewer. The reviewer writes no file, so gaps.md is not written: its findings are its report, which you read in the task\'s drawer.',
+    );
+    await w.store.close();
+  });
 });
 
 /**
