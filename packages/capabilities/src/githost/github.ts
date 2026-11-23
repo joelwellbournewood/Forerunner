@@ -228,7 +228,7 @@ export class GitHubHost implements GitHost {
       if (!res.ok) {
         let message = `${method} ${path} -> ${res.status}`;
         try {
-          const j = (await res.json()) as { message?: string };
+          const j = (await this.json(res)) as { message?: string };
           if (j.message) message += `: ${j.message}`;
         } catch {
           // no body
@@ -247,7 +247,7 @@ export class GitHubHost implements GitHost {
       }
       opts.onResponse?.(res);
       if (res.status === 204) return undefined as T;
-      return (await res.json()) as T;
+      return (await this.json(res)) as T;
     }
     throw new ForerunnerError(
       "provider_error",
@@ -282,6 +282,33 @@ export class GitHubHost implements GitHost {
           `GitHub API at ${this.origin ?? this.baseUrl} did not answer in time`,
           { retryable: true },
         );
+      const token = (this.headers.Authorization ?? "").replace(/^Bearer /, "");
+      throw new ForerunnerError(
+        "provider_error",
+        `GitHub API unreachable at ${this.origin ?? this.baseUrl}: ${describeNetworkError(e, [token])}`,
+        { retryable: true },
+      );
+    }
+  }
+
+  /**
+   * L4-github-120: an answer's body, read under the request's own timeout (`send`'s signal ends
+   * the body too): a body that stalls past it is GitHub not answering in time, retryable, as a
+   * request that never got its headers; one cut short otherwise is GitHub unreachable. Before,
+   * the reads were outside `send`'s guard and threw the bare abort. Never the token.
+   */
+  private async json(res: Response): Promise<unknown> {
+    try {
+      return await res.json();
+    } catch (e) {
+      const name = (e as { name?: unknown } | null)?.name;
+      if (name === "TimeoutError" || name === "AbortError")
+        throw new ForerunnerError(
+          "provider_error",
+          `GitHub API at ${this.origin ?? this.baseUrl} did not answer in time`,
+          { retryable: true },
+        );
+      if (e instanceof SyntaxError) throw e;
       const token = (this.headers.Authorization ?? "").replace(/^Bearer /, "");
       throw new ForerunnerError(
         "provider_error",
@@ -783,7 +810,7 @@ export class GitHubHost implements GitHost {
       if (!res.ok) {
         let message = `graphql ${opName} -> ${res.status}`;
         try {
-          const j = (await res.json()) as { message?: string };
+          const j = (await this.json(res)) as { message?: string };
           if (j.message) message += `: ${j.message}`;
         } catch {
           // no body
@@ -800,7 +827,7 @@ export class GitHubHost implements GitHost {
           details: { status: res.status, operation: opName },
         });
       }
-      const payload = (await res.json()) as { data?: T; errors?: GraphqlError[] };
+      const payload = (await this.json(res)) as { data?: T; errors?: GraphqlError[] };
       const errors = payload.errors ?? [];
       if (errors.length) {
         const types = errors.map((e) => String(e.type ?? ""));
