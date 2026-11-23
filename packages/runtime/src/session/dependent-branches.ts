@@ -259,7 +259,11 @@ export class DependentBranches {
    * task closes, as on a merge (L4-github-117: "Closed: #4 was closed on GitHub."), and what
    * built on it is rebuilt without it.
    */
-  private async closedOnHost(task: TaskRow, info: PullRequestInfo): Promise<void> {
+  private async closedOnHost(
+    task: TaskRow,
+    info: PullRequestInfo,
+    o: { rebuild?: boolean } = {},
+  ): Promise<void> {
     const { store } = this.deps;
     const record = await store.mergeRecord.forTask(task.id);
     // Read again after its change was recorded as merged through another: nothing more to do.
@@ -274,7 +278,25 @@ export class DependentBranches {
       await this.recordCancelledClose(task, info);
     this.logger.info("pull request closed on the host", { taskId: task.id, pr: info.number });
     await this.closeMergeCards(task.id, task.pr_url ?? info.htmlUrl, "closed");
-    await this.rebuildFor(task.project_id, task.id);
+    if (o.rebuild !== false) await this.rebuildFor(task.project_id, task.id);
+  }
+
+  /**
+   * L4-github-124 (a) (fixup-l4-github-merge): the person's Merge found that a pull request its
+   * chain builds on is no longer open and read it once (`ProjectPullRequests.merge`): closed on
+   * GitHub a moment ago, before the watcher's poll read it. Its record, its Tasks row and its
+   * merge cards are settled now as the watcher's report settles them (`closedOnHost`: "#4 was
+   * closed without merging.", or merged through another), so the row is true right after the
+   * press; before, it read "waiting for you to merge" until the next poll. What built on it is
+   * not rebuilt here: the press's own branch check did that for the chain it merges, and the
+   * watcher's next poll (which reads the close again) does it for the rest, so the press writes
+   * to GitHub only for what the person pressed. A pull request merged on GitHub is left to that
+   * poll, whose report starts the merge's listeners once.
+   */
+  async closedAtPress(task: TaskRow, info: PullRequestInfo): Promise<void> {
+    if (info.state === "open" || info.merged) return;
+    this.seen.delete(task.id);
+    await this.closedOnHost(task, info, { rebuild: false });
   }
 
   /**

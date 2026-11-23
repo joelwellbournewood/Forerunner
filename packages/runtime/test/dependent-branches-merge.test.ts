@@ -2543,10 +2543,18 @@ describe("l3-merge, run L3", { timeout: 240_000 }, () => {
     `#${b} was rebuilt without #${a}, ${how}. It was reviewed with #${a}'s changes, so it waits for you: look at it, then merge it or redo the task.`;
   const changedAfterReview = (pr: number) =>
     `#${pr} changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.`;
-  /** The Overview's Merge, as compose wires it: the merge step itself, answered at once. */
+  /**
+   * The Overview's Merge, as compose wires it: the merge step itself, answered at once (and,
+   * since fixup-l4-github-merge, a closed pull request the chain builds on settled on the press).
+   */
   async function press(m: ChainWorld, n: number) {
     const project = await m.w.store.project.mustGet(m.w.project);
-    const prs = new ProjectPullRequests({ store: m.w.store, host: m.github, merge: m.merge });
+    const prs = new ProjectPullRequests({
+      store: m.w.store,
+      host: m.github,
+      merge: m.merge,
+      closedAtPress: (task, info) => m.dependents.closedAtPress(task, info),
+    });
     const answer = await prs.merge(project, n, m.w.human);
     await prs.idle();
     await m.host.settle();
@@ -2980,10 +2988,18 @@ describe("l4-github-merge, run L4", { timeout: 240_000 }, () => {
   type ChainWorld = Awaited<ReturnType<typeof chainWorld>>;
   const changedAfterReview = (pr: number) =>
     `#${pr} changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.`;
-  /** The Overview's Merge, as compose wires it: the merge step itself, answered at once. */
+  /**
+   * The Overview's Merge, as compose wires it: the merge step itself, answered at once, and a
+   * pull request the chain builds on found closed settled on the press (L4-github-124 (a)).
+   */
   async function press(m: ChainWorld, n: number) {
     const project = await m.w.store.project.mustGet(m.w.project);
-    const prs = new ProjectPullRequests({ store: m.w.store, host: m.github, merge: m.merge });
+    const prs = new ProjectPullRequests({
+      store: m.w.store,
+      host: m.github,
+      merge: m.merge,
+      closedAtPress: (task, info) => m.dependents.closedAtPress(task, info),
+    });
     const answer = await prs.merge(project, n, m.w.human);
     await prs.idle();
     await m.host.settle();
@@ -3481,10 +3497,74 @@ describe("l4-github-merge, run L4", { timeout: 240_000 }, () => {
       });
       expect((await m.pr(b.id)).merged).toBe(false);
       expect((await overviewRow(m, prB))?.merge?.canMerge).toBe(true);
+      // fixup-l4-github-merge (L4-github-124 (a)): the press read A closed, so A's row says it
+      // even though B's check could not run.
+      expect((await rowOf(m, a.id)).label).toBe("Accepted · pull request closed");
     } finally {
       release();
       await lock;
     }
     expect(await mainFiles(m)).not.toContain(m.fileOf("Add page"));
+  });
+
+  it("L4-github-124 (a): A closed on GitHub, then Merge pressed on B before any poll: A's Tasks row reads its pull request closed right after the press, with no poll; B is refused as before (L3-github-1); the next poll and a restart keep both", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    const waiting = (await rowOf(m, a.id)).label;
+    await m.close(a.id);
+    const sentence = `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it, then merge it or redo the task.`;
+    expect(await press(m, prB)).toEqual({ state: "refused", sentence, order: [] });
+    // Before: A's row still read as it did before the close until the watcher's next poll.
+    const closed = `#${prA} was closed without merging.`;
+    const expectA = async () => {
+      expect(await m.record(a.id)).toMatchObject({
+        state: "left_to_you",
+        last_outcome: "closed",
+        sentence: closed,
+      });
+      const row = await rowOf(m, a.id);
+      expect(row.label).toBe("Accepted · pull request closed");
+      expect(row.label).not.toBe(waiting);
+      expect(await openViews(m, a.id)).toEqual([]);
+    };
+    await expectA();
+    // B as L3-github-1 has it: rebuilt without A, one card, nothing on main.
+    expect((await m.pr(b.id)).merged).toBe(false);
+    expect(await m.prFiles(prB)).toEqual([m.fileOf("Add footer")]);
+    expect(await m.record(b.id)).toMatchObject({ state: "left_to_you", sentence });
+    expect(await openViews(m, b.id)).toHaveLength(1);
+    // Nothing more was written to GitHub for A: it stays closed and unmerged.
+    expect(await m.pr(a.id)).toMatchObject({ state: "closed", merged: false });
+    // The watcher's next poll reads A's close again: nothing changes.
+    await m.poll();
+    await expectA();
+    expect(await openViews(m, b.id)).toHaveLength(1);
+    expect((await m.pr(b.id)).merged).toBe(false);
+    // The daemon started again: the record is on the store, and its poll keeps it.
+    await restarted(m).poll();
+    await expectA();
+    expect(await openViews(m, b.id)).toHaveLength(1);
+    expect(await mainFiles(m)).not.toContain(m.fileOf("Add page"));
+  });
+
+  it("L4-github-124 (a), counter-case: a dependency redone after both were accepted keeps its pull request open on GitHub; the press reads it open and leaves its record and row as they were", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    const row = await m.w.store.task.mustGet(a.id);
+    await m.w.store.task.reopen(a.id, row.version, "ready", "Redo asked by you", {
+      agentId: m.w.alice,
+    });
+    const before = await m.record(a.id);
+    expect((await press(m, prB)).state).toBe("refused");
+    expect(await m.record(a.id)).toMatchObject({
+      state: before.state,
+      last_outcome: before.last_outcome,
+      sentence: before.sentence,
+    });
+    expect((await m.pr(a.id)).state).toBe("open");
   });
 });

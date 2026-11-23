@@ -9812,6 +9812,15 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   head (`getBranchHead`), mergeable and the checks on the reviewed head, refused at once in the
   merge step's words; `finish` records a merge GitHub made first as `merged_on_host` and sets
   `MergeOutcome.alreadyMerged` (`ports.ts`).
+- `daemon/pull-requests.ts` (fixup, L4-github-124 (a)): `goneUnder` names the tasks a pressed
+  chain builds on whose pull request is not listed open and not merged on its record; after the
+  chain's branch check (also when it refuses) `settleClosedAtPress` reads each once with
+  `getPullRequest` and hands one closed without a merge to the `closedAtPress` port (compose:
+  `DependentBranches.closedAtPress`, which runs `closedOnHost` with `rebuild: false`, then a
+  `project` event), so its Tasks row reads closed right after the press. An open one or one
+  merged on GitHub is left to the watcher's poll; a failed read is logged and left too. Tests:
+  `dependent-branches-merge.test.ts` "l4-github-merge, run L4" (L4-github-124 (a), its
+  counter-case, L4-github-119), `real-daemon.test.ts` "l4-github-merge, run L4".
 - `daemon/pull-requests.ts`: the press calls `headMovedNow` for every task of the chain;
   `isJoinedStatusPr` lists a joined project's marked open status pull request as the kept
   project's docs row. `daemon/join-preview.ts` names "Status pull request" and counts open pull

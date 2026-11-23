@@ -1791,7 +1791,11 @@ checks the installation and prints what is missing.
   GitHub."). A cancelled task's pull request you close there reads as closed without merging.
 - **Merge** reads GitHub first: a commit pushed a moment ago, a check that failed or a conflict
   is said at once, and nothing is merged. A pull request you merged on GitHub already reads "#59
-  was merged on GitHub already.".
+  was merged on GitHub already.". If the pull request you press builds on one you closed on
+  GitHub a moment ago, the task of the closed one reads "Accepted · pull request closed" in Tasks
+  right after your press.
+- In Costs, **Accepted** is counted against tries: a run that paused at its budget and the run
+  your Continue started are one try, so a task accepted after one Continue reads "1 / 1".
 - **Make one project** names the Status pull request setting and counts only the pull requests
   still open. After it, the kept project lists the other's open status pull request with Merge.
   The other project's page names it in the header, says where its files are and where its tasks

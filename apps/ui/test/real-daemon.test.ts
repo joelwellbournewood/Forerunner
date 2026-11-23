@@ -26373,4 +26373,69 @@ describe("l4-github-merge, run L4", () => {
       await w.host.stop();
     }
   }, 240_000);
+
+  it("fixup-l4-github-merge (L4-github-124 (a)): A closed on GitHub, Merge pressed on B before any poll: the press is refused as L3-github-1 says, and A's Tasks row reads its pull request closed right after the press, with no poll; also after the daemon starts again", async () => {
+    const w = await repoWorld("l4press");
+    let { rt, client } = await w.compose();
+    try {
+      const project = await client.createProject({
+        name: "Kite club",
+        goal: "The club's pages",
+        repos: ["alice/l4press"],
+      });
+      const a = await client.createTask(project.id, {
+        title: "Write kite/club.txt with one line",
+        outcome: "kite/club.txt holds one line",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const b = await client.createTask(project.id, {
+        title: "Write kite/club-day.txt after the club file",
+        outcome: "kite/club-day.txt names the club day",
+        riskTier: 1,
+        specialist: "coder",
+        dependsOn: [a.id],
+      });
+      await runSession(client, project.id);
+      const [prA, prB] = [
+        prOf((await rt.store.task.mustGet(a.id)).pr_url),
+        prOf((await rt.store.task.mustGet(b.id)).pr_url),
+      ];
+      const rowOfA = async (c: DaemonClient) =>
+        (await c.tasks(project.id)).find((t) => t.id === a.id)?.display;
+      expect((await rowOfA(client))?.label).toBe("Accepted · waiting for you to merge");
+      // The person closes A on GitHub and presses Merge on B on the Overview before any poll.
+      await w.github.updatePullRequest(w.REPO, prA, { state: "closed" });
+      expect(await client.mergePullRequest(project.id, prB)).toEqual({
+        state: "refused",
+        sentence: `#${prB} was rebuilt without #${prA}, which was closed. It was reviewed with #${prA}'s changes, so it waits for you: look at it, then merge it or redo the task.`,
+        order: [],
+      });
+      await rt.pullRequests.idle();
+      await w.host.settle();
+      // Before: "Accepted · waiting for you to merge" until the watcher's next poll.
+      const closed = {
+        label: "Accepted · pull request closed",
+        detail: `#${prA} was closed without merging.`,
+      };
+      expect(await rowOfA(client)).toMatchObject(closed);
+      // Nothing was written to GitHub for A, and nothing reached main.
+      expect(await w.github.getPullRequest(w.REPO, prA)).toMatchObject({
+        state: "closed",
+        merged: false,
+      });
+      expect((await w.github.getPullRequest(w.REPO, prB)).merged).toBe(false);
+      // The daemon starts again on the same home; its first poll keeps the row.
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      expect(await rowOfA(client)).toMatchObject(closed);
+      await rt.githostWatcher?.pollOnce();
+      await w.host.settle();
+      expect(await rowOfA(client)).toMatchObject(closed);
+    } finally {
+      await rt.close();
+      await w.host.stop();
+      rmSync(w.work, { recursive: true, force: true });
+    }
+  }, 240_000);
 });

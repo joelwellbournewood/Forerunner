@@ -3113,3 +3113,10 @@ their tries and the Accepted column ("7 / 9 (78%)", "5 / 6 (83%)") is read again
 `project.test.tsx` ("l4-github-merge, run L4") reads those rows from the fake; the real daemon's
 rule is pinned in `real-daemon.test.ts` beside "Costs: tasks by title ..." (a paused run and the
 run a Continue started read runs 2, accepted 1, tries 1 for the task, the coder and the model).
+
+fixup-l4-github-merge (2026-11-23, L4-github-124 (a)): the fake daemon's
+`pullRequestPressFinds` takes `closedDependency` (`{ taskId, number }`): the press then settles
+that task's merge record as the daemon's `closedAtPress` does ("#N was closed without merging.",
+`last_outcome` closed) and emits `project.changed`, so its Tasks row reads "Accepted · pull
+request closed" right after the refused press (`project-overview.test.tsx`, "l4-github-merge, run
+L4 (fixup)").

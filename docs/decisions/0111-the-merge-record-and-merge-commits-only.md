@@ -600,6 +600,18 @@ Decided, each tested at the boundary the person uses (`dependent-branches-merge.
    (`alreadyMerged`) is recorded `merged_on_host` and `MergeOutcome.alreadyMerged` says it: a
    rebuild card's Merge then answers "#59 was merged on GitHub already."; only Forerunner's own
    merge reads "Merged #59.".
+5. **A pull request the press finds closed is settled at the press** (L4-github-124 (a), added
+   by the fix-up of the same day). When the pressed chain builds on a pull request that is no
+   longer listed open and not merged on its record, the press reads that pull request once
+   after the chain's own branch check; one closed on GitHub without a merge is settled as the
+   watcher's report settles it (`DependentBranches.closedAtPress` over `closedOnHost`: "#46 was
+   closed without merging." or merged through another, its merge cards closed), so its Tasks row
+   reads "Accepted · pull request closed" right after the press, also when the press is refused.
+   What built on it is not rebuilt there: the press's branch check already rebuilt the chain it
+   merges, and the watcher's next poll, which reads the close again, rebuilds the rest; so the
+   press writes to GitHub only for what the person pressed. One still open (its task redone or
+   cancelled) is left as it is, and one merged on GitHub is left to that poll, whose report tells
+   the merge's listeners once.
 
 Left for later: a Close button for a cancelled task's pull request still open on GitHub (the
 owner's answer of 2026-11-18, ADR 0105 point 4) is not built in this round.

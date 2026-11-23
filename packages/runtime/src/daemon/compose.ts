@@ -2853,6 +2853,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     agentId: agent.id,
     // d1109-onerepo-link: W15-01's ownership reads this computer's copy's marker too.
     copyMarker: (projectId) => docs.copyMarker(projectId),
+    // L4-github-124 (a): a pull request the pressed chain builds on, read closed at the press,
+    // is settled there (its row reads closed at once), as the watcher's report settles it.
+    // Its cards closing tell the Inbox (`cardsClosed`); the project's screens read again here.
+    closedAtPress: async (task, info) => {
+      await dependentBranches.closedAtPress(task, info);
+      if (task.project_id) events.emit("project", { id: task.project_id });
+    },
     changed: (projectId) => {
       events.emit("project", { id: projectId });
       // merged-copy with merge-in-app: a docs pull request merged on the click has no task, so

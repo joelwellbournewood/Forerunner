@@ -1116,3 +1116,48 @@ describe("l3-merge, run L3", () => {
     expect(within(files).getByTestId("prs-cancelled")).toHaveTextContent("pull request #43");
   });
 });
+
+describe("l4-github-merge, run L4 (fixup)", () => {
+  it("L4-github-124 (a): Merge on a pull request that builds on one closed on GitHub: the press is refused at once, and the Tasks row of the task it built on reads its pull request closed right after, with no poll", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const sentence =
+      "#48 was rebuilt without #11, which was closed. It was reviewed with #11's changes, so it waits for you: look at it, then merge it or redo the task.";
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [
+        {
+          kind: "task",
+          taskId: "task_48",
+          title: "Write kite/club-day.txt",
+          number: 48,
+          url: "https://example.test/org/atlas/pull/48",
+          branch: "fr/48",
+          review: "critic",
+          merge: { state: "ready", canMerge: true, sentence: null, first: [11] },
+        },
+      ],
+      error: null,
+    };
+    // "Index the documentation pages" (#11) was closed on GitHub; no poll read it yet.
+    harness.daemon.state.pullRequestPressFinds["proj_atlas#48"] = {
+      row: "left_to_you",
+      sentence,
+      closedDependency: { taskId: "task_1", number: 11 },
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    await user.click(await within(files).findByTestId("pr-merge"));
+    expect(await within(files).findByRole("alert")).toHaveTextContent(sentence);
+    expect(postedCalls(harness, "/projects/proj_atlas/pull-requests/48/merge")).toHaveLength(1);
+    // The Tasks tab, opened after the press: the closed one's row says so.
+    await user.click(screen.getByTestId("tab-tasks"));
+    await waitFor(() => {
+      const row = screen
+        .getAllByTestId("task-row")
+        .find((r) => r.getAttribute("data-task-id") === "task_1") as HTMLElement;
+      expect(within(row).getByTestId("task-status")).toHaveTextContent(
+        "Accepted · pull request closed",
+      );
+    });
+  });
+});
