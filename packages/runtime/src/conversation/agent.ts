@@ -1183,8 +1183,12 @@ export class ConversationAgent {
       text: string,
       actions: ChatAction[],
       extra: Partial<ChatReply> = {},
-      /** `notice`: a reply about the app, not content (`lastMessage` skips it; U-047). */
-      meta: { notice?: boolean } = {},
+      /**
+       * `notice`: a reply about the app, not content (`lastMessage` skips it; U-047). `hold`: the
+       * app's own hold reply (the credential policy held the question), which the model never
+       * wrote, so no later turn's history carries it (`historyMessages`).
+       */
+      meta: { notice?: boolean; hold?: boolean } = {},
     ): Promise<ChatReply> => {
       const reply = cancelledForStop ? `${CARD_CANCELLED_SENTENCE} ${text}` : text;
       hold.replied = true;
@@ -1193,6 +1197,7 @@ export class ConversationAgent {
         text: reply,
         conversationProjectId: conversationProject,
         ...(meta.notice ? { notice: true } : {}),
+        ...(meta.hold ? { hold: true } : {}),
         ...(answeredHere ? { answeredId: answeredHere } : {}),
         actions: actions.map((a) => a.kind),
         actionDetails: actions,
@@ -1468,7 +1473,7 @@ export class ConversationAgent {
               },
             }
           : {},
-        { notice: true },
+        { notice: true, hold: true },
       );
     }
     // The one-off press: this question's calls may move to the next credential at a stop.
@@ -2650,6 +2655,8 @@ export class ConversationAgent {
           : {}),
         ...(stopped ? { stopped: true } : {}),
         ...(ownAsk || askInPlace || heldAfter || failedTurn ? { notice: true } : {}),
+        // fixup-l4-cred-screens (L4-creds-19): the hold reply is the app's, never the model's.
+        ...(heldAfter ? { hold: true } : {}),
         // L4-creds-4: a reply that says the answer failed; Ask again under it where the same
         // line could get an answer now.
         ...(failedTurn?.askAgain ? { failed: true } : {}),

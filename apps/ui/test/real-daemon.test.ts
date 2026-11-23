@@ -25706,4 +25706,81 @@ describe("l4-cred-screens, run L4", () => {
       await second.rt.close();
     }
   }, 60_000);
+
+  // fixup-l4-cred-screens (the review's blocking #2; L4-creds-19): two held questions, then the
+  // press on the newest. The app's own hold reply under the first one reached the model as an
+  // assistant turn ("... so I have not answered. I can still add and change tasks."): words the
+  // model never wrote, in its history. The history leaves out every hold reply; the conversation
+  // still shows the first question with its hold reply, and the answered one once.
+  it("L4-creds-19: with two held questions, the press on the newest reaches the model with no hold reply in its history, after composing again too", async () => {
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const scripted = new ScriptedProvider([{ text: "It has cost CHF 0.40 so far." }], clock);
+    const standIn = messagesApiStandIn({ model: new AcceptingCriticProvider(scripted), clock });
+    const first = await composeL4({ clock, standIn });
+    const earlier = "which task is next?";
+    const said = "how much has this project cost?";
+    const modelSaw = () =>
+      (scripted.calls.at(-1)?.messages ?? []).map((m) => ({
+        role: m.role,
+        text: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+      }));
+    let home = "";
+    try {
+      await restSource(first.rt, "subscription", resetAt);
+      const me = await first.client.me();
+      const agentId = (await first.client.agents())[0]?.id ?? "";
+      const one = await first.client.chat({ humanId: me.id, agentId, text: earlier });
+      expect(one.reply).toMatch(/so I have not answered/);
+      const two = await first.client.chat({ humanId: me.id, agentId, text: said });
+      expect(two.reply).toMatch(/so I have not answered/);
+      expect(two.oneOff?.label).toBe("Use API key");
+      const answered = await first.client.chat({
+        humanId: me.id,
+        agentId,
+        text: said,
+        oneOff: true,
+        heldTurn: two.transcriptId,
+      });
+      expect(answered.reply).toContain("It has cost CHF 0.40 so far.");
+      // The model's request: the pressed question once, and no line the model never wrote.
+      const messages = modelSaw();
+      expect(messages.filter((m) => m.role === "user" && m.text.includes(said))).toHaveLength(1);
+      expect(messages.some((m) => m.text.includes("so I have not answered"))).toBe(false);
+      expect(messages.some((m) => m.text.includes("I can still add and change tasks"))).toBe(false);
+      expect(messages.filter((m) => m.role === "assistant")).toEqual([]);
+      // The conversation as the person sees it: the first question with its hold reply, the
+      // answered one once.
+      const turns = (await first.client.conversation(null)).turns;
+      expect(turns.map((t) => t.said)).toEqual([earlier, said]);
+      expect(turns[0]?.reply?.text).toMatch(/so I have not answered/);
+      expect(turns[1]?.reply?.text ?? "").toContain("It has cost CHF 0.40 so far.");
+      await settleSessions(first.rt);
+      home = first.home;
+    } finally {
+      await first.rt.close();
+    }
+    // Composed again: the next question's history has the answered turn, and still no hold reply.
+    const second = await composeL4({ home, clock, vault: first.vault, standIn });
+    try {
+      const me = await second.client.me();
+      const agentId = (await second.client.agents())[0]?.id ?? "";
+      // The subscription's rest is kept across the restart: this one is answered on the key too.
+      const next = await second.client.chat({
+        humanId: me.id,
+        agentId,
+        text: "and what is left?",
+        oneOff: true,
+      });
+      expect(next.reply).toContain("It has cost CHF 0.40 so far.");
+      const messages = modelSaw();
+      expect(messages.some((m) => m.text.includes("so I have not answered"))).toBe(false);
+      expect(messages.filter((m) => m.role === "user" && m.text.includes(said))).toHaveLength(1);
+      expect(
+        messages.filter((m) => m.role === "assistant" && m.text.includes("CHF 0.40")),
+      ).toHaveLength(1);
+      await settleSessions(second.rt);
+    } finally {
+      await second.rt.close();
+    }
+  }, 60_000);
 });

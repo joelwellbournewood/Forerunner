@@ -8361,6 +8361,14 @@ log's lines stay in `session/credential-words.ts`); the shapes are in
   reply carries `oneOff`) and has the same words, the new `chat.human` row records `replaces`;
   `readTranscript` leaves a replaced turn out (the conversation view and `historyMessages`
   alike, after a restart too), and the turn's `earlier` drops it before the model call.
+  fixup-l4-cred-screens: every hold reply is the app's own words, never an assistant turn of the
+  history. Both hold forms (held before the call, held on the way) write `hold: true` on their
+  `chat.reply` row (`TranscriptReply.hold`; a notice with `oneOff` reads as one on older rows,
+  `isHoldReply`), and `historyMessages` treats a held turn as the person's line alone (merged
+  with the next, dropped when it is the last). The conversation view still shows it. Before,
+  two held questions and the press on the newest showed the model the first one's "... so I
+  have not answered. I can still add and change tasks." as its own reply (real-daemon "with two
+  held questions").
 - **The refused card's closed line** (C5-left-5): `closeRefusedCards(..., {why, workWaited})`
   records why it closed; `refusedClosedLine` words it.
 - **Rows and status** (CS-5): `waitRowWords` covers the share (Change the allowance), a key's
