@@ -23,9 +23,12 @@ import {
 } from "../loop/merge.ts";
 import {
   folderWaitOver,
+  MERGED_THROUGH,
+  mergedThroughSentence,
   OWED_FOLDER_OUTCOMES,
   owedFolderWait,
   plainWaitForYou,
+  throughNumberOf,
 } from "../loop/merge-mode.ts";
 import type { MergeOutcome, MergePort, MergeRequest } from "../loop/ports.ts";
 import type { WatchedPullRequest } from "./githost-watcher.ts";
@@ -65,7 +68,7 @@ export interface DependentBranchesDeps {
   clock: Clock;
   merge: Pick<ReviewedPrMerge, "merged">;
   executor: Pick<PrTaskExecutor, "rebuildDependents" | "rebuildTask" | "mergeMethodOf"> &
-    Partial<Pick<PrTaskExecutor, "conflictsWithBase">>;
+    Partial<Pick<PrTaskExecutor, "conflictsWithBase" | "reachedBase">>;
   /** L3-github-2: merge cards were closed (compose tells the Inbox, `inbox.changed`). */
   cardsClosed?: () => void;
 }
@@ -154,6 +157,19 @@ function reviewedChangeBefore(record: MergeRecordRow, r: DependentRebuild): bool
   return !!record.reviewed_head_sha && r.before === record.reviewed_head_sha;
 }
 
+/**
+ * L4-github-112: the card of a task whose pull request was closed while its change reached main
+ * through another's merge (`mergedThroughCard`): take it out of main, or keep it.
+ */
+export const MERGED_THROUGH_OPTIONS = ["Take this work out", "Keep it"] as const;
+
+/**
+ * Why a task's merge cards were closed (`closeMergeCards`, the card's `closed`): its pull request
+ * merged; closed on GitHub without a merge (L4-github-117: "Closed: #33 was closed on GitHub.");
+ * or closed while its change reached main through another (L4-github-112).
+ */
+export type MergeCardsClosed = "merged" | "closed" | "merged_through";
+
 /** A rebuild that could not run: the worktree was busy (or dirty), the push was held, a step failed. */
 const OWES: ReadonlySet<DependentOutcome["result"]> = new Set(["busy", "held", "failed", "waits"]);
 
@@ -226,22 +242,245 @@ export class DependentBranches {
         method,
       });
       await this.deps.merge.merged({ task, record: done, mergeSha, method });
+      // L4-github-112: what it built on and was closed on GitHub may have reached main with it.
+      await this.closedReachedThrough(task, { number: info.number, mergeSha });
       return;
     }
     // No record (accepted before ADR 0111): what built on it is rebuilt all the same.
     await this.rebuildFor(task.project_id, task.id);
   }
 
+  /**
+   * A task pull request closed on GitHub without a merge. Its record is left to the person
+   * ("#4 was closed without merging."), unless its reviewed change reached main all the same
+   * through a pull request that built on it (L4-github-112, `mergedThrough`); a cancelled task's
+   * pull request without a record gets one that says it was closed (L4-chat-110: chat's facts
+   * read "Closed without merging", never "Left open on GitHub"). Every open merge card of the
+   * task closes, as on a merge (L4-github-117: "Closed: #4 was closed on GitHub."), and what
+   * built on it is rebuilt without it.
+   */
   private async closedOnHost(task: TaskRow, info: PullRequestInfo): Promise<void> {
     const { store } = this.deps;
     const record = await store.mergeRecord.forTask(task.id);
-    if (record && record.state !== "merged" && record.pr_number === info.number)
+    // Read again after its change was recorded as merged through another: nothing more to do.
+    if (record?.state === "merged" && record.pr_number === info.number) return;
+    if (record && record.state !== "merged" && record.pr_number === info.number) {
+      if (await this.mergedThrough(task, record)) return;
       await store.mergeRecord.move(record.id, "left_to_you", {
         sentence: `${prName(info.number)} was closed without merging.`,
         last_outcome: "closed",
       });
+    } else if (!record && task.status === "cancelled" && task.pr_url)
+      await this.recordCancelledClose(task, info);
     this.logger.info("pull request closed on the host", { taskId: task.id, pr: info.number });
+    await this.closeMergeCards(task.id, task.pr_url ?? info.htmlUrl, "closed");
     await this.rebuildFor(task.project_id, task.id);
+  }
+
+  /**
+   * L4-chat-110: a cancelled task's pull request closed on GitHub, with no merge record (it was
+   * cancelled before an accept): a record that says so, left to the person with no Merge, so
+   * the chat's facts and the Overview read it closed. Nothing is written to GitHub.
+   */
+  private async recordCancelledClose(task: TaskRow, info: PullRequestInfo): Promise<void> {
+    const agentId = task.owner_agent_id ?? task.claimed_by ?? task.author_agent ?? "";
+    await this.deps.store.transaction(async (tx) => {
+      const pinned = await tx.mergeRecord.pin({
+        task_id: task.id,
+        project_id: task.project_id,
+        agent_id: agentId,
+        pr_number: info.number,
+        pr_url: task.pr_url ?? info.htmlUrl,
+        reviewed_head_sha: info.head.sha,
+        author_agent: agentId || null,
+      });
+      await tx.mergeRecord.move(pinned.id, "left_to_you", {
+        sentence: `${prName(info.number)} was closed without merging.`,
+        last_outcome: "closed",
+      });
+    });
+  }
+
+  /**
+   * L4-github-112 (ADR 0111, amendment of 2026-11-23, replacing point 4 of the 2026-11-15 one):
+   * a pull request closed on GitHub whose reviewed commit is on main all the same (a pull request
+   * that held it was merged there, before or after the watcher read the close) is recorded as
+   * merged through it: state merged, `MERGED_THROUGH`, the merge commit when known, and "#46 was
+   * closed, but its change reached main through #48.". Its other merge cards close, and one card
+   * offers Take this work out and Keep it; nothing is written to GitHub before the person
+   * presses. True when it was (the caller then leaves the record as it is). `via`: the merged
+   * pull request it is known to have reached main through (the merge the watcher just read).
+   */
+  private async mergedThrough(
+    task: TaskRow,
+    record: MergeRecordRow,
+    via?: { number: number; mergeSha: string | null },
+  ): Promise<boolean> {
+    const { store, executor } = this.deps;
+    if (!record.reviewed_head_sha || !executor.reachedBase) return false;
+    if ((await executor.reachedBase(task, record.reviewed_head_sha)) !== true) return false;
+    const through = via ?? (await this.mergedDependentOf(task));
+    const sentence = mergedThroughSentence(record.pr_number, through?.number ?? null);
+    const moved = await store.mergeRecord.move(record.id, "merged", {
+      merge_sha: through?.mergeSha ?? null,
+      method: null,
+      sentence,
+      last_outcome: MERGED_THROUGH,
+      rebuild_owed_for: null,
+    });
+    this.logger.info("closed pull request's change reached main through another", {
+      taskId: task.id,
+      pr: record.pr_number,
+      through: through?.number ?? null,
+    });
+    await this.closeMergeCards(task.id, record.pr_url, "merged_through");
+    await this.mergedThroughCard(task, moved, sentence, through?.number ?? null);
+    // What else built on it holds a change that is on main now: nothing went away.
+    await this.rebuildFor(task.project_id, task.id);
+    return true;
+  }
+
+  /**
+   * L4-github-112: after `task`'s pull request was merged on GitHub (`merged`), each task it
+   * built on whose pull request was closed: recorded as merged through it when its reviewed
+   * change came along; one recorded so before this merge was read gets the merge commit.
+   */
+  private async closedReachedThrough(
+    task: TaskRow,
+    merged: { number: number; mergeSha: string | null },
+  ): Promise<void> {
+    const { store } = this.deps;
+    try {
+      for (const dep of await this.dependenciesOf(task)) {
+        const record = await store.mergeRecord.forTask(dep.id);
+        if (!record || record.pr_url !== dep.pr_url) continue;
+        if (record.state === "merged") {
+          if (
+            record.last_outcome === MERGED_THROUGH &&
+            !record.merge_sha &&
+            merged.mergeSha &&
+            throughNumberOf(record) === merged.number
+          )
+            await store.mergeRecord.patch(record.id, { merge_sha: merged.mergeSha });
+          continue;
+        }
+        if (record.state === "left_to_you" && record.last_outcome === "closed")
+          await this.mergedThrough(dep, record, merged);
+      }
+    } catch (e) {
+      this.logger.warn("closed dependencies not checked after a merge", {
+        taskId: task.id,
+        error: errorMessage(e),
+      });
+    }
+  }
+
+  /** The tasks `task` builds on, directly or through others, nearest first. */
+  private async dependenciesOf(task: TaskRow): Promise<TaskRow[]> {
+    const out: TaskRow[] = [];
+    const seen = new Set<string>([task.id]);
+    let frontier = [...(task.depends_on ?? [])];
+    while (frontier.length) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const dep = await this.deps.store.task.get(id);
+        if (!dep) continue;
+        out.push(dep);
+        next.push(...(dep.depends_on ?? []));
+      }
+      frontier = next;
+    }
+    return out;
+  }
+
+  /**
+   * The nearest done task that builds on `task` and whose pull request was merged (its record
+   * says so, or its reviewed commit is on main: merged on GitHub and not read yet), with its
+   * merge commit when the record has it; null when none can be named.
+   */
+  private async mergedDependentOf(
+    task: TaskRow,
+  ): Promise<{ number: number; mergeSha: string | null } | null> {
+    const { store, executor } = this.deps;
+    const tasks = await store.task.list({ project_id: task.project_id } as never, { limit: 2000 });
+    let frontier = [task.id];
+    const seen = new Set<string>(frontier);
+    while (frontier.length) {
+      const next: string[] = [];
+      for (const t of tasks) {
+        if (seen.has(t.id) || !(t.depends_on ?? []).some((d) => frontier.includes(d))) continue;
+        seen.add(t.id);
+        next.push(t.id);
+        const record = t.pr_url ? await store.mergeRecord.forTask(t.id) : undefined;
+        if (!record || record.pr_url !== t.pr_url || !record.pr_number) continue;
+        if (record.state === "merged" && record.last_outcome !== MERGED_THROUGH)
+          return { number: record.pr_number, mergeSha: record.merge_sha };
+        if (
+          record.reviewed_head_sha &&
+          (await executor.reachedBase?.(t, record.reviewed_head_sha)) === true
+        )
+          return { number: record.pr_number, mergeSha: null };
+      }
+      frontier = next;
+    }
+    return null;
+  }
+
+  /**
+   * L4-github-112: one card for a closed pull request whose change reached main through another:
+   * Take this work out (a pull request that takes only its own change out of main; nothing
+   * changes until the person merges it) or Keep it. Filed once per record.
+   */
+  private async mergedThroughCard(
+    task: TaskRow,
+    record: MergeRecordRow,
+    sentence: string,
+    through: number | null,
+  ): Promise<void> {
+    const { store } = this.deps;
+    try {
+      const rows = await store.humanRequest.list({ task_id: task.id } as never, { limit: 50 });
+      if (
+        rows.some((r) => {
+          const card = (r.change_card ?? {}) as JsonObject;
+          return (
+            card.key === MERGE_LEFT_OPEN_KEY &&
+            card.merged_through === true &&
+            card.pr_url === record.pr_url
+          );
+        })
+      )
+        return;
+      const agentId = record.agent_id || task.owner_agent_id || task.author_agent || "";
+      const humanId = (await store.agent.get(agentId))?.owner_human_id ?? "";
+      if (!humanId) return;
+      await fileLeftOpenRequest(store, {
+        task,
+        sessionId: null,
+        humanId,
+        agentId,
+        outcome: {
+          taskId: task.id,
+          prUrl: record.pr_url,
+          status: "closed",
+          reason: `PR closed, its change merged through another: ${sentence}`,
+          sentence,
+        },
+        card: { merged_through: true, through },
+        options: [...MERGED_THROUGH_OPTIONS],
+        steps: [
+          through
+            ? `Look at #${through} on GitHub: it brought the change of #${record.pr_number} into main`
+            : `Look at main on GitHub: it holds the change of #${record.pr_number}`,
+          "Then press Take this work out to undo only that change, or Keep it",
+        ],
+      });
+      this.deps.cardsClosed?.();
+    } catch (e) {
+      this.logger.warn("merged-through card not filed", { taskId: task.id, error: errorMessage(e) });
+    }
   }
 
   /**
@@ -249,7 +488,7 @@ export class DependentBranches {
    * task's merge cards close first (L3-github-2), then what built on it is rebuilt.
    */
   async dependencyMerged(e: MergedEvent): Promise<void> {
-    await this.closeMergeCards(e.task.id, e.record.pr_url);
+    await this.closeMergeCards(e.task.id, e.record.pr_url, "merged");
     await this.rebuildFor(e.task.project_id, e.task.id);
   }
 
@@ -263,7 +502,11 @@ export class DependentBranches {
    * restart, the chat repeated it as "never merged", and a rebuild card's Merge answered
    * "Merging #42." for a pull request merged on GitHub. Returns how many were closed.
    */
-  private async closeMergeCards(taskId: string, prUrl: string): Promise<number> {
+  private async closeMergeCards(
+    taskId: string,
+    prUrl: string,
+    why: MergeCardsClosed,
+  ): Promise<number> {
     const { store } = this.deps;
     let closed = 0;
     const rows = await store.humanRequest.list({ task_id: taskId, status: "open" } as never, {
@@ -274,9 +517,11 @@ export class DependentBranches {
       if (card.key !== MERGE_LEFT_OPEN_KEY) continue;
       // A card about another pull request of the task (an earlier one, before a redo) stays.
       if (typeof card.pr_url === "string" && card.pr_url && card.pr_url !== prUrl) continue;
+      // L4-github-112: the merged-through card is about the merge itself; the person answers it.
+      if (card.merged_through === true) continue;
       try {
         const marked = await store.humanRequest.patch(row.id, {
-          change_card: { ...card, closed: "merged" },
+          change_card: { ...card, closed: why },
         });
         await store.humanRequest.withdraw(marked.id, marked.version);
         closed++;
@@ -285,7 +530,12 @@ export class DependentBranches {
       }
     }
     if (closed) {
-      this.logger.info("merge cards closed: the pull request is merged", { taskId, closed });
+      this.logger.info(
+        why === "closed"
+          ? "merge cards closed: the pull request was closed"
+          : "merge cards closed: the pull request is merged",
+        { taskId, closed },
+      );
       this.deps.cardsClosed?.();
     }
     return closed;
@@ -311,8 +561,15 @@ export class DependentBranches {
     for (const taskId of taskIds) {
       if (!tasks.some((t) => t.id === taskId)) continue;
       const record = await store.mergeRecord.forTask(taskId);
+      // L4-github-117: also a card left open for a pull request closed on GitHub.
+      if (record?.state === "left_to_you" && record.last_outcome === "closed")
+        closed += await this.closeMergeCards(taskId, record.pr_url, "closed");
       if (record?.state !== "merged") continue;
-      closed += await this.closeMergeCards(taskId, record.pr_url);
+      closed += await this.closeMergeCards(
+        taskId,
+        record.pr_url,
+        record.last_outcome === MERGED_THROUGH ? "merged_through" : "merged",
+      );
     }
     return closed > 0;
   }

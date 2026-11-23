@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import {
   GitHubHost,
   GitOps,
+  inWorktree,
   PrTaskExecutor,
   REBASE_CONFLICT_KEY,
   REDO_FROM_BASE_FIELD,
@@ -13,6 +14,7 @@ import { join, Logger, run, safeSegment } from "@forerunner/platform";
 import type { MergeRecordRow, TaskRow } from "@forerunner/state";
 import { FakeGitHost } from "@forerunner/testenv";
 import { afterEach, describe, expect, it } from "vitest";
+import { filesBlock, repositoryFacts } from "../src/conversation/project-facts.ts";
 import { ProjectPullRequests } from "../src/daemon/pull-requests.ts";
 import { loadTaskDisplayContext, taskDisplay } from "../src/daemon/task-display.ts";
 import { requestViews } from "../src/daemon/views.ts";
@@ -32,6 +34,7 @@ import {
   ReviewedPrMerge,
 } from "../src/loop/merge.ts";
 import { MERGE_CARD_KEY, type MergeMode, REDO_FROM_BASE } from "../src/loop/merge-mode.ts";
+import { TaskTakeOut } from "../src/loop/take-out.ts";
 import { syncCannotRunAnswers } from "../src/session/cannot-run-card.ts";
 import { DependentBranches } from "../src/session/dependent-branches.ts";
 import { syncSignoffAnswers } from "../src/session/findings.ts";
@@ -2970,5 +2973,518 @@ describe("l3-merge, run L3", { timeout: 240_000 }, () => {
       order: [prB],
     });
     expect((await m.pr(b.id)).merged).toBe(true);
+  });
+});
+
+describe("l4-github-merge, run L4", { timeout: 240_000 }, () => {
+  type ChainWorld = Awaited<ReturnType<typeof chainWorld>>;
+  const changedAfterReview = (pr: number) =>
+    `#${pr} changed after the review: look at the new commits, then merge it yourself on GitHub, or redo the task from its row in Tasks.`;
+  /** The Overview's Merge, as compose wires it: the merge step itself, answered at once. */
+  async function press(m: ChainWorld, n: number) {
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const prs = new ProjectPullRequests({ store: m.w.store, host: m.github, merge: m.merge });
+    const answer = await prs.merge(project, n, m.w.human);
+    await prs.idle();
+    await m.host.settle();
+    return answer;
+  }
+  async function overviewRow(m: ChainWorld, n: number) {
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const view = await new ProjectPullRequests({ store: m.w.store, host: m.github }).view(project);
+    return view.waiting.find((r) => r.number === n);
+  }
+  const mainFiles = (m: ChainWorld) => m.hostGit("ls-tree", "-r", "--name-only", "main");
+  /** The Tasks row's words of a task (GET /projects/:id/tasks reads `taskDisplay`). */
+  async function rowOf(m: ChainWorld, taskId: string) {
+    const tasks = await m.w.store.task.list({ project_id: m.w.project } as never);
+    const ctx = await loadTaskDisplayContext(m.w.store, tasks, true);
+    const t = tasks.find((x) => x.id === taskId);
+    if (!t) throw new Error("no task");
+    return taskDisplay(t, ctx);
+  }
+  async function openViews(m: ChainWorld, taskId: string) {
+    const rows = await m.w.store.humanRequest.list({ task_id: taskId, status: "open" } as never);
+    return requestViews(m.w.store, rows);
+  }
+  async function answeredLine(m: ChainWorld, id: string) {
+    const [view] = await requestViews(m.w.store, [await m.w.store.humanRequest.mustGet(id)]);
+    return view?.outcome;
+  }
+  /** A commit someone pushes to `branch` on GitHub (through its git endpoint). */
+  async function pushTo(m: ChainWorld, branch: string, file: string): Promise<void> {
+    const dir = mkdtempSync(join(tmpdir(), "fr-l4-push-"));
+    try {
+      const auth = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${m.token}`).toString("base64")}`;
+      const g = (args: string[]) =>
+        run([
+          "git",
+          "-C",
+          dir,
+          "-c",
+          "user.name=Pat",
+          "-c",
+          "user.email=pat@example.test",
+          "-c",
+          `http.extraheader=${auth}`,
+          ...args,
+        ]);
+      await run([
+        "git",
+        "-c",
+        `http.extraheader=${auth}`,
+        "clone",
+        "-q",
+        "--branch",
+        branch,
+        m.host.cloneUrl(FULL),
+        dir,
+      ]);
+      writeFileSync(join(dir, file), "pushed on GitHub after the review\n");
+      await g(["add", file]);
+      await g(["commit", "-q", "-m", `Add ${file}`]);
+      await g(["push", "-q", "origin", `HEAD:${branch}`]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  /** The person's answer on a card, with the option string the Inbox shows. */
+  async function answer(m: ChainWorld, id: string, label: string) {
+    const row = await m.w.store.humanRequest.mustGet(id);
+    const [view] = await requestViews(m.w.store, [row]);
+    const option = view?.choices?.find((c) => c.label === label)?.label;
+    if (!option) throw new Error(`no option ${label}: ${JSON.stringify(view?.choices)}`);
+    await m.w.store.humanRequest.answer(row.id, row.version, option, m.w.human);
+  }
+  function takeOutOf(m: ChainWorld) {
+    return new TaskTakeOut({
+      store: m.w.store,
+      host: m.github,
+      git: m.executor,
+      humanId: m.w.human,
+      agentId: m.w.alice,
+    });
+  }
+  const sync = (m: ChainWorld) =>
+    syncPrAnswers({
+      store: m.w.store,
+      clock: m.w.clock,
+      humanId: m.w.human,
+      agentId: m.w.alice,
+      merge: m.merge,
+      takeOut: takeOutOf(m),
+    });
+  /**
+   * The daemon started again on the same store and folders: a new merge step, dependent-branches
+   * service and watcher, wired as compose wires them (as in "w15-tail, wave 15 run B").
+   */
+  function restarted(m: ChainWorld) {
+    const w = m.w;
+    const audit = new MemoryAudit();
+    const hooks = new EnforcementHooks({
+      tokens: w.tokens,
+      caps: new AllowAllCaps(),
+      secrets: new NoSecrets(),
+      kill: w.kill,
+      clock: w.clock,
+      ledger: new MemoryLedger(),
+      audit,
+      approvals: new AutoApprove("approved"),
+    });
+    const executor = new PrTaskExecutor({
+      store: w.store,
+      clock: w.clock,
+      host: m.github,
+      inner: doneExecutor(w),
+      repoFor: async () => ({ clone: m.host.cloneUrl(FULL), repo: REPO, base: "main" }),
+      worktreeRoot: m.worktreeRoot,
+      token: m.token,
+      identity,
+    });
+    const merge = new ReviewedPrMerge({
+      store: w.store,
+      clock: w.clock,
+      tokens: w.tokens,
+      hooks,
+      audit,
+      host: m.github,
+      worktreeRoot: m.worktreeRoot,
+      token: m.token,
+      identity,
+      agentIds: [w.alice],
+      allowedDomains: ["127.0.0.1"],
+      stopped: (agentId) => w.kill.isFrozen({ agentId }),
+      checksWaitMs: 0,
+    });
+    const dependents = new DependentBranches({ store: w.store, clock: w.clock, merge, executor });
+    merge.onMerged((e) => dependents.dependencyMerged(e));
+    merge.checkBranchesWith((task, o) => dependents.checkBeforeMerge(task, o));
+    const watcher = new GitHostWatcher({
+      store: w.store,
+      clock: w.clock,
+      host: m.github,
+      agentIds: [w.alice],
+      humanId: w.human,
+      retryMerges: () => merge.retryWaiting(),
+      onPullRequestState: (pr, info) => dependents.pullRequestState(pr, info),
+      repositoryProjects: async () => [{ projectId: w.project, repo: REPO }],
+      onDefaultBranchHead: (p) => dependents.sweep(p.projectId),
+    });
+    return {
+      dependents,
+      async poll() {
+        const r = await watcher.pollOnce();
+        await m.host.settle();
+        return r;
+      },
+    };
+  }
+  /** What the watcher reports for one task's pull request, read from the fake GitHub now. */
+  async function report(
+    m: ChainWorld,
+    dependents: Pick<DependentBranches, "pullRequestState">,
+    taskId: string,
+  ) {
+    const t = await m.w.store.task.mustGet(taskId);
+    const n = await m.prNumber(taskId);
+    await dependents.pullRequestState(
+      {
+        agentId: m.w.alice,
+        projectId: m.w.project,
+        taskId,
+        repo: REPO,
+        number: n,
+        url: t.pr_url ?? "",
+      },
+      await m.github.getPullRequest(REPO, n),
+    );
+    await m.host.settle();
+  }
+  /** A, then B building on A; A closed on GitHub and B merged there (B holds A's change). */
+  async function closedThenMergedThrough(m: ChainWorld) {
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    await m.close(a.id);
+    expect((await m.github.mergePullRequest(REPO, prB)).merged).toBe(true);
+    await m.host.settle();
+    // GitHub's main holds both changes: A's came in through #B's merge commit.
+    const files = await mainFiles(m);
+    expect(files).toContain(m.fileOf("Add page"));
+    expect(files).toContain(m.fileOf("Add footer"));
+    return { a, b, prA, prB };
+  }
+  async function expectMergedThrough(
+    m: ChainWorld,
+    o: { a: TaskRow; prA: number; prB: number },
+  ): Promise<string> {
+    const sentence = `#${o.prA} was closed, but its change reached main through #${o.prB}.`;
+    // Before: left_to_you, "closed", "#1 was closed without merging.", and no card.
+    expect(await m.record(o.a.id)).toMatchObject({
+      state: "merged",
+      last_outcome: "merged_through",
+      sentence,
+    });
+    const row = await rowOf(m, o.a.id);
+    expect(row.label).toBe(`Merged through #${o.prB}`);
+    expect(row.detail).toBe(sentence);
+    expect(row.takeOut?.state).toBe("offered");
+    const cards = await openViews(m, o.a.id);
+    expect(cards.map((c) => c.title)).toEqual([
+      `"Add page" reached main through pull request #${o.prB}`,
+    ]);
+    expect(cards[0]?.body).toBe(sentence);
+    expect(cards[0]?.choices?.map((c) => c.label)).toEqual(["Take this work out", "Keep it"]);
+    expect(cards[0]?.choices?.map((c) => c.explain)).toEqual([
+      `Opens a pull request that takes only the change of #${o.prA} out of main; nothing changes until you merge it.`,
+      `Closes this card; main keeps the change of #${o.prA}.`,
+    ]);
+    return cards[0]?.id ?? "";
+  }
+
+  it("L4-github-112: A closed on GitHub, then B (which holds A's change) merged there, one poll: A reads merged through #B with one card (Take this work out, Keep it); its Take this work out opens one pull request that takes out A's change only; nothing was written to GitHub before the press", async () => {
+    const m = await chainWorld({ level: 2 });
+    const o = await closedThenMergedThrough(m);
+    const pullsBefore = (await m.github.listPullRequests(REPO, { state: "all" })).length;
+    await m.poll();
+    const cardId = await expectMergedThrough(m, o);
+    expect(await m.record(o.b.id)).toMatchObject({ state: "merged" });
+    // Nothing was written to GitHub by the poll: no pull request opened, A stays closed.
+    expect((await m.github.listPullRequests(REPO, { state: "all" })).length).toBe(pullsBefore);
+    expect((await m.pr(o.a.id)).state).toBe("closed");
+    // The person presses Take this work out.
+    await answer(m, cardId, "Take this work out");
+    await sync(m);
+    await m.host.settle();
+    const opened = (await m.github.listPullRequests(REPO, { state: "open" })).filter((p) =>
+      p.title.startsWith("Take out:"),
+    );
+    expect(opened.map((p) => p.title)).toEqual(["Take out: Add page"]);
+    const takeOut = opened[0];
+    expect(takeOut?.body).toContain(
+      `(#${o.prA}, closed, its change merged through #${o.prB}): it reverts that change`,
+    );
+    expect(await answeredLine(m, cardId)).toMatch(new RegExp(`#${takeOut?.number}`));
+    // Its branch takes out A's file and keeps B's.
+    const onBranch = await m.hostGit("ls-tree", "-r", "--name-only", takeOut?.head.ref ?? "");
+    expect(onBranch).not.toContain(m.fileOf("Add page"));
+    expect(onBranch).toContain(m.fileOf("Add footer"));
+    expect(await openViews(m, o.a.id)).toEqual([]);
+    expect((await rowOf(m, o.a.id)).label).toBe(
+      `Taken out in #${takeOut?.number} (waiting for you to merge)`,
+    );
+  });
+
+  it("L4-github-112: the watcher reads B's merge before A's close: the same record, row and one card", async () => {
+    const m = await chainWorld({ level: 2 });
+    const o = await closedThenMergedThrough(m);
+    await report(m, m.dependents, o.b.id);
+    await report(m, m.dependents, o.a.id);
+    await expectMergedThrough(m, o);
+    // A poll after it files no second card.
+    await m.poll();
+    await expectMergedThrough(m, o);
+    expect(await m.record(o.a.id)).toMatchObject({
+      merge_sha: (await m.pr(o.b.id)).mergeCommitSha,
+    });
+  });
+
+  it("L4-github-112: A's close read first (B still open), then B merged on GitHub and read by a daemon started again: A reads merged through #B with #B's merge commit; Keep it keeps it", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    await m.close(a.id);
+    // A's close is read while B is open; B's branch is held busy so it is not rebuilt yet.
+    let release!: () => void;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const lock = inWorktree(join(m.worktreeRoot, safeSegment(b.id)), () => held);
+    await report(m, m.dependents, a.id);
+    release();
+    await lock;
+    expect(await m.record(a.id)).toMatchObject({ state: "left_to_you", last_outcome: "closed" });
+    // The person merges B on GitHub as it was reviewed (holding A); the daemon starts again.
+    const again = restarted(m);
+    expect((await m.github.mergePullRequest(REPO, prB)).merged).toBe(true);
+    await m.host.settle();
+    await report(m, again.dependents, b.id);
+    const cardId = await expectMergedThrough(m, { a, prA, prB });
+    expect(await m.record(a.id)).toMatchObject({
+      merge_sha: (await m.pr(b.id)).mergeCommitSha,
+    });
+    await again.poll();
+    expect(await openViews(m, a.id)).toHaveLength(1);
+    await answer(m, cardId, "Keep it");
+    await sync(m);
+    expect(await answeredLine(m, cardId)).toBe(`Kept: the change of #${prA} stays on main.`);
+    expect(await mainFiles(m)).toContain(m.fileOf("Add page"));
+  });
+
+  it("L4-github-117: a 'changed after the review' card closes once its pull request is closed on GitHub (Closed: #N was closed on GitHub.); a card an earlier version left open closes at the next poll, also after a restart", async () => {
+    const m = await chainWorld({ level: 2 });
+    const t = await m.runTask("Link trips page");
+    const pr = await m.prNumber(t.id);
+    await pushTo(m, (await m.w.store.task.mustGet(t.id)).branch ?? "", "theirs.txt");
+    await m.host.settle();
+    expect((await press(m, pr)).state).toBe("refused");
+    const [card] = await openViews(m, t.id);
+    expect(card?.choices?.map((c) => c.label)).toEqual(["I merged it", "Leave it open"]);
+    await m.close(t.id);
+    await m.poll();
+    // Before: the card stayed in Needs you with "I merged it" for a pull request closed on GitHub.
+    expect(await openViews(m, t.id)).toEqual([]);
+    expect(await answeredLine(m, card?.id ?? "")).toBe(`Closed: #${pr} was closed on GitHub.`);
+    expect((await rowOf(m, t.id)).label).toBe("Accepted · pull request closed");
+    const stale = await fileLeftOpenRequest(m.w.store, {
+      task: await m.w.store.task.mustGet(t.id),
+      sessionId: null,
+      humanId: m.w.human,
+      agentId: m.w.alice,
+      outcome: {
+        taskId: t.id,
+        prUrl: (await m.w.store.task.mustGet(t.id)).pr_url ?? "",
+        status: "head_moved",
+        reason: "PR left open for you",
+        sentence: changedAfterReview(pr),
+      },
+    });
+    await restarted(m).poll();
+    expect((await m.w.store.humanRequest.mustGet(stale.id)).status).toBe("withdrawn");
+    expect(await answeredLine(m, stale.id)).toBe(`Closed: #${pr} was closed on GitHub.`);
+  });
+
+  it("L4-chat-110: a cancelled task's pull request closed on GitHub is read by the watcher and recorded as closed: the chat's facts say 'Closed without merging', never 'Left open on GitHub'; it is read once", async () => {
+    const m = await chainWorld({ level: 2 });
+    const t = await m.runTask("Add page");
+    let row = await m.w.store.task.mustGet(t.id);
+    await m.w.store.task.reopen(t.id, row.version, "ready", "Redo asked by you", {
+      agentId: m.w.alice,
+    });
+    row = await m.w.store.task.mustGet(t.id);
+    await m.w.store.task.transition(t.id, row.version, "cancelled", "you cancelled it", {
+      agentId: m.w.alice,
+    });
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const before = await repositoryFacts(m.w.store, project);
+    expect(before?.cancelled?.map((p) => p.title)).toEqual(["Add page"]);
+    expect(before?.closed).toEqual([]);
+    await m.close(t.id);
+    await m.poll();
+    const after = await repositoryFacts(m.w.store, project);
+    // Before: still listed as left open (the watcher never read a cancelled task's pull request).
+    expect(after?.cancelled).toEqual([]);
+    expect(after?.closed.map((p) => p.title)).toEqual(["Add page"]);
+    // What the chat model is told (`# Your files`).
+    const told = filesBlock(null, after);
+    expect(told).toContain(`Closed without merging: "Add page" ${row.pr_url}`);
+    expect(told).not.toContain("Left open on GitHub");
+    expect(await m.w.store.mergeRecord.forTask(t.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "closed",
+    });
+  });
+
+  it("L4-chat-110: a cancelled task's pull request without a merge record gets one that says it was closed, with no Merge", async () => {
+    const m = await chainWorld({ level: 2 });
+    const t = await m.runTask("Add page");
+    const record = await m.record(t.id);
+    await m.w.store.mergeRecord.delete(record.id);
+    const row = await m.w.store.task.mustGet(t.id);
+    await m.w.store.task.reopen(t.id, row.version, "ready", "Redo asked by you", {
+      agentId: m.w.alice,
+    });
+    const ready = await m.w.store.task.mustGet(t.id);
+    await m.w.store.task.transition(t.id, ready.version, "cancelled", "you cancelled it", {
+      agentId: m.w.alice,
+    });
+    await m.close(t.id);
+    await m.poll();
+    expect(await m.w.store.mergeRecord.forTask(t.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "closed",
+      sentence: `#${await m.prNumber(t.id)} was closed without merging.`,
+    });
+    const facts = await repositoryFacts(m.w.store, await m.w.store.project.mustGet(m.w.project));
+    expect(facts?.closed.map((p) => p.title)).toEqual(["Add page"]);
+  });
+
+  it("L4-github-122: a rebuild card's Merge answered while B was merged on GitHub and before any poll says '#B was merged on GitHub already.', and the record says merged on the host", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    await m.close(a.id);
+    await m.poll();
+    const [card] = await openViews(m, b.id);
+    expect(card?.choices?.map((c) => c.label)).toEqual(["Merge", "Redo"]);
+    await answer(m, card?.id ?? "", "Merge");
+    // B is merged on GitHub, and no poll reads it before the answer is applied.
+    expect((await m.github.mergePullRequest(REPO, prB)).merged).toBe(true);
+    await sync(m);
+    // Before: "Merged #2." and last_outcome "merged" (as if Forerunner had merged it).
+    expect(await answeredLine(m, card?.id ?? "")).toBe(`#${prB} was merged on GitHub already.`);
+    expect(await m.record(b.id)).toMatchObject({
+      state: "merged",
+      last_outcome: "merged_on_host",
+    });
+  });
+
+  it("L4-github-118: a check that failed on GitHub after Forerunner's last look: Merge is refused at once with the merge step's sentence, nothing merges, one card", async () => {
+    const m = await chainWorld({ level: 2 });
+    const t = await m.runTask("Add page");
+    const pr = await m.prNumber(t.id);
+    expect((await overviewRow(m, pr))?.merge?.canMerge).toBe(true);
+    await m.check((await m.record(t.id)).reviewed_head_sha, "completed", "failure");
+    const sentence = `A check failed on #${pr} (ci/test): fix it, or merge it on GitHub.`;
+    // Before: {"state":"queued","sentence":"Merging #1.","order":[1]} and the refusal later.
+    expect(await press(m, pr)).toEqual({ state: "refused", sentence, order: [] });
+    expect((await m.pr(t.id)).merged).toBe(false);
+    expect(await m.record(t.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "checks_failed",
+      sentence,
+    });
+    expect(await m.cards(t.id)).toEqual([
+      {
+        title: `The critic accepted "Add page", but pull request #${pr} was not merged`,
+        body: sentence,
+      },
+    ]);
+    expect((await overviewRow(m, pr))?.merge).toMatchObject({ canMerge: false, sentence });
+  });
+
+  it("L4-github-118: a pull request that stopped merging cleanly after Forerunner's last look: Merge is refused at once with the conflict sentence, nothing merges, one card", async () => {
+    const m = await chainWorld({ level: 2 });
+    const t = await m.runTask("Add page");
+    const pr = await m.prNumber(t.id);
+    await m.host.seedCommit(
+      FULL,
+      { [m.fileOf("Add page")]: "main's own line\n" },
+      "Main changes it",
+      "main",
+    );
+    await m.host.settle();
+    const sentence = `#${pr} conflicts with main in ${m.fileOf("Add page")}: resolve the conflict on GitHub, then merge it.`;
+    expect(await press(m, pr)).toEqual({ state: "refused", sentence, order: [] });
+    expect((await m.pr(t.id)).merged).toBe(false);
+    expect(await m.record(t.id)).toMatchObject({ state: "left_to_you", last_outcome: "conflict" });
+    expect(await m.cards(t.id)).toHaveLength(1);
+  });
+
+  it("L4-creds-22: Merge pressed right after a push, while GitHub's pull request still shows the old head: refused at once as changed after the review (the branch head is read), nothing merged, one card", async () => {
+    const m = await chainWorld({ level: 2 });
+    const t = await m.runTask("Add page");
+    const pr = await m.prNumber(t.id);
+    const reviewed = (await m.record(t.id)).reviewed_head_sha;
+    m.host.ops.pullHeadLag = 5;
+    await pushTo(m, (await m.w.store.task.mustGet(t.id)).branch ?? "", "theirs.txt");
+    await m.host.settle();
+    // GitHub's pull request has not followed the push yet.
+    expect((await m.github.getPullRequest(REPO, pr)).head.sha).toBe(reviewed);
+    // Before: {"state":"queued","sentence":"Merging #1.","order":[1]}, refused 1.5 s later.
+    expect(await press(m, pr)).toEqual({
+      state: "refused",
+      sentence: changedAfterReview(pr),
+      order: [],
+    });
+    m.host.ops.pullHeadLag = 0;
+    expect((await m.pr(t.id)).merged).toBe(false);
+    expect(await mainFiles(m)).not.toContain("theirs.txt");
+    expect(await m.record(t.id)).toMatchObject({
+      state: "left_to_you",
+      last_outcome: "head_moved",
+      reviewed_head_sha: reviewed,
+    });
+    expect(await m.cards(t.id)).toEqual([
+      { title: '"Add page" changed after the review', body: changedAfterReview(pr) },
+    ]);
+  });
+
+  it("L4-github-119: B builds on A closed on GitHub, and B's folder is busy at the press: refused with the 'checks first' sentence, nothing merges, the row keeps its Merge", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const prB = await m.prNumber(b.id);
+    await m.close(a.id);
+    let release!: () => void;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const lock = inWorktree(join(m.worktreeRoot, safeSegment(b.id)), () => held);
+    try {
+      expect(await press(m, prB)).toEqual({
+        state: "refused",
+        sentence: `#${prB} is not merged yet: Forerunner first checks what it holds of the work it builds on. Press Merge again in a minute.`,
+        order: [],
+      });
+      expect((await m.pr(b.id)).merged).toBe(false);
+      expect((await overviewRow(m, prB))?.merge?.canMerge).toBe(true);
+    } finally {
+      release();
+      await lock;
+    }
+    expect(await mainFiles(m)).not.toContain(m.fileOf("Add page"));
   });
 });

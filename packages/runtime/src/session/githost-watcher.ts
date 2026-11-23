@@ -239,6 +239,41 @@ export async function watchedPullRequests(
   return [...out.values()];
 }
 
+/**
+ * L4-chat-110: the PRs of cancelled tasks of these agents that the watched list does not hold
+ * (Forerunner leaves a cancelled task's pull request open on GitHub, ADR 0105 point 4): read
+ * for their state only, so a close on GitHub is recorded; their comments and checks start
+ * nothing.
+ */
+export async function cancelledPullRequests(
+  store: Pick<StateStore, "task">,
+  agentIds: readonly string[],
+  watched: readonly WatchedPullRequest[],
+): Promise<WatchedPullRequest[]> {
+  const agents = new Set(agentIds);
+  const seen = new Set(watched.map((w) => prKey(w.repo, w.number)));
+  const out: WatchedPullRequest[] = [];
+  for (const t of await store.task.list({ status: "cancelled" }, { limit: 2000 })) {
+    if (!t.pr_url) continue;
+    const agentId = t.owner_agent_id ?? t.claimed_by ?? t.author_agent;
+    if (!agentId || !agents.has(agentId)) continue;
+    const parsed = parsePullRequestUrl(t.pr_url);
+    if (!parsed) continue;
+    const key = prKey(parsed.repo, parsed.number);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      agentId,
+      projectId: t.project_id ?? null,
+      taskId: t.id,
+      repo: parsed.repo,
+      number: parsed.number,
+      url: t.pr_url,
+    });
+  }
+  return out;
+}
+
 export function prKey(repo: RepoRef, number: number): string {
   return `${repo.owner}/${repo.name}#${number}`;
 }
@@ -500,6 +535,25 @@ export class GitHostWatcher {
         this.logger.warn("pull request poll failed", { pr: key, error: errorMessage(e) });
       }
     }
+    // L4-chat-110: a cancelled task's pull request is read for its state only (no event fires):
+    // closed or merged on GitHub, it is reported once (its record says so) and not read again.
+    if (this.deps.onPullRequestState && !stop.signal.aborted)
+      for (const pr of await cancelledPullRequests(this.deps.store, this.deps.agentIds, prs)) {
+        if (stop.signal.aborted) break;
+        const key = prKey(pr.repo, pr.number);
+        if (cursor.prs[key]?.closed) continue;
+        try {
+          const info = await this.deps.host.getPullRequest(pr.repo, pr.number);
+          if (info.state === "open") continue;
+          await this.deps.onPullRequestState(pr, info);
+          cursor.prs[key] = { ...emptyPrCursor(), ...cursor.prs[key], closed: true };
+        } catch (e) {
+          this.logger.warn("cancelled task's pull request not read", {
+            pr: key,
+            error: errorMessage(e),
+          });
+        }
+      }
     if (this.pollStop === stop) this.pollStop = null;
     // A baseline cut short by a stop is not complete: the next poll records it again.
     const stopped = stop.signal.aborted;

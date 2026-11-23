@@ -748,13 +748,17 @@ export class ProjectPullRequests {
     // is said at once, in the merge step's words, and nothing of the chain merges; one that keeps
     // the reviewed change (main merged in) is followed by the merge step as before. Before (live
     // check 3, G4) the press answered "Merging #40." and the refusal came about 4 s later.
+    // L4-github-118 with L4-creds-22: each pull request of the chain is read once now, its
+    // branch head included (GitHub updates the listing's head a moment after a push), and a
+    // head that moved, a conflict or a check that failed since Forerunner's last look is refused
+    // at once in the merge step's words (its record, row and one card settled); before, the
+    // press answered "Merging #N." and the refusal came seconds later (live check 4, L4-l3-11).
     if (!waits && merge.headMovedNow)
       for (const task of chain) {
         if (rebuiltNow.has(task.id)) continue;
         const record = await store.mergeRecord.forTask(task.id);
-        const number = record?.pr_number;
-        const head = listed.find((p) => p.number === number)?.head.sha;
-        if (!record?.reviewed_head_sha || !head || head === record.reviewed_head_sha) continue;
+        if (!record?.reviewed_head_sha) continue;
+        const head = listed.find((p) => p.number === record.pr_number)?.head.sha ?? "";
         const moved = await merge.headMovedNow(task, head);
         if (moved) return refused(moved);
       }

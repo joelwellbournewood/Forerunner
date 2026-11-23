@@ -246,3 +246,29 @@ export function owedMergeWait(record: {
   if (!record.rebuild_owed_for || !OWED_FOLDER_OUTCOMES.has(record.last_outcome ?? "")) return null;
   return record.sentence.trim() || null;
 }
+
+/**
+ * L4-github-112 (ADR 0111, amendment of 2026-11-23): a task's pull request closed on GitHub
+ * whose reviewed change reached main all the same, through a pull request that built on it and
+ * was merged there. Its merge record says merged with this outcome (no migration: the outcome is
+ * free text) and `mergedThroughSentence` as its sentence; the Tasks row, the card and Take this
+ * work out read the number back from it (`throughNumberOf`).
+ */
+export const MERGED_THROUGH = "merged_through";
+
+/** "#1 was closed, but its change reached main through #2." (without the second: "…reached main.") */
+export function mergedThroughSentence(pr: number, through: number | null): string {
+  return through
+    ? `#${pr} was closed, but its change reached main through #${through}.`
+    : `#${pr} was closed, but its change reached main.`;
+}
+
+/** The pull request a merged-through record's change reached main through, or null. */
+export function throughNumberOf(record: {
+  last_outcome: string | null;
+  sentence: string;
+}): number | null {
+  if (record.last_outcome !== MERGED_THROUGH) return null;
+  const m = / through #(\d+)\.$/.exec(record.sentence.trim());
+  return m?.[1] ? Number(m[1]) : null;
+}

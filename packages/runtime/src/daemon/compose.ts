@@ -5343,6 +5343,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         humanId: human.id,
         agentId: agent.id,
         merge,
+        // L4-github-112: a merged-through card's Take this work out, as the Tasks row's button.
+        takeOut,
         ...resumeStart,
       }),
       // A session review that needed the human (U-033): acknowledge, or correct the summary.
