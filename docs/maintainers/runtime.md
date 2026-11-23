@@ -8291,6 +8291,12 @@ hiding what it left out. What changed, item by item:
   on line 3, two sentences after what "it" was. "fix the tasks" with no Claude says "Fixing the
   tasks needs Claude: connect it in Settings, Basics." (`FIX_NEEDS_CLAUDE`, L4-selftasks-127; a
   Connect button under the reply is not built: chat replies have no link offer yet).
+- **A chat turn that answered a card is heard** (fixup-l4-selftasks-chat): `POST /chat` and
+  `POST /chat/stream` note the executor's waiting cards before the turn (`waitingCards`) and,
+  when one is gone after it (a yes, a no, a Yes refused because what it named changed), send
+  `inbox.changed` and the card's project's `project.changed` (`heardChat`). Before, the open page
+  kept "Waiting for you: 1 change to confirm" and the Inbox badge until a reload. Test:
+  real-daemon.test.ts "a chat No, and a Yes refused because the task changed, tell the screens".
 - **Specialists and plans in the person's words** (L4-selftasks-111): the fence's reasons name a
   specialist through `saidByName` ("the writer", "the deployment specialist", never
   "writer-marketing" or "ops-deploy"); "the plan you approved has no task for the writer" only

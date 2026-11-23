@@ -1819,9 +1819,11 @@ checks the installation and prints what is missing.
 ### Chat changes are yours, and wait for your answer (2026-11-23)
 
 A change you ask for in Chat is read back once with Yes and No. After your Yes it is yours:
-Changes names you, the task says "Changed by you", and the Inbox does not repeat it. A read-back
+Changes names you as the one who made it, and the Inbox does not repeat it. A read-back
 waits until you answer it, also for days and after Forerunner restarts; if what it names changed
-meanwhile, your Yes changes nothing and Chat says what changed, so you can ask again. A note
+meanwhile (another change, or the task was cancelled or finished), your Yes changes nothing and
+Chat says what changed, so you can ask again. When you answer it, in Chat or in the Inbox, the
+header's count and the Inbox follow at once. A note
 for a task's next brief is read back too when Chat wrote it for you.
 
 The reviewer reads and runs checks but writes no file: its findings are its report, which you

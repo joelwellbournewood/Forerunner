@@ -27412,4 +27412,43 @@ describe("l4-selftasks-chat, run L4", () => {
       await a.rt.close();
     }
   }, 60_000);
+
+  it("L4-selftasks-117 (review): a chat No, and a Yes refused because the task changed, tell the screens at once (inbox.changed, project.changed)", async () => {
+    const a = await open("fr-ui-real-l4-stc-heard-");
+    try {
+      const project = await a.client.createProject({ name: "Help", goal: "A help page" });
+      const taskId = (await a.client.createTask(project.id, taskBody("Write the FAQ"))).id;
+      const inbox: number[] = [];
+      const projects: string[] = [];
+      a.rt.events.on("inbox", () => inbox.push(1));
+      a.rt.events.on("project", (p: { id: string }) => projects.push(p.id));
+      // A No in chat closes the card: the header and the Inbox hear it.
+      await a.chat(project.id, 'tool: task_pause {"task": "Write the FAQ"}');
+      inbox.length = 0;
+      projects.length = 0;
+      expect((await a.chat(project.id, "no")).reply).toBe("Cancelled; nothing was changed.");
+      expect(inbox.length).toBeGreaterThan(0);
+      expect(projects).toContain(project.id);
+      expect((await a.client.inbox(a.me.id)).needsYouCount).toBe(0);
+      // A Yes that what it named changed meanwhile: refused in words, and heard as well.
+      await a.chat(project.id, 'tool: task_pause {"task": "Write the FAQ"}');
+      const row = await a.client.task(taskId);
+      await a.client.transitionTask(taskId, {
+        version: row.task.version,
+        to: "cancelled",
+        reason: "not needed",
+      });
+      inbox.length = 0;
+      projects.length = 0;
+      const yes = await a.chat(project.id, "yes");
+      expect(yes.reply).toBe(
+        '"Write the FAQ" changed since I asked: it is cancelled now. Nothing was changed; ask again if you still want it.',
+      );
+      expect(inbox.length).toBeGreaterThan(0);
+      expect(projects).toContain(project.id);
+      expect((await a.client.inbox(a.me.id)).needsYouCount).toBe(0);
+    } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
 });

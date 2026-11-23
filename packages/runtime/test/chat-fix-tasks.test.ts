@@ -1002,7 +1002,7 @@ describe("l4-selftasks-chat, run L4: a note is the person's only when they wrote
     });
     const r = await w.chat("the logo is late, so publishing must wait");
     expect(r.pendingConfirmation?.readback).toBe(
-      'Pause "Publish the page"? No session runs it until you press Resume. Note for its next brief: "Put on hold by the person.".',
+      'Pause "Publish the page"? No session runs it until you press Resume. Note for its next brief: "Put on hold by the person."',
     );
     const yes = await w.chat("yes");
     expect(yes.reply).toBe(

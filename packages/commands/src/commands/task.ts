@@ -131,7 +131,10 @@ function personsNote(ctx: CommandContext): boolean {
 /** The note a read-back shows when the model passed it ('Note for its next brief: "…"'). */
 function noteClause(ctx: CommandContext, note: string | undefined): string {
   const text = note?.trim();
-  return text && !personsNote(ctx) ? ` Note for its next brief: ${quote(text)}.` : "";
+  // fixup-l4-selftasks-chat: a note that ends its own sentence gets no second period after
+  // the quote (before: 'Note for its next brief: "Put on hold by the person.".').
+  const end = text && /[.!?]$/.test(text) ? "" : ".";
+  return text && !personsNote(ctx) ? ` Note for its next brief: ${quote(text)}${end}` : "";
 }
 
 /** The note's end of a sentence: the person's own, or one the agent passed. */
