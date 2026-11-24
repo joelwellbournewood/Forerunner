@@ -933,6 +933,130 @@ describe("w8-status-write, wave 8: the writer", () => {
     ).toHaveLength(1);
   });
 
+  /**
+   * W8a-left-3: a host whose calls answer 404 as GitHub answers them, from the moment `when`
+   * says so: for a private repository the token no longer sees (every call), or for one edit.
+   */
+  function answering404(
+    inner: GitHost,
+    when: (prop: string, args: unknown[]) => boolean | (() => void),
+  ): GitHost {
+    return new Proxy(inner, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => {
+          const hit = when(String(prop), args);
+          if (hit) {
+            if (typeof hit === "function") hit();
+            return Promise.reject(new ForerunnerError("not_found", `${String(prop)}: Not Found`));
+          }
+          return (value as (...a: unknown[]) => unknown).apply(target, args);
+        };
+      },
+    }) as unknown as GitHost;
+  }
+
+  function boardOn(ada: Writer, clock: SimulatedClock, host: GitHost): StatusBoard {
+    return new StatusBoard({
+      store: ada.store,
+      clock,
+      host: async () => host,
+      writerId: () => ada.device,
+      agentName: async () => "Ada's agent",
+      projectsRoot: join(ada.root, "projects"),
+      tell: async (_p, body) => {
+        ada.told.push(body);
+      },
+      bodyIntervalMs: 0,
+    });
+  }
+
+  it("W8a-left-3: a token that lost access answers 404 (every call, or only the edit while reads work): one issue, no new comment, the no-permission sentence, and no retry on a timer", async () => {
+    const { clock, github, make } = await world();
+    const ada = await make("ada", "dev-ada", "Ada's agent");
+    ada.board.sessionEnded(K, { endedAt: "2026-11-24T21:10:00.000Z", done: [], next: [] });
+    await ada.board.settled();
+    const [mine] = await commentsOn(github, 1);
+    const host = github.asLogin("ada");
+    // Only the edit answers 404: the token reads the issue and the comment but may not write.
+    const writes = github.writesBy("ada").length;
+    const editOnly = boardOn(
+      ada,
+      clock,
+      answering404(host, (p) => p === "updateIssueComment"),
+    );
+    editOnly.sessionEnded(K, { endedAt: "2026-11-24T21:20:00.000Z", done: ["One"], next: [] });
+    await editOnly.settled();
+    expect(editOnly.place(ada.project)).toEqual({ kind: "no_permission", repo: "team/shared" });
+    expect(statusPlaceSentence(editOnly.place(ada.project), null)).toBe(
+      "Status stays in the app: Forerunner may not write issues on team/shared (the GitHub key needs Issues: read and write).",
+    );
+    // A private repository the token no longer sees: every call answers 404.
+    let calls = 0;
+    const lost = boardOn(
+      ada,
+      clock,
+      answering404(host, () => {
+        calls++;
+        return true;
+      }),
+    );
+    lost.sessionEnded(K, { endedAt: "2026-11-24T21:30:00.000Z", done: ["Two"], next: [] });
+    await lost.settled();
+    expect(lost.place(ada.project)).toEqual({ kind: "no_permission", repo: "team/shared" });
+    const tried = calls;
+    await clock.advance(10 * 60_000);
+    await lost.settled();
+    expect(calls).toBe(tried);
+    // Nothing reached GitHub: one issue, Ada's one comment, unchanged.
+    expect(github.writesBy("ada").slice(writes)).toEqual([]);
+    expect((await github.listIssues(REPO, { state: "all" })).map((i) => i.number)).toEqual([1]);
+    expect((await commentsOn(github, 1)).map((c) => [c.id, c.body])).toEqual([
+      [mine?.id, mine?.body],
+    ]);
+    // Access back: the next event writes the comment it waited with, in place.
+    const back = boardOn(ada, clock, host);
+    back.sessionEnded(K, { endedAt: "2026-11-24T21:40:00.000Z", done: ["Three"], next: [] });
+    await back.settled();
+    expect(back.place(ada.project)).toMatchObject({ kind: "on", issue: 1 });
+    const now = await commentsOn(github, 1);
+    expect(now.map((c) => c.id)).toEqual([mine?.id]);
+    expect(now[0]?.body).toContain('did 1 task: "Three"');
+  });
+
+  it("W8a-left-3: the comment deleted between the read and the edit (the edit answers 404, the issue reads): exactly one comment is written again, and no second issue", async () => {
+    const { clock, github, make } = await world();
+    const ada = await make("ada", "dev-ada", "Ada's agent");
+    ada.board.sessionEnded(K, { endedAt: "2026-11-24T21:10:00.000Z", done: [], next: [] });
+    await ada.board.settled();
+    const [mine] = await commentsOn(github, 1);
+    let deleted = false;
+    const board = boardOn(
+      ada,
+      clock,
+      answering404(github.asLogin("ada"), (p, args) =>
+        p === "updateIssueComment" && args[1] === mine?.id && !deleted
+          ? () => {
+              github.removeIssueComment(REPO, mine?.id as number);
+              deleted = true;
+            }
+          : false,
+      ),
+    );
+    board.sessionEnded(K, { endedAt: "2026-11-24T21:20:00.000Z", done: ["One"], next: [] });
+    await board.settled();
+    expect(deleted).toBe(true);
+    const own = (await commentsOn(github, 1)).filter((c) => c.author === "ada");
+    expect(own).toHaveLength(1);
+    expect(own[0]?.id).not.toBe(mine?.id);
+    expect(own[0]?.body).toContain('did 1 task: "One"');
+    expect(github.writesBy("ada").filter((w) => w.op === "commentOnIssue")).toHaveLength(2);
+    expect((await github.listIssues(REPO, { state: "all" })).map((i) => i.number)).toEqual([1]);
+    expect(board.place(ada.project)).toMatchObject({ kind: "on", issue: 1 });
+    expect(board.read(K).commentId).toBe(own[0]?.id);
+  });
+
   it("W8-write-8: a deleted issue gets one new issue and the person is told once", async () => {
     const { github, make } = await world();
     const ada = await make("ada", "dev-ada", "Ada's agent");

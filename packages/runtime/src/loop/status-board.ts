@@ -220,6 +220,8 @@ interface Wanted {
   body: boolean;
   /** Write even when the text did not change (the 30-minute refresh, a retry). */
   force: boolean;
+  /** This write follows one a deleted comment or issue answered 404 (W8a-left-3): once only. */
+  again?: boolean;
 }
 
 interface Slot {
@@ -736,20 +738,68 @@ export class StatusBoard implements StatusBoardPort {
     } catch (e) {
       const refusal = issueRefusalOf(e);
       const repoName = `${repo.owner}/${repo.name}`;
+      // W8a-left-3: GitHub answers 404 for a deleted comment or issue and for a repository the
+      // token no longer sees (a private one) alike, so the writer reads again before it writes
+      // again: refused, the status stays in the app with the no-permission sentence and no timer
+      // tries it again (the next task or session does); gone, it is written again once now.
+      const missing = refusal === "missing" ? await this.whyMissing(projectId, repo, host) : null;
       if (refusal === "issues_off") changeState("issues_off", { placeRepo: repoName });
-      else if (refusal === "no_permission" || refusal === "token_refused")
+      else if (refusal === "no_permission" || refusal === "token_refused" || missing === "refused")
         changeState("no_permission", { placeRepo: repoName });
-      else {
-        // GitHub did not answer (or a read raced a delete): the text waits; tried again later.
+      else if (missing === "gone" && !want.again) {
+        logger.info("status comment or issue gone at the write; written again", { projectId });
+        await this.write(projectId, { ...want, force: true, again: true });
+        return;
+      } else {
+        // GitHub did not answer: the text waits; tried again later.
         changeState("waiting");
         this.timer(`retry:${projectId}`, this.deps.retryMs ?? 60_000, () => this.resume(projectId));
       }
       logger.info("status issue write waits", {
         projectId,
-        reason: refusal ?? "error",
+        reason: missing ? `missing (${missing})` : (refusal ?? "error"),
         error: errorMessage(e),
       });
     }
+  }
+
+  /**
+   * Why a call answered 404 (W8a-left-3), read again with the same host: the repository not
+   * readable any more, or everything readable while the write was refused, is `refused` (the
+   * token may not write there); the stored issue or this writer's comment gone is `gone`; a read
+   * GitHub did not answer is `unknown` (the text waits).
+   */
+  private async whyMissing(
+    projectId: string,
+    repo: RepoRef,
+    host: GitHost,
+  ): Promise<"refused" | "gone" | "unknown"> {
+    const s = this.read(projectId);
+    // A comment read answers null for a 404 (the port's `getIssueComment`).
+    const reread = async (read: () => Promise<unknown>) => {
+      try {
+        return (await read()) === null ? ("missing" as const) : ("ok" as const);
+      } catch (e) {
+        const r = issueRefusalOf(e);
+        return r === "missing"
+          ? ("missing" as const)
+          : r === "no_permission" || r === "token_refused"
+            ? ("refused" as const)
+            : ("unknown" as const);
+      }
+    };
+    const repoRead = await reread(() => host.getRepo(repo));
+    if (repoRead !== "ok") return repoRead === "unknown" ? "unknown" : "refused";
+    for (const read of [
+      s.issue ? () => host.getIssue(repo, s.issue as number) : null,
+      s.commentId ? () => host.getIssueComment(repo, s.commentId as number) : null,
+    ]) {
+      if (!read) continue;
+      const r = await reread(read);
+      if (r === "missing") return "gone";
+      if (r !== "ok") return r;
+    }
+    return "refused";
   }
 
   /** The role of `login` on the repository, read once per call site (fails closed). */
