@@ -10,6 +10,7 @@ import {
   type IdentityFs,
   identityOf,
   type LinkIdentity,
+  markerNameOf,
   projectIdsOf,
   RepositoryIndex,
   type RepositoryRead,
@@ -437,5 +438,58 @@ describe("l4-github-link, run L4", () => {
       message:
         "Forerunner works with repositories on github.com, not gitlab.com. Link a GitHub repository or a folder.",
     });
+  });
+});
+
+describe("l4-github-carried, run L4", () => {
+  it("L4e-left-10: a GitHub Enterprise install (its API base set, no git remote base) accepts its own host only, not github.com links", () => {
+    // Before: ["github.com", "ghe.example.com"]: the git remote base's default added github.com.
+    expect(repoHostsFor({ githubApiBase: "https://ghe.example.com/api/v3" })).toEqual([
+      "ghe.example.com",
+    ]);
+    // Without either base, and with github.com's own API base, it stays github.com.
+    expect(repoHostsFor({})).toEqual(["github.com"]);
+    expect(repoHostsFor({ githubApiBase: "https://api.github.com" })).toEqual(["github.com"]);
+    expect(repoHostsFor({ gitRemoteBase: "https://github.com" })).toEqual(["github.com"]);
+    // A stand-in's API base (not GitHub Enterprise's /api/v3 form) keeps github.com.
+    expect(repoHostsFor({ githubApiBase: "http://127.0.0.1:4010" })).toEqual([
+      "github.com",
+      "127.0.0.1",
+    ]);
+  });
+
+  it("L4e-left-10: an enterprise install refuses a github.com link as another host", async () => {
+    const clock = new SimulatedClock("2026-11-24T09:00:00Z");
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    try {
+      const enterprise = new RepositoryUse({
+        store,
+        clock,
+        host: async () => null,
+        hosts: repoHostsFor({ githubApiBase: "https://ghe.example.com/api/v3" }),
+      });
+      await expect(enterprise.check(["https://github.com/o/site"])).rejects.toMatchObject({
+        message:
+          "Forerunner works with repositories on ghe.example.com, not github.com. Link a GitHub repository or a folder.",
+        details: { cause: "other_host" },
+      });
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("L4e-left-10: a marker's project name longer than 60 characters is cut at a word with an ellipsis, never mid-word", () => {
+    const name = "The Kite Flyers Club of Lower Saxony and the Whole North Sea Coast";
+    const cut = markerNameOf(name) ?? "";
+    // Before: "The Kite Flyers Club of Lower Saxony and the Whole North Sea" cut at 60
+    // characters, here at a word by chance; a name cut mid-word read "... North Se".
+    expect(cut.length).toBeLessThanOrEqual(60);
+    expect(cut.endsWith("…")).toBe(true);
+    expect(name.startsWith(`${cut.slice(0, -1)} `)).toBe(true);
+    const midWord = markerNameOf(
+      "Kite club pages for the summer festival and the autumn workshops",
+    );
+    expect(midWord).toBe("Kite club pages for the summer festival and the autumn…");
+    expect(markerNameOf("Kite club")).toBe("Kite club");
   });
 });

@@ -438,7 +438,15 @@ export function markerNameOf(name: string | null | undefined): string | null {
   if (scanForInjection(name, "repo_file").suspicious) return null;
   // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are removed.
   const clean = name.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").trim();
-  const cut = clean.length > 60 ? clean.slice(0, 60).trim() : clean;
+  // L4e-left-10 (l4-github-carried): a long name is cut at a word with "…" (before: at 60
+  // characters, mid-word, in the offer's first sentence).
+  const one = clean.replace(/\s+/g, " ");
+  const head = one.slice(0, 59);
+  const space = head.lastIndexOf(" ");
+  const cut =
+    one.length > 60
+      ? `${(space > 30 ? head.slice(0, space) : head).replace(/[\s,;:.]+$/, "")}…`
+      : one;
   if (!cut) return null;
   if (scanForInjection(cut, "repo_file").suspicious) return null;
   if (/["<>`]/.test(cut)) return null;

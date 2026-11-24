@@ -9186,6 +9186,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (body.source === "github") {
       // As the daemon (OR-04, C2-left-12, L4-creds-23): a repository another project here uses
       // is refused before anything is cloned, 409 "conflict" with the cause the offer reads.
+      // L4e-left-10 (l4-github-carried): a URL on another host too, as the daemon's checkHere.
+      const link = fakeLinkOf(locator);
+      if (link && "host" in link)
+        return c.json(
+          {
+            code: "conflict",
+            message: otherHostSentence(link.host),
+            details: { cause: "other_host" },
+          },
+          409,
+        );
       const inUse = linkInUse(locator, id);
       if (inUse)
         return c.json({ code: "conflict", message: inUse.message, details: inUse.details }, 409);
