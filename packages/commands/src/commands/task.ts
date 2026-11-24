@@ -480,6 +480,7 @@ export async function moveAsCardAnswer(
   ctx: CommandContext,
   params: { task: string; project?: string | undefined; note?: string | undefined },
   option: string,
+  movable: (task: TaskRow) => boolean,
 ): Promise<{
   name: "request.answer";
   params: { request: string; answer: string; note?: string };
@@ -502,12 +503,19 @@ export async function moveAsCardAnswer(
     // l4-chat-final (L4h-left-4): a card that needs this computer's OK keeps the note too, so the
     // chat's reply can say it was not kept (request.answer reads a note only for an option that
     // takes one, `noteOf`).
-    const note = choice?.input === "note" || r.risk === "high" ? params.note?.trim() : undefined;
     // l4-chat-final (L4h-left-1): the person's own note on an option that takes none (Cancel task)
     // keeps the move, which carries it to the task's brief; a card that needs this computer's OK
     // stays the one way to its answer (the move would not ask for that OK).
-    if (choice && choice.input !== "note" && r.risk !== "high" && ownNote(ctx, params.note))
-      return null;
+    // fixup-l4-chat-final (the review of L4h-left-1): only a move the task can make keeps it. A
+    // failed task, or one that waits for the person, cannot move to done: only its card's Mark
+    // done anyway closes it. Before, "mark the digest page done anyway, the client accepted it as
+    // it is" kept the move, which was then refused ('... is failed now, so it cannot be done;
+    // nothing changed.'), where without the note the card was answered. The card is answered, and
+    // the person's note goes with it so its read-back says the note is not kept (request.answer).
+    const own = ownNote(ctx, params.note);
+    if (choice && choice.input !== "note" && r.risk !== "high" && own && movable(task)) return null;
+    const note =
+      choice?.input === "note" || r.risk === "high" || own ? params.note?.trim() : undefined;
     if (choice)
       return {
         name: "request.answer",
@@ -1397,7 +1405,11 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
     // move off the card. l4-chat-final (L4h-left-1): the person's own note goes with the card's
     // answer when its option takes one (Try again), else it keeps the move, so their words are
     // kept either way (`moveAsCardAnswer`).
-    return option ? moveAsCardAnswer(ctx, params, option) : null;
+    return option
+      ? moveAsCardAnswer(ctx, params, option, (t) =>
+          canTransition(TASK_TRANSITIONS, t.status, params.to),
+        )
+      : null;
   },
   async plan(params, ctx) {
     const task = await findTask(params, ctx);
@@ -1599,7 +1611,16 @@ export const taskResume: CommandDef<TaskResumeParams> = {
     // l4-selftasks-carried (L4-selftasks-120): a note the chat's model wrote does not keep the
     // resume off the card. l4-chat-final (L4h-left-1): the person's own note goes with an option
     // that takes one, else it keeps the resume (`moveAsCardAnswer`).
-    return moveAsCardAnswer(ctx, params, params.without_answers ? "Go ahead without" : "Try again");
+    return moveAsCardAnswer(
+      ctx,
+      params,
+      params.without_answers ? "Go ahead without" : "Try again",
+      // The resume's own checks (`plan`): only a task that waits for the person, and one someone
+      // else can do when it goes ahead without the answers.
+      (t) =>
+        t.status === "needs_human" &&
+        !(params.without_answers && t.specialist === PERSON_SPECIALIST),
+    );
   },
   async plan(params, ctx) {
     const task = await findTask(params, ctx);

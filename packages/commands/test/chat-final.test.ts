@@ -16,12 +16,16 @@ const PERSONS_LINE = "try the digest page again and tell it to use the old layou
 const PERSONS_NOTE = "Use the old layout.";
 const MODEL_NOTE = "Put on hold by the person.";
 
-async function failedWithCard(w: World, risk: "medium" | "high" = "medium") {
+async function failedWithCard(
+  w: World,
+  risk: "medium" | "high" = "medium",
+  status: "failed" | "needs_human" = "failed",
+) {
   const task = await w.store.task.insert({
     project_id: w.pharma.id,
     title: "Write the digest page",
     outcome: "digest.html",
-    status: "failed",
+    status,
   });
   const card = await w.store.humanRequest.insert({
     kind: "approval",
@@ -42,7 +46,11 @@ async function failedWithCard(w: World, risk: "medium" | "high" = "medium") {
               : '"Write the digest page" failed',
           choices: [
             { label: "Try again", explain: "Starts a session that tries again.", input: "note" },
-            { label: "Mark done anyway", explain: null, input: null },
+            {
+              label: "Mark done anyway",
+              explain: "Closes it although nothing passed review.",
+              input: null,
+            },
             { label: "Cancel task", explain: null, input: null },
           ],
           outcome: null,
@@ -295,6 +303,119 @@ describe("l4-chat-final, run L4: the person's own words in a chat note stay the 
     expect(plain.status === "refused" ? plain.reason : plain.status).toBe(
       'Answer it on its card in the Inbox: "Write the digest page" failed 4 times. Nothing else was filed.',
     );
+    await w.store.close();
+  });
+});
+
+/**
+ * fixup-l4-chat-final, run L4 (the review of L4h-left-1): the person's own note kept a move off
+ * the card only so the move could carry it, but a move the task cannot make is no way to keep it.
+ * A failed task (or one waiting for the person) cannot move to done: only its card's Mark done
+ * anyway closes it. Before, "mark the digest page done anyway, the client accepted it as it is"
+ * kept the move, which was refused ('"Write the digest page" is failed now, so it cannot be done;
+ * nothing changed.'), where without the note the card was answered. Now the card is answered and
+ * its read-back says the note is not kept (Mark done anyway takes none), before the yes.
+ */
+describe("fixup-l4-chat-final, run L4: a move the task cannot make answers the card, also with the person's own note", () => {
+  const OWN_LINE = "mark the digest page done anyway, the client accepted it as it is";
+  const OWN_NOTE = "the client accepted it as it is";
+  const MARK_DONE =
+    'Mark done anyway ("Write the digest page" failed)? Closes it although nothing passed review.';
+
+  it("Mark done anyway with the person's own note, in chat and by voice, from a failed task and from one that waits for the person: the card's read-back says the note is not kept, and the yes answers the card", async () => {
+    for (const source of ["chat", "voice"] as const)
+      for (const status of ["failed", "needs_human"] as const) {
+        const at = `${source}, ${status}`;
+        const w = await world();
+        const { task, card } = await failedWithCard(w, "medium", status);
+        const asked = await w.executor.execute({
+          name: "task.transition",
+          params: { task: "digest", to: "done", note: OWN_NOTE },
+          ctx: w.ctx({
+            actor: { kind: "agent", id: w.agent.id },
+            source,
+            onPersonsWords: true,
+            wordsUsed: OWN_LINE,
+          }),
+        });
+        if (asked.status !== "pending") throw new Error(`${at}: ${JSON.stringify(asked)}`);
+        expect(asked.card?.command, at).toBe("request.answer");
+        // Voice asks for the spoken yes as every voice read-back does.
+        expect(asked.readback, at).toBe(
+          `${MARK_DONE} Your note is not kept.${source === "voice" ? " Say yes or no." : ""}`,
+        );
+        // One card about the task: the read-back (the executor's pending change) answers it, and
+        // no second card about the task is filed.
+        const open = await w.store.humanRequest.open({ humanId: w.human.id }, { limit: 10 });
+        expect(
+          open
+            .filter((r) => !(r.change_card as { command?: string } | null)?.command)
+            .map((r) => r.id),
+          at,
+        ).toEqual([card.id]);
+        const yes = await w.executor.confirmByText(asked.pendingId, "yes", w.ctx().actor);
+        expect(yes.status, at).toBe("done");
+        expect((await w.store.humanRequest.mustGet(card.id)).answer, at).toBe("Mark done anyway");
+        // The answer is the card's: the move itself made no change of its own.
+        expect((await w.store.task.mustGet(task.id)).status, at).toBe(status);
+        await w.store.close();
+      }
+  });
+
+  it("after a restart the read-back still says the note is not kept, and the yes answers the card", async () => {
+    const w = await world();
+    const { card } = await failedWithCard(w);
+    const asked = await w.executor.execute({
+      name: "task.transition",
+      params: { task: "digest", to: "done", note: OWN_NOTE },
+      ctx: w.ctx({
+        actor: { kind: "agent", id: w.agent.id },
+        source: "chat",
+        onPersonsWords: true,
+        wordsUsed: OWN_LINE,
+      }),
+    });
+    if (asked.status !== "pending") throw new Error(JSON.stringify(asked));
+    const { again, armed } = await restarted(w)();
+    expect(armed).toContain(asked.pendingId);
+    expect(again.getPending(asked.pendingId)?.readback).toBe(`${MARK_DONE} Your note is not kept.`);
+    const yes = await again.confirmByText(asked.pendingId, "yes", w.ctx().actor);
+    expect(yes.status).toBe("done");
+    expect((await w.store.humanRequest.mustGet(card.id)).answer).toBe("Mark done anyway");
+    await w.store.close();
+  });
+
+  it("a note the model made up, or no note, reads back the card's answer alone; the person's note on Cancel task still keeps the move, which the task can make", async () => {
+    for (const note of [MODEL_NOTE, undefined]) {
+      const w = await world();
+      await failedWithCard(w);
+      const asked = await w.executor.execute({
+        name: "task.transition",
+        params: { task: "digest", to: "done", ...(note ? { note } : {}) },
+        ctx: w.ctx({
+          actor: { kind: "agent", id: w.agent.id },
+          source: "chat",
+          onPersonsWords: true,
+          wordsUsed: "mark the digest page done anyway",
+        }),
+      });
+      expect(asked.card?.command, `note: ${note}`).toBe("request.answer");
+      expect((asked as { readback: string }).readback, `note: ${note}`).toBe(MARK_DONE);
+      await w.store.close();
+    }
+    const w = await world();
+    await failedWithCard(w, "medium", "needs_human");
+    const cancel = await w.executor.execute({
+      name: "task.transition",
+      params: { task: "digest", to: "cancelled", note: "the customer dropped the digest" },
+      ctx: w.ctx({
+        actor: { kind: "agent", id: w.agent.id },
+        source: "chat",
+        onPersonsWords: true,
+        wordsUsed: "cancel the digest page, the customer dropped the digest",
+      }),
+    });
+    expect(cancel.card?.command).toBe("task.transition");
     await w.store.close();
   });
 });

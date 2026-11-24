@@ -1889,8 +1889,11 @@ When you give words for a task's next attempt in Chat ("pause the FAQ and tell i
 the logo", "try the digest page again and tell it to use the old layout"), those words are your
 note: Chat does not read them back to you, the Yes says "Your note goes into its next brief.",
 and the next attempt reads them as yours. A failed task's card is answered with Try again and
-your note. A note Chat wrote without your words is still read back first ('Note for its next
-brief: "..."') and stays the agent's; its words never become the task's reason on the drawer. A
+your note. Mark done anyway takes no note: "mark the digest page done anyway, the client
+accepted it as it is" answers the card's Mark done anyway, and Chat's question ends "Your note is
+not kept." so you know before you say yes. A note Chat wrote without your words is still read
+back first ('Note for its next brief: "..."') and stays the agent's; its words never become the
+task's reason on the drawer. A
 card that needs this computer's OK is answered on the card only; Chat then says where your note
 goes ("type your note there with Try again") or that it was not kept. A suggestion card's
 Answered line says what was really changed, and when the changed tasks wait for a task only you

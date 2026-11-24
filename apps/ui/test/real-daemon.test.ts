@@ -29224,4 +29224,52 @@ describe("l4-chat-final, run L4", () => {
       await a.rt.close();
     }
   }, 60_000);
+
+  // fixup-l4-chat-final (the review of L4h-left-1): a failed task cannot move to done, so the
+  // person's own note no longer keeps that move off its card. Before, the move was kept and then
+  // refused ('"Write the digest page" is failed now, so it cannot be done; nothing changed.').
+  it("fixup-l4-chat-final: POST /chat: the person's own words to mark a failed task done anyway answer its card's Mark done anyway; the read-back says their note is not kept", async () => {
+    const a = await open("fr-ui-real-l4-final-done-");
+    try {
+      const project = await a.client.createProject({ name: "Digest club", goal: "A digest" });
+      const task = await a.rt.store.task.insert({
+        project_id: project.id,
+        title: "Write the digest page",
+        outcome: "digest.html lists the week's news",
+        acceptance_criteria: ["digest.html exists"],
+        risk_tier: 1,
+        status: "failed",
+        priority: 5,
+        specialist: "coder",
+        reason: "Claude did not answer (model call failed).",
+        author_agent: a.rt.agent.id,
+      } as never);
+      const { request } = await fileFailedTaskCard({
+        store: a.rt.store,
+        task,
+        session: null,
+        humanId: a.me.id,
+        agentId: a.rt.agent.id,
+        runId: null,
+        reason: "Claude did not answer (model call failed).",
+      });
+      const asked = await a.chat(
+        project.id,
+        'tool: task_transition {"task": "Write the digest page", "to": "done", "note": "the client accepted it as it is"}',
+      );
+      expect(asked.pendingConfirmation?.readback).toBe(
+        'Mark done anyway ("Write the digest page" failed)? Closes it although nothing passed review. Your note is not kept.',
+      );
+      // One card about the task: the read-back answers it, no second card is filed.
+      expect((await a.client.inbox(a.me.id)).needsYouCount).toBe(1);
+      await a.chat(project.id, "yes");
+      expect((await a.rt.store.humanRequest.mustGet(request.id)).answer).toBe("Mark done anyway");
+      expect((await a.rt.store.task.mustGet(task.id)).status).toBe("done");
+      const notes = await a.rt.store.queue.list({ project_id: project.id } as never, { limit: 20 });
+      expect(notes.filter((n) => n.kind === "note")).toEqual([]);
+    } finally {
+      await settleSessions(a.rt);
+      await a.rt.close();
+    }
+  }, 60_000);
 });

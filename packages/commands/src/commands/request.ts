@@ -84,15 +84,24 @@ async function askOf(
   answer: string,
   ctx: CommandContext,
   note: string | null = null,
+  given: string | undefined = undefined,
 ): Promise<string> {
+  // fixup-l4-chat-final (the review of L4h-left-1): the person's own note that this answer cannot
+  // carry (Mark done anyway, Cancel task: no note field) is said not kept before the yes, as the
+  // reply about a card that needs this computer's OK says it. Before, it was dropped unsaid. A
+  // note the model made up and the answer cannot carry is left out: the person never gave it.
+  const dropped =
+    !note && (ctx.source === "chat" || ctx.source === "voice") && notesPersons(ctx, given)
+      ? " Your note is not kept."
+      : "";
   const words = await ctx.ports.cardWords?.(r).catch(() => null);
-  if (!words) return `Answer ${quote(r.why, 60)} with ${quote(answer)}?`;
+  if (!words) return `Answer ${quote(r.why, 60)} with ${quote(answer)}?${dropped}`;
   const option = words.choices.find((c) => word(c.label) === word(answer));
-  if (!option) return `Answer ${quote(words.title, 80)} with ${quote(answer)}?`;
+  if (!option) return `Answer ${quote(words.title, 80)} with ${quote(answer)}?${dropped}`;
   const ask = `${option.label} (${words.title})?${option.explain ? ` ${option.explain}` : ""}`;
   // l4-chat-final (L4h-left-1): the person's own words are theirs and not read back to them; a
   // note the model made up is, so the yes covers it.
-  return note && !notesPersons(ctx, note) ? `${ask} ${noteForBrief(note)}` : ask;
+  return note && !notesPersons(ctx, note) ? `${ask} ${noteForBrief(note)}` : `${ask}${dropped}`;
 }
 
 /** 'Note for its next brief: "…"', as a move's read-back shows a note the model passed. */
@@ -147,7 +156,7 @@ export const requestAnswer: CommandDef<RequestAnswerParams> = {
       reversible: false,
       projectId: r.project_id,
       projectName: project?.name ?? null,
-      ask: await askOf(r, p.answer, ctx, await noteOf(r, p, ctx)),
+      ask: await askOf(r, p.answer, ctx, await noteOf(r, p, ctx), p.note),
     });
   },
   async run(p, ctx) {

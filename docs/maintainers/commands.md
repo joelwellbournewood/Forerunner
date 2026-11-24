@@ -1167,3 +1167,17 @@ l4-money-pause, run L4 (2026-11-22, L4-money-109): `SETTING_SPECS.session_reserv
 - Tests: packages/commands/test/chat-final.test.ts (the words rule, the move, the card with a
   restart, the no-note option, the high-risk card), packages/commands/test/selftasks-carried.test.ts
   (the parser's own note now answers the card's Try again with it).
+- **fixup-l4-chat-final (2026-11-24, the review of L4h-left-1)**: `moveAsCardAnswer(ctx, params,
+  option, movable)` keeps the move for a person's note on an option that takes none only when
+  `movable(task)` says the move itself can run: task.transition passes `canTransition(TASK_TRANSITIONS,
+  status, to)`, task.resume its own checks (`needs_human`, and someone else does a task that goes
+  ahead without its answers). A failed or waiting task cannot move to done (only its card's Mark
+  done anyway closes it), so "mark the digest page done anyway, the client accepted it as it is"
+  answers the card; before, the kept move was refused ('... is failed now, so it cannot be done;
+  nothing changed.'). The person's note then travels in `request.answer`'s params, and `askOf`
+  (request.ts) ends the read-back "Your note is not kept." when the option cannot carry it and the
+  note is the person's own (chat or voice); a note the model made up is left out, as before. Tests:
+  packages/commands/test/chat-final.test.ts ('fixup-l4-chat-final, run L4': chat and voice, failed
+  and waiting, a restart, the model's note and none, Cancel task still kept) and
+  apps/ui/test/real-daemon.test.ts ('l4-chat-final, run L4' > 'fixup-l4-chat-final: POST /chat: ...
+  Mark done anyway').
