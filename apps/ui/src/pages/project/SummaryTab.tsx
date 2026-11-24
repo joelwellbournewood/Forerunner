@@ -60,6 +60,12 @@ export function SummaryTab({ projectId, project }: { projectId: string; project?
       <WorkingNow projectId={projectId} />
       <SummaryCard projectId={projectId} project={project} />
       <RepositoryElsewhere projectId={projectId} project={project} />
+      {project?.guideStopped ? (
+        // W8a-left-22: the daemon's one line when the guide could not go out on GitHub.
+        <p className="text-sm text-amber-800 dark:text-amber-300" data-testid="guide-stopped-line">
+          {project.guideStopped}
+        </p>
+      ) : null}
       <SharedRepository projectId={projectId} project={project} />
       <IncludesWorkOf project={project} />
       {closed ? null : <ResearchReads projectId={projectId} project={project} />}

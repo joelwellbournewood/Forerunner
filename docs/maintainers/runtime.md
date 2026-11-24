@@ -7880,9 +7880,17 @@ no store, git host or file system, so the UI's fake daemon imports it).
   `tookOverLine`); the intake's doc set the same (`session/intake.ts`). The scaffold's branch
   (L4-github-102, D-L4-24, ADR 0117 amended 2026-11-23): `scaffoldBranchFor` takes the first of
   `scaffoldBranchesOf(project)` (`fr/docs-scaffold`, `fr/docs-scaffold-<name slug>`, that with
-  8 characters of the id) that holds this project's open scaffold pull request, is not on GitHub,
-  or is this project's own (its marker names the project); `fr/docs-scaffold` with another
-  project's open pull request stays `foreign` (W15-01, nothing written); null means no branch.
+  8 characters of the id) that holds this project's open scaffold pull request (looked for first
+  across all three, so a branch freed earlier in the list never gets a second one), else the
+  first that is not on GitHub or is this project's own (its marker names the project, no pull
+  request open on it); null means no branch. w8-together (W8a-left-22, ADR 0121 amended
+  2026-11-24): a branch whose open pull request is not this project's, `fr/docs-scaffold` too, is
+  passed over like any other taken branch (before, `fr/docs-scaffold` was returned as `foreign`
+  and the scaffold and every guide refresh stopped there); nothing is pushed to it or commented
+  on it (W15-01). When all three are taken (`stopped: "branches_taken"`) the scaffold and
+  `refreshGuide` record `summary_cache.docs.guide_stopped`; `guideStoppedLine`
+  (`sources/repository-words.ts`) gives `ProjectCard.guideStopped`, the Overview's one line
+  (`GUIDE_BRANCHES_TAKEN_LINE`); a run that gets through, or a guide found current, clears it.
   `checkout(project, target, pick, {ours, fresh: (open) => !open})` starts from the default branch
   whenever no pull request of this project is open, and the push replaces a branch already on
   GitHub with `--force-with-lease` (only the project's own; `GitOps.push` refuses the default
@@ -10252,7 +10260,10 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   (`session/task-context.ts`) says a new decision is its own dated file.
 - **A docs pull request this install did not open is nobody's** (L4i-left-2): `isProjectDocsPr`
   takes the branch's own marker (`branchMarker`), read in `scaffoldInCopy` and
-  `docsInPullRequests`; `docsPrListing` gives `own`, `listed` (no Merge, "#N names no project,
+  `docsInPullRequests`, and beside it the default branch's (`defaultMarker`, W8a-left-27, ADR 0121
+  amended 2026-11-24): the branch marker counts only when it differs from the default branch's
+  (`branchMarkerNames`), since every branch cut from a main that carries the project's marker
+  carries it too; `docsPrListing` gives `own`, `listed` (no Merge, "#N names no project,
   so it is only listed here: open it on GitHub to see whose it is.") or nothing. A `listed` one
   is its own row kind in `GET /projects/:id/pull-requests` (`kind: "listed"`, titled "Docs pull
   request #N" by `listedDocsTitle`, fixup-w8-repo-guide): the Overview lists it under "Also open

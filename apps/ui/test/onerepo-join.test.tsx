@@ -495,3 +495,25 @@ describe("w8-together, wave 8: Work together for a project already here (OJ-11, 
     expect(postedCalls(harness, "/commands/execute")).toEqual([]);
   });
 });
+
+describe("w8-together, wave 8: the guide could not go out (W8a-left-22)", () => {
+  const LINE =
+    "The repository guide on GitHub was not updated: every branch this project may write its docs on holds someone else's pull request.";
+
+  it("the Overview says in one line why the repository guide was not updated, with no button, only while the daemon's card carries it", async () => {
+    const harness = createHarness();
+    harness.daemon.state.guideStopped.proj_atlas = true;
+    renderApp("/projects/proj_atlas/summary", harness);
+    const line = await screen.findByTestId("guide-stopped-line");
+    expect(line).toHaveTextContent(LINE);
+    expect(line.textContent).toBe(LINE);
+    expect(within(line).queryAllByRole("button")).toEqual([]);
+  });
+
+  it("no line when the guide's last run got through", async () => {
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/summary", harness);
+    await screen.findByTestId("summary-tab");
+    expect(screen.queryByTestId("guide-stopped-line")).toBeNull();
+  });
+});

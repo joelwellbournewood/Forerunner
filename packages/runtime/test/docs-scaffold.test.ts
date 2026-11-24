@@ -205,9 +205,22 @@ describe("standard doc set at project creation (G.5)", () => {
     expect(
       await host.listPullRequestComments({ owner: "o", name: "delta" }, existingPr.number),
     ).toEqual([]);
-    expect(row0.summary_cache.docs).toMatchObject({ location: "repo", pr_url: null, created: [] });
+    // w8-together (W8a-left-22): Delta's scaffold passes over that branch and opens its own
+    // docs pull request on fr/docs-scaffold-delta (before: it stopped, with none).
+    const own = (await host.listPullRequests({ owner: "o", name: "delta" }, { state: "open" }))
+      .filter((p) => p.number !== existingPr.number)
+      .map((p) => [p.head.ref, p.htmlUrl]);
+    expect(own.map((p) => p[0])).toEqual([`${DOCS_SCAFFOLD_BRANCH}-delta`]);
+    expect(row0.summary_cache.docs).toMatchObject({ location: "repo", pr_url: own[0]?.[1] });
     // Once the pull request names Delta (this install's mark), it is Delta's: the files
-    // already on its branch are kept and no second pull request is opened.
+    // already on its branch are kept and no other pull request is opened (Delta's own one is
+    // closed on GitHub first, so the intake's is its only one).
+    const ownNumber = (
+      await host.listPullRequests({ owner: "o", name: "delta" }, { state: "open" })
+    ).find((p) => p.number !== existingPr.number)?.number;
+    await host.updatePullRequest({ owner: "o", name: "delta" }, ownNumber ?? 0, {
+      state: "closed",
+    });
     await host.updatePullRequest({ owner: "o", name: "delta" }, existingPr.number, {
       body: `The intake's docs.\n\n${docsPrMarker(row0)}`,
     });
@@ -246,20 +259,27 @@ describe("standard doc set at project creation (G.5)", () => {
       goal: "Same repo",
       repos: ["o/delta"],
     });
+    const delta = await run(["git", "--git-dir", bare, "rev-parse", DOCS_SCAFFOLD_BRANCH]);
     await rt.docs.scaffoldProject(pair);
     const row2 = await rt.store.project.mustGet(pair.id);
-    expect(row2.summary_cache.docs).toMatchObject({ location: "repo", created: [] });
-    expect((row2.summary_cache.docs as { pr_url?: unknown }).pr_url).toBeNull();
     expect(
       (await host.listPullRequestComments({ owner: "o", name: "delta" }, existingPr.number)).length,
     ).toBe(1);
+    expect((await run(["git", "--git-dir", bare, "rev-parse", DOCS_SCAFFOLD_BRANCH])).stdout).toBe(
+      delta.stdout,
+    );
     expect(
       parseInstallMarker((await show(bare, DOCS_SCAFFOLD_BRANCH, INSTALL_MARKER_FILE)) ?? "")
         ?.project,
     ).toBe(row.id);
-    expect(
-      await host.listPullRequests({ owner: "o", name: "delta" }, { state: "open" }),
-    ).toHaveLength(1);
+    // w8-together (W8a-left-22): the pair's scaffold goes on its own branch (before: it
+    // stopped at Delta's, with none).
+    const open = await host.listPullRequests({ owner: "o", name: "delta" }, { state: "open" });
+    expect(open.map((p) => p.head.ref)).toEqual([
+      DOCS_SCAFFOLD_BRANCH,
+      `${DOCS_SCAFFOLD_BRANCH}-delta-2`,
+    ]);
+    expect((row2.summary_cache.docs as { pr_url?: unknown }).pr_url).toBe(open[1]?.htmlUrl);
   });
 
   it("without a repository the doc set goes under the project's data directory", async () => {

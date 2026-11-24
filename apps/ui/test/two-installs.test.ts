@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { GitOps } from "../../../packages/capabilities/src/githost/git.ts";
 import type { MemoryGitHost } from "../../../packages/capabilities/src/githost/memory.ts";
 import type { PullRequestInfo, RepoRef } from "../../../packages/capabilities/src/githost/types.ts";
+import { scaffoldBranchesOf } from "../../../packages/runtime/src/loop/docs.ts";
 import { readStatusIssueKey } from "../../../packages/runtime/src/loop/status-board-words.ts";
 import { removeHomes } from "../../../packages/runtime/test/helpers.ts";
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
@@ -444,7 +445,7 @@ describe("w8-repo-guide, wave 8: a docs pull request this install did not open i
     ["has no marker file", null],
     ["names the project Ada takes over", OLD],
   ] as const) {
-    it(`Bob's unmarked fr/docs-scaffold pull request whose branch ${label}: Ada's scaffold, her take-over and its rebuild, and her Try again push nothing to it and comment nothing on it; her Overview lists it without Merge`, async () => {
+    it(`Bob's unmarked fr/docs-scaffold pull request whose branch ${label}: Ada's scaffold and her take-over push nothing to it and comment nothing on it, and open her docs pull request on her own branch (W8a-left-22); her Overview lists it without Merge`, async () => {
       const two = await composeTwo({ host: "memory" });
       const work = mkdtempSync(join(tmpdir(), "fr-repo-guide-"));
       try {
@@ -460,12 +461,18 @@ describe("w8-repo-guide, wave 8: a docs pull request this install did not open i
         });
         expect(await branchSha(shared)).toBe(bobs.sha);
         expect(two.writesBy("ada").filter((w) => w.number === bobs.pr.number)).toEqual([]);
+        // w8-together (W8a-left-22): Ada's scaffold passes over Bob's branch and opens her one
+        // docs pull request on her own (before: it stopped at fr/docs-scaffold, with none).
+        const own = (await two.pullRequests()).filter((p) => p.authorLogin === "ada");
+        expect(own.map((p) => p.head.ref)).toEqual(["fr/docs-scaffold-team-site"]);
         // fixup-w8-repo-guide: listed apart ("listed", the Overview's "Also open on GitHub"),
         // with a title that claims nothing about it (before: "docs", "The project's standard
         // docs", under "Waiting for you to merge").
         const listed = (await ada.client.projectPullRequests(made.id)).waiting;
         expect(
-          listed.map((r) => [r.number, r.kind, r.title, r.merge?.canMerge, r.merge?.sentence]),
+          listed
+            .filter((r) => r.number === bobs.pr.number)
+            .map((r) => [r.number, r.kind, r.title, r.merge?.canMerge, r.merge?.sentence]),
         ).toEqual([
           [
             bobs.pr.number,
@@ -475,6 +482,9 @@ describe("w8-repo-guide, wave 8: a docs pull request this install did not open i
             LISTED_ONLY(bobs.pr.number),
           ],
         ]);
+        expect(
+          listed.filter((r) => r.number === own[0]?.number).map((r) => [r.kind, r.merge?.canMerge]),
+        ).toEqual([["docs", true]]);
         // Merge on it is refused with its line, and nothing is written to it.
         expect(await ada.client.mergePullRequest(made.id, bobs.pr.number)).toEqual({
           state: "refused",
@@ -499,24 +509,28 @@ describe("w8-repo-guide, wave 8: a docs pull request this install did not open i
         });
         expect(await branchSha(old)).toBe(bobsOld.sha);
         expect(two.writesBy("ada").filter((w) => w.number === bobsOld.pr.number)).toEqual([]);
-        expect((await ada.client.project(took.id)).repositoryElsewhere).toMatchObject({
-          outcome: "took_over_no_pull_request",
-          tryAgainLine: "Tries again to open the docs pull request that names this project.",
-        });
-        // Try again through the client: refused in one sentence, and still nothing on Bob's.
-        expect(await ada.client.retryTakeOver(took.id)).toEqual({
-          state: "refused",
-          sentence:
-            "The docs pull request still could not be opened: another docs pull request is open on team/old; close it on GitHub, then try again.",
-          prUrl: null,
-        });
+        // w8-together (W8a-left-22): the take-over's docs pull request goes on Ada's own branch,
+        // so the take-over lands and there is no Try again (before: 'took_over_no_pull_request'
+        // and a Try again refused with 'another docs pull request is open on team/old').
+        const elsewhere = (await ada.client.project(took.id)).repositoryElsewhere;
+        expect(elsewhere?.outcome).toBeUndefined();
+        expect(elsewhere?.tryAgainLine).toBeUndefined();
         expect(await branchSha(old)).toBe(bobsOld.sha);
         expect(two.writesBy("ada").filter((w) => w.number === bobsOld.pr.number)).toEqual([]);
-        expect(
-          (await two.pullRequests(oldRepo)).map((p) => [p.number, p.head.ref, p.authorLogin]),
-        ).toEqual([[bobsOld.pr.number, "fr/docs-scaffold", "bob"]]);
+        const oldPrs = (await two.pullRequests(oldRepo)).map((p) => [
+          p.number,
+          p.head.ref,
+          p.authorLogin,
+        ]);
+        expect(oldPrs).toHaveLength(2);
+        expect(oldPrs[0]).toEqual([bobsOld.pr.number, "fr/docs-scaffold", "bob"]);
+        expect(oldPrs[1]?.slice(1)).toEqual(["fr/docs-scaffold-old-site-again", "ada"]);
         const oldListed = (await ada.client.projectPullRequests(took.id)).waiting;
-        expect(oldListed.map((r) => [r.number, r.kind, r.title, r.merge?.canMerge])).toEqual([
+        expect(
+          oldListed
+            .map((r) => [r.number, r.kind, r.title, r.merge?.canMerge])
+            .filter((r) => r[0] === bobsOld.pr.number),
+        ).toEqual([
           [bobsOld.pr.number, "listed", `Docs pull request #${bobsOld.pr.number}`, false],
         ]);
         expect(
@@ -1557,4 +1571,159 @@ describe("w8-together, wave 8: join together", () => {
       await two.close();
     }
   }, 240_000);
+
+  /** A file on a branch of the stand-in's bare repository, or null. */
+  async function show(bare: string, ref: string, path: string): Promise<string | null> {
+    const r = await run(["git", "--git-dir", bare, "show", `${ref}:${path}`], {
+      allowFailure: true,
+    });
+    return r.code === 0 ? r.stdout : null;
+  }
+  const headOf = async (bare: string, ref: string) =>
+    (await run(["git", "--git-dir", bare, "rev-parse", ref], { allowFailure: true })).stdout.trim();
+  const GUIDE_STOPPED =
+    "The repository guide on GitHub was not updated: every branch this project may write its docs on holds someone else's pull request.";
+
+  /**
+   * Bob (a person on GitHub, with his own account) opens a pull request on `branch`, cut from
+   * the default branch, which carries Ada's marker once her doc set merged: the branch's
+   * `.forerunner/project.json` is Ada's, and the body names no project.
+   */
+  async function bobsDocsPr(two: TwoHomes, branch: string, files: Record<string, string>) {
+    await seedBranch(two, branch, files, "docs: Bob's notes");
+    return two.bob.rt.gitHost.createPullRequest(two.repo, {
+      title: "docs: notes",
+      body: "Bob's notes for the repository.",
+      head: branch,
+      base: "main",
+    });
+  }
+
+  it("http: W8a-left-22, -27: Bob's unmarked fr/docs-scaffold pull request cut from a main that carries Ada's marker gets no write from Ada over a scaffold run, a guide refresh after a fact change and her restart; she opens exactly one docs pull request, on her own branch; her Overview lists Bob's without Merge and her Docs tab does not list its files", async () => {
+    const two = await composeTwo({ host: "http" });
+    try {
+      const { ada } = two;
+      const bare = two.http?.repo(two.repo)?.dir ?? "";
+      expect(bare).not.toBe("");
+      const { kite, docs } = await kiteClub(two, true);
+      await followDefaultBranch(ada, kite.id);
+      const marker = await show(bare, "main", ".forerunner/project.json");
+      expect(marker).toContain(kite.id);
+      // Bob's pull request on fr/docs-scaffold: the branch carries Ada's marker, as main does.
+      const bobs = await bobsDocsPr(two, "fr/docs-scaffold", {
+        "docs/notes.md": "# Notes\n\nBob's notes.\n",
+        "docs/runbook.md": "# Runbook\n\nBob's steps.\n",
+      });
+      expect(await show(bare, "fr/docs-scaffold", ".forerunner/project.json")).toBe(marker);
+      const bobsHead = await headOf(bare, "fr/docs-scaffold");
+      // Ada's writes on Bob's pull request (a comment, an edit, a close); a push onto his branch
+      // shows in its head, checked beside.
+      const onBobs = () => two.writesBy("ada").filter((w) => w.number === bobs.number);
+      const adaDocsPrs = async () =>
+        (await two.pullRequests()).filter(
+          (p) => p.state === "open" && p.authorLogin === "ada" && p.head.ref.startsWith("fr/docs-"),
+        );
+
+      // A scaffold run (as a take-over's Try again runs it), then a fact Ada changes (who
+      // merges) and the guide's refresh at her session's end.
+      await ada.rt.docs.scaffoldProject(await ada.rt.store.project.mustGet(kite.id));
+      const row = await ada.rt.store.project.mustGet(kite.id);
+      await ada.client.updateProjectSettings(kite.id, {
+        version: row.version,
+        settings: { merge_mode: "after_review" },
+      });
+      const refreshed = await ada.rt.docs.refreshGuide(await ada.rt.store.project.mustGet(kite.id));
+      expect(refreshed.changed).toBe(true);
+      const opened = await adaDocsPrs();
+      expect(opened.map((p) => [p.head.ref, p.authorLogin])).toEqual([
+        ["fr/docs-scaffold-kite-club", "ada"],
+      ]);
+      expect(await show(bare, "fr/docs-scaffold-kite-club", "AGENTS.md")).toContain(
+        "merges its pull requests itself once its critic accepted them.",
+      );
+      expect(onBobs()).toEqual([]);
+      expect(await headOf(bare, "fr/docs-scaffold")).toBe(bobsHead);
+
+      // Her Overview lists Bob's without Merge, hers with it; her Docs tab does not count Bob's
+      // files as hers waiting there.
+      const listed = (await ada.client.projectPullRequests(kite.id)).waiting;
+      expect(
+        listed
+          .map((r) => [r.number, r.kind, r.merge?.canMerge])
+          .sort((a, b) => Number(a[0]) - Number(b[0])),
+      ).toEqual([
+        [bobs.number, "listed", false],
+        [opened[0]?.number, "docs", true],
+      ]);
+      const waiting = await ada.rt.docs.docsInPullRequests(
+        await ada.rt.store.project.mustGet(kite.id),
+      );
+      expect(waiting.filter((d) => d.number === bobs.number)).toEqual([]);
+      const docsTab = await ada.client.docs(kite.id);
+      expect(docsTab.filter((d) => d.pullRequest?.number === bobs.number)).toEqual([]);
+      expect(docs.number).not.toBe(bobs.number);
+      expect((await ada.client.project(kite.id)).guideStopped ?? null).toBeNull();
+
+      // Her daemon starts again and the refresh runs twice: no second pull request, still
+      // nothing on Bob's.
+      await ada.restart();
+      for (let i = 0; i < 2; i++)
+        await ada.rt.docs.refreshGuide(await ada.rt.store.project.mustGet(kite.id));
+      await ada.rt.docs.scaffoldProject(await ada.rt.store.project.mustGet(kite.id));
+      expect((await adaDocsPrs()).map((p) => p.number)).toEqual(opened.map((p) => p.number));
+      expect(onBobs()).toEqual([]);
+      expect(await headOf(bare, "fr/docs-scaffold")).toBe(bobsHead);
+    } finally {
+      await two.close();
+    }
+  }, 300_000);
+
+  it("http: W8a-left-22: with every branch Ada's project may write its docs on holding someone else's pull request, her guide refresh writes nothing and her Overview says why in one line, also after her daemon starts again; once one is closed, the next refresh opens her one docs pull request there and the line goes", async () => {
+    const two = await composeTwo({ host: "http" });
+    try {
+      const { ada, bob } = two;
+      const bare = two.http?.repo(two.repo)?.dir ?? "";
+      const { kite } = await kiteClub(two, true);
+      await followDefaultBranch(ada, kite.id);
+      const branches = scaffoldBranchesOf(kite);
+      expect(branches).toHaveLength(3);
+      const prs = [];
+      for (const branch of branches)
+        prs.push(await bobsDocsPr(two, branch, { "docs/notes.md": `# Notes\n\n${branch}\n` }));
+      const heads = await Promise.all(branches.map((b) => headOf(bare, b)));
+      const before = two.writesBy("ada").length;
+      const row = await ada.rt.store.project.mustGet(kite.id);
+      await ada.client.updateProjectSettings(kite.id, {
+        version: row.version,
+        settings: { merge_mode: "after_review" },
+      });
+      const out = await ada.rt.docs.refreshGuide(await ada.rt.store.project.mustGet(kite.id));
+      expect(out).toEqual({ changed: false, prUrl: null });
+      expect(
+        two
+          .writesBy("ada")
+          .slice(before)
+          .filter((w) => !/^(issue|comment)/.test(w.action)),
+      ).toEqual([]);
+      expect(await Promise.all(branches.map((b) => headOf(bare, b)))).toEqual(heads);
+      expect((await ada.client.project(kite.id)).guideStopped).toBe(GUIDE_STOPPED);
+      await ada.restart();
+      expect((await ada.client.project(kite.id)).guideStopped).toBe(GUIDE_STOPPED);
+
+      // Bob closes his pull request on the second branch and deletes that branch: the next
+      // refresh opens Ada's one docs pull request there, and the line goes.
+      await bob.rt.gitHost.updatePullRequest(two.repo, prs[1]?.number ?? 0, { state: "closed" });
+      await run(["git", "--git-dir", bare, "branch", "-D", branches[1] ?? ""]);
+      await ada.rt.docs.refreshGuide(await ada.rt.store.project.mustGet(kite.id));
+      const ours = (await two.pullRequests()).filter(
+        (p) => p.state === "open" && p.authorLogin === "ada" && p.head.ref.startsWith("fr/docs-"),
+      );
+      expect(ours.map((p) => p.head.ref)).toEqual([branches[1]]);
+      expect((await ada.client.project(kite.id)).guideStopped ?? null).toBeNull();
+      for (const n of [prs[0]?.number, prs[2]?.number])
+        expect(two.writesBy("ada").filter((w) => w.number === n)).toEqual([]);
+    } finally {
+      await two.close();
+    }
+  }, 300_000);
 });

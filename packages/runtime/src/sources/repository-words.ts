@@ -102,6 +102,24 @@ export function scaffoldLeftNoMarker(project: Pick<ProjectRow, "summary_cache">)
   return !(typeof d.pr_url === "string" && d.pr_url) || other;
 }
 
+/**
+ * W8a-left-22 (w8-together): the Overview's one line when the repository guide could not go out
+ * because every scaffold branch the project may write on holds someone else's pull request
+ * (`summary_cache.docs.guide_stopped`, recorded by the scaffold and the guide refresh).
+ */
+export const GUIDE_BRANCHES_TAKEN_LINE =
+  "The repository guide on GitHub was not updated: every branch this project may write its docs on holds someone else's pull request.";
+
+/** The guide line for the Overview, or null (no stop recorded, or the project is closed). */
+export function guideStoppedLine(
+  project: Pick<ProjectRow, "status" | "summary_cache" | "settings">,
+): string | null {
+  if (project.status === "archived") return null;
+  const docs = (project.summary_cache as JsonObject | null | undefined)?.docs;
+  if (!docs || typeof docs !== "object" || Array.isArray(docs)) return null;
+  return (docs as JsonObject).guide_stopped === "branches_taken" ? GUIDE_BRANCHES_TAKEN_LINE : null;
+}
+
 /** A project whose creation was undone (W15-36): archived, with its old name kept. */
 export function isRemovedProject(project: Pick<ProjectRow, "status" | "settings">): boolean {
   return project.status === "archived" && typeof settingsOf(project)[REMOVED_NAME_KEY] === "string";

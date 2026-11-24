@@ -1032,11 +1032,14 @@ describe("w15-merge, wave 15", () => {
     const head0 = await headOf(bare, "fr/docs-scaffold");
     const b = await secondProject(w);
     const second = await docs.scaffoldProject(b);
-    expect(second.prUrl).toBeNull();
     expect(await headOf(bare, "fr/docs-scaffold")).toBe(head0);
     expect(await host.listPullRequestComments(REPO, pr?.number ?? 0)).toEqual([]);
-    expect(await host.listPullRequests(REPO, { state: "open" })).toHaveLength(1);
-    expect(await docs.docsInPullRequests(b)).toEqual([]);
+    // w8-together (W8a-left-22): the second project's scaffold passes over the first one's
+    // branch to its own (before: it stopped at fr/docs-scaffold and opened none).
+    const open = await host.listPullRequests(REPO, { state: "open" });
+    expect(open.map((p) => p.head.ref)).toEqual(["fr/docs-scaffold", "fr/docs-scaffold-second"]);
+    expect(second.prUrl).toBe(open[1]?.htmlUrl);
+    expect((await docs.docsInPullRequests(b)).filter((d) => d.number === pr?.number)).toEqual([]);
     await w.close();
   }, 60_000);
 

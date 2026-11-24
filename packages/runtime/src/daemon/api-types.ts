@@ -254,6 +254,13 @@ export const ProjectCard = z.object({
    */
   researchReads: z.string().optional(),
   /**
+   * w8-together (W8a-left-22): the repository guide could not go out because every scaffold
+   * branch the project may write on holds someone else's pull request ('The repository guide on
+   * GitHub was not updated: ...', `guideStoppedLine`); null otherwise. Absent on a card the
+   * state service serves.
+   */
+  guideStopped: z.string().nullable().optional(),
+  /**
    * d1109-onerepo-link (ADR 0117, OR-07): the Overview's line about the repository. `elsewhere`:
    * this computer's copy of the repository names a Forerunner project that is not on this
    * computer ('o/kite is also the Forerunner project "Kite club", which is not on this

@@ -30653,3 +30653,61 @@ describe("w8-together, wave 8: Work together for a project already here (OJ-11)"
     }
   }, 180_000);
 });
+
+describe("w8-together, wave 8: the guide could not go out (W8a-left-22)", () => {
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  it("GET /projects/:id carries the one Overview line while the guide's last run found every scaffold branch someone else's, after the daemon starts again too; none once a run got through, and none on a closed project", async () => {
+    const work = mkdtempSync(join(tmpdir(), "fr-ui-real-w8-guide-"));
+    homes.push(work);
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const env = { FORERUNNER_HOME: home };
+    const host = new MemoryGitHost("alice");
+    await host.createRepo({ owner: "o", name: "kite", private: true });
+    const compose = () =>
+      composeWithRolePlayer(
+        {},
+        {
+          gitHost: host,
+          tryIt: false,
+          env,
+          dirs: appDirs({ env }),
+          stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        },
+      );
+    let { rt, client } = await compose();
+    try {
+      // The record the scaffold and the guide refresh write when every candidate branch holds
+      // someone else's pull request (`summary_cache.docs.guide_stopped`).
+      const kite = await rt.store.project.insert({
+        name: "Kite club",
+        goal: "The kite club's site",
+        repos: ["o/kite"],
+        settings: { members: [rt.agent.id] },
+        author_human: rt.human.id,
+        summary_cache: { docs: { location: "repo", guide_stopped: "branches_taken" } },
+      });
+      const LINE =
+        "The repository guide on GitHub was not updated: every branch this project may write its docs on holds someone else's pull request.";
+      expect((await client.project(kite.id)).guideStopped).toBe(LINE);
+      await rt.close();
+      ({ rt, client } = await compose());
+      expect((await client.project(kite.id)).guideStopped).toBe(LINE);
+      // A later run got through (the record without the stop): no line.
+      await rt.store.project.patch(kite.id, {
+        summary_cache: { docs: { location: "repo", guide_key: "k" } } as never,
+      });
+      expect((await client.project(kite.id)).guideStopped ?? null).toBeNull();
+      // A closed project says nothing about its guide.
+      await rt.store.project.patch(kite.id, {
+        status: "archived",
+        summary_cache: { docs: { location: "repo", guide_stopped: "branches_taken" } } as never,
+      });
+      expect((await client.project(kite.id)).guideStopped ?? null).toBeNull();
+    } finally {
+      await rt.close();
+    }
+  }, 120_000);
+});

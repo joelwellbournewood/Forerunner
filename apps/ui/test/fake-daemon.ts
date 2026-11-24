@@ -123,6 +123,7 @@ import { openPlanSentence } from "@forerunner/runtime/session/intake-words";
 import {
   type Elsewhere,
   elsewhereSentence,
+  GUIDE_BRANCHES_TAKEN_LINE,
   inUseSentence,
   nothingToTakeOverSentence,
   otherHostSentence,
@@ -714,6 +715,11 @@ export interface FakeDaemonState {
   oldStatusPr: Record<string, number>;
   /** OJ-11: per project id, a refusal of the together form (GitHub not answering, ...). */
   togetherRefusal: Record<string, string>;
+  /**
+   * W8a-left-22: per project id, the guide's last run stopped because every scaffold branch is
+   * someone else's (the daemon's `summary_cache.docs.guide_stopped`); the card's line.
+   */
+  guideStopped: Record<string, true>;
   /**
    * OJ-06: per closed project id, where Make one project put its work (`ProjectCard.joinedInto`);
    * `project.join` writes it, its Undo removes it. A joined project leaves `GET /projects`.
@@ -1612,6 +1618,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     joinPreviews: {},
     oldStatusPr: {},
     togetherRefusal: {},
+    guideStopped: {},
     joined: {},
     joinRefusal: null,
     joinUndoBlocked: null,
@@ -1951,6 +1958,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.joinPreviews = {};
     state.oldStatusPr = {};
     state.togetherRefusal = {};
+    state.guideStopped = {};
     state.joined = {};
     state.joinRefusal = null;
     state.joinUndoBlocked = null;
@@ -2387,6 +2395,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       repository,
       // 'sites': as the daemon's card, from "Web pages research may read".
       researchReads: researchReadsLine(webAccessFake(p.id)),
+      // W8a-left-22, as the daemon: the guide could not go out (`guideStoppedLine`).
+      guideStopped:
+        state.guideStopped[p.id] && p.status !== "archived" ? GUIDE_BRANCHES_TAKEN_LINE : null,
       // OR-07: the repository is also a project that is not on this computer (or together).
       repositoryElsewhere: state.repositoryOverview[p.id] ?? null,
       // OJ-01 and OJ-06 (d1109-onerepo-join), as the daemon's card.
