@@ -168,7 +168,7 @@ function taskRow(overrides: Partial<TaskRow> = {}): TaskRow {
 }
 
 describe("ProjectsMirror", () => {
-  it("creates the board and fields, mirrors title, status, specialist, cost in CHF, PR and review, and records event and audit rows", async () => {
+  it("creates the board and fields, mirrors title, status, specialist, PR and review (no cost: w8-status-write, W8-write-2), and records event and audit rows", async () => {
     const w = await world();
     const t1 = await w.addTask("Write docs", {
       status: "in_review",
@@ -234,7 +234,6 @@ describe("ProjectsMirror", () => {
       fields: {
         Status: "In Review",
         specialist: "writer",
-        cost: "CHF 1.28",
         pr: "https://github.example/acme/sample/pull/7",
         review: `accept 92/100 forerunner://reviews/${review.id}`,
         forerunner_task_id: t1,
@@ -243,8 +242,12 @@ describe("ProjectsMirror", () => {
     expect(i1?.body).toContain("Docs exist");
     expect(i1?.body).toContain("- README updated");
     expect(i1?.body).toContain("one way");
+    // No cost reaches GitHub (the ledger above has CHF 1.28 for the task).
+    expect(i1?.fields.cost).toBeUndefined();
+    expect(i1?.body).not.toMatch(/CHF|USD|Cost/);
     const i2 = list.find((i) => i.forerunnerTaskId === t2);
-    expect(i2?.fields).toMatchObject({ Status: "Draft", cost: "USD 0.00" });
+    expect(i2?.fields).toMatchObject({ Status: "Draft" });
+    expect(i2?.fields.cost).toBeUndefined();
     expect(i2?.fields.specialist ?? null).toBeNull();
     expect(i2?.fields.pr ?? null).toBeNull();
 
@@ -860,17 +863,16 @@ describe("ProjectsMirror", () => {
     });
   });
 
-  it("taskToItem maps every status to a label and falls back to USD when the ledger has no CHF", () => {
+  it("taskToItem maps every status to a label and writes no cost (w8-status-write)", () => {
     for (const status of TASK_STATUSES) {
       const item = taskToItem(taskRow({ status }), {
-        costChfMicro: null,
-        costUsdMicro: 1_234_567,
         review: null,
         reviewLink: null,
         milestone: null,
       });
       expect(item.fields?.Status).toBe(MIRROR_STATUS_LABELS[status]);
-      expect(item.fields?.cost).toBe("USD 1.23");
+      expect(item.fields?.cost).toBeUndefined();
+      expect(item.body).not.toMatch(/CHF|USD|Cost/);
       expect(item.fields?.review).toBeNull();
       expect(item.fields?.milestone).toBeNull();
       expect(item.forerunnerTaskId).toBe("t");

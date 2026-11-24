@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { GitOps } from "../../../packages/capabilities/src/githost/git.ts";
 import type { MemoryGitHost } from "../../../packages/capabilities/src/githost/memory.ts";
 import type { PullRequestInfo, RepoRef } from "../../../packages/capabilities/src/githost/types.ts";
+import { readStatusIssueKey } from "../../../packages/runtime/src/loop/status-board-words.ts";
 import { removeHomes } from "../../../packages/runtime/test/helpers.ts";
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
 import { ApiError, type DaemonClient } from "../src/api/client.ts";
@@ -132,10 +133,27 @@ describe("w8-two-homes, wave 8: harness", () => {
         expect(bobWrites.filter((w) => w.action === "pull_request.create")).toHaveLength(1);
         expect(bobWrites.filter((w) => w.number === adaDocs.number)).toEqual([]);
         expect(two.writesBy("ada").filter((w) => w.number === bobRun.pr?.number)).toEqual([]);
-        // Bob's home wrote no docs, marker, guide or status: only its task's branch and pull
-        // request (a together project writes nothing else to the repository).
+        // Bob's home wrote no docs, marker, guide or status file: only its task's branch and
+        // pull request (a together project writes nothing else to the repository), and
+        // (w8-status-write, W8-write-6) its own comment on the project's status issue.
+        await bob.rt.statusBoard.settled();
+        const statusIssue = new Set(
+          (await bob.rt.gitHost.listIssues(two.repo, { state: "all" }))
+            .filter((i) => readStatusIssueKey(i.body) === made.id)
+            .map((i) => i.number),
+        );
+        const onStatusIssue = (w: (typeof bobWrites)[number]) =>
+          ["issue.create", "issue.update", "issue.pin", "comment", "comment.update"].includes(
+            w.action,
+          ) &&
+          (w.number === undefined || statusIssue.has(w.number));
         expect(
-          bobWrites.filter((w) => !["push", "pull_request.create", "other"].includes(w.action)),
+          two
+            .writesBy("bob")
+            .filter(
+              (w) =>
+                !["push", "pull_request.create", "other"].includes(w.action) && !onStatusIssue(w),
+            ),
         ).toEqual([]);
         // Each lists only its own pull requests.
         const listedBob = await bob.client.projectPullRequests(made.id);
@@ -703,9 +721,24 @@ describe("w8-repo-guide, wave 8: the guide is written by the Forerunner that mad
       await bob.restart();
       await bob.rt.docs.refreshGuide(await bob.rt.store.project.mustGet(made.id));
       const bobWrites = two.writesBy("bob");
+      // w8-status-write (W8-write-6): beside its task pull requests, Bob's Forerunner writes
+      // only its own comment on the project's status issue (and may rebuild its body).
+      await bob.rt.statusBoard.settled();
+      const statusIssue = new Set(
+        (await bob.rt.gitHost.listIssues(two.repo, { state: "all" }))
+          .filter((i) => readStatusIssueKey(i.body) === made.id)
+          .map((i) => i.number),
+      );
       expect(
         bobWrites.filter(
-          (w) => !["push", "pull_request.create", "pull_request.merge", "other"].includes(w.action),
+          (w) =>
+            !["push", "pull_request.create", "pull_request.merge", "other"].includes(w.action) &&
+            !(
+              ["issue.create", "issue.update", "issue.pin", "comment", "comment.update"].includes(
+                w.action,
+              ) &&
+              (w.number === undefined || statusIssue.has(w.number))
+            ),
         ),
       ).toEqual([]);
       const bobsPrs = (await two.pullRequests()).filter((p) => p.authorLogin === "bob");
@@ -745,6 +778,328 @@ describe("w8-repo-guide, wave 8: the guide is written by the Forerunner that mad
       await ada.restart();
       await runOneTask(ada, two, made.id, "Write the news page in news.md");
       expect((await guidePrs()).map((p) => p.number)).toEqual(opened.map((p) => p.number));
+    } finally {
+      await two.close();
+    }
+  }, 300_000);
+});
+
+describe("w8-status-write, wave 8: one pinned status issue, one comment per Forerunner", () => {
+  const ISSUE_TITLE = "Forerunner status: Team site";
+  /** The lines a person reads (the hidden markers are the one place an id stands, D-W8-35). */
+  const visible = (text: string) =>
+    text
+      .split("\n")
+      .filter((l) => !/^<!-- \/?forerunner:[\w-]+.*-->$/.test(l.trim()))
+      .join("\n");
+  const statusIssues = async (home: Home, repo: RepoRef) =>
+    (await home.rt.gitHost.listIssues(repo, { state: "all" })).filter(
+      (i) => i.title === ISSUE_TITLE && readStatusIssueKey(i.body) !== null,
+    );
+  const commentsOf = async (home: Home, repo: RepoRef, n: number) =>
+    (await home.rt.gitHost.listIssueComments(repo, n)).comments;
+  /** Ada makes "Team site" on team/shared; Bob works on it together. */
+  async function teamSite(two: TwoHomes) {
+    const made = await two.ada.client.createProject({
+      name: "Team site",
+      goal: "A small site for the team",
+      repos: ["team/shared"],
+    });
+    const together = await two.bob.client.createProject({
+      name: "Bob's site",
+      goal: "The team's site",
+      repos: ["team/shared"],
+      switch: true,
+      together: { project: made.id },
+    });
+    expect(together.id).toBe(made.id);
+    // OR-15: the Work together press writes nothing, the status issue neither.
+    expect(two.writesBy("bob")).toEqual([]);
+    return made;
+  }
+
+  it("http: Ada's and Bob's Forerunners keep one pinned issue with the marker and the label and two comments, each edited only by its writer and the same comments across sessions and restarts; the body lists both; no raw device id, no money, no status pull request; Bob's Docs row and Settings say where; the issue's creation gives Ada no docs pull request (W8-write-1, -2, -3, -5, -6, W8a-left-1)", async () => {
+    const two = await composeTwo({ host: "http" });
+    try {
+      const { ada, bob } = two;
+      const repo = two.repo;
+      const made = await teamSite(two);
+      const adaDevice = (await ada.client.me()).desktopDeviceId ?? "";
+      const bobDevice = (await bob.client.me()).desktopDeviceId ?? "";
+      expect(adaDevice).not.toBe("");
+      expect(bobDevice).not.toBe("");
+      const docsPrs = async () =>
+        (await two.pullRequests()).filter((p) => /^fr\/(docs-scaffold|intake)/.test(p.head.ref));
+      const docsBefore = (await docsPrs()).map((p) => p.number);
+
+      // Ada's first task start opens the issue (no issue at linking or at Work together).
+      await runOneTask(ada, two, made.id, "Write the about page in about.md");
+      await ada.rt.statusBoard.settled();
+      const [issue, ...more] = await statusIssues(ada, repo);
+      expect(more).toEqual([]);
+      expect(issue).toMatchObject({ state: "open", labels: ["forerunner:status"] });
+      expect(issue?.body.split("\n")[0]).toBe(`<!-- forerunner:status v1 key=${made.id} -->`);
+      expect(two.http?.pinnedIssues(repo)).toEqual([issue?.number]);
+      // W8a-left-1 (D-W8-44): the issue's number is no guide fact: its creation opened no docs
+      // pull request of Ada's.
+      expect((await docsPrs()).map((p) => p.number)).toEqual(docsBefore);
+
+      // Bob's first task adds his comment to the same issue; no second issue.
+      await runOneTask(bob, two, made.id, "Write the contact page in contact.md");
+      await bob.rt.statusBoard.settled();
+      expect((await statusIssues(bob, repo)).map((i) => i.number)).toEqual([issue?.number]);
+      const first = await commentsOf(ada, repo, issue?.number ?? 0);
+      expect(first.map((c) => c.author)).toEqual(["ada", "bob"]);
+      const ids = first.map((c) => c.id);
+      expect(first[0]?.body).toContain("**Ada's agent (Forerunner)** · ada · updated ");
+      expect(first[1]?.body).toContain("**Bob's agent (Forerunner)** · bob · updated ");
+      expect(first[0]?.body).toContain('did 1 task: "Write the about page in about.md"');
+      // The body lists both writers.
+      const body = (await ada.rt.gitHost.getIssue(repo, issue?.number ?? 0)).body;
+      expect(body).toContain("**ada's Forerunner**");
+      expect(body).toContain("**bob's Forerunner**");
+
+      // Restarts, then one more session each: the same two comments, edited in place.
+      await ada.restart();
+      await bob.restart();
+      await runOneTask(ada, two, made.id, "Write the news page in news.md");
+      await runOneTask(bob, two, made.id, "Write the team page in team.md");
+      await ada.rt.statusBoard.settled();
+      await bob.rt.statusBoard.settled();
+      const after = await commentsOf(ada, repo, issue?.number ?? 0);
+      expect(after.map((c) => c.id)).toEqual(ids);
+      expect(after[0]?.body).toContain('did 1 task: "Write the news page in news.md"');
+      expect(after[1]?.body).toContain('did 1 task: "Write the team page in team.md"');
+      // Each comment edited only by its writer; neither wrote to the other's pull requests.
+      for (const [login, own] of [
+        ["ada", ids[0]],
+        ["bob", ids[1]],
+      ] as const) {
+        const edits = two.writesBy(login).filter((w) => w.action === "comment.update");
+        expect(edits.length, login).toBeGreaterThan(0);
+        for (const e of edits) expect(e.op.endsWith(`/issues/comments/${own}`), e.op).toBe(true);
+      }
+      const prs = await two.pullRequests();
+      for (const [login, other] of [
+        ["ada", "bob"],
+        ["bob", "ada"],
+      ] as const) {
+        const theirs = prs.filter((p) => p.authorLogin === other).map((p) => p.number);
+        expect(two.writesBy(login).filter((w) => w.number && theirs.includes(w.number))).toEqual(
+          [],
+        );
+      }
+      // W8-write-5: no status pull request and no fr/status branch, from either home.
+      expect(prs.filter((p) => p.head.ref === "fr/status")).toEqual([]);
+      // W8-write-3, -2: no raw device id anywhere on GitHub; no money, email or mention.
+      const texts = [
+        (await ada.rt.gitHost.getIssue(repo, issue?.number ?? 0)).body,
+        ...after.map((c) => c.body),
+      ];
+      for (const t of texts) {
+        expect(t).not.toContain(adaDevice);
+        expect(t).not.toContain(bobDevice);
+        expect(visible(t)).not.toMatch(/CHF|USD|EUR|Spent|@|[0-9a-f]{8}-[0-9a-f]{4}-/);
+      }
+      // W8-write-6: Bob's Docs row and Settings say where his status is.
+      const bobStatus = (await bob.client.docs(made.id)).find((d) => d.path === "docs/status.md");
+      expect(bobStatus?.note).toBe(`In the app; also on GitHub: issue #${issue?.number}`);
+      expect(bobStatus?.notWrittenHere).toBeUndefined();
+      const bobRow = (await bob.client.settings()).find(
+        (r) => r.key === "project.status_issue" && r.scopeId === made.id,
+      );
+      expect(bobRow?.description).toContain(`Status on GitHub: issue #${issue?.number} (pinned)`);
+      // Run C's Details line names the status issue (exact text).
+      expect((await bob.client.project(made.id)).repositoryElsewhere?.details).toBe(
+        "What the other Forerunner does shows in its comment on the status issue and its pull requests on GitHub. You merge yours; its person merges theirs.",
+      );
+    } finally {
+      await two.close();
+    }
+  }, 300_000);
+
+  it("memory: a write that waits while GitHub is off is kept across a restart and sent once when GitHub answers; Settings says it waits meanwhile; Quit with nothing running writes nothing", async () => {
+    const two = await composeTwo({ host: "memory" });
+    try {
+      const { ada } = two;
+      const repo = two.repo;
+      const made = await teamSite(two);
+      await runOneTask(ada, two, made.id, "Write the about page in about.md");
+      await ada.rt.statusBoard.settled();
+      const [issue] = await statusIssues(ada, repo);
+      const [mine] = await commentsOf(ada, repo, issue?.number ?? 0);
+      ada.githubOff();
+      await runOneTask(ada, two, made.id, "Write the news page in news.md");
+      await ada.rt.statusBoard.settled();
+      const row = async () =>
+        (await ada.client.settings()).find(
+          (r) => r.key === "project.status_issue" && r.scopeId === made.id,
+        );
+      expect((await row())?.description).toMatch(
+        /Status on GitHub: last updated \d\d:\d\d; it updates when GitHub answers\.$/,
+      );
+      const writesBefore = two.writesBy("ada").length;
+      // Quit with nothing running: nothing of the writer is sent (no Working on now lines).
+      await ada.restart();
+      expect(two.writesBy("ada").length).toBe(writesBefore);
+      ada.githubOn();
+      // Opening Settings (or the Docs tab) sends what waited, once.
+      await row();
+      await until(
+        "the waiting status to reach GitHub",
+        async () =>
+          two
+            .writesBy("ada")
+            .slice(writesBefore)
+            .some((w) => w.action === "comment.update"),
+        async () => JSON.stringify(two.writesBy("ada").slice(writesBefore)),
+      );
+      await ada.rt.statusBoard.settled();
+      expect((await commentsOf(ada, repo, issue?.number ?? 0))[0]?.body).not.toBe(mine?.body);
+      const sent = two.writesBy("ada").slice(writesBefore);
+      expect(sent.filter((w) => w.action === "comment.update")).toHaveLength(1);
+      expect((await commentsOf(ada, repo, issue?.number ?? 0)).map((c) => c.id)).toEqual([
+        mine?.id,
+      ]);
+      await row();
+      await ada.rt.statusBoard.settled();
+      expect(
+        two
+          .writesBy("ada")
+          .slice(writesBefore)
+          .filter((w) => w.action === "comment.update"),
+      ).toHaveLength(1);
+    } finally {
+      await two.close();
+    }
+  }, 300_000);
+
+  it("memory: W8-write-9: Bob's 'Site' on team/shared, whose default branch's marker names Ada's 'Team site', writes no issue and no comment over a session and a restart, and its status stays in the app with its sentence", async () => {
+    const two = await composeTwo({ host: "memory" });
+    try {
+      const { ada, bob } = two;
+      const repo = two.repo;
+      const made = await ada.client.createProject({
+        name: "Team site",
+        goal: "A small site for the team",
+        repos: ["team/shared"],
+      });
+      // Ada's marker is on the default branch (as when her docs pull request merged).
+      await two.memory?.putFile(repo, {
+        path: ".forerunner/project.json",
+        content: `${JSON.stringify({ schema: 1, project: made.id, name: "Team site" })}\n`,
+        message: "marker",
+        branch: "main",
+      });
+      // Bob made "Site" while GitHub did not answer him (the link check fails open then).
+      bob.githubOff();
+      const site = await bob.client.createProject({
+        name: "Site",
+        goal: "Another site",
+        repos: ["team/shared"],
+      });
+      bob.githubOn();
+      expect(site.id).not.toBe(made.id);
+      const sentence =
+        'Status stays in the app: team/shared is the Forerunner project "Team site"; Work together on the Overview shares its status issue.';
+      const check = async () => {
+        await runOneTask(bob, two, site.id, "Write the shop page in shop.md");
+        await bob.rt.statusBoard.settled();
+        expect(
+          two
+            .writesBy("bob")
+            .filter((w) => w.action.startsWith("issue") || w.action.startsWith("comment")),
+        ).toEqual([]);
+        const row = (await bob.client.settings()).find(
+          (r) => r.key === "project.status_issue" && r.scopeId === site.id,
+        );
+        expect(row?.description).toContain(sentence);
+        const status = (await bob.client.docs(site.id)).find((d) => d.path === "docs/status.md");
+        expect(status?.note).toBe(sentence);
+      };
+      await check();
+      await bob.restart();
+      await check();
+    } finally {
+      await two.close();
+    }
+  }, 300_000);
+
+  it("memory: W8-write-10 and W8a-left-1: switched off, Bob writes no issue and no comment and his row says so after a restart too; Ada's comment is untouched; Ada switching hers off gives one docs pull request whose guide says so, and Bob's together project opens none", async () => {
+    const two = await composeTwo({ host: "memory" });
+    try {
+      const { ada, bob } = two;
+      const repo = two.repo;
+      const made = await teamSite(two);
+      await runOneTask(ada, two, made.id, "Write the about page in about.md");
+      await ada.rt.statusBoard.settled();
+      const [issue] = await statusIssues(ada, repo);
+      const adaComment = (await commentsOf(ada, repo, issue?.number ?? 0))[0];
+      const off = async (home: Home) => {
+        const r = await home.client.executeCommands({
+          commands: [
+            {
+              name: "settings.set",
+              params: { key: "status_issue", value: false, project: made.id },
+            },
+          ],
+          source: "ui",
+          projectId: made.id,
+          confirm: "tap",
+        });
+        expect(r.status).toBe("done");
+      };
+      await off(bob);
+      await runOneTask(bob, two, made.id, "Write the contact page in contact.md");
+      await bob.rt.statusBoard.settled();
+      const bobIssueWrites = () =>
+        two
+          .writesBy("bob")
+          .filter((w) => w.action.startsWith("issue") || w.action.startsWith("comment"));
+      expect(bobIssueWrites()).toEqual([]);
+      const offWords =
+        'Status stays in the app: the status issue is turned off for "Bob\'s site" in Settings.';
+      const bobRow = async () =>
+        (await bob.client.settings()).find(
+          (r) => r.key === "project.status_issue" && r.scopeId === made.id,
+        );
+      expect(await bobRow()).toMatchObject({ value: false });
+      expect((await bobRow())?.description).toContain(offWords);
+      await bob.restart();
+      expect(await bobRow()).toMatchObject({ value: false });
+      await runOneTask(bob, two, made.id, "Write the team page in team.md");
+      await bob.rt.statusBoard.settled();
+      expect(bobIssueWrites()).toEqual([]);
+      expect((await commentsOf(ada, repo, issue?.number ?? 0)).map((c) => [c.id, c.body])).toEqual([
+        [adaComment?.id, adaComment?.body],
+      ]);
+      // Ada switches hers off: her next session's end opens one docs pull request whose guide
+      // says the status is kept in the app; Bob's together project opens none.
+      const guidePrs = async () =>
+        (await two.pullRequests()).filter((p) => p.head.ref.startsWith("fr/docs-scaffold"));
+      const before = await guidePrs();
+      await off(ada);
+      await runOneTask(ada, two, made.id, "Write the news page in news.md");
+      await ada.rt.statusBoard.settled();
+      const docsWrites = two
+        .writesBy("ada")
+        .filter(
+          (w) => w.action === "pull_request.create" && w.detail?.startsWith("fr/docs-scaffold"),
+        );
+      expect(docsWrites.length).toBeLessThanOrEqual(before.length + 1);
+      const bare = (await two.memory?.getRepo(repo))?.cloneUrl ?? "";
+      const branch = (await guidePrs()).at(-1)?.head.ref ?? "fr/docs-scaffold";
+      const guide = (
+        await run(["git", "--git-dir", bare, "show", `${branch}:AGENTS.md`], {
+          allowFailure: true,
+        })
+      ).stdout;
+      expect(guide).toContain(
+        "- Status: the Forerunner that made this project keeps its status in the app; its status issue is switched off for this project, so it announces nothing on GitHub.",
+      );
+      expect(two.writesBy("bob").filter((w) => w.detail?.startsWith("fr/docs-scaffold"))).toEqual(
+        [],
+      );
     } finally {
       await two.close();
     }

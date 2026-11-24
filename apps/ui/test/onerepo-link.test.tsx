@@ -311,7 +311,7 @@ describe("d1109-onerepo-link, run C: the Overview's line about the repository (O
       canTakeOver: false,
       takeOverLine: null,
       details:
-        "What the other Forerunner does shows in its pull requests on GitHub; each of you merges your own.",
+        "What the other Forerunner does shows in its comment on the status issue and its pull requests on GitHub. You merge yours; its person merges theirs.",
     };
     renderApp("/projects/proj_atlas/summary", harness);
     const section = await screen.findByTestId("repository-elsewhere");
@@ -321,7 +321,7 @@ describe("d1109-onerepo-link, run C: the Overview's line about the repository (O
     expect(within(section).queryByTestId("repository-take-over")).toBeNull();
     await user.click(within(section).getByTestId("repository-elsewhere-details-toggle"));
     expect(within(section).getByTestId("repository-elsewhere-details")).toHaveTextContent(
-      "What the other Forerunner does shows in its pull requests on GitHub; each of you merges your own.",
+      "What the other Forerunner does shows in its comment on the status issue and its pull requests on GitHub. You merge yours; its person merges theirs.",
     );
     delete harness.daemon.state.repositoryOverview.proj_atlas;
   });

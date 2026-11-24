@@ -27,7 +27,7 @@ import {
  * rules": the state store is the truth, GitHub is a mirror).
  *
  * - `sync(projectId)` reads the tasks of a Forerunner project from the store and creates or
- *   updates one project item per task (title, status, specialist, cost in CHF, links to the
+ *   updates one project item per task (title, status, specialist (no cost), links to the
  *   PR and the review); done and cancelled tasks are archived, deleted tasks too.
  * - Nothing is ever read back from GitHub into the store. The host's state only decides
  *   whether an item exists; the store decides what it says.
@@ -89,6 +89,12 @@ const STATUS_COLORS: Record<TaskStatus, ProjectOptionColor> = {
 
 export const MIRROR_FIELD_STATUS = "Status";
 export const MIRROR_FIELD_SPECIALIST = "specialist";
+/**
+ * The field earlier versions wrote each task's cost into. w8-status-write (W8-write-2; D-W8-13,
+ * owner question 7 of 2026-11-02: "the Projects mirror's cost field dropped"): no cost goes to
+ * GitHub, so the mirror neither creates nor writes it; a board an earlier version made keeps the
+ * old field until the person deletes it on GitHub.
+ */
 export const MIRROR_FIELD_COST = "cost";
 export const MIRROR_FIELD_PR = "pr";
 export const MIRROR_FIELD_REVIEW = "review";
@@ -106,7 +112,6 @@ export const MIRROR_FIELDS: readonly ProjectFieldSpec[] = [
     })),
   },
   { name: MIRROR_FIELD_SPECIALIST, kind: "text" },
-  { name: MIRROR_FIELD_COST, kind: "text" },
   { name: FORERUNNER_TASK_ID_FIELD, kind: "text" },
   { name: MIRROR_FIELD_PR, kind: "text" },
   { name: MIRROR_FIELD_REVIEW, kind: "text" },
@@ -304,10 +309,6 @@ export async function githubHostForSecretRef(
 // ---- task -> item --------------------------------------------------------------------------------
 
 export interface TaskMirrorExtras {
-  /** Cost of the task in micro-CHF (from the ledger), or null when unknown. */
-  costChfMicro: number | null;
-  /** Fallback when the ledger has no CHF amount: micro-USD. */
-  costUsdMicro: number;
   review: ReviewRow | null;
   reviewLink: string | null;
   /** Name of the task's milestone (from the store), or null when it has none. */
@@ -321,17 +322,12 @@ export function formatMicro(micro: number): string {
 
 /** Pure mapping of a task row (plus ledger and review facts) to a project item. */
 export function taskToItem(task: TaskRow, extras: TaskMirrorExtras): ProjectItemInput {
-  const cost =
-    extras.costChfMicro !== null
-      ? `CHF ${formatMicro(extras.costChfMicro)}`
-      : `USD ${formatMicro(extras.costUsdMicro)}`;
   const review = extras.review
     ? `${extras.review.verdict} ${extras.review.grade}/100${extras.reviewLink ? ` ${extras.reviewLink}` : ""}`
     : null;
   const fields: ProjectItemFields = {
     [MIRROR_FIELD_STATUS]: MIRROR_STATUS_LABELS[task.status],
     [MIRROR_FIELD_SPECIALIST]: task.specialist || null,
-    [MIRROR_FIELD_COST]: cost,
     [MIRROR_FIELD_PR]: task.pr_url || null,
     [MIRROR_FIELD_REVIEW]: review,
     [MIRROR_FIELD_MILESTONE]: extras.milestone || null,
@@ -347,7 +343,7 @@ export function taskToItem(task: TaskRow, extras: TaskMirrorExtras): ProjectItem
   }
   lines.push(
     "",
-    `**Status:** ${MIRROR_STATUS_LABELS[task.status]} · **Specialist:** ${task.specialist || "-"} · **Cost:** ${cost} · **Risk tier:** ${task.risk_tier}`,
+    `**Status:** ${MIRROR_STATUS_LABELS[task.status]} · **Specialist:** ${task.specialist || "-"} · **Risk tier:** ${task.risk_tier}`,
   );
   if (extras.milestone) lines.push(`**Milestone:** ${extras.milestone}`);
   if (task.pr_url) lines.push(`**PR:** ${task.pr_url}`);
@@ -726,14 +722,13 @@ export class ProjectsMirror {
   }
 
   /**
-   * Item content from the store only: the task row, its ledger sum, its latest review and its
-   * milestone's name (`opts.milestones` is a per-run cache id -> name; absent, one lookup).
+   * Item content from the store only: the task row, its latest review and its milestone's name
+   * (no cost: w8-status-write) (`opts.milestones` is a per-run cache id -> name; absent, one lookup).
    */
   async itemFor(
     task: TaskRow,
     opts: { milestones?: Map<string, string> } = {},
   ): Promise<ProjectItemInput> {
-    const sum = await this.deps.store.costLedger.sum({ taskId: task.id });
     const review = (await this.deps.store.review.latestForTask(task.id)) ?? null;
     let milestone: string | null = null;
     if (task.milestone_id) {
@@ -743,8 +738,6 @@ export class ProjectsMirror {
         null;
     }
     return taskToItem(task, {
-      costChfMicro: sum.entries > 0 ? sum.chf_micro : null,
-      costUsdMicro: sum.entries > 0 ? sum.usd_micro : task.actual_cost_usd_micro,
       review,
       reviewLink: review
         ? (this.deps.reviewLink?.(review) ?? `forerunner://reviews/${review.id}`)

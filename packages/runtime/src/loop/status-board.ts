@@ -19,7 +19,7 @@ import { clockTime } from "../session/credential-wait.ts";
 import { extractPathHints } from "../session/peers.ts";
 import { INSTALL_MARKER_FILE, parseInstallMarker } from "../sources/marker.ts";
 import { markerNameOf } from "../sources/repository-use.ts";
-import { isTogether } from "../sources/repository-words.ts";
+import { isTogether, togetherOf } from "../sources/repository-words.ts";
 import {
   type BodyWriter,
   commentChangedUpdate,
@@ -112,6 +112,8 @@ export interface StatusBoardState {
   bodyAt: string | null;
   /** The old status pull request of this project was looked for (W8-write-5). */
   oldPrChecked: boolean;
+  /** The guide's status fact when this writer last looked (D-W8-44); null before. */
+  guide: StatusIssueState | null;
 }
 
 function emptyState(): StatusBoardState {
@@ -133,6 +135,7 @@ function emptyState(): StatusBoardState {
     told: {},
     bodyAt: null,
     oldPrChecked: false,
+    guide: null,
   };
 }
 
@@ -568,6 +571,27 @@ export class StatusBoard implements StatusBoardPort {
   }
 
   private async flush(projectId: string, want: Wanted): Promise<void> {
+    try {
+      await this.write(projectId, want);
+    } finally {
+      // D-W8-44: the guide's status fact (on, switched off, issues off) changed since this
+      // writer last looked: the guide is refreshed (one docs pull request), never for the
+      // issue's number. The first look records it only.
+      const project = await this.deps.store.project.get(projectId).catch(() => undefined);
+      if (project && statusRepoOf(project)) {
+        const now = this.guideState(project);
+        const was = this.read(projectId).guide;
+        if (was !== now) {
+          this.update(projectId, (s) => {
+            s.guide = now;
+          });
+          if (was !== null) this.deps.onStateChange?.(projectId);
+        }
+      }
+    }
+  }
+
+  private async write(projectId: string, want: Wanted): Promise<void> {
     const project = await this.deps.store.project.get(projectId);
     if (!project || project.status === "archived") return;
     const repo = statusRepoOf(project);
@@ -577,12 +601,10 @@ export class StatusBoard implements StatusBoardPort {
       place: StatusBoardState["place"],
       extra: Partial<StatusBoardState> = {},
     ) => {
-      const was = this.read(projectId).place;
       this.update(projectId, (s) => {
         s.place = place;
         Object.assign(s, extra);
       });
-      if ((was === "issues_off") !== (place === "issues_off")) this.deps.onStateChange?.(projectId);
     };
     if (!statusIssuePolicy(project).on) {
       // W8-write-10: switched off, this install writes no issue and no comment for the project.
@@ -754,7 +776,7 @@ export class StatusBoard implements StatusBoardPort {
       try {
         const known = await host.getIssue(repo, s.issue);
         if (!known.isPullRequest && readStatusIssueKey(known.body) === key) return known;
-        if (!known.isPullRequest && known.title === statusIssueTitle(project.name)) return known;
+        if (!known.isPullRequest && known.title === statusIssueTitle(nameOf(project))) return known;
       } catch (e) {
         if (issueRefusalOf(e) !== "missing") throw e;
         deleted = s.issue;
@@ -768,14 +790,18 @@ export class StatusBoard implements StatusBoardPort {
     const role = this.roles(host, repo, login);
     const found = await this.lowestIssue(project, repo, host, role);
     if (found) {
+      // Pinned while fewer than three are (GitHub answers "pinned" for one that already is,
+      // writing nothing), so Settings can say whether it is.
+      const pinned = s.pinned ?? (await this.pin(project, repo, host, found.number));
       this.update(project.id, (st) => {
         st.issue = found.number;
+        st.pinned = pinned;
       });
       return found;
     }
     if (!create) return null;
     let made: IssueInfo;
-    const opts = { title: statusIssueTitle(project.name), body: renderIssueBody(key, []) };
+    const opts = { title: statusIssueTitle(nameOf(project)), body: renderIssueBody(key, []) };
     try {
       made = await host.createIssue(repo, { ...opts, labels: [STATUS_ISSUE_LABEL] });
     } catch (e) {
@@ -798,13 +824,7 @@ export class StatusBoard implements StatusBoardPort {
       await host.updateIssue(repo, made.number, { state: "closed" });
       issue = lowest;
     }
-    let pinned: boolean | null = null;
-    try {
-      const pin = await host.pinIssue(repo, issue.number);
-      pinned = pin === "pinned" ? true : pin === "limit" ? false : null;
-    } catch (e) {
-      logger.info("status issue not pinned", { projectId: project.id, error: errorMessage(e) });
-    }
+    const pinned = await this.pin(project, repo, host, issue.number);
     this.update(project.id, (st) => {
       st.issue = issue.number;
       st.pinned = pinned;
@@ -817,6 +837,22 @@ export class StatusBoard implements StatusBoardPort {
       });
     }
     return issue;
+  }
+
+  /** Pins the issue: true pinned, false left unpinned (three taken), null refused or unknown. */
+  private async pin(
+    project: ProjectRow,
+    repo: RepoRef,
+    host: GitHost,
+    issue: number,
+  ): Promise<boolean | null> {
+    try {
+      const pin = await host.pinIssue(repo, issue);
+      return pin === "pinned" ? true : pin === "limit" ? false : null;
+    } catch (e) {
+      logger.info("status issue not pinned", { projectId: project.id, error: errorMessage(e) });
+      return null;
+    }
   }
 
   private async lowestIssue(
@@ -834,7 +870,7 @@ export class StatusBoard implements StatusBoardPort {
     };
     return (
       (await byWriter(open.filter((i) => readStatusIssueKey(i.body) === project.id))) ??
-      (await byWriter(open.filter((i) => i.title === statusIssueTitle(project.name))))
+      (await byWriter(open.filter((i) => i.title === statusIssueTitle(nameOf(project)))))
     );
   }
 
@@ -1004,4 +1040,12 @@ function filesOf(task: Pick<TaskRow, "title" | "outcome" | "acceptance_criteria"
     [task.title, task.outcome, ...(task.acceptance_criteria ?? [])].join("\n"),
     5,
   );
+}
+
+/**
+ * The project's name as the repository knows it: a together project's is the marker's name it
+ * was made with (the other Forerunner's project), else the project's own.
+ */
+function nameOf(project: ProjectRow): string {
+  return (isTogether(project) && togetherOf(project)?.name) || project.name;
 }

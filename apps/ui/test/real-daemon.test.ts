@@ -18595,7 +18595,7 @@ describe("d1109-onerepo-link, run C", () => {
         canTakeOver: false,
         takeOverLine: null,
         details:
-          "What the other Forerunner does shows in its pull requests on GitHub; each of you merges your own.",
+          "What the other Forerunner does shows in its comment on the status issue and its pull requests on GitHub. You merge yours; its person merges theirs.",
       });
     } finally {
       await rt.close();
@@ -20559,7 +20559,7 @@ describe("d1109-onerepo-join, run C", () => {
       expect(made.id).toBe(KITE);
       const check = async (c: DaemonClient) => {
         const rows = await c.docs(KITE);
-        const missing = rows.filter((r) => !r.exists);
+        const missing = rows.filter((r) => !r.exists && r.path !== "docs/status.md");
         expect(missing.length).toBeGreaterThan(0);
         for (const r of missing) {
           expect(r.notWrittenHere, r.path).toBe(true);
@@ -20567,6 +20567,13 @@ describe("d1109-onerepo-join, run C", () => {
             'The other Forerunner of "Kite club" writes this doc on GitHub; this project does not write docs.',
           );
         }
+        // w8-status-write (W8-write-6): the Status row is the project's own, together or not,
+        // and says where its status goes on GitHub.
+        expect(rows.find((r) => r.path === "docs/status.md")).toMatchObject({
+          exists: false,
+          note: "Status on GitHub: the status issue is written when a task starts or a session ends.",
+        });
+        expect(rows.find((r) => r.path === "docs/status.md")?.notWrittenHere).toBeUndefined();
         expect(JSON.stringify(rows)).not.toContain("not written yet");
       };
       await check(client);
