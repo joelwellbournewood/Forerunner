@@ -10,6 +10,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import {
   DOCS_SCAFFOLD_BRANCH,
+  docsPrMarker,
   gitAuthFor,
   parseRepoRef,
   STATUS_BRANCH,
@@ -188,19 +189,43 @@ describe("standard doc set at project creation (G.5)", () => {
       { owner: "o", name: "delta" },
       { title: "docs: intake", body: "", head: DOCS_SCAFFOLD_BRANCH, base: "main" },
     );
+    const branchBefore = await run(["git", "--git-dir", bare, "rev-parse", DOCS_SCAFFOLD_BRANCH]);
     const res = await req("/projects", {
       method: "POST",
       body: JSON.stringify({ name: "Delta", goal: "Keep drafts", repos: ["o/delta"] }),
     });
     expect(res.status).toBe(201);
+    const row0 = await rt.store.project.mustGet(String((await json(res)).id));
+    // w8-repo-guide (L4i-left-2, ADR 0121): the open pull request names no project and its
+    // branch carries no marker of Delta's, so it is nobody's: Delta's scaffold writes nothing to
+    // it and comments nothing on it, though Delta is the only project here on o/delta (before,
+    // that made it Delta's, and another Forerunner's pull request was written onto).
+    expect((await run(["git", "--git-dir", bare, "rev-parse", DOCS_SCAFFOLD_BRANCH])).stdout).toBe(
+      branchBefore.stdout,
+    );
+    expect(
+      await host.listPullRequestComments({ owner: "o", name: "delta" }, existingPr.number),
+    ).toEqual([]);
+    expect(row0.summary_cache.docs).toMatchObject({ location: "repo", pr_url: null, created: [] });
+    // Once the pull request names Delta (this install's mark), it is Delta's: the files
+    // already on its branch are kept and no second pull request is opened.
+    await host.updatePullRequest({ owner: "o", name: "delta" }, existingPr.number, {
+      body: `The intake's docs.\n\n${docsPrMarker(row0)}`,
+    });
+    await rt.docs.scaffoldProject(row0);
     const prs = await host.listPullRequests({ owner: "o", name: "delta" }, { state: "open" });
     expect(prs.map((p) => p.number)).toEqual([existingPr.number]);
     expect(await show(bare, DOCS_SCAFFOLD_BRANCH, "docs/overview.md")).toBe(
       "# Drafted by the intake\n",
     );
-    expect(await show(bare, DOCS_SCAFFOLD_BRANCH, "docs/status.md")).toContain("# Status");
+    // W8-guide-1, -2: the guide joins the branch, and no docs/status.md.
+    expect(await show(bare, DOCS_SCAFFOLD_BRANCH, "docs/status.md")).toBeNull();
+    expect(await show(bare, DOCS_SCAFFOLD_BRANCH, "CLAUDE.md")).toBe("@AGENTS.md\n");
+    expect(await show(bare, DOCS_SCAFFOLD_BRANCH, "AGENTS.md")).toContain(
+      'This repository is the Forerunner project "Delta".',
+    );
     expect(await tree(bare, "main")).toEqual(["README.md"]);
-    const row = await rt.store.project.mustGet(String((await json(res)).id));
+    const row = await rt.store.project.mustGet(row0.id);
     expect(row.summary_cache.docs).toMatchObject({
       location: "repo",
       pr_url: existingPr.htmlUrl,
@@ -208,8 +233,8 @@ describe("standard doc set at project creation (G.5)", () => {
     });
     expect(row.summary_cache.docs).toMatchObject({ marker: { status: "created" } });
     // A second creation against the same repository writes nothing: the open scaffold PR names
-    // no project and two projects are now linked to the repository, so it is neither's to
-    // write into (W15-01); the first project's marker is never overwritten.
+    // Delta, so it is never another project's to write into (W15-01); the first project's
+    // marker is never overwritten.
     // d1109-onerepo-link (OR-13): POST /projects refuses a second project on the repository now;
     // the pair is one made before that rule (through the store), scaffolded as creation did.
     const again = await req("/projects", {
@@ -766,7 +791,12 @@ describe("l4-github-link, run L4: the scaffold's branch starts from the default 
         parseInstallMarker((await show(kite.bare, branch, INSTALL_MARKER_FILE)) ?? "")?.project,
       ).toBe(id);
       expect(await isAncestor(kite.bare, "main", branch)).toBe(true);
-      expect(await diffNames(kite.bare, "main", branch)).toEqual([INSTALL_MARKER_FILE]);
+      // The marker, and the guide (W8-guide-1): main had the doc set but no guide.
+      expect(await diffNames(kite.bare, "main", branch)).toEqual([
+        INSTALL_MARKER_FILE,
+        "AGENTS.md",
+        "CLAUDE.md",
+      ]);
       // The old branch and its closed pull request are left as they are (never force-pushed).
       expect(await head(kite.bare, DOCS_SCAFFOLD_BRANCH)).toBe(oldHead);
       expect(
@@ -786,7 +816,12 @@ describe("l4-github-link, run L4: the scaffold's branch starts from the default 
       const again = await w.host.listPullRequests({ owner: "o", name: "kite" }, { state: "open" });
       expect(again.map((p) => p.head.ref)).toEqual([branch]);
       expect(await isAncestor(kite.bare, "main", branch)).toBe(true);
-      expect(await diffNames(kite.bare, "main", branch)).toEqual([INSTALL_MARKER_FILE]);
+      // The marker, and the guide (W8-guide-1): main had the doc set but no guide.
+      expect(await diffNames(kite.bare, "main", branch)).toEqual([
+        INSTALL_MARKER_FILE,
+        "AGENTS.md",
+        "CLAUDE.md",
+      ]);
       expect(await head(kite.bare, DOCS_SCAFFOLD_BRANCH)).toBe(oldHead);
     } finally {
       await w.rt.close();
@@ -862,6 +897,59 @@ describe("l4-github-link, run L4: the scaffold's branch starts from the default 
         pr?.number ?? 0,
       );
       expect(comments.map((c) => c.body).join("\n")).toContain(tookOverLine("Kite club", "Kites"));
+    } finally {
+      await w.rt.close();
+    }
+  }, 90_000);
+
+  it("L4i-left-14: the take-over's rebuild keeps the default branch's newer version of a file main changed after the scaffold branch left it (another Forerunner's merged docs), and carries over only what the branch alone changed", async () => {
+    const w = await world();
+    try {
+      const kite = await w.repo("kite3");
+      await kite.commit(
+        "main",
+        { "README.md": "# kite\n", [INSTALL_MARKER_FILE]: mk(KITE, "Kite club") },
+        "Kite club",
+      );
+      const project = await w.rt.store.project.insert({
+        name: "Kites",
+        goal: "g",
+        repos: ["o/kite3"],
+        author_human: w.rt.human.id,
+      });
+      await w.rt.docs.scaffoldProject(project);
+      const [pr] = await w.host.listPullRequests({ owner: "o", name: "kite3" }, { state: "open" });
+      expect(pr?.head.ref).toBe(DOCS_SCAFFOLD_BRANCH);
+      // Main moves under the branch: another Forerunner's docs pull request merged its own
+      // docs/overview.md; the scaffold branch still has the template's.
+      await kite.seed.fetch();
+      await run(["git", "-C", kite.seedDir, "reset", "-q", "--hard", "origin/main"]);
+      await kite.commit(
+        "main",
+        { "docs/overview.md": "# Overview\n\nWritten by the team.\n" },
+        "docs: the team's overview",
+      );
+      const taken = await w.post("/commands/execute", {
+        commands: [{ name: "repo.take_over", params: { project: project.id } }],
+        wordsUsed: "Take it over (Overview)",
+        source: "ui",
+        projectId: project.id,
+        confirm: "tap",
+      });
+      expect((await json(taken)).status).toBe("done");
+      // Before: the branch's template replaced the team's overview in the rebuilt branch.
+      expect(await show(kite.bare, DOCS_SCAFFOLD_BRANCH, "docs/overview.md")).toBe(
+        "# Overview\n\nWritten by the team.\n",
+      );
+      expect(await diffNames(kite.bare, "main", DOCS_SCAFFOLD_BRANCH)).not.toContain(
+        "docs/overview.md",
+      );
+      // What the branch alone added is still on it, with the replaced marker.
+      expect(await show(kite.bare, DOCS_SCAFFOLD_BRANCH, "docs/runbook.md")).not.toBeNull();
+      expect(
+        parseInstallMarker((await show(kite.bare, DOCS_SCAFFOLD_BRANCH, INSTALL_MARKER_FILE)) ?? "")
+          ?.project,
+      ).toBe(project.id);
     } finally {
       await w.rt.close();
     }

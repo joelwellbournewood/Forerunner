@@ -1783,6 +1783,25 @@ export const DATA_ASSETS: DataAssetView[] = [
 ];
 
 export const DOCS: DocView[] = [
+  // W8-guide-1 (ADR 0121): the guide leads the set, as the daemon's docs-routes.ts lists it.
+  {
+    path: "AGENTS.md",
+    title: "Guide",
+    exists: true,
+    sizeBytes: 3_400,
+    updatedAt: "2026-10-19T20:00:00.000Z",
+    drift: false,
+    note: "",
+  },
+  {
+    path: "CLAUDE.md",
+    title: "Guide for Claude Code",
+    exists: true,
+    sizeBytes: 12,
+    updatedAt: "2026-10-19T20:00:00.000Z",
+    drift: false,
+    note: "",
+  },
   {
     path: "README.md",
     title: "README",
@@ -1809,17 +1828,6 @@ export const DOCS: DocView[] = [
     updatedAt: "2026-10-05T20:00:00.000Z",
     drift: true,
     note: "src/search changed after this doc",
-  },
-  {
-    path: "docs/status.md",
-    title: "Status",
-    exists: true,
-    sizeBytes: 900,
-    updatedAt: "2026-10-19T21:10:00.000Z",
-    drift: false,
-    // Atlas is a repository project with its status pull request off (C-57, the default): the
-    // daemon reads its Status from the app's copy and says so (docs-routes.ts).
-    note: "kept in the app: no status pull request (Settings turns it on)",
   },
   {
     path: "docs/decisions",
@@ -1856,6 +1864,18 @@ export const DOCS: DocView[] = [
     updatedAt: "2026-10-15T09:00:00.000Z",
     drift: false,
     note: "",
+  },
+  // W8-guide-2: the status is the app's, never a file in the repository; its row comes last.
+  {
+    path: "docs/status.md",
+    title: "Status",
+    exists: true,
+    sizeBytes: 900,
+    updatedAt: "2026-10-19T21:10:00.000Z",
+    drift: false,
+    // Atlas is a repository project with its status pull request off (C-57, the default): the
+    // daemon reads its Status from the app's copy and says so (docs-routes.ts).
+    note: "kept in the app: no status pull request (Settings turns it on)",
   },
 ];
 

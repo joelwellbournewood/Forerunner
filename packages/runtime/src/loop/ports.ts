@@ -502,6 +502,17 @@ export interface DocsScaffoldOutcome {
    * branch (ADR 0106): no pull request then.
    */
   firstCommit?: boolean;
+  /**
+   * L4i-left-6: why nothing was written to the repository, when that is the reason no docs pull
+   * request names the project: `pull_request_open`, a docs pull request that is not this
+   * project's is open on the scaffold's branch (W15-01, L4i-left-2: it is never written to);
+   * `branches_taken`, every scaffold branch on GitHub holds another project's docs (D-L4-24).
+   */
+  stopped?: "pull_request_open" | "branches_taken";
+  /** W8-guide-1: the guide's files brought up to date although they were there. */
+  updated?: string[];
+  /** W8-guide-2: Forerunner's untouched `docs/status.md` template, taken out. */
+  removed?: string[];
 }
 
 export interface SessionStatusOutcome {
@@ -528,6 +539,12 @@ export interface SessionStatusOutcome {
 export interface ProjectDocsPort {
   /** Scaffold the missing docs of the standard set for a new project; never overwrites. */
   scaffoldProject(project: ProjectRow): Promise<DocsScaffoldOutcome>;
+  /**
+   * W8-guide-1: the repository guide (`AGENTS.md`, `CLAUDE.md`) brought up to its facts, by the
+   * Forerunner that made the project only; one docs pull request at a time. The runner calls it
+   * at the end of each session. Absent in compositions without one.
+   */
+  refreshGuide?(project: ProjectRow): Promise<{ changed: boolean; prUrl: string | null }>;
   /**
    * Write the session's update into `docs/status.md`: with a repository on Forerunner's own
    * status branch and its one pull request, never on a task's reviewed pull request branch

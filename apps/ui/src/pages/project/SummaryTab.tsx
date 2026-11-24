@@ -624,8 +624,11 @@ function RepositoryFiles({
   const rowsListed: ProjectPullRequestView[] = prs.data?.waiting ?? [];
   // L3-github-10: a cancelled task's pull request still open on GitHub has its own heading,
   // with Open and no Merge; it waits for no merge.
-  const waiting = rowsListed.filter((pr) => pr.kind !== "cancelled");
+  // fixup-w8-repo-guide (L4i-left-2): a docs pull request that names no project waits for no
+  // Merge either; it is listed apart, as information, under "Also open on GitHub".
+  const waiting = rowsListed.filter((pr) => pr.kind !== "cancelled" && pr.kind !== "listed");
   const leftOpen = rowsListed.filter((pr) => pr.kind === "cancelled");
+  const alsoOpen = rowsListed.filter((pr) => pr.kind === "listed");
   const inFlight = (pr: ProjectPullRequestView) =>
     pr.merge?.state === "merging" || pr.merge?.state === "queued";
   // A row that changes without the person (it waits for checks, its own or those of one it merges
@@ -919,6 +922,38 @@ function RepositoryFiles({
                       role="alert"
                     >
                       {closeAnswer.sentence}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {alsoOpen.length > 0 ? (
+          // fixup-w8-repo-guide (L4i-left-2): another person's or another Forerunner's docs pull
+          // request that names no project, as information only: Open, its one line, no Merge
+          // and no Open this version. Before, it was listed under "Waiting for you to merge" >
+          // "Forerunner's docs, merge them when you like" as "The project's standard docs".
+          <div data-testid="prs-listed">
+            <h3 className="font-medium">Also open on GitHub</h3>
+            <ul className="space-y-0.5">
+              {alsoOpen.map((pr) => (
+                <li
+                  key={pr.number}
+                  data-testid="pr-listed"
+                  data-number={pr.number}
+                  className="flex flex-wrap items-center gap-2"
+                >
+                  <span data-testid="pr-listed-title">{pr.title}</span>
+                  <ExternalLink href={pr.url} variant="inline" testId="pr-listed-link">
+                    Open
+                  </ExternalLink>
+                  {pr.merge?.sentence ? (
+                    <span
+                      className="basis-full text-xs text-neutral-600 dark:text-neutral-400"
+                      data-testid="pr-listed-sentence"
+                    >
+                      {pr.merge.sentence}
                     </span>
                   ) : null}
                 </li>

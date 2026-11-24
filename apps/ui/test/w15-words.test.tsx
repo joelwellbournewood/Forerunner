@@ -608,7 +608,7 @@ describe("w15-words, wave 15 run B", () => {
       for (const d of docs) d.drift = false;
       renderApp("/projects/proj_atlas/docs", harness);
       const tab = await screen.findByTestId("docs");
-      expect(within(tab).getByTestId("docs-present")).toHaveTextContent("7 of 8 present");
+      expect(within(tab).getByTestId("docs-present")).toHaveTextContent("9 of 10 present");
       expect(tab).not.toHaveTextContent("0 drifted");
       expect(within(tab).queryByTestId("docs-drift")).toBeNull();
     });

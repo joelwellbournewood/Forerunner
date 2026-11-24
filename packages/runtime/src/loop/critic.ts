@@ -1,5 +1,5 @@
 import { existsSync, rmSync } from "node:fs";
-import { DEPS_BASE_REF, snapshotRef } from "@forerunner/capabilities";
+import { DEPS_BASE_REF, guideChangeLine, snapshotRef } from "@forerunner/capabilities";
 import {
   applyVerdict,
   type CheckCommand,
@@ -23,7 +23,7 @@ import {
   type TriedEvidence,
   triedTimes,
 } from "@forerunner/critic";
-import { checkDocDrift, STATUS_DOC } from "@forerunner/memory";
+import { checkDocDrift } from "@forerunner/memory";
 import {
   type Clock,
   errorMessage,
@@ -187,13 +187,6 @@ export interface CriticLoopDeps {
    * on the PATH (`which`). Without it the checks are not run and the review says why.
    */
   hasCommand?: (cmd: string) => Promise<boolean>;
-  /**
-   * The PM writes `docs/status.md` at session end through the runner's docs port (spec G.5,
-   * ADR 0058), so the tier 2+ drift check neither expects a specialist's change to touch it
-   * nor reports it missing. The daemon sets it; a runner without a docs port leaves it off
-   * and the check lists the status doc as before.
-   */
-  statusDocManaged?: boolean;
 }
 
 export interface DiffResult {
@@ -514,6 +507,9 @@ export class CriticLoop implements CriticPort {
       ...(result.runId ? { runId: result.runId } : {}),
       artifacts: [
         `attempt ${task.attempt + 1} by ${req.item.specialist}`,
+        // W8-guide-6 (w8-repo-guide): a change to the repository guide other people's agents
+        // follow is said to the critic, as the pull request's body says it.
+        ...(guideChangeLine(changedFiles) ? [guideChangeLine(changedFiles) as string] : []),
         // W15-27: reviewed without a run; the work is what that run did.
         ...(result.reviewOnly
           ? [
@@ -551,12 +547,10 @@ export class CriticLoop implements CriticPort {
     if (tier >= 2 && worktree && changedFiles.length) {
       // Doc drift of the project's standard doc set (spec G.5, memory package); a drift is a
       // non-required check, so it is a low finding the human sees and the PM fixes at session
-      // end, never a reason to block a correct change (ADR 0036). The status doc the PM
-      // itself writes after this review (`statusDocManaged`) is not the specialist's drift.
+      // end, never a reason to block a correct change (ADR 0036). W8-guide-2: the status is the
+      // app's, never a doc the change must touch; the guide is Forerunner's to write.
       try {
-        const drift = (await checkDocDrift(worktree, { changedFiles, tasksChanged: true })).filter(
-          (d) => !(this.deps.statusDocManaged && d.doc === STATUS_DOC),
-        );
+        const drift = await checkDocDrift(worktree, { changedFiles, tasksChanged: true });
         evidence.checkResults = [
           {
             name: "docs-drift",

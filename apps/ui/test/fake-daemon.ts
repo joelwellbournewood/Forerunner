@@ -114,7 +114,10 @@ import {
   inUseSentence,
   nothingToTakeOverSentence,
   otherHostSentence,
+  TAKE_OVER_NO_REPOSITORY,
+  TAKE_OVER_NOT_TAKEN,
   TAKE_OVER_NOTHING_TO_RETRY,
+  type TakeOverRetryFailure,
   TOGETHER_OVERVIEW_DETAILS,
   TOGETHER_OVERVIEW_LINE,
   takeOverAsk,
@@ -670,9 +673,11 @@ export interface FakeDaemonState {
   /**
    * l4-github-carried (L4e-left-1): set by a test, the next Try again of the take-over's docs
    * pull request for this project id fails (`refused`: GitHub refused the push; `blocked`:
-   * another project's docs pull request is in its way), as `retryTakeOverDocs` answers it.
+   * another docs pull request is in its way; w8-repo-guide, L4i-left-6: `unreachable`, GitHub
+   * did not answer; `branches`, its branches hold another project's docs), as
+   * `retryTakeOverDocs` answers it.
    */
-  takeOverRetryFails: Record<string, "refused" | "blocked">;
+  takeOverRetryFails: Record<string, TakeOverRetryFailure>;
   /**
    * d1109-onerepo-join (OJ-01): per project id, the Overview's line about the other projects here
    * on its repository or folder, as the daemon's `sharesRepositoryWith` gives it. A test sets it;
@@ -9586,8 +9591,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!Number.isInteger(number) || number <= 0)
       return errorBody(c, 400, "validation", "not a pull request number");
     const prs = state.pullRequests[id];
-    // A cancelled task's open pull request (L3-github-10) does not wait to be merged either.
-    const row = prs?.waiting.find((r) => r.number === number && r.kind !== "cancelled");
+    // A cancelled task's open pull request (L3-github-10) does not wait to be merged either, nor
+    // does a docs pull request that names no project (`listed`, L4i-left-2).
+    const row = prs?.waiting.find(
+      (r) => r.number === number && r.kind !== "cancelled" && r.kind !== "listed",
+    );
     if (!prs || !row)
       return c.json({
         state: "refused",
@@ -9604,20 +9612,35 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   // l4-github-carried (L4e-left-1, owner question OQ-L4e-1's default), as the daemon's
   // `retryTakeOverDocs`: only the take-over's no-pull-request line is tried again; opened, the
   // line goes and the docs pull request waits on the Overview; a failure set by a test keeps it.
+  const takeOverOpened = new Set<string>();
   app.post("/projects/:id/take-over/retry", (c) => {
     const id = c.req.param("id");
     const project = state.projects.find((p) => p.id === id);
     if (!project) return errorBody(c, 404, "not_found", "no such project");
     const refused = (sentence: string) => c.json({ state: "refused", sentence, prUrl: null });
     const line = state.repositoryOverview[id];
-    if (line?.outcome !== "took_over_no_pull_request") return refused(TAKE_OVER_NOTHING_TO_RETRY);
-    const locator = project.repos?.[0] ?? "";
+    // w8-repo-guide (L4i-left-5): the repository as the line above names it (owner/name), as
+    // the daemon's `RepositoryUse.locatorOf` reads any spelling the person typed.
+    const typed = project.repos?.[0]?.trim() ?? "";
+    const named =
+      /^(?:[a-z][a-z0-9+.-]*:\/\/[^/]+\/|[\w.-]+@[\w.-]+:)?([\w.-]+)\/([\w.-]+?)(?:\.git)?\/*$/i.exec(
+        typed,
+      );
+    const locator = named ? `${named[1]}/${named[2]}` : null;
+    if (line?.outcome !== "took_over_no_pull_request") {
+      // L4i-left-7: answered by the real state.
+      if (!locator) return refused(TAKE_OVER_NO_REPOSITORY);
+      // The fake knows a take-over by its line: one tried again here once had it.
+      if (!takeOverOpened.has(id)) return refused(TAKE_OVER_NOT_TAKEN);
+      return refused(TAKE_OVER_NOTHING_TO_RETRY);
+    }
     const fails = state.takeOverRetryFails[id];
     if (fails) {
       delete state.takeOverRetryFails[id];
-      return refused(takeOverRetryFailedSentence(locator, fails));
+      return refused(takeOverRetryFailedSentence(locator ?? typed, fails));
     }
     delete state.repositoryOverview[id];
+    takeOverOpened.add(id);
     const prs = state.pullRequests[id] ?? { waiting: [], error: null };
     state.pullRequests[id] = prs;
     const number = Math.max(1, ...prs.waiting.map((r) => r.number + 1));

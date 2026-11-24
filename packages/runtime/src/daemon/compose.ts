@@ -2582,9 +2582,6 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     context,
     memory,
     worktreeRoot: dirs.worktrees,
-    // The PM's `ProjectDocs` (below) writes docs/status.md on the session's PR right after the
-    // review (spec G.5), so the drift check leaves the status doc to it.
-    statusDocManaged: true,
     // ADR 0104: the project's build, lint and tests run in the task's sandbox (never on the
     // host), pages are tried, and a specialist's registry floor sets the least review.
     sandbox: sandboxPort,

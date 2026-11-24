@@ -74,7 +74,7 @@ test("data: register a dataset by path and import a folder", async ({ page, requ
 
 test("docs: the standard set with drift, and a document opens", async ({ page }) => {
   await page.goto("/projects/proj_atlas/docs");
-  await expect(page.getByTestId("docs-present")).toHaveText("7 of 8 present");
+  await expect(page.getByTestId("docs-present")).toHaveText("9 of 10 present");
   await expect(page.getByTestId("docs-drift")).toHaveText("1 drifted");
   await page
     .getByTestId("doc-row")

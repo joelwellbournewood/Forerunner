@@ -56,9 +56,10 @@ rename), LF on write, CRLF accepted on read.
 | `critic` | every principal, the critic | none | row (state service in team mode), file is the export | the critic's reviews and calibration |
 | `shared` | every principal, the critic | none | row, file is the export | promotion, project-level lessons recorded by the critic or a principal |
 
-Project docs (`README`, `docs/*.md` in the project repo) are the fourth place knowledge lives.
-This package scaffolds the missing ones and rewrites the four standard sections of
-`docs/status.md` at session end; it never touches any other existing doc (see "Project docs").
+Project docs (`AGENTS.md`, `CLAUDE.md`, `README`, `docs/*.md` in the project repo) are the
+fourth place knowledge lives. This package scaffolds the missing ones, renders Forerunner's part
+of the repository guide (`AGENTS.md`) from facts, and formats `docs/status.md` for the optional
+status branch; it never touches any other existing doc (see "Project docs").
 
 `grantFor(kind, agentId)` in `src/service.ts` turns an agent kind into a `ScopeGrant`: principal
 and conversation agents get their own private scope plus shared; the critic gets critic plus
@@ -308,17 +309,37 @@ the source the consolidation rule above recognises.
 
 ### Project docs (`src/docs.ts`)
 
-`STANDARD_DOCS` = `README.md`, `docs/overview.md`, `docs/architecture.md`, `docs/status.md`,
-`docs/decisions/`, `docs/runbook.md`, `docs/data.md`, `docs/testing.md`. `scaffoldDocs(repoDir,
-{ name, goal?, repos? })` writes the missing ones from templates with frontmatter
-`maintained-by: forerunner` and a `read_if` line, never touching an existing file (the directory
-entry maps to `docs/decisions/README.md`). `checkDocDrift(repoDir, { changedFiles, tasksChanged?,
-adrWorthy? })` returns the docs that should have changed, for the critic at tier 2+:
-`docs/status.md` after a task change or any non-doc change; `docs/architecture.md` when files
+`STANDARD_DOCS` = `AGENTS.md`, `CLAUDE.md`, `README.md`, `docs/overview.md`,
+`docs/architecture.md`, `docs/decisions/`, `docs/runbook.md`, `docs/data.md`, `docs/testing.md`
+(wave 8, ADR 0121: the guide leads the set; `docs/status.md` is out, W8-guide-2).
+`scaffoldDocs(repoDir, { name, goal?, repos?, guide? })` writes the missing ones from templates
+with frontmatter `maintained-by: forerunner` and a `read_if` line, never touching an existing
+file (the directory entry maps to `docs/decisions/README.md`, whose template names decision
+files by day). The guide's two files are written only with `guide` (`GuideFacts`): `AGENTS.md`
+gets Forerunner's part appended to a person's file or replaced in place (`applyGuide`, between
+`GUIDE_START` and `GUIDE_END`), `CLAUDE.md` gets `@AGENTS.md` once (`applyGuideImport`); the
+result names them in `updated`. Forerunner's untouched status template (`STATUS_TEMPLATE`, compared
+after line endings) is taken out (`removed`); a `docs/status.md` a person wrote stays.
+`checkDocDrift(repoDir, { changedFiles, tasksChanged?, adrWorthy? })` returns the docs that should
+have changed, for the critic at tier 2+ (never `docs/status.md`, never the guide, which Forerunner
+writes itself): `docs/architecture.md` when files
 were added or removed under a source directory; `docs/decisions/` when an ADR-worthy change is
 flagged and no decision file changed; `docs/data.md` for schema, migration, model or `.sql`
 files; `docs/testing.md` for test-runner or workflow config; plus every standard doc missing
-from the repo. Paths may use either separator.
+from the repo except the guide. Paths may use either separator.
+
+**The repository guide (W8-guide-1, ADR 0121).** `renderGuidePart(facts)` is Forerunner's part
+of `AGENTS.md`, from `GuideFacts` only (`name`, `goal`, `repository` with `defaultBranch`,
+`mergedBy` (`you` or `after_review`) and `statusIssue` (`on`, `switched_off`, `issues_off`), or
+null for a folder; `checks` as exact commands; `unfinishedWork`, the one list in
+`@forerunner/capabilities` `UNFINISHED_WORK_RULES`). Sections: the Work together line, Goal,
+"Where things are" (the status issue by its title "Forerunner status: <name>", never a number;
+when it is not on, the status stays in the app and nothing is announced), "Before you start"
+(the announce rules, or the open pull requests), "Branches and pull requests" (never push to the
+default branch, each Forerunner merges its own, who presses Merge), "Checks", "Leaving work
+unfinished", "Do not touch", "For agents". `guidePartOf(text)` reads the part back; `isGuideDoc`
+tells the two files apart. `docs-search.ts` collects `ROOT_DOC_FILES` (`AGENTS.md`, `CLAUDE.md`,
+`README.md`) beside `docs/`, so recall finds the guide (W8-guide-4).
 
 `renderStandardDoc(doc, project)` is a doc's full scaffold text (frontmatter and body; the
 README and `docs/overview.md` list `repos` under "## Repositories" when given), so a caller
@@ -438,6 +459,10 @@ the private/shared boundary; spelled as ADR 0002 names it).
   the affected rows for the memory view.
 - **Another polarity pair**: append to `POLARITY_PAIRS` in `src/polarity.ts` with a test in
   `test/consolidation.test.ts`.
+- **The guide's words**: change `renderGuidePart` and its cases in `test/docs.test.ts` (one per
+  merge mode, status issue state and the folder form); a new fact goes into `GuideFacts`, into
+  `guideFactsOf` (`packages/runtime/src/loop/guide.ts`) and so into the key that decides one docs
+  pull request per change.
 - **A new standard doc**: add it to `STANDARD_DOCS` and `TEMPLATES` in `src/docs.ts` and a rule
   in `checkDocDrift` if some change should trigger it.
 - **The status format**: `STATUS_SECTIONS`, `sessionEntry` and `MAX_STATUS_SESSIONS` in

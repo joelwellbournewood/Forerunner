@@ -1578,10 +1578,18 @@ export const ProjectPullRequestView = z.object({
    * `cancelled` (L3-github-10): a cancelled task's pull request still open on GitHub, listed
    * under its own heading with Open and no Merge (`merge.canMerge` false, the sentence says to
    * close it there or reopen the task) until GitHub says it is closed; it waits for no merge.
+   * `listed` (L4i-left-2, wave 8): a docs pull request that names no project, on the one project
+   * here linked to the repository; it may be another Forerunner's or a person's, so it is listed
+   * as information only, under its own heading ("Also open on GitHub"), titled "Docs pull
+   * request #N", with Open and no Merge (`merge.canMerge` false, the sentence says it names no
+   * project); it waits for no merge and nothing is written to it.
    */
-  kind: z.enum(["task", "docs", "take_out", "cancelled"]),
+  kind: z.enum(["task", "docs", "take_out", "cancelled", "listed"]),
   taskId: z.string().nullable(),
-  /** The task's title, or what the docs PR holds in words. */
+  /**
+   * The task's title, or what the docs PR holds in words; for `listed`, "Docs pull request #N"
+   * (it claims nothing about whose it is or what it holds).
+   */
   title: z.string(),
   number: z.number().int(),
   url: z.string(),

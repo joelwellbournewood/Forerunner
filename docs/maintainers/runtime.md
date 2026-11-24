@@ -10243,3 +10243,54 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   `packages/commands/test/project-join.test.ts`, `packages/capabilities/test/pr-executor.test.ts`
   and `apps/ui/test/real-daemon.test.ts` (Close through the client with one PATCH and a restart;
   Try again over a bare repository with a pre-receive refusal, a restart and the success).
+
+### The repository guide and who writes a project's docs (w8-repo-guide, wave 8, [ADR 0121](../decisions/0121-the-repository-guide-and-who-writes-a-projects-docs.md))
+
+- **The guide's facts** (`loop/guide.ts`): `guideFactsOf(project, { dir, defaultBranch })` reads
+  the project's name, goal, `merge_mode`, `settings.checks` and the copy's package.json scripts
+  (as `npm run <name>`, the critic's own); `guideStatusIssueState` is the one place the status
+  issue's state comes in (`on` until w8-status-write's policy answers `switched_off` or
+  `issues_off`); `guideKeyOf` is the facts' short key.
+- **Written by the maker only.** `ProjectDocs.scaffoldProject`, the first commit of an empty
+  repository and the intake's `writeDocSet` pass the facts; the scaffold commit and pull request
+  body list the guide's files and "(taken out)" for the status template. A together project
+  writes none (`isTogether`). `ProjectDocs.refreshGuide` runs after the status write at each
+  session's end (`SessionRunner`): the recorded `summary_cache.docs.guide_key` equal to the
+  facts' key reads nothing; the copy already current records the key; an open intake docs pull
+  request of the project waits; else the scaffold runs on the project's own branch (one docs
+  pull request, its open one updated), and the key it went out with is recorded.
+- **Docs tab** (`daemon/docs-routes.ts`): rows are `STANDARD_DOCS` then the app's status
+  (`DOC_ROWS`), titled "Guide" and "Guide for Claude Code" for the two files; a together
+  project's guide rows say whose they are (`togetherDocNote`) also when the copy has them.
+- **Decisions by day** (`session/intake.ts`, `session/person-questions.ts`):
+  `FIRST_DECISION_PATH` is `docs/decisions/YYYY-MM-DD-<slug>.md`; a reply's numbered first
+  decision is renamed to the day's name and carries `DECISION_RECORD_MARK`; a reply's
+  docs/status.md, AGENTS.md or CLAUDE.md is dropped (`INTAKE_DOCS_LEFT_OUT`). The Inbox's
+  answers go to the record the card names: `decisionRecordForProject` picks it when the card is
+  filed (an existing `0001-*.md`, else the marked record, else the one an earlier open card of
+  the project names, else `<day>-project-decisions.md` by the filing day), the card keeps it in
+  `decision_doc` and `writeAnswersToDecisionDoc` writes there whatever day the answers come
+  (`namedDecisionRecord` accepts only `docs/decisions/<name>.md`; a card naming the folder, a
+  specialist's or an older one, finds the record when the answers are written). Before
+  (fixup-w8-repo-guide) the card named the filing day's file and the answers went to the
+  answering day's. The specialist's brief
+  (`session/task-context.ts`) says a new decision is its own dated file.
+- **A docs pull request this install did not open is nobody's** (L4i-left-2): `isProjectDocsPr`
+  takes the branch's own marker (`branchMarker`), read in `scaffoldInCopy` and
+  `docsInPullRequests`; `docsPrListing` gives `own`, `listed` (no Merge, "#N names no project,
+  so it is only listed here: open it on GitHub to see whose it is.") or nothing. A `listed` one
+  is its own row kind in `GET /projects/:id/pull-requests` (`kind: "listed"`, titled "Docs pull
+  request #N" by `listedDocsTitle`, fixup-w8-repo-guide): the Overview lists it under "Also open
+  on GitHub", never under "Waiting for you to merge" or Forerunner's docs; Merge is refused with
+  its line and Open this version with "#N does not wait to be merged: ...".
+- **Try again** (`daemon/take-over-retry.ts`): `retryFailureOf` and the scaffold's `stopped`
+  (`pull_request_open`, `branches_taken`) pick the sentence; the repository is named by
+  `RepositoryUse.locatorOf`; nothing to try answers `TAKE_OVER_NO_REPOSITORY` or
+  `TAKE_OVER_NOT_TAKEN`. The intake records its docs outcome on the row
+  (`recordDocsOutcome`, `intake_at`), which `scaffoldLeftNoMarker` reads (L4i-left-8). The
+  take-over's rebuild keeps a file main changed after the fork (L4i-left-14).
+- Tests: `loop-docs.test.ts`, `docs-scaffold.test.ts` (the guide on the branch, the take-over's
+  marker and guide, L4i-left-14 over real git), `intake.test.ts` (dated record, mark, guide,
+  no status file), `person-questions-daemon.test.ts` (the card names the dated file),
+  `loop-critic.test.ts` (drift without status or guide; the guide line in the evidence), and
+  `apps/ui/test/two-installs.test.ts` "w8-repo-guide, wave 8" (two homes on the stand-in).

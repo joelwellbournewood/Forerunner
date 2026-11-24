@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import {
   appDirs,
   errorMessage,
+  ForerunnerError,
   join,
   run,
   SimulatedClock,
@@ -6982,8 +6983,9 @@ describe("the UI client against the real daemon: what the bench walks (phase E, 
     });
     expect(decisions.find((d) => d.kind === "record")).toMatchObject({
       question: "A plain static page, no build step",
-      chosen: "docs/decisions/0001-plain-static-page.md",
-      path: "docs/decisions/0001-plain-static-page.md",
+      // W8-guide-3 (ADR 0121): the plan's decision record is named by the day it was made.
+      chosen: "docs/decisions/2026-03-05-plain-static-page.md",
+      path: "docs/decisions/2026-03-05-plain-static-page.md",
       decidedByName: null,
     });
   }, 120_000);
@@ -24755,7 +24757,8 @@ describe("l4-money-pause, run L4", () => {
       const lines = (await a.client.sessionEvents(sessionId)).map((e) => e.text ?? "");
       const review = lines.find((l) => l.startsWith("Session review:")) ?? "";
       expect(review, lines.join(" | ")).toBe(
-        "Session review: planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%, with one task tried twice (grade 85, 1 finding).",
+        // W8-guide-3: the brief's added decision line costs a few input tokens (1426% before).
+        "Session review: planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1427%, with one task tried twice (grade 85, 1 finding).",
       );
       // The project's reviews: the session check is a review with no task, and its verdict is
       // the UI's to word ("noted"); the daemon's own summary never says "sent back".
@@ -24769,7 +24772,7 @@ describe("l4-money-pause, run L4", () => {
       // the fake: the action is the agent's, and the tab shows no "To fix" line for it.
       expect(check?.findings.map((f) => [f.description, f.requiredAction])).toEqual([
         [
-          "Planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%, with one task tried twice",
+          "Planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1427%, with one task tried twice",
           "Record the overrun against the estimate so the next plan is calibrated; split the work that overran",
         ],
       ]);
@@ -26333,7 +26336,7 @@ describe("l4-github-link, run L4", () => {
       expect(String(calls[1]?.messages[2]?.content)).toBe(
         [
           "Forerunner could not use your reply:",
-          "- docs: the decision record is missing: write docs/decisions/0001-<slug>.md with the choice the brief points to; any standard doc you leave out is written from the template.",
+          "- docs: the decision record is missing: write docs/decisions/YYYY-MM-DD-<slug>.md, named by the Today date, with the choice the brief points to; any standard doc you leave out is written from the template.",
           "",
           "Reply again with the whole JSON object in the shape the instructions give, with these problems fixed and nothing else changed: no text and no code fence around it.",
         ].join("\n"),
@@ -26341,7 +26344,8 @@ describe("l4-github-link, run L4", () => {
       const first = await planCard(client, project.id);
       expect(first.card?.title).toMatch(/^Plan for "Quote page": \d+ tasks?$/);
       expect(first.shown.planOnly).toBe(false);
-      expect(first.shown.docs[0]?.path).toBe("docs/decisions/0001-plain-static-page.md");
+      // W8-guide-3: the reply's numbered record is shown under the day's name.
+      expect(first.shown.docs[0]?.path).toBe("docs/decisions/2026-03-05-plain-static-page.md");
       // What the card shows the person under the tasks (data-testid intake-decision-line).
       expect(intakeDecisionLine(first.shown)).toBe(decided);
 
@@ -30282,19 +30286,23 @@ describe("l4-github-carried, run L4: Try again on the take-over's line (L4e-left
       });
       expect((await client.project(made.id)).repositoryElsewhere).toMatchObject(line);
       // 2. The push works now, but the other project's docs pull request is open on its branch.
+      // w8-repo-guide (L4i-left-2): its body names no project (an older version's, or one a
+      // person edited), and this is the only project here linked to o/kite: still nobody's, so
+      // nothing is written to it (before, the body had to carry Sandbox's mark).
       rmSync(hook);
-      const sandboxPr = await w.host.createPullRequest(repo, {
+      const sandboxPr = await w.host.openPullRequestAs(repo, "sandbox-person", {
         title: "docs: scaffold",
-        body: `The Sandbox project's docs.\n\n${forerunnerMarker({ project: SANDBOX_ID })}`,
+        body: "The Sandbox project's docs.",
         head: "fr/docs-scaffold",
         base: "main",
       });
       expect(await client.retryTakeOver(made.id)).toEqual({
         state: "refused",
         sentence:
-          "The docs pull request still could not be opened: another project's docs pull request is open on o/kite; close it on GitHub, then try again.",
+          "The docs pull request still could not be opened: another docs pull request is open on o/kite; close it on GitHub, then try again.",
         prUrl: null,
       });
+      expect(w.host.writesBy("alice").filter((x) => x.number === sandboxPr.number)).toEqual([]);
       expect((await w.host.getPullRequest(repo, sandboxPr.number)).state).toBe("open");
       expect(await git("rev-parse", "fr/docs-scaffold")).toBe(sandboxBefore);
       expect((await client.project(made.id)).repositoryElsewhere).toMatchObject(line);
@@ -30329,6 +30337,154 @@ describe("l4-github-carried, run L4: Try again on the take-over's line (L4e-left
       ({ rt, client } = await w.compose());
       expect((await client.project(made.id)).repositoryElsewhere ?? null).toBeNull();
       expect((await w.host.listPullRequests(repo, { state: "open" })).length).toBe(1);
+      await settleSessions(rt);
+    } finally {
+      await rt.close();
+    }
+  }, 180_000);
+});
+
+describe("w8-repo-guide, wave 8: Try again names the repository as its line does, says what stopped it and answers by the project's state (L4i-left-5, -6, -7)", () => {
+  const KITE_ID = "01a1a000-0000-7000-8000-00000000c1ab";
+  const marker = (project: string, name: string) =>
+    `${JSON.stringify({ schema: 1, project, name }, null, 2)}\n`;
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  it("a take-over typed as a web address: a refused push names o/kite, GitHub not answering says so, and a project that took nothing over or has no repository is told that; a docs pull request that names no project is listed without Merge", async () => {
+    const work = mkdtempSync(join(tmpdir(), "fr-ui-real-w8-guide-retry-"));
+    homes.push(work);
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const env = { FORERUNNER_HOME: home };
+    const host = new MemoryGitHost("alice");
+    const identity = { name: "Forerunner", email: "agent@example.test" };
+    const seeded = async (name: string, files: Record<string, string>) => {
+      const bare = join(work, `${name}.git`);
+      await run(["git", "init", "--bare", "-b", "main", bare]);
+      const seed = new GitOps({ cwd: join(work, `${name}-seed`), identity });
+      await seed.clone(bare);
+      for (const [path, text] of Object.entries(files)) {
+        mkdirSync(join(work, `${name}-seed`, ...path.split("/").slice(0, -1)), { recursive: true });
+        writeFileSync(join(work, `${name}-seed`, ...path.split("/")), text);
+      }
+      await seed.commitAll("seed");
+      await seed.push("main");
+      await host.createRepo({ owner: "o", name, private: true, cloneUrl: bare });
+      for (const [path, text] of Object.entries(files))
+        await host.putFile(
+          { owner: "o", name },
+          { path, content: text, message: "seed", branch: "main" },
+        );
+      return bare;
+    };
+    const kite = await seeded("kite", {
+      "README.md": "# kite\n",
+      ".forerunner/project.json": marker(KITE_ID, "Kite club"),
+    });
+    await seeded("plain", { "README.md": "# plain\n" });
+    // GitHub refuses every push to o/kite (a branch rule, a token without write).
+    writeFileSync(join(kite, "hooks", "pre-receive"), "#!/bin/sh\necho refused >&2\nexit 1\n", {
+      mode: 0o755,
+    });
+    const { rt, client } = await composeWithRolePlayer(
+      {},
+      {
+        gitHost: host,
+        tryIt: false,
+        env,
+        dirs: appDirs({ env }),
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      },
+    );
+    try {
+      const made = await client.createProject({
+        name: "Kite flyers",
+        goal: "Fly kites",
+        repos: ["https://github.com/o/kite.git"],
+        switch: true,
+        takeOver: { projects: [KITE_ID] },
+      });
+      expect((await client.project(made.id)).repositoryElsewhere).toMatchObject({
+        text: 'Took over o/kite from "Kite club" here, but the docs pull request that names this project could not be opened, so GitHub still names "Kite club".',
+        outcome: "took_over_no_pull_request",
+      });
+      // L4i-left-5: the same o/kite as the line above, never the address as typed.
+      expect(await client.retryTakeOver(made.id)).toEqual({
+        state: "refused",
+        sentence:
+          "The docs pull request still could not be opened: check that the saved GitHub token can push to o/kite, then try again.",
+        prUrl: null,
+      });
+      // L4i-left-6: GitHub not answering is said as that, not as the token.
+      const listPullRequests = host.listPullRequests.bind(host);
+      host.listPullRequests = () =>
+        Promise.reject(
+          new ForerunnerError(
+            "provider_error",
+            "GitHub API unreachable at https://api.github.com: connection refused",
+            { retryable: true },
+          ),
+        );
+      expect(await client.retryTakeOver(made.id)).toEqual({
+        state: "refused",
+        sentence:
+          "The docs pull request still could not be opened: GitHub did not answer. Try again in a moment.",
+        prUrl: null,
+      });
+      host.listPullRequests = listPullRequests;
+      // L4i-left-7: a project that took nothing over, and one with no repository on GitHub.
+      const plain = await client.createProject({
+        name: "Plain site",
+        goal: "A plain site",
+        repos: ["o/plain"],
+      });
+      expect(await client.retryTakeOver(plain.id)).toEqual({
+        state: "refused",
+        sentence: "There is nothing to try again: this project took no repository over.",
+        prUrl: null,
+      });
+      const local = await client.createProject({ name: "Notes", goal: "Notes", repos: [] });
+      expect(await client.retryTakeOver(local.id)).toEqual({
+        state: "refused",
+        sentence: "There is nothing to try again: this project has no repository on GitHub.",
+        prUrl: null,
+      });
+      // L4i-left-2: on o/plain, a docs pull request whose body names no project (a person's) is
+      // listed on its only project here without Merge; one that names "Plain site" has Merge.
+      const plainRepo = { owner: "o", name: "plain" };
+      const theirs = await host.openPullRequestAs(plainRepo, "bob", {
+        title: "docs: notes",
+        body: "Notes by hand.",
+        head: "fr/docs-scaffold-notes",
+      });
+      const listed = (await client.projectPullRequests(plain.id)).waiting;
+      // fixup-w8-repo-guide: its own kind, which the Overview lists under "Also open on GitHub",
+      // titled without a claim about it (before: "docs", "The project's standard docs").
+      expect(listed.find((r) => r.number === theirs.number)).toMatchObject({
+        kind: "listed",
+        taskId: null,
+        title: `Docs pull request #${theirs.number}`,
+        review: null,
+      });
+      expect(listed.find((r) => r.number === theirs.number)?.merge).toEqual({
+        state: "blocked",
+        canMerge: false,
+        sentence: `#${theirs.number} names no project, so it is only listed here: open it on GitHub to see whose it is.`,
+        first: [],
+      });
+      // "Open this version" is not offered for it either: it does not wait to be merged.
+      expect(await client.previewPullRequest(plain.id, theirs.number)).toMatchObject({
+        state: "refused",
+        sentence: `#${theirs.number} does not wait to be merged: it may be merged or closed already.`,
+      });
+      const named = await host.openPullRequestAs(plainRepo, "bob", {
+        title: "docs: more",
+        body: `More.\n\n${forerunnerMarker({ project: plain.id })}`,
+        head: "fr/docs-scaffold-more",
+      });
+      const again = (await client.projectPullRequests(plain.id)).waiting;
+      expect(again.find((r) => r.number === named.number)?.merge?.canMerge).toBe(true);
       await settleSessions(rt);
     } finally {
       await rt.close();

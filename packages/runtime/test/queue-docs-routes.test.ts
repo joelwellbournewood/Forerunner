@@ -212,20 +212,23 @@ describe("docs routes (U-005)", () => {
       drift: boolean;
       note: string;
     }>;
+    // W8-guide-1, -2 (ADR 0121): the guide leads the set; the status is the app's, last.
     expect(docs.map((d) => d.path)).toEqual([
+      "AGENTS.md",
+      "CLAUDE.md",
       "README.md",
       "docs/overview.md",
       "docs/architecture.md",
-      "docs/status.md",
       "docs/decisions/README.md",
       "docs/runbook.md",
       "docs/data.md",
       "docs/testing.md",
+      "docs/status.md",
     ]);
-    expect(docs[0]).toMatchObject({ exists: true, drift: false, note: "from the project folder" });
-    expect(docs[1]).toMatchObject({ exists: false, drift: false, note: "not written yet" });
-    expect(docs[3]).toMatchObject({ exists: true, drift: true });
-    expect(docs[3]?.note).toContain("new endpoint");
+    expect(docs[2]).toMatchObject({ exists: true, drift: false, note: "from the project folder" });
+    expect(docs[3]).toMatchObject({ exists: false, drift: false, note: "not written yet" });
+    expect(docs[9]).toMatchObject({ exists: true, drift: true });
+    expect(docs[9]?.note).toContain("new endpoint");
   });
 
   it("reads one doc of the set and lists the decisions folder's records", async () => {

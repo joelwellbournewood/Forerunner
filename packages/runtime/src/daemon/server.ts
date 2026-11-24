@@ -1267,6 +1267,7 @@ export function createDaemonApp(
       {
         overviewOf: (p) => rt.repositoryUse.overviewOf(p),
         scaffold: async (p) => rt.docs.scaffoldProject(await rt.store.project.mustGet(p.id)),
+        locatorOf: (p) => rt.repositoryUse.locatorOf(p),
       },
       project,
     );

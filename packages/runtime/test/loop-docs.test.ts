@@ -7,6 +7,7 @@ import { fromPosix, join, run } from "@forerunner/platform";
 import type { ProjectRow, SessionRow } from "@forerunner/state";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  docsPrListing,
   isProjectDocsPr,
   isProjectStatusPr,
   ownsUnmarkedDocs,
@@ -135,8 +136,14 @@ describe("project docs at session end (spec G.5)", () => {
     // Before: the status commit was pushed onto fr/add-clamp after the critic accepted it, so
     // the reviewed PR held a file the critic never saw. Now: the task's PR holds only its work.
     const prs = await host.listPullRequests(REPO, { state: "open" });
-    expect(prs.map((p) => p.head.ref)).toEqual(["fr/add-clamp", STATUS_BRANCH]);
+    // W8-guide-1 (ADR 0121): the repository had no guide, so the session's end opens the one
+    // docs pull request that brings it (after the status write).
+    expect(prs.map((p) => p.head.ref)).toEqual(["fr/add-clamp", STATUS_BRANCH, "fr/docs-scaffold"]);
     expect(await show(bare, "fr/add-clamp", STATUS_DOC)).toBeNull();
+    expect(await show(bare, "fr/add-clamp", "AGENTS.md")).toBeNull();
+    expect(await show(bare, "fr/docs-scaffold", "AGENTS.md")).toContain(
+      `This repository is the Forerunner project "${(await w.store.project.mustGet(w.project)).name}".`,
+    );
     const status = await show(bare, STATUS_BRANCH, STATUS_DOC);
     expect(status).not.toBeNull();
     expect(status).toContain("maintained-by: forerunner");
@@ -179,8 +186,9 @@ describe("project docs at session end (spec G.5)", () => {
     const result = await w.start(w.runner(doneExecutor(w, { outcome: "needs_human" }), { docs }));
     expect(result.needsHuman).toEqual([task.id]);
     const branch = STATUS_BRANCH;
+    // W8-guide-1: beside the status PR, the one docs pull request that brings the guide.
     const prs = await host.listPullRequests(REPO, { state: "open" });
-    expect(prs).toHaveLength(1);
+    expect(prs.map((p) => p.head.ref)).toEqual([branch, "fr/docs-scaffold"]);
     expect(prs[0]).toMatchObject({ head: { ref: branch }, base: { ref: "main" } });
     expect(prs[0]?.title).toBe("docs: project status");
     // W15-08: the session by when it started, never its id.
@@ -214,8 +222,10 @@ describe("project docs at session end (spec G.5)", () => {
     expect(twice?.match(/^### Session started /gm)).toHaveLength(2);
     expect(twice).not.toContain(again.sessionId);
     expect(twice).toMatch(/## Done\n\n- Add retries\n/);
+    // Nothing in the guide's facts changed: no second docs pull request (W8-guide-1).
     expect((await host.listPullRequests(REPO, { state: "open" })).map((p) => p.head.ref)).toEqual([
       branch,
+      "fr/docs-scaffold",
     ]);
     const comments = (await host.listPullRequestComments(REPO, prs[0]?.number ?? 0))
       .map((c) => c.body)
@@ -237,8 +247,10 @@ describe("project docs at session end (spec G.5)", () => {
       w.runner(prExecutor(w, root, bare, host, "fr/add-clamp"), { docs }),
     );
     expect(result.completed).toHaveLength(1);
+    // W8-guide-1: the guide's docs pull request, and no status pull request.
     expect((await host.listPullRequests(REPO, { state: "open" })).map((p) => p.head.ref)).toEqual([
       "fr/add-clamp",
+      "fr/docs-scaffold",
     ]);
     expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toBeNull();
     const dir = docs.statusDocRoot(await w.store.project.mustGet(w.project));
@@ -257,6 +269,7 @@ describe("project docs at session end (spec G.5)", () => {
     await w.start(w.runner(doneExecutor(w, { checksPassed: true }), { docs }));
     expect((await host.listPullRequests(REPO, { state: "open" })).map((p) => p.head.ref)).toEqual([
       "fr/add-clamp",
+      "fr/docs-scaffold",
       STATUS_BRANCH,
     ]);
     await w.close();
@@ -416,8 +429,14 @@ describe("project docs at session end (spec G.5)", () => {
     expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toContain(
       await startedHeading(w, result.sessionId),
     );
-    // Back on main after the write: the status waits in its PR, main is unchanged.
-    expect(await show(bare, "main", STATUS_DOC)).toContain("maintained-by: forerunner");
+    // Back on main after the write: the status waits in its PR, main is unchanged. W8-guide-1,
+    // -2: the first commit brought the guide and no docs/status.md, so the session's end opens
+    // no docs pull request.
+    expect(await show(bare, "main", STATUS_DOC)).toBeNull();
+    expect(await show(bare, "main", "CLAUDE.md")).toBe("@AGENTS.md\n");
+    expect(await show(bare, "main", "AGENTS.md")).toContain(
+      `This repository is the Forerunner project "${project.name}".`,
+    );
     await w.close();
   });
 
@@ -493,7 +512,10 @@ describe("project docs at session end (spec G.5)", () => {
     const out = await docs.scaffoldProject(project);
     expect(out.location).toBe("data_dir");
     const workspace = join(root, "projects", w.project, WORKSPACE_DIR);
-    expect(existsSync(join(workspace, "docs", "status.md"))).toBe(true);
+    // W8-guide-1, -2: the set brings the guide and no docs/status.md.
+    expect(existsSync(join(workspace, "docs", "overview.md"))).toBe(true);
+    expect(existsSync(join(workspace, "AGENTS.md"))).toBe(true);
+    expect(existsSync(join(workspace, "docs", "status.md"))).toBe(false);
     expect(docs.docsDirsFor(project)).toEqual([folder, workspace]);
     await w.close();
   });
@@ -1385,10 +1407,38 @@ describe("d1109-onerepo-link, run C: W15-01's ownership through the one index; a
       { head: { ref: "fr/status" }, body: "an unmarked status pull request" },
     ];
     for (const pr of cases) {
-      expect(isProjectDocsPr(together, pr, { soleLinked: true }), pr.head.ref).toBe(false);
-      expect(isProjectDocsPr(project(), pr, { soleLinked: true }), pr.head.ref).toBe(true);
+      expect(isProjectDocsPr(together, pr), pr.head.ref).toBe(false);
+      expect(docsPrListing(together, pr, { soleLinked: true }), pr.head.ref).toBeNull();
     }
+    // w8-repo-guide (L4i-left-2): for any other project, what names it is its own; an unmarked
+    // status pull request is never its own for a write, only listed while it is the one
+    // project here (before, `soleLinked` made it its own, with Merge and the status written in).
+    for (const pr of cases.slice(0, 4))
+      expect(isProjectDocsPr(project(), pr), pr.head.ref).toBe(true);
+    const unmarked = cases[4] as (typeof cases)[number];
+    expect(isProjectDocsPr(project(), unmarked)).toBe(false);
+    expect(docsPrListing(project(), unmarked, { soleLinked: true })).toBe("listed");
+    expect(docsPrListing(project(), unmarked, { soleLinked: false })).toBeNull();
     expect(isProjectStatusPr(together, { body: marker(A) }, { soleLinked: true })).toBe(false);
+  });
+
+  it("w8-repo-guide (L4i-left-2): an unmarked scaffold pull request is this project's only by its record or its branch's own marker naming the project itself; a taken-over id does not count; with only `soleLinked` it is listed without being its own", () => {
+    const unmarked = { head: { ref: "fr/docs-scaffold" }, body: "Notes by hand." };
+    expect(isProjectDocsPr(project(), unmarked)).toBe(false);
+    expect(isProjectDocsPr(project(), unmarked, { branchMarker: A })).toBe(true);
+    expect(isProjectDocsPr(project(), unmarked, { branchMarker: A.toUpperCase() })).toBe(true);
+    expect(isProjectDocsPr(project(), unmarked, { branchMarker: B })).toBe(false);
+    const took = project({
+      settings: { took_over: { projects: [B], name: "Kite club", at: "x" } },
+    });
+    expect(isProjectDocsPr(took, unmarked, { branchMarker: B })).toBe(false);
+    const recorded = project({ summary_cache: { docs: { pr_url: "https://x/pull/3" } } as never });
+    expect(isProjectDocsPr(recorded, { ...unmarked, htmlUrl: "https://x/pull/3" })).toBe(true);
+    expect(docsPrListing(project(), unmarked, { soleLinked: true })).toBe("listed");
+    expect(docsPrListing(project(), unmarked, { soleLinked: false })).toBeNull();
+    // One that names another project is never listed, whatever `soleLinked` says.
+    const other = { head: { ref: "fr/docs-scaffold" }, body: `docs\n\n${marker(B)}` };
+    expect(docsPrListing(project(), other, { soleLinked: true })).toBeNull();
   });
 
   it("a project joined into another (joined_from) counts as the kept one: its marks and intake branch are the kept project's", () => {

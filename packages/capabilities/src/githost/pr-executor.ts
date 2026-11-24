@@ -795,6 +795,38 @@ export function emptiedSentence(prNumber: number | null, why: EmptiedWhy, base =
 /** The first words of a work-in-progress commit's subject. */
 export const WIP_SUBJECT = "Work in progress: ";
 
+/** The two headings of a work-in-progress commit's message (`workInProgressMessage`). */
+export const WIP_STOPPED_HEADING = "Where I stopped:";
+export const WIP_LEFT_HEADING = "Left to do:";
+
+/**
+ * W8-guide-5 (wave 8, w8-repo-guide): how any person or agent leaves unfinished work, in one
+ * place. The repository guide quotes it (`AGENTS.md`, "Leaving work unfinished"), the
+ * work-in-progress commit Forerunner makes for a run that stopped (`workInProgressMessage`)
+ * keeps its shape, and a run's wrap-up (`wrapUpText`) asks for the same: the step finished, the
+ * work left building and running, where it stopped and what is left with the next step first.
+ * A change here changes what other people's agents read in every repository's guide.
+ */
+export const UNFINISHED_WORK_RULES: readonly string[] = [
+  "Finish the step you are on and start nothing new.",
+  "Leave the build and the tests passing, or name the one that fails.",
+  `Commit what is done on the work's own branch, with the subject "${WIP_SUBJECT}<title>" and, in its message, "${WIP_STOPPED_HEADING}" (what is done, and anything half done with its file) and "${WIP_LEFT_HEADING}" (what is left, the next step first).`,
+  "Never leave unfinished work on the default branch.",
+];
+
+/**
+ * W8-guide-6 (wave 8, w8-repo-guide): the line a task's pull request body and its review
+ * evidence carry when the work changes the repository guide (`AGENTS.md`, `CLAUDE.md`), which
+ * other people's agents follow; null when it changes neither. GitHub text: no id, no cost.
+ */
+export function guideChangeLine(changedFiles: readonly string[]): string | null {
+  const touched = ["AGENTS.md", "CLAUDE.md"].filter((f) =>
+    changedFiles.some((c) => c.replace(/\\/g, "/").replace(/^\.\//, "") === f),
+  );
+  if (!touched.length) return null;
+  return `This changes ${touched.join(" and ")}, the guide other people's agents follow in this repository: read ${touched.length > 1 ? "them" : "it"} before merging.`;
+}
+
 /** The limit a pause names in its commit ("its budget", "this month's cap"). */
 export function pausedAtWords(stop: TaskExecutionResult["budgetStop"]): string {
   switch (stop?.source) {
@@ -850,10 +882,10 @@ export function workInProgressMessage(
     `${WIP_SUBJECT}${title} (${why})`,
     ...(h
       ? [
-          `Where I stopped: ${plain(h.stopped) || "it wrote no note (it stopped at its budget)."}`,
+          `${WIP_STOPPED_HEADING} ${plain(h.stopped) || "it wrote no note (it stopped at its budget)."}`,
           h.leftToDo.length
-            ? `Left to do:\n${h.leftToDo.map((t) => `- ${plain(t)}`).join("\n")}`
-            : "Left to do: not listed.",
+            ? `${WIP_LEFT_HEADING}\n${h.leftToDo.map((t) => `- ${plain(t)}`).join("\n")}`
+            : `${WIP_LEFT_HEADING} not listed.`,
         ]
       : []),
   ].join("\n\n");
@@ -1365,6 +1397,7 @@ export class PrTaskExecutor implements TaskExecutor {
       existingPr,
       result.summary,
       unmerged,
+      changedFiles,
     );
     if (answered) await this.consume(answered.row);
     // The work went to review: nothing of it is in progress any more.
@@ -2924,7 +2957,15 @@ export class PrTaskExecutor implements TaskExecutor {
       await this.deps.host.listPullRequests(target.repo, { state: "open", head: branch })
     )[0];
     const summary = `You resolved the conflict of ${branch}; the branch was checked against ${target.base}${rebased ? " (rebased onto it)" : brought ? ` (${target.base} brought into it)` : ""} and goes to review.`;
-    const prUrl = await this.openOrUpdatePr(ctx, target, branch, existingPr, summary, unmerged);
+    const prUrl = await this.openOrUpdatePr(
+      ctx,
+      target,
+      branch,
+      existingPr,
+      summary,
+      unmerged,
+      changedFiles,
+    );
     await this.consume(answered.row);
     this.logger.info("pull request ready after the person resolved the conflict", {
       taskId: ctx.task.id,
@@ -3089,6 +3130,7 @@ export class PrTaskExecutor implements TaskExecutor {
     existingPr: { number: number; htmlUrl: string } | undefined,
     summary: string,
     unmerged: readonly UnmergedDependency[] = [],
+    changedFiles: readonly string[] = [],
   ): Promise<string> {
     const { task } = ctx;
     // The report without the specialist's lesson lines (notes for Forerunner's memory), and the
@@ -3116,6 +3158,8 @@ export class PrTaskExecutor implements TaskExecutor {
       title: task.title,
       body: [
         task.outcome.trim(),
+        // W8-guide-6: a change to the repository guide is said first, before anything to merge.
+        guideChangeLine(changedFiles),
         buildsOn,
         criteria.length
           ? `Acceptance criteria:\n${criteria.map((c: string) => `- ${c}`).join("\n")}`

@@ -167,3 +167,11 @@ another Forerunner's pull requests:
   project's status pull request ...; close it there to have this one's there.'; for an unmarked
   one, '... another status pull request ...'. The holder is recorded beside the kept status (its
   number and the project its mark names), so it reads the same after a restart.
+
+## Amendment (2026-11-24, wave 8, w8-repo-guide): the first commit carries the guide, and no status file (ADR 0121)
+
+An empty repository's first commit now carries AGENTS.md (Forerunner's part rendered from the
+guide's facts) and CLAUDE.md (`@AGENTS.md`), and no docs/status.md; the session's end then finds
+the guide current and opens no docs pull request. The status of a repository project stays in
+the app by default (C-57); the optional `fr/status` branch is unchanged until the status issue
+(w8-status-write) replaces it.

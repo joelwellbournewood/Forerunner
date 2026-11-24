@@ -546,7 +546,8 @@ describe("l4-github-link, run L4", () => {
     await user.click(screen.getByTestId("tab-docs"));
     const docs = await screen.findByTestId("docs");
     const rows = await within(docs).findAllByTestId("doc-row");
-    expect(rows.length).toBe(8);
+    // W8-guide-1, -2: AGENTS.md and CLAUDE.md join the set (ADR 0121).
+    expect(rows.length).toBe(10);
     for (const row of rows) {
       expect(row).toHaveTextContent(
         'The other Forerunner of "Kite club" writes this doc on GitHub; this project does not write docs.',

@@ -1,5 +1,11 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { docFile, STANDARD_DOCS } from "@forerunner/memory";
+import {
+  docFile,
+  isGuideDoc,
+  STANDARD_DOCS,
+  STATUS_DOC,
+  type StandardDoc,
+} from "@forerunner/memory";
 import {
   basename,
   errorMessage,
@@ -86,16 +92,29 @@ const logger = log("docs-routes");
 /** The largest doc `GET /projects/:id/docs/:path` returns in full; longer ones are cut. */
 export const DOC_CONTENT_MAX_BYTES = 512 * 1024;
 
-const TITLES: Record<(typeof STANDARD_DOCS)[number], string> = {
+/**
+ * The Docs tab's rows (W8-guide-1, -2): the standard doc set, the repository guide first, and
+ * the project's status, which is the app's (`docs/status.md` in the app's folder, C-57), no
+ * longer a doc of the repository's set.
+ */
+const DOC_ROWS: readonly (StandardDoc | typeof STATUS_DOC)[] = [...STANDARD_DOCS, STATUS_DOC];
+
+const TITLES: Record<StandardDoc | typeof STATUS_DOC, string> = {
+  "AGENTS.md": "Guide",
+  "CLAUDE.md": "Guide for Claude Code",
   "README.md": "Readme",
   "docs/overview.md": "Overview",
   "docs/architecture.md": "Architecture",
-  "docs/status.md": "Status",
   "docs/decisions/": "Decisions",
   "docs/runbook.md": "Runbook",
   "docs/data.md": "Data",
   "docs/testing.md": "Testing",
+  "docs/status.md": "Status",
 };
+
+/** The row's file (a folder entry maps to its README). */
+const rowFile = (doc: StandardDoc | typeof STATUS_DOC): string =>
+  doc === STATUS_DOC ? STATUS_DOC : docFile(doc);
 
 interface Located {
   root: string;
@@ -269,8 +288,8 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
     const drift = reviews.reviews
       .flatMap((r) => r.findings)
       .filter((f) => f.status === "open" && /^doc drift/i.test(f.description));
-    const out: DocView[] = STANDARD_DOCS.map((doc) => {
-      const rel = docFile(doc);
+    const out: DocView[] = DOC_ROWS.map((doc) => {
+      const rel = rowFile(doc);
       const found = locate(rootsFor(project, rel), rel);
       const finding = drift.find((f) => f.description.includes(doc) || f.description.includes(rel));
       const pr = found
@@ -286,6 +305,19 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
           drift: false,
           note: `waiting in pull request #${pr.number}: merge it to add it`,
           pullRequest: { number: pr.number, url: pr.url },
+        };
+      // W8-guide-3 (D-W8-9): the guide is the other Forerunner's in a together project, also
+      // when this computer's copy has it: this project never writes it.
+      if (together && found && isGuideDoc(doc) && !finding)
+        return {
+          path: rel,
+          title: TITLES[doc],
+          exists: true,
+          sizeBytes: found.sizeBytes,
+          updatedAt: found.updatedAt,
+          drift: false,
+          note: togetherDocNote(together.name),
+          notWrittenHere: true,
         };
       // C2-left-13: a together project writes no docs; one it does not have is the other's.
       if (together && !found && !finding)
@@ -324,7 +356,7 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
     const rel = c.req.param("path");
     // Only the set's own files and the decision records in docs/decisions (design §3.4:
     // "all" links to the record): the path is never joined onto a root unchecked.
-    if (!STANDARD_DOCS.some((doc) => docFile(doc) === rel) && !DECISION_RECORD.test(rel)) {
+    if (!DOC_ROWS.some((doc) => rowFile(doc) === rel) && !DECISION_RECORD.test(rel)) {
       throw new ForerunnerError("not_found", `${rel} is not one of the project's standard docs`);
     }
     const found = locate(rootsFor(project, rel), rel);

@@ -13,7 +13,13 @@ import {
   resolveGitToken,
 } from "@forerunner/capabilities";
 import { removedProjectRefusal } from "@forerunner/commands";
-import { docFile, renderStandardDoc, STANDARD_DOCS, scaffoldDocs } from "@forerunner/memory";
+import {
+  docFile,
+  isGuideDoc,
+  renderStandardDoc,
+  STANDARD_DOCS,
+  scaffoldDocs,
+} from "@forerunner/memory";
 import {
   type Clock,
   errorMessage,
@@ -45,6 +51,7 @@ import { withoutIds } from "../daemon/task-words.ts";
 import { SessionBudget } from "../enforcement/budget.ts";
 import type { TokenIssuer } from "../enforcement/token.ts";
 import { boundedPlanEstimate, taskSizeFactor } from "../estimates/model.ts";
+import { guideFactsOf } from "../loop/guide.ts";
 import type { ProjectDocsPort } from "../loop/ports.ts";
 import {
   capEffort,
@@ -90,7 +97,12 @@ import {
 import { unappliedBlockingAnswers } from "./findings.ts";
 import { withOwnersContent } from "./intake-content.ts";
 import { openPlanSentence } from "./intake-words.ts";
-import { MAX_PERSON_QUESTIONS, MAX_QUESTION_CHARS, PERSON_SPECIALIST } from "./person-questions.ts";
+import {
+  DECISION_RECORD_MARK,
+  MAX_PERSON_QUESTIONS,
+  MAX_QUESTION_CHARS,
+  PERSON_SPECIALIST,
+} from "./person-questions.ts";
 import {
   applyProjectPlan,
   isShortBrief,
@@ -198,11 +210,43 @@ export const MAX_RATIONALE_CHARS = 500;
 /** Longest audit summary written here. */
 const MAX_AUDIT_SUMMARY_CHARS = 500;
 
-/** The standard doc files (directories mapped to their README), plus the first decision. */
-export const INTAKE_DOC_PATHS: readonly string[] = STANDARD_DOCS.map(docFile);
-const FIRST_DECISION_PATH = /^docs\/decisions\/0001-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/;
+/**
+ * The standard doc files a plan may draft (directories mapped to their README), plus the first
+ * decision. Not the repository guide (`AGENTS.md`, `CLAUDE.md`): Forerunner renders it from
+ * facts (W8-guide-1), never from a model's words.
+ */
+export const INTAKE_DOC_PATHS: readonly string[] = STANDARD_DOCS.filter((d) => !isGuideDoc(d)).map(
+  docFile,
+);
+/**
+ * W8-guide-3 (D-W8-9): the plan's first decision is named by the day it was drafted,
+ * `docs/decisions/YYYY-MM-DD-<slug>.md`, so two people's pull requests never collide by number.
+ * A reply that still names it `0001-<slug>.md` is renamed to the day's name when it is read
+ * (`datedDecisionDocs`); a numbered file already in a repository stays as it is.
+ */
+export const FIRST_DECISION_PATH =
+  /^docs\/decisions\/\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/;
+/** The numbered name a model may still give the first decision (renamed, `datedDecisionDocs`). */
+const NUMBERED_DECISION_PATH = /^docs\/decisions\/0001-([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/;
 const allowedDocPath = (p: string): boolean =>
-  INTAKE_DOC_PATHS.includes(p) || FIRST_DECISION_PATH.test(p);
+  INTAKE_DOC_PATHS.includes(p) || FIRST_DECISION_PATH.test(p) || NUMBERED_DECISION_PATH.test(p);
+
+/**
+ * W8-guide-3: the drafted docs with a numbered first decision (`docs/decisions/0001-<slug>.md`)
+ * renamed to the day's name (`docs/decisions/<day>-<slug>.md`); every other path as it is.
+ */
+export function datedDecisionDocs(
+  docs: Record<string, string>,
+  day: string,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [path, text] of Object.entries(docs)) {
+    const numbered = NUMBERED_DECISION_PATH.exec(path);
+    const name = numbered ? `docs/decisions/${day}-${numbered[1]}.md` : path;
+    if (!(name in docs) || name === path) out[name] = text;
+  }
+  return out;
+}
 
 /**
  * A drafted doc cut to `max` characters at the last paragraph (else line) break that fits, with
@@ -222,13 +266,31 @@ export function shortenDoc(text: string, max = MAX_DOC_CHARS): string {
   return `${body.trimEnd()}${note}`;
 }
 
+/**
+ * Docs a reply may name that Forerunner leaves out instead of refusing the plan (wave 8,
+ * W8-guide-1, -2): `docs/status.md` (no longer in a repository's set: the status is the app's)
+ * and the repository guide (rendered from facts, never from a model's words). A plan that
+ * names them is taken without them; before, a reply naming one would have been refused whole.
+ */
+export const INTAKE_DOCS_LEFT_OUT: readonly string[] = ["docs/status.md", "AGENTS.md", "CLAUDE.md"];
+
 export const IntakeDocs = z
-  .record(
-    z.string().min(1).max(120),
-    z
-      .string()
-      .min(1)
-      .transform((s) => shortenDoc(s)),
+  .preprocess(
+    (docs) =>
+      docs && typeof docs === "object" && !Array.isArray(docs)
+        ? Object.fromEntries(
+            Object.entries(docs as Record<string, unknown>).filter(
+              ([path]) => !INTAKE_DOCS_LEFT_OUT.includes(path),
+            ),
+          )
+        : docs,
+    z.record(
+      z.string().min(1).max(120),
+      z
+        .string()
+        .min(1)
+        .transform((s) => shortenDoc(s)),
+    ),
   )
   .superRefine((docs, ctx) => {
     for (const p of Object.keys(docs)) {
@@ -236,7 +298,7 @@ export const IntakeDocs = z
         ctx.addIssue({
           code: "custom",
           path: [p],
-          message: `docs may only name the standard doc set (${INTAKE_DOC_PATHS.join(", ")}) or docs/decisions/0001-<slug>.md`,
+          message: `docs may only name the standard doc set (${INTAKE_DOC_PATHS.join(", ")}) or docs/decisions/YYYY-MM-DD-<slug>.md, named by the Today date`,
         });
       }
     }
@@ -825,19 +887,24 @@ export function parseIntakeReply(
  * (model-facing: the card's "Decision: ..." line is read from that record, design section 3.3).
  */
 export const MISSING_DECISION_PROBLEM =
-  "docs: the decision record is missing: write docs/decisions/0001-<slug>.md with the choice the brief points to; any standard doc you leave out is written from the template.";
+  "docs: the decision record is missing: write docs/decisions/YYYY-MM-DD-<slug>.md, named by the Today date, with the choice the brief points to; any standard doc you leave out is written from the template.";
 
 /** L4-github-104: the cut-off advice of the first-plan form keeps the decision record. */
 export const CUT_OFF_PROBLEM =
-  "Your reply was cut off at the output limit before the JSON object ended. Write each doc in a few lines, or leave out the standard docs (Forerunner writes them from its templates), but keep docs/decisions/0001-<slug>.md, in a few lines, so the whole object fits.";
+  "Your reply was cut off at the output limit before the JSON object ended. Write each doc in a few lines, or leave out the standard docs (Forerunner writes them from its templates), but keep the decision record docs/decisions/YYYY-MM-DD-<slug>.md, in a few lines, so the whole object fits.";
 
 /** The cut-off advice of the plan-only form (Add to it), which writes no document. */
 export const CUT_OFF_PLAN_ONLY_PROBLEM =
   "Your reply was cut off at the output limit before the JSON object ended. Write each task in a few lines, so the whole object fits.";
 
-/** Whether a first plan's reply carries its decision record (`docs/decisions/0001-<slug>.md`). */
+/**
+ * Whether a first plan's reply carries its decision record (`docs/decisions/YYYY-MM-DD-<slug>.md`,
+ * or the numbered name it is renamed from).
+ */
 export function hasDecisionRecord(proposal: Pick<IntakeProposal, "docs">): boolean {
-  return Object.keys(proposal.docs ?? {}).some((p) => FIRST_DECISION_PATH.test(p));
+  return Object.keys(proposal.docs ?? {}).some(
+    (p) => FIRST_DECISION_PATH.test(p) || NUMBERED_DECISION_PATH.test(p),
+  );
 }
 
 /**
@@ -1735,6 +1802,8 @@ export class IntakeService {
           shortened: read.shortened,
         });
       outcome = "completed";
+      // W8-guide-3: the first decision is named by the day (a numbered name is renamed).
+      read.proposal.docs = datedDecisionDocs(read.proposal.docs, clock.nowIso().slice(0, 10));
       const docs = Object.keys(read.proposal.docs).length;
       note = `${docs} ${docs === 1 ? "doc" : "docs"}${calls > 1 ? `, on call ${calls}` : ""}${why}`;
       return {
@@ -2058,14 +2127,15 @@ export class IntakeService {
       : [
           "only the human can answer (below). docs may name only:",
           `${INTAKE_DOC_PATHS.join(", ")}`,
-          "and docs/decisions/0001-<slug>.md for the first decision; each a markdown file with a title",
+          "and docs/decisions/YYYY-MM-DD-<slug>.md for the first decision, named by the Today date;",
+          "each a markdown file with a title",
           "line, concrete to this project. A standard doc you leave out is written from Forerunner's",
           "template. firstSession.items lists every task a specialist does, in the order the work",
           "should run (a task after the tasks it waits for), each with its cost estimate in USD",
           "micro-units (1000000 = $1); the first session starts with the ready ones and takes the",
           "others as they become ready. A person task needs no item.",
           "Choose what the brief points to (the stack, the hosting, the repository) and write each",
-          "choice and why in docs/decisions/0001-<slug>.md. Its first line under the title is",
+          "choice and why in that decision record. Its first line under the title is",
           '"Decision: " and the choice in one or two sentences: the person reads that line on the plan',
           "card before approving, and the rest of the record one click away. Write no process notes",
           "in it (no status line, no placeholder for answers). A decision only the human can make,",
@@ -2466,6 +2536,7 @@ export class IntakeService {
         });
       }
     }
+    await this.recordDocsOutcome(project, docs);
     const after = await store.humanRequest.mustGet(row.id);
     await store.humanRequest.patch(row.id, {
       change_card: { ...(after.change_card ?? {}), docs: docs as unknown as JsonValue },
@@ -2498,6 +2569,49 @@ export class IntakeService {
     }
   }
 
+  /**
+   * L4i-left-8 (L4e-left-5): the intake's docs outcome on a repository project's row
+   * (`summary_cache.docs`, as the scaffold records its own): the docs pull request it opened, or
+   * none and why. A take-over made with a brief leaves its docs to the intake, so this is what
+   * the Overview's no-pull-request line and its Try again read (`scaffoldLeftNoMarker`); before,
+   * nothing was recorded and a failed docs pull request was said nowhere.
+   */
+  private async recordDocsOutcome(
+    project: ProjectRow,
+    docs: IntakeDocsOutcome | { error: string },
+  ): Promise<void> {
+    if (!repoRefOf(project.repos[0])) return;
+    const now = this.deps.clock.nowIso();
+    const failed =
+      "error" in docs
+        ? docs.error
+        : docs.target === "workspace"
+          ? (docs.repo_error ?? "the docs went to this computer only")
+          : null;
+    try {
+      const current = await this.deps.store.project.mustGet(project.id);
+      const kept = (current.summary_cache?.docs ?? {}) as JsonObject;
+      const { error: _error, failed_at: _failedAt, ...rest } = kept;
+      const record: JsonObject = failed
+        ? { ...rest, location: "repo", pr_url: null, error: failed, failed_at: now, intake_at: now }
+        : {
+            ...rest,
+            location: "repo",
+            ...("branch" in docs && docs.branch ? { branch: docs.branch } : {}),
+            pr_url: "prUrl" in docs ? (docs.prUrl ?? null) : null,
+            intake_at: now,
+          };
+      await this.deps.store.project.patch(project.id, {
+        summary_cache: { ...current.summary_cache, docs: record } as never,
+      });
+    } catch (e) {
+      this.logger.warn("intake docs outcome not recorded", {
+        projectId: project.id,
+        error: errorMessage(e),
+      });
+    }
+  }
+
   /** The doc set to the repository as a pull request, else to the workspace directory. */
   private async writeDocs(
     project: ProjectRow,
@@ -2523,7 +2637,7 @@ export class IntakeService {
     docs: Record<string, string>,
   ): Promise<Extract<IntakeDocsOutcome, { target: "workspace" }>> {
     const dir = this.workspaceDir(project.id);
-    const r = await writeDocSet(dir, docs, project);
+    const r = await writeDocSet(dir, docs, project, null);
     return { target: "workspace", dir, ...r };
   }
 
@@ -2567,7 +2681,7 @@ export class IntakeService {
       ...(auth ? { auth } : {}),
       ...(this.deps.identity ? { identity: this.deps.identity } : {}),
       first: async (scratch) => {
-        first = await writeDocSet(scratch, docs, project);
+        first = await writeDocSet(scratch, docs, project, info.defaultBranch);
         return "docs: start the repository with the project's doc set\n\nThe repository was empty; Forerunner made this first commit from the approved plan so the project's work has a branch to start from.";
       },
     });
@@ -2587,7 +2701,7 @@ export class IntakeService {
     // brief: ...") is gone with the branch that wrote it.
     const branch = await this.intakeBranchFor(host, repo, git, project);
     await git.createBranch(branch, `origin/${info.defaultBranch}`);
-    const r = await writeDocSet(dir, docs, project);
+    const r = await writeDocSet(dir, docs, project, info.defaultBranch);
     const commit = await git.commitAll(
       `docs: project doc set from the brief\n\nDrafted by Forerunner from the project's brief: ${docSetWords(r)}.`,
     );
@@ -2685,6 +2799,8 @@ async function writeDocSet(
   dir: string,
   docs: Record<string, string>,
   project: Pick<ProjectRow, "id" | "name" | "goal" | "repos" | "settings">,
+  // W8-guide-1: the repository's default branch for the guide's facts; null for a folder.
+  defaultBranch: string | null,
 ): Promise<{
   written: string[];
   kept: string[];
@@ -2707,10 +2823,23 @@ async function writeDocSet(
       recursive: true,
     });
     const body = normalizeNewlines(docs[rel] as string);
-    await writeFile(abs, body.endsWith("\n") ? body : `${body}\n`, "utf8");
+    const ended = body.endsWith("\n") ? body : `${body}\n`;
+    // W8-guide-3: the plan's decision record carries its hidden mark, so the person's answers
+    // find it whatever day it is named by (person-questions.ts `decisionDocPath`).
+    const marked =
+      FIRST_DECISION_PATH.test(rel) && !ended.includes(DECISION_RECORD_MARK)
+        ? `${ended}\n${DECISION_RECORD_MARK}\n`
+        : ended;
+    await writeFile(abs, marked, "utf8");
     written.push(rel);
   }
-  const scaffold = await scaffoldDocs(dir, info);
+  // W8-guide-1, -2: the guide from its facts (only the Forerunner that made the project writes
+  // a doc set at all: a project worked on together gets the plan-only form, OR-15), and
+  // Forerunner's untouched status template taken out.
+  const scaffold = await scaffoldDocs(dir, {
+    ...info,
+    guide: guideFactsOf(project, { dir, defaultBranch }),
+  });
   // d1109-onerepo-link (ADR 0058 amended): a take-over replaces the marker of exactly the
   // projects it took the repository over from; any other project's is kept.
   const marker = await writeInstallMarker(

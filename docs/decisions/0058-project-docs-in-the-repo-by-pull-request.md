@@ -134,3 +134,23 @@ A parallel item (A.2 intake) drafts doc content and will call `scaffoldDocs`.
    this project is open, and is never a branch Forerunner did not write for this project: an old
    `fr/docs-scaffold` that is not this project's own is left as it is and the set opens on
    `fr/docs-scaffold-<project name>` (ADR 0117, amendment of 2026-11-23, point 2).
+
+## Amendment (2026-11-24, wave 8, w8-repo-guide): the guide in the set, no status file, decisions by day, unmarked pull requests (ADR 0121)
+
+1. **The set (W8-guide-1, -2).** The standard doc set is now AGENTS.md, CLAUDE.md, README.md,
+   docs/overview.md, docs/architecture.md, docs/decisions/, docs/runbook.md, docs/data.md and
+   docs/testing.md. AGENTS.md carries Forerunner's part (rendered from facts, ADR 0121 point 1)
+   and CLAUDE.md the one line `@AGENTS.md`; neither is written from a template without the
+   guide's facts. docs/status.md is no longer in the set, the README's Docs line or the drift
+   check ("docs/status.md: a task changed state" is gone); the scaffold takes out Forerunner's
+   untouched template and keeps one a person wrote. The status doc this ADR rewrote per session
+   stays only on the optional status branch (C-57) until the status issue replaces it.
+2. **Kept current.** Besides the scaffold at creation, `ProjectDocs.refreshGuide` at each
+   session's end opens one docs pull request when a fact of the guide changed (or the
+   repository has no guide), on the project's own scaffold branch, and none when nothing changed.
+3. **Decisions by day.** The first decision record is `docs/decisions/YYYY-MM-DD-<slug>.md`;
+   the decisions README's template names files by day. Records made before keep their numbers.
+4. **Ownership (L4i-left-2).** A docs pull request is the project's by its recorded address,
+   its hidden mark, its L-16 line or its branch's own marker; one that names no project is
+   nobody's: no write, comment or rebuild, listed without Merge. The sole-linked fallback of
+   W15-01 stays only for the status writer.

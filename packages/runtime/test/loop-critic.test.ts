@@ -61,11 +61,10 @@ describe("critic in the loop", () => {
     await w.close();
   });
 
-  it("at tier 2 the docs-drift check runs on the task's worktree (G.5); with the PM writing docs/status.md at session end, the status doc is not expected of the specialist", async () => {
-    const review = async (statusDocManaged?: boolean) => {
+  it("at tier 2 the docs-drift check runs on the task's worktree (G.5); the status is the app's and the guide Forerunner's, so neither is expected of the specialist; a change to AGENTS.md is said to the critic (W8-guide-2, -6)", async () => {
+    const review = async (changed: string[]) => {
       const w = await loopWorld({
         replies: [submitReply({ grade: 91 }), closingReply()],
-        ...(statusDocManaged === undefined ? {} : { critic: { statusDocManaged } }),
       });
       // A worktree with the change and none of the standard docs.
       const worktree = await mkdtemp(join(tmpdir(), "fr-drift-"));
@@ -77,7 +76,7 @@ describe("critic in the loop", () => {
         execute: async (ctx) => ({
           ...(await inner.execute(ctx)),
           worktree,
-          changedFiles: ["src/x.ts"],
+          changedFiles: changed,
         }),
       };
       const result = await w.start(w.runner(executor));
@@ -93,21 +92,22 @@ describe("critic in the loop", () => {
       await rm(worktree, { recursive: true, force: true });
       return { result, task, sent, findings };
     };
-    // Without the flag (a runner without a docs port): the status doc is the specialist's drift.
-    const plain = await review();
+    const plain = await review(["src/x.ts"]);
     expect(plain.result.reviews[0]).toMatchObject({ taskId: plain.task.id, tier: 2 });
     expect(plain.sent).toContain("docs-drift");
-    expect(plain.sent).toContain("docs/status.md: a task changed state");
+    // The status is the app's (W8-guide-2): never asked of a change, never reported missing.
+    expect(plain.sent).not.toContain("docs/status.md");
+    // The guide is Forerunner's to write through its own docs pull request: never missing here.
+    expect(plain.sent).not.toContain("AGENTS.md");
+    expect(plain.sent).not.toContain("CLAUDE.md");
     expect(plain.sent).toContain("docs/architecture.md: missing from the standard doc set");
     // A failed non-required check is a low finding on the review, never a block.
     expect(plain.findings).toContain("Check failed: docs-drift");
-    // With it (the daemon, whose ProjectDocs writes the status doc on the same PR afterwards):
-    // the check still runs and still names the other missing docs, never docs/status.md.
-    const managed = await review(true);
-    expect(managed.result.reviews[0]).toMatchObject({ taskId: managed.task.id, tier: 2 });
-    expect(managed.sent).toContain("docs-drift");
-    expect(managed.sent).not.toContain("docs/status.md");
-    expect(managed.sent).toContain("docs/architecture.md: missing from the standard doc set");
+    // W8-guide-6: a change to the guide other people's agents follow is said, in its words.
+    const guide = await review(["src/x.ts", "AGENTS.md"]);
+    expect(guide.sent).toContain(
+      "This changes AGENTS.md, the guide other people's agents follow in this repository: read it before merging.",
+    );
   });
 
   it("tier 0 is reviewed by the critic as the light review (ADR 0104); only a runner without a critic closes it on its run", async () => {

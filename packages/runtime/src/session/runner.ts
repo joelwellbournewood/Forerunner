@@ -4200,6 +4200,21 @@ export class SessionRunner {
           await emit("docs.status_failed", { warning: errorMessage(e) });
         }
       }
+      // W8-guide-1 (w8-repo-guide): the repository guide kept current at each session's end,
+      // after the status write refreshed this computer's copy; nothing when its facts did not
+      // change, never by a project worked on together. A failure only logs: the guide waits for
+      // the next end.
+      if (this.deps.docs.refreshGuide) {
+        try {
+          await this.deps.docs.refreshGuide((await store.project.get(project.id)) ?? project);
+        } catch (e) {
+          this.logger.warn("repository guide not checked", {
+            sessionId: session.id,
+            projectId: project.id,
+            error: errorMessage(e),
+          });
+        }
+      }
     }
     // What the re-check before these writes read (spec E.4): ids and kinds, never the words
     // (another agent's message is data); `stopped_by` is the stop or pause this session ended
