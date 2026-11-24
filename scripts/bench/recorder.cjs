@@ -197,6 +197,31 @@ async function openApp(name, opts = {}) {
 }
 
 /**
+ * w8-two-homes (wave 8): two people's apps in one script, each bench's UI in its own browser
+ * with its own profile, token and problems file, as two people at two PCs. Steps go to each
+ * bench's own steps/ (`step(two.a.page, ...)`, `step(two.b.page, ...)`). Options as openApp's,
+ * for both. Returns { a: { browser, context, page }, b: {...}, close() }.
+ */
+async function openTwo(a, b, opts = {}) {
+  const first = await openApp(a, opts);
+  let second;
+  try {
+    second = await openApp(b, opts);
+  } catch (e) {
+    await first.browser.close().catch(() => undefined);
+    throw e;
+  }
+  return {
+    a: first,
+    b: second,
+    close: async () => {
+      await first.browser.close().catch(() => undefined);
+      await second.browser.close().catch(() => undefined);
+    },
+  };
+}
+
+/**
  * On a home whose setup was never finished the app shows the setup assistant on every screen;
  * this presses "Set up later" as a person without keys would. True when it did.
  */
@@ -526,6 +551,7 @@ module.exports = {
   workspaceOf,
   skipSetup,
   openApp,
+  openTwo,
   step,
   api,
   apiRaw,

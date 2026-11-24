@@ -277,9 +277,18 @@ export function setupEnv({ home, extra = {} }) {
  * with the repositories `bench/empty` (no commit, as one just created on GitHub) and
  * `bench/seeded` (a README on main). Returns `{ pid, url, token, repos }` once it serves.
  */
-export async function startGithost({ dir, port }) {
+export async function startGithost({ dir, port, users, org, members, collaborators }) {
   const out = path.join(dir, "githost.json");
   const logFile = path.join(dir, "githost.log");
+  // w8-two-homes: --users ada,bob [--org team] [--members ...] [--collaborators carol=read].
+  const people = [];
+  for (const [flag, value] of [
+    ["--users", users],
+    ["--org", org],
+    ["--members", members],
+    ["--collaborators", collaborators],
+  ])
+    if (typeof value === "string" && value) people.push(flag, value);
   const pid = spawnLogged(
     [
       process.execPath,
@@ -292,6 +301,7 @@ export async function startGithost({ dir, port }) {
       String(port),
       "--out",
       out,
+      ...people,
     ],
     { cwd: REPO, env: { ...process.env }, logFile },
   );
@@ -303,7 +313,99 @@ export async function startGithost({ dir, port }) {
     await killTree(pid);
     fail(`the stand-in for GitHub did not start; see ${logFile}`);
   }
-  return { pid, url: info.url, token: info.token, repos: info.repos };
+  return {
+    pid,
+    url: info.url,
+    token: info.token,
+    login: info.login,
+    repos: info.repos,
+    users: info.users ?? null,
+    org: info.org ?? null,
+  };
+}
+
+/**
+ * w8-two-homes: the stand-in for GitHub another bench started (`start.mjs --githost-shared
+ * <bench>`), read from that bench's githost.json; fails when it is not running. One GitHub for
+ * two benches, as two people's Forerunners meet on one GitHub.
+ */
+export function sharedGithost(owner) {
+  const dir = benchDir(owner);
+  const file = path.join(dir, "githost.json");
+  if (!existsSync(file))
+    fail(
+      `bench ${owner} has no stand-in for GitHub (${file}); start it with --githost <port> first`,
+    );
+  const info = JSON.parse(readFileSync(file, "utf8"));
+  if (!isAlive(info.pid))
+    fail(`the stand-in for GitHub of bench ${owner} is not running (pid ${info.pid})`);
+  return {
+    pid: info.pid,
+    url: info.url,
+    token: info.token,
+    login: info.login,
+    repos: info.repos,
+    users: info.users ?? null,
+    org: info.org ?? null,
+    dir,
+  };
+}
+
+/** The token of `login` on the stand-in (`--githost-user`), else the first user's. */
+export function githostLogin(githost, login) {
+  if (!login || login === true) return { login: githost.login, token: githost.token };
+  const user = githost.users?.[login];
+  if (!user)
+    fail(
+      `the stand-in for GitHub has no user ${login} (it has ${Object.keys(githost.users ?? { [githost.login]: 1 }).join(", ")}); start it with --users`,
+    );
+  return { login, token: user.token };
+}
+
+/**
+ * w8-two-homes: this bench's own way to GitHub, a proxy `cut.mjs <bench> github off|on` can
+ * close (scripts/bench/github-proxy.mjs); returns { pid, url, port }.
+ */
+export async function startGithubProxy({ dir, target }) {
+  const port = await freePort();
+  const logFile = path.join(dir, "github-proxy.log");
+  const stateFile = path.join(dir, "github-proxy.json");
+  const pid = spawnLogged(
+    [
+      process.execPath,
+      path.join(REPO, "scripts", "bench", "github-proxy.mjs"),
+      "--port",
+      String(port),
+      "--target",
+      target,
+      "--dir",
+      dir,
+    ],
+    { cwd: REPO, env: { ...process.env }, logFile },
+  );
+  const up = await waitFor(() => {
+    if (!isAlive(pid)) return { exited: true };
+    if (!existsSync(stateFile)) return null;
+    const s = JSON.parse(readFileSync(stateFile, "utf8"));
+    return s.pid === pid && s.state === "on" ? s : null;
+  }, 20_000);
+  if (!up || up.exited) {
+    await killTree(pid);
+    fail(`the proxy to GitHub did not start; see ${logFile}`);
+  }
+  return { pid, url: `http://127.0.0.1:${port}`, port };
+}
+
+/** A port nothing listens on (the OS picks it). */
+export function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+  });
 }
 
 /**
