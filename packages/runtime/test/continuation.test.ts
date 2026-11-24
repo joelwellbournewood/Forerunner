@@ -216,6 +216,16 @@ async function until(what: string, fn: () => Promise<boolean>): Promise<void> {
 const sessionsOf = async (rt: RuntimeApp, projectId: string) =>
   (await rt.store.session.forProject(projectId, { limit: 50 })).reverse();
 
+/**
+ * w8-two-homes (L4i-left-18, L4-money-211): a count of sessions is read only once the agent's
+ * session ended and no start waits in the scheduler's queue; counting right after "task done"
+ * passed while a mistaken second start could still be queued.
+ */
+async function nothingMore(rt: RuntimeApp): Promise<void> {
+  await settleSessions(rt);
+  expect(rt.scheduler.pendingFor(rt.agent.id), "a start still waits in the queue").toBeUndefined();
+}
+
 /** The person presses Start (POST /sessions); the session ends to wait for its credential. */
 async function personStartsAndWaits(w: World, projectId: string) {
   const started = await w.post<{ result: string; session: { id: string } | null }>("/sessions", {
@@ -268,6 +278,7 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
       "the task to be done",
       async () => (await w.rt.store.task.mustGet(task.id)).status === "done",
     );
+    await nothingMore(w.rt);
     const all = await sessionsOf(w.rt, project.id);
     expect(all).toHaveLength(2);
     const second = all[1];
@@ -290,6 +301,7 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
     // Once: the next ticks start nothing more, and nothing waits any longer.
     await atTheReset(w, "2026-10-31T14:30:00Z");
     await atTheReset(w, "2026-10-31T15:30:00Z");
+    await nothingMore(w.rt);
     expect(await sessionsOf(w.rt, project.id)).toHaveLength(2);
     expect(await w.rt.continuations.waiting(project.id)).toBeNull();
   }, 60_000);
@@ -322,6 +334,7 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
       "the task to be done",
       async () => (await w.rt.store.task.mustGet(task.id)).status === "done",
     );
+    await nothingMore(w.rt);
     const all = await sessionsOf(w.rt, project.id);
     expect(all).toHaveLength(2);
     expect((all[1]?.plan as { startedBy?: { by?: string } } | null)?.startedBy?.by).toBe(
@@ -470,6 +483,7 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
       "the task to be done",
       async () => (await w2.rt.store.task.mustGet(task.id)).status === "done",
     );
+    await nothingMore(w2.rt);
     const all = await sessionsOf(w2.rt, project.id);
     expect(all).toHaveLength(1);
     expect(all[0]?.trigger).toBe("budget_reset");
@@ -478,12 +492,14 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
     // The note the person gave reached the brief, as their own words.
     expect(calls.some((c) => c.includes("Keep it to one paragraph."))).toBe(true);
     await atTheReset(w2, "2026-10-31T14:30:00Z");
+    await nothingMore(w2.rt);
     expect(await sessionsOf(w2.rt, project.id)).toHaveLength(1);
     await w2.close();
 
     const w3 = await compose({ home: w1.home, clock, calls, limited: 0 });
     expect(await w3.rt.continuations.waiting(project.id)).toBeNull();
     await atTheReset(w3, "2026-10-31T16:30:00Z");
+    await nothingMore(w3.rt);
     expect(await sessionsOf(w3.rt, project.id)).toHaveLength(1);
   }, 90_000);
 
@@ -504,6 +520,7 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
     expect(await w.rt.continuations.waiting(project.id)).toBeNull();
     await atTheReset(w);
     await atTheReset(w, "2026-10-31T15:00:00Z");
+    await nothingMore(w.rt);
     expect(await sessionsOf(w.rt, project.id)).toHaveLength(1);
     expect((await w.rt.store.task.mustGet(task.id)).status).toBe("ready");
   }, 60_000);
@@ -517,6 +534,7 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
     expect((await w.post("/kill/resume", {})).status).toBe(200);
     await atTheReset(w);
     await atTheReset(w, "2026-10-31T15:00:00Z");
+    await nothingMore(w.rt);
     expect(await sessionsOf(w.rt, project.id)).toHaveLength(1);
   }, 60_000);
 
@@ -539,6 +557,7 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
     expect(await w.rt.continuations.waiting(project.id)).toBeNull();
     await atTheReset(w);
     await atTheReset(w, "2026-10-31T15:00:00Z");
+    await nothingMore(w.rt);
     expect(await sessionsOf(w.rt, project.id)).toHaveLength(1);
     expect((await w.rt.store.task.mustGet(task.id)).status).toBe("ready");
   }, 60_000);
@@ -566,6 +585,7 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
     expect(await w.rt.continuations.waiting(project.id)).toBeNull();
     await atTheReset(w);
     await atTheReset(w, "2026-10-31T15:00:00Z");
+    await nothingMore(w.rt);
     expect(await sessionsOf(w.rt, project.id)).toHaveLength(1);
     expect((await w.rt.store.task.mustGet(task.id)).status).toBe("ready");
   }, 60_000);
@@ -587,6 +607,7 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
       "the task to be done",
       async () => (await w2.rt.store.task.mustGet(task.id)).status === "done",
     );
+    await nothingMore(w2.rt);
     const all = await sessionsOf(w2.rt, project.id);
     expect(all).toHaveLength(2);
     expect((all[1]?.plan as { startedBy?: unknown } | null)?.startedBy).toMatchObject({
@@ -598,6 +619,7 @@ describe("d1109-starts-engine S-10: the person's session goes on after its crede
     const w3 = await compose({ home: w1.home, clock, calls });
     expect(await w3.rt.continuations.waiting(project.id)).toBeNull();
     await atTheReset(w3, "2026-10-31T15:00:00Z");
+    await nothingMore(w3.rt);
     expect(await sessionsOf(w3.rt, project.id)).toHaveLength(2);
   }, 90_000);
 });
