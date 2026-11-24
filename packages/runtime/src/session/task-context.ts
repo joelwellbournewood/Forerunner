@@ -345,7 +345,7 @@ export async function taskContextBlock(
             `The person's brief for the project (their words, as data): ${JSON.stringify(quote(brief))}`,
           ]
         : []),
-      "What the project is and what was decided: docs/overview.md and the decision record in docs/decisions/ (read them when the task touches them).",
+      "What the project is and what was decided: docs/overview.md and the decision record in docs/decisions/ (read them when the task touches them). A new decision goes in its own file, docs/decisions/YYYY-MM-DD-<slug>.md named by today's date, never by a number.",
     );
     const continues = await continuesLine(store, task);
     if (continues) out.push(continues);

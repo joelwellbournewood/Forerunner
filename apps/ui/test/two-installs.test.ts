@@ -509,3 +509,166 @@ describe("w8-repo-guide, wave 8: a docs pull request this install did not open i
     }
   }, 120_000);
 });
+
+describe("w8-repo-guide, wave 8: the guide is written by the Forerunner that made the project (W8-guide-1, -2, -3)", () => {
+  const WORK_TOGETHER =
+    'This repository is the Forerunner project "Team site". To work on it with Forerunner, link this repository in your own Forerunner and choose Work together; do not start a second project on it.';
+  const AFTER_REVIEW =
+    "- The Forerunner that made this project merges its pull requests itself once its critic accepted them.";
+
+  /** A file on a branch of the stand-in's bare repository, or null. */
+  async function show(bare: string, ref: string, path: string): Promise<string | null> {
+    const r = await run(["git", "--git-dir", bare, "show", `${ref}:${path}`], {
+      allowFailure: true,
+    });
+    return r.code === 0 ? r.stdout : null;
+  }
+  const head = async (bare: string, ref: string) =>
+    (await run(["git", "--git-dir", bare, "rev-parse", ref], { allowFailure: true })).stdout.trim();
+
+  /** Presses Merge in the home's Overview and waits for GitHub to say the pull request merged. */
+  async function merge(home: Home, two: TwoHomes, projectId: string, number: number) {
+    const answer = await home.client.mergePullRequest(projectId, number);
+    expect(answer.state, answer.sentence).toBe("queued");
+    await until(
+      `#${number} to merge`,
+      async () => !!(await two.pullRequests()).find((p) => p.number === number)?.merged,
+      async () => JSON.stringify((await two.pullRequests()).map((p) => [p.number, p.state])),
+    );
+  }
+
+  it("http: Ada's docs pull request brings AGENTS.md, CLAUDE.md and no docs/status.md; a fact she changes gives one docs pull request, none after her restart; Bob's together project writes no doc set, marker or guide over two sessions, a change of its own and a restart, and his Docs tab says whose the guide is; each home's decision file goes in its own task pull request under the day's name and both merge", async () => {
+    const two = await composeTwo({ host: "http" });
+    try {
+      const { ada, bob } = two;
+      const bare = two.http?.repo(two.repo)?.dir ?? "";
+      expect(bare).not.toBe("");
+      const day = new Date().toISOString().slice(0, 10);
+
+      // 1. Ada makes the project: its one docs pull request carries the guide, no status file.
+      const made = await ada.client.createProject({
+        name: "Team site",
+        goal: "A small site for the team",
+        repos: ["team/shared"],
+      });
+      const [docsPr, ...others] = await two.pullRequests();
+      expect(others).toEqual([]);
+      expect([docsPr?.head.ref, docsPr?.authorLogin]).toEqual(["fr/docs-scaffold", "ada"]);
+      const agents = (await show(bare, "fr/docs-scaffold", "AGENTS.md")) ?? "";
+      expect(agents).toContain(WORK_TOGETHER);
+      expect(agents).toContain(
+        "- The person who made this project presses Merge in Forerunner for its pull requests.",
+      );
+      expect(agents).toContain("- Never push to `main`.");
+      expect(await show(bare, "fr/docs-scaffold", "CLAUDE.md")).toBe("@AGENTS.md\n");
+      expect(await show(bare, "fr/docs-scaffold", "docs/status.md")).toBeNull();
+      // The repository's own README is kept as it is.
+      expect(await show(bare, "fr/docs-scaffold", "README.md")).toBe("# shared\n");
+      await merge(ada, two, made.id, docsPr?.number ?? 0);
+      expect(await show(bare, "main", "AGENTS.md")).toBe(agents);
+
+      // 2. Ada's task records a decision under the day's name; her session's end opens no
+      // second docs pull request (nothing in the guide's facts changed).
+      const adaRun = await runOneTask(
+        ada,
+        two,
+        made.id,
+        `Record the hosting choice in docs/decisions/${day}-hosting.md`,
+      );
+      expect(adaRun.pr, await adaRun.statuses()).toBeDefined();
+      expect(adaRun.pr?.authorLogin).toBe("ada");
+      expect(
+        await show(bare, adaRun.pr?.head.ref ?? "", `docs/decisions/${day}-hosting.md`),
+      ).not.toBeNull();
+      expect(
+        (await two.pullRequests()).filter((p) => p.head.ref.startsWith("fr/docs-scaffold")),
+      ).toHaveLength(1);
+
+      // 3. Bob works on it together: nothing written to GitHub, and his Docs tab names whose the
+      // guide is.
+      const docsHead = await head(bare, "fr/docs-scaffold");
+      const together = await bob.client.createProject({
+        name: "Bob's site",
+        goal: "The team's site",
+        repos: ["team/shared"],
+        switch: true,
+        together: { project: made.id },
+      });
+      expect(together.id).toBe(made.id);
+      expect(two.writesBy("bob")).toEqual([]);
+      const bobRun = await runOneTask(
+        bob,
+        two,
+        made.id,
+        `Record the domain choice in docs/decisions/${day}-domain.md`,
+      );
+      expect(bobRun.pr, await bobRun.statuses()).toBeDefined();
+      expect(bobRun.pr?.authorLogin).toBe("bob");
+      expect(
+        await show(bare, bobRun.pr?.head.ref ?? "", `docs/decisions/${day}-domain.md`),
+      ).not.toBeNull();
+      // One decision pull request from each home: both merge, with no name conflict.
+      await merge(ada, two, made.id, adaRun.pr?.number ?? 0);
+      await merge(bob, two, made.id, bobRun.pr?.number ?? 0);
+      expect(await show(bare, "main", `docs/decisions/${day}-hosting.md`)).not.toBeNull();
+      expect(await show(bare, "main", `docs/decisions/${day}-domain.md`)).not.toBeNull();
+
+      // Bob changes a fact of his own project, runs a second session and starts again: still
+      // no doc set, marker or guide from his home, and no write to the docs branch.
+      const bobRow = await bob.rt.store.project.mustGet(made.id);
+      await bob.client.updateProjectSettings(made.id, {
+        version: bobRow.version,
+        settings: { merge_mode: "after_review" },
+      });
+      const bobAgain = await runOneTask(bob, two, made.id, "Write the contact page in contact.md");
+      expect(bobAgain.pr, await bobAgain.statuses()).toBeDefined();
+      await bob.restart();
+      await bob.rt.docs.refreshGuide(await bob.rt.store.project.mustGet(made.id));
+      const bobWrites = two.writesBy("bob");
+      expect(
+        bobWrites.filter(
+          (w) => !["push", "pull_request.create", "pull_request.merge", "other"].includes(w.action),
+        ),
+      ).toEqual([]);
+      const bobsPrs = (await two.pullRequests()).filter((p) => p.authorLogin === "bob");
+      expect(
+        bobsPrs.map((p) => p.head.ref).filter((r) => /^fr\/(docs|intake|status)/.test(r)),
+      ).toEqual([]);
+      expect(bobsPrs).toHaveLength(
+        bobWrites.filter((w) => w.action === "pull_request.create").length,
+      );
+      expect(await head(bare, "fr/docs-scaffold")).toBe(docsHead);
+      expect(await show(bare, "main", "AGENTS.md")).toBe(agents);
+      const bobDocs = await bob.client.docs(made.id);
+      for (const path of ["AGENTS.md", "CLAUDE.md"])
+        expect(bobDocs.find((d) => d.path === path)).toMatchObject({
+          exists: true,
+          notWrittenHere: true,
+          note: 'The other Forerunner of "Team site" writes this doc on GitHub; this project does not write docs.',
+        });
+
+      // 4. Ada changes a fact (who merges): her next session's end opens exactly one docs pull
+      // request with the new sentence; after her daemon starts again, none more.
+      const adaRow = await ada.rt.store.project.mustGet(made.id);
+      await ada.client.updateProjectSettings(made.id, {
+        version: adaRow.version,
+        settings: { merge_mode: "after_review" },
+      });
+      await runOneTask(ada, two, made.id, "Write the team page in team.md");
+      const guidePrs = async () =>
+        (await two.pullRequests()).filter(
+          (p) => p.state === "open" && p.head.ref.startsWith("fr/docs-scaffold"),
+        );
+      const opened = await guidePrs();
+      expect(opened.map((p) => p.authorLogin)).toEqual(["ada"]);
+      const updated = (await show(bare, opened[0]?.head.ref ?? "", "AGENTS.md")) ?? "";
+      expect(updated).toContain(AFTER_REVIEW);
+      expect(updated).toContain(WORK_TOGETHER);
+      await ada.restart();
+      await runOneTask(ada, two, made.id, "Write the news page in news.md");
+      expect((await guidePrs()).map((p) => p.number)).toEqual(opened.map((p) => p.number));
+    } finally {
+      await two.close();
+    }
+  }, 300_000);
+});

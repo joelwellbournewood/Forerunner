@@ -68,6 +68,24 @@ describe("project docs search (spec J.1)", () => {
     await rm(outside, { recursive: true, force: true });
   });
 
+  it("W8-guide-4: collects the guide (AGENTS.md, CLAUDE.md) beside README.md, and a question about who merges finds AGENTS.md", async () => {
+    await put("README.md", "# Team site\n");
+    await put(
+      "AGENTS.md",
+      "# Team site\n\n## Working on this repository\n\n### Branches and pull requests\n\n- The person who made this project presses Merge in Forerunner for its pull requests.\n",
+    );
+    await put("CLAUDE.md", "@AGENTS.md\n");
+    await put("docs/overview.md", "# Overview\n\nA small site for the team.\n");
+    expect((await collectDocFiles(repo)).map((f) => f.path)).toEqual([
+      "AGENTS.md",
+      "CLAUDE.md",
+      "README.md",
+      "docs/overview.md",
+    ]);
+    const r = await searchDocs(repo, "who presses Merge for the pull requests?");
+    expect(r.hits[0]?.path).toBe("AGENTS.md");
+  });
+
   it("chunks by heading with the heading trail, frontmatter and empty sections dropped", () => {
     const chunks = chunkMarkdown("docs/runbook.md", RUNBOOK);
     expect(chunks.map((c) => c.heading)).toEqual(["Runbook > Start and stop", "Runbook > Deploy"]);

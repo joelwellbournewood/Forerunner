@@ -235,6 +235,59 @@ describe("PrTaskExecutor", { timeout: 120_000 }, () => {
     await w.store.close();
   });
 
+  it("W8-guide-6: a task pull request that changes AGENTS.md says so in its body, one that does not says nothing of it", async () => {
+    const w = await world();
+    const run1 = async (title: string, files: Record<string, string>) => {
+      const task = await w.store.task.insert({
+        project_id: w.project,
+        title,
+        outcome: `${title} is done`,
+        acceptance_criteria: [],
+        risk_tier: 1,
+        status: "in_progress",
+        priority: 5,
+        depends_on: [],
+        budget_usd_micro: 1,
+        est_cost_usd_micro: 1,
+        actual_cost_usd_micro: 0,
+        attempt: 0,
+        reason: "seed",
+      });
+      const res = await new PrTaskExecutor({
+        store: w.store,
+        clock: w.clock,
+        host: w.host,
+        inner: innerWriting(files),
+        repoFor: async () => ({
+          clone: w.bare,
+          repo: { owner: "o", name: "sample" },
+          base: "main",
+        }),
+        worktreeRoot: join(w.root, "wt"),
+        identity,
+      }).execute({
+        task,
+        session: w.session,
+        token: w.token,
+        budget: w.budget,
+        item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+        signal: new AbortController().signal,
+      });
+      expect(res.outcome).toBe("in_review");
+      const prs = await w.host.listPullRequests({ owner: "o", name: "sample" });
+      return prs.find((p) => p.head.ref === res.branch)?.body ?? "";
+    };
+    const guide = await run1("Tell agents to run the linter", {
+      "AGENTS.md": "# Rules\n\nRun the linter first.\n",
+    });
+    expect(guide).toContain(
+      "This changes AGENTS.md, the guide other people's agents follow in this repository: read it before merging.",
+    );
+    const plain = await run1("Add the health check", { "health.ts": "export const ok = true;\n" });
+    expect(plain).not.toContain("the guide other people's agents follow");
+    await w.store.close();
+  });
+
   it("an empty repository gets a first commit (a README) on its default branch, then the task's branch and pull request (GitHub walk, 2026-11-02)", async () => {
     // Before: every task of a project linked to a repository just created on GitHub failed with
     // "git checkout -B fr/... failed: fatal: 'origin/main' is not a commit and a branch ...

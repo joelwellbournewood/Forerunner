@@ -26334,7 +26334,7 @@ describe("l4-github-link, run L4", () => {
       expect(String(calls[1]?.messages[2]?.content)).toBe(
         [
           "Forerunner could not use your reply:",
-          "- docs: the decision record is missing: write docs/decisions/0001-<slug>.md with the choice the brief points to; any standard doc you leave out is written from the template.",
+          "- docs: the decision record is missing: write docs/decisions/YYYY-MM-DD-<slug>.md, named by the Today date, with the choice the brief points to; any standard doc you leave out is written from the template.",
           "",
           "Reply again with the whole JSON object in the shape the instructions give, with these problems fixed and nothing else changed: no text and no code fence around it.",
         ].join("\n"),

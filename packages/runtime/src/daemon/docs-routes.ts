@@ -1,5 +1,11 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { docFile, STANDARD_DOCS, STATUS_DOC, type StandardDoc } from "@forerunner/memory";
+import {
+  docFile,
+  isGuideDoc,
+  STANDARD_DOCS,
+  STATUS_DOC,
+  type StandardDoc,
+} from "@forerunner/memory";
 import {
   basename,
   errorMessage,
@@ -299,6 +305,19 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
           drift: false,
           note: `waiting in pull request #${pr.number}: merge it to add it`,
           pullRequest: { number: pr.number, url: pr.url },
+        };
+      // W8-guide-3 (D-W8-9): the guide is the other Forerunner's in a together project, also
+      // when this computer's copy has it: this project never writes it.
+      if (together && found && isGuideDoc(doc) && !finding)
+        return {
+          path: rel,
+          title: TITLES[doc],
+          exists: true,
+          sizeBytes: found.sizeBytes,
+          updatedAt: found.updatedAt,
+          drift: false,
+          note: togetherDocNote(together.name),
+          notWrittenHere: true,
         };
       // C2-left-13: a together project writes no docs; one it does not have is the other's.
       if (together && !found && !finding)

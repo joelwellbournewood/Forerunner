@@ -244,10 +244,25 @@ describe("Docs tab", () => {
     const user = userEvent.setup();
     renderApp("/projects/proj_atlas/docs");
     const docs = await screen.findByTestId("docs");
-    expect(within(docs).getByTestId("docs-present")).toHaveTextContent("7 of 8 present");
+    expect(within(docs).getByTestId("docs-present")).toHaveTextContent("9 of 10 present");
     expect(within(docs).getByTestId("docs-drift")).toHaveTextContent("1 drifted");
     const rows = within(docs).getAllByTestId("doc-row");
-    expect(rows).toHaveLength(8);
+    expect(rows).toHaveLength(10);
+    // W8-guide-1, -2 (ADR 0121): the guide leads the list and the app's status comes last.
+    expect(rows.map((r) => r.dataset.path)).toEqual([
+      "AGENTS.md",
+      "CLAUDE.md",
+      "README.md",
+      "docs/overview.md",
+      "docs/architecture.md",
+      "docs/decisions",
+      "docs/runbook.md",
+      "docs/data.md",
+      "docs/testing.md",
+      "docs/status.md",
+    ]);
+    expect(rows[0]).toHaveTextContent("Guide");
+    expect(rows[1]).toHaveTextContent("Guide for Claude Code");
     const arch = rows.find((r) => r.dataset.path === "docs/architecture.md");
     if (!arch) throw new Error("no architecture row");
     expect(arch).toHaveAttribute("data-drift", "true");
