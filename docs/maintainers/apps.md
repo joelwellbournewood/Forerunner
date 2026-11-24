@@ -3270,3 +3270,17 @@ L4 (fixup)").
   sends nothing until `/me` answers, then `human_alice`; a session page on screen goes from
   21:00 to 15:00 when the person's zone moves from Zurich to New York; the setup assistant's
   zone reaches the store). No route or shape changed, so the fake daemon is unchanged.
+- **The two-home harness** (W8-homes-1, -2, -4): `test/two-installs.ts` composes two whole
+  runtimes, Ada's and Bob's, each on its own home with its own SQLite store, vault, identity,
+  agent name, device row (`remote: { enabled: true }` beside `startServices: false`) and GitHub
+  login, against one GitHub with the users ada and bob and the organisation team (team/shared
+  with one commit, team/empty): `composeTwo({ host: "memory" })` (one `MemoryGitHost`, a
+  per-login view for each home, bare repositories as clone URLs) or `{ host: "http" }` (the
+  testenv stand-in GitHub, one classic token each). Each home is driven only through the UI's
+  client (`home.client`); `home.restart()` composes it again on the same home and vault;
+  `home.githubOff()` / `githubOn()` make that home's GitHub calls fail as a refused connection
+  does; `home.holdModelCalls(when)` holds its model calls; `two.writesBy(login)` lists that
+  login's writes on the host with a normalised `action` (`pull_request.create`, `comment`,
+  `push`, ...); `two.close()` settles, closes, stops and removes everything. Tests:
+  `test/two-installs.test.ts` (describe "w8-two-homes, wave 8: harness"; later wave 8 areas
+  append their own describe blocks and helpers, never change these).
