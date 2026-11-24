@@ -282,12 +282,23 @@ describe("l4-github-link, run L4 (L4-creds-23): the fake daemon's onerepo answer
     expect(made.status).toBe(201);
     const rows = DocView.array().parse(await (await call(`/projects/${KITE}/docs`)).json());
     expect(rows.length).toBeGreaterThan(0);
-    for (const r of rows)
+    for (const r of rows.filter((d) => d.path !== "docs/status.md"))
       expect({ exists: r.exists, notWrittenHere: r.notWrittenHere, note: r.note }).toEqual({
         exists: false,
         notWrittenHere: true,
         note: 'The other Forerunner of "Kite club" writes this doc on GitHub; this project does not write docs.',
       });
+    // w8-status-write (W8-write-6): the Status row is the project's own, as the daemon's.
+    const status = rows.find((d) => d.path === "docs/status.md");
+    expect({
+      exists: status?.exists,
+      notWrittenHere: status?.notWrittenHere,
+      note: status?.note,
+    }).toEqual({
+      exists: false,
+      notWrittenHere: undefined,
+      note: "Status on GitHub: the status issue is written when a task starts or a session ends.",
+    });
     const refused = await call("/projects/proj_beacon/data/import", {
       method: "POST",
       body: JSON.stringify({ source: "github", locator: "org/atlas" }),
