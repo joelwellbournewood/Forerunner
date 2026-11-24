@@ -180,11 +180,18 @@ export async function prepareWork(
  */
 export async function previewWork(
   deps: Pick<PrepareDeps, "store" | "live" | "startedFor" | "continuationWaits">,
-  req: Pick<PrepareRequest, "agentId" | "projectId" | "by">,
+  req: Pick<PrepareRequest, "agentId" | "projectId" | "by" | "taskIds">,
 ): Promise<string | null> {
   if (!req.projectId) return null;
-  if (deps.live?.forProject(req.projectId) || deps.startedFor?.(req.agentId, req.projectId))
-    return preparedLine("no_room");
+  // l4-starts-carried (L4g-left-2): the running session answers for the tasks moved with the
+  // admit's own rule, read-only: a task larger than its whole work budget runs at the next Start
+  // (L4-money-203's line), one it stopped taking too; before, always the room rule's words.
+  const handle = deps.live?.forProject(req.projectId);
+  if (handle?.preview && req.taskIds?.length) {
+    const answers = await handle.preview(req.taskIds);
+    if (answers.size > 0) return preparedLine(summarize(answers));
+  }
+  if (handle || deps.startedFor?.(req.agentId, req.projectId)) return preparedLine("no_room");
   if (await deps.continuationWaits?.(req.projectId)) return preparedLine("waits_continuation");
   const project = await deps.store.project.get(req.projectId);
   return startsByItself(project) && req.by !== "agent"

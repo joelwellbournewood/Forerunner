@@ -956,3 +956,63 @@ describe("l4-starts-sessions, run L4: a running or waiting session is said once 
     await waitFor(() => expect(within(header).getByTestId("start-session")).toBeInTheDocument());
   });
 });
+
+describe("l4-starts-carried, run L4", () => {
+  // L4g-left-4 (review walk 6 of l4-starts-sessions): while the project's own session waited to
+  // go on, the header still offered Start session (at 1280 and 375 px) and its Start answered
+  // 409 ("Your session of 16:41 goes on by itself at 16:44."). The wait offers Cancel; nothing
+  // else starts the project then.
+  it("L4g-left-4: while the project's own session waits to go on, the header offers no Start session; the bar's Cancel drops the wait and Start comes back", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const beaconTask = harness.daemon.state.tasks.find((t) => t.id === "task_4");
+    if (!beaconTask) throw new Error("fixture changed");
+    beaconTask.status = "ready";
+    harness.daemon.state.startsWait.proj_beacon = {
+      kind: "continuation",
+      head: "Waiting until 15:40 (your subscription's limit)",
+    };
+    harness.daemon.state.runningExtra = [WAITING];
+    renderApp("/projects/proj_beacon", harness);
+    const header = await screen.findByTestId("project-header");
+    await waitFor(() =>
+      expect(within(header).getByTestId("project-status")).toHaveTextContent(
+        /^Waiting until 15:40 \(your subscription's limit\), then it goes on$/,
+      ),
+    );
+    expect(within(header).queryByTestId("start-session")).toBeNull();
+    const bar = await screen.findByTestId("run-indicator-bar");
+    await user.click(within(bar).getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/projects/proj_beacon/continuation/cancel")).toHaveLength(1),
+    );
+    await waitFor(() => expect(within(header).getByTestId("start-session")).toBeInTheDocument());
+    // Nothing started meanwhile.
+    expect(postedCalls(harness, "/sessions")).toHaveLength(0);
+  });
+
+  it("L4g-left-4: a Start kept for the reset offers no second Start in the header; its line's Cancel drops it", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    const beaconTask = harness.daemon.state.tasks.find((t) => t.id === "task_4");
+    if (!beaconTask) throw new Error("fixture changed");
+    beaconTask.status = "ready";
+    harness.daemon.state.startsWait.proj_beacon = {
+      kind: "kept_start",
+      head: "Starts at 15:40 (your subscription's limit)",
+    };
+    renderApp("/projects/proj_beacon", harness);
+    const header = await screen.findByTestId("project-header");
+    await waitFor(() =>
+      expect(within(header).getByTestId("project-status")).toHaveTextContent(
+        /^Starts at 15:40 \(your subscription's limit\)/,
+      ),
+    );
+    expect(within(header).queryByTestId("start-session")).toBeNull();
+    await user.click(within(header).getByTestId("project-status-action"));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/projects/proj_beacon/continuation/cancel")).toHaveLength(1),
+    );
+    await waitFor(() => expect(within(header).getByTestId("start-session")).toBeInTheDocument());
+  });
+});

@@ -195,7 +195,9 @@ export function ProjectPage() {
             ) : null}
             {/* l4-starts-sessions (L4-money-209): while a start of this project waits behind
                 another project's session (`startsAfter`), its line says so with Cancel and the
-                header offers no second Start. */}
+                header offers no second Start. l4-starts-carried (L4g-left-4): nor while the
+                project's own session waits to go on or a Start is kept for the reset
+                (`startWait`): the wait carries its Cancel, and a Start would start nothing. */}
             {view.working ? (
               <Link
                 to={`/sessions/${encodeURIComponent(view.working.sessionId)}`}
@@ -204,7 +206,7 @@ export function ProjectPage() {
               >
                 Open running session
               </Link>
-            ) : closed || view.startsAfter ? null : (
+            ) : closed || view.startsAfter || view.startWait ? null : (
               <Button
                 variant="primary"
                 onClick={() => setStartOpen(true)}

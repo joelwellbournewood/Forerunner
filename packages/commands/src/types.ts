@@ -399,13 +399,42 @@ export interface CommandPorts {
     by: "person" | "agent";
   }): Promise<string | null>;
   /** The same line, read-only, for chat's read-back of such a move (nothing joins or starts). */
-  previewWork?(req: { projectId: string; by: "person" | "agent" }): Promise<string | null>;
+  previewWork?(req: {
+    projectId: string;
+    by: "person" | "agent";
+    /** The tasks the move makes ready (l4-starts-carried L4g-left-2: read with their estimate). */
+    taskIds?: string[];
+  }): Promise<string | null>;
   /**
    * S-10: one wait per project: the sentence that says when the person's session waiting for its
    * Claude credential goes on ("Your session of 14:05 goes on by itself at 15:40."), or null.
    * `session.start` answers it and starts nothing.
    */
   startWaits?(projectId: string): Promise<string | null>;
+  /**
+   * l4-starts-carried (L4a-left-5, S-10's "Start at 15:40" for chat): when a person's start of
+   * the project now is kept for its Claude credential's reset ("at 15:40", "on 1 Dec": the
+   * credential the work needs rests, nothing is kept or runs for the project), read-only; null
+   * when a start now runs as usual. `session.start` reads it back ('Start a session on Map notes
+   * at 15:40 (up to CHF 5.00)?').
+   */
+  startKeptWhen?(projectId: string): Promise<string | null>;
+  /**
+   * The same start kept for the reset (`RuntimeApp.continuations.keepStart`): its sentence ("A
+   * session of Map notes starts at 15:40.") and the kept start's own id (fixup-l4-starts-carried:
+   * its Undo drops that start only), or null when nothing waits for a reset now (the start then
+   * runs as usual).
+   */
+  keepStart?(
+    projectId: string,
+    budgetUsdMicro: number,
+  ): Promise<{ sentence: string; keptId: string } | null>;
+  /**
+   * Undo of a kept start: the start kept with that id is dropped and nothing starts at the
+   * reset; a continuation or another kept start of the project stays. False when it no longer
+   * waits (it ran, or it was cancelled).
+   */
+  cancelKeptStart?(projectId: string, keptId: string): Promise<boolean>;
   /**
    * d1109-onerepo-join (ADR 0117 amended): Make one project's checks, read by `project.join` in
    * its plan and again at its run. Absent: the command is refused as unavailable.

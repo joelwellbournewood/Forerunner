@@ -1450,3 +1450,23 @@ describe("d1109-onerepo-link, run C: W15-01's ownership through the one index; a
     }
   });
 });
+
+describe("l4-starts-carried, run L4", () => {
+  // L4g-left-3 (fixup-l4-starts-sessions' bench walk B): the folder's docs/status.md said
+  // "Spent CHF 0.00." for a session whose result said "Less than CHF 0.01." (W14-6: an amount
+  // above zero never reads CHF 0.00; one money wording everywhere).
+  it("L4g-left-3: the status note of a session that spent under a centime says 'less than CHF 0.01', never 'CHF 0.00'", async () => {
+    const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
+    const { root } = await bareRepo();
+    const { docs } = await docsFor(w, root, null);
+    const task = await w.addTask("Add clamp", { risk_tier: 1 });
+    // USD 0.003 is CHF 0.0024: under a centime, above zero.
+    const result = await w.start(w.runner(doneExecutor(w, { costPerTask: 3_000 }), { docs }));
+    expect(result.completed).toEqual([task.id]);
+    const file = join(root, "projects", w.project, WORKSPACE_DIR, fromPosix(STATUS_DOC));
+    const status = await readFile(file, "utf8");
+    expect(status).toContain("- Note: Done. Spent less than CHF 0.01.\n");
+    expect(status).not.toContain("CHF 0.00");
+    await w.close();
+  });
+});

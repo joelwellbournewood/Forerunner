@@ -187,6 +187,7 @@ import { resultSwitchLine, sessionSwitchLine } from "./credential-policy-view.ts
 import { planCredentialLine, startCredential } from "./credential-start.ts";
 import { decisionViews } from "./decision-views.ts";
 import { createDocsRoutes } from "./docs-routes.ts";
+import { heldDependency } from "./held-words.ts";
 import { joinPreview, sharesRepositoryWith } from "./join-preview.ts";
 import { joinedIntoOf } from "./join-words.ts";
 import { buildModelSettingsView } from "./model-settings-view.ts";
@@ -214,7 +215,12 @@ import {
 } from "./session-list.ts";
 import { settingsView } from "./settings-view.ts";
 import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
-import { busyHere, runsWork, startBlocked as startBlockedReason } from "./start-blocked.ts";
+import {
+  busyHere,
+  heldFacts,
+  runsWork,
+  startBlocked as startBlockedReason,
+} from "./start-blocked.ts";
 import {
   ACTION_FROM,
   ACTION_WORDS,
@@ -1686,15 +1692,27 @@ export function createDaemonApp(
     projectId: string,
     agentId: string,
     /**
-     * R-startcred: the Start dialog's check names a credential wait; `POST /sessions` does not
-     * refuse on it (the session meets the wait, keeps it on the source and ends on its sentence,
-     * as before), so a start from the API or the phone still records the wait.
+     * R-startcred: the Start dialog's check names a credential wait. `POST /sessions` asks for
+     * it only through `rt.refusedStart` (a refused credential is refused in words, L4d-left-2);
+     * a resting one keeps the person's Start for the reset ("Start at 15:40", S-10).
      */
-    opts: { credentialWait?: boolean } = {},
+    opts: {
+      credentialWait?: boolean;
+      /** fixup-l4-starts-carried: `heldFacts` already read for this check (read once). */
+      held?: Awaited<ReturnType<typeof heldFacts>> | null;
+    } = {},
   ): Promise<StartCheckView["blocked"]> => {
     // No task yet because the plan from the brief waits for approval (or is being drafted):
     // the button is the plan card, not the Tasks tab (design §3.3, §3.6).
     const intake = r.ready === 0 ? await rt.intake.status(projectId).catch(() => null) : null;
+    // C2-left-2, L4g-left-1: what holds the project's tasks that wait on the person (an open
+    // card, a limit only Settings changes, their own pause), read only when nothing would run.
+    const held =
+      opts.held !== undefined
+        ? opts.held
+        : r.ready === 0 || r.waiting.length > 0
+          ? await heldFacts(rt.store, projectId).catch(() => null)
+          : null;
     return startBlockedReason(r, {
       stopped: rt.kill.isFrozen({ agentId: rt.agent.id }),
       hasModel: !!rt.provider,
@@ -1706,25 +1724,10 @@ export function createDaemonApp(
           ? intake.state
           : null,
       planWait: intake?.wait ?? null,
-      // C2-left-2: with nothing ready, a task that waits on the person's open card.
-      needsYou:
-        r.ready === 0
-          ? await (async () => {
-              const held = await rt.store.task.forProject(
-                projectId,
-                { status: ["needs_human"] },
-                { limit: 50 },
-              );
-              for (const t of held) {
-                const open = await rt.store.humanRequest.list(
-                  { task_id: t.id, status: "open" } as never,
-                  { limit: 1 },
-                );
-                if (open.length > 0) return t.title;
-              }
-              return null;
-            })().catch(() => null)
-          : null,
+      // C2-left-2: with nothing ready, a task that waits on the person's open card (or, L4g-left-1,
+      // on a limit only Settings changes).
+      needsYou: r.ready === 0 ? (held?.needsYou ?? null) : null,
+      held: held?.held ?? null,
       // R-startcred: only asked while tasks would run (the pick is read-only); a task larger
       // than the work budget runs too (D4).
       credentialWait:
@@ -1758,7 +1761,13 @@ export function createDaemonApp(
     const sessionRuns = rt.scheduler.isActive(rt.agent.id);
     const planning = !sessionRuns && rt.scheduler.isHeld(rt.agent.id);
     const busy = sessionRuns || planning;
-    const found = await startBlocked(r, projectId, rt.agent.id, { credentialWait: true });
+    // fixup-l4-starts-carried: what holds the tasks that wait on the person, read once for the
+    // blocker and the waiting list (each dependency says what holds it).
+    const held =
+      r.ready === 0 || r.waiting.length > 0
+        ? await heldFacts(rt.store, projectId).catch(() => null)
+        : null;
+    const found = await startBlocked(r, projectId, rt.agent.id, { credentialWait: true, held });
     const credential = await credentialAtStart(r, projectId);
     // CS-3: the project's own session already waits to go on (one wait per project): the dialog
     // says when it goes on by itself, beside its "Use API key".
@@ -1790,7 +1799,15 @@ export function createDaemonApp(
       waiting: r.waiting.map((w) => ({
         taskId: w.taskId,
         title: w.title,
-        waitsOn: w.waitsOn.map((d) => ({ taskId: d.id, title: d.title, status: d.status })),
+        waitsOn: w.waitsOn.map((d) => {
+          const h = d.status === "needs_human" ? held?.held[d.id] : undefined;
+          return {
+            taskId: d.id,
+            title: d.title,
+            status: d.status,
+            ...(h ? { held: heldDependency(h) } : {}),
+          };
+        }),
       })),
       // U-079: the full-review tasks that wait for the Docker sandbox, with the step to take.
       waitingForSandbox: r.waitingForSandbox
@@ -2043,22 +2060,14 @@ export function createDaemonApp(
     // Start dialog's and chat's sentence ("Nothing can run until you save a new API key in
     // Settings."), also while the person's session is kept to go on; before, a start from the
     // API, the phone or the session page's Continue got the kept session's "goes on by itself
-    // once its Claude credential is back", which names no step. Only while a session is kept:
-    // without one, a start still runs and meets the refusal, and that session goes on by itself
-    // once a new one is saved (S-10, the refused-key case's "starts both by itself").
-    if (body.projectId && !yesForStop && (await rt.continuations.waiting(body.projectId))) {
-      const check = await rt.startCheck(body.projectId, body.budgetUsdMicro);
-      const refused = await startBlocked(check, body.projectId, body.agentId, {
-        credentialWait: true,
-      });
-      if (
-        refused?.kind === "nothing_runnable" &&
-        !refused.startable &&
-        refused.action?.kind === "link" &&
-        refused.action.to === "/setup"
-      )
-        throw new ForerunnerError("validation", refused.sentence, {
-          details: { blocked: refused, cause: "credential_refused", reason: START_REFUSED },
+    // once its Claude credential is back", which names no step. l4-starts-carried (L4d-left-2,
+    // the session lead's decision of 2026-11-23): also with no session kept; before, such a
+    // start ran a session that only met the refusal and ended to wait.
+    if (body.projectId && !yesForStop) {
+      const refused = await rt.refusedStart(body.projectId);
+      if (refused)
+        throw new ForerunnerError("validation", refused, {
+          details: { cause: "credential_refused", reason: START_REFUSED },
         });
     }
     // S-10: one wait per project: while the person's session waits to go on (or a Start was kept

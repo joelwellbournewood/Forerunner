@@ -8391,10 +8391,14 @@ describe("the UI client against the real daemon: a Claude credential at its limi
       );
       expect(again).toBeInstanceOf(ApiError);
       expect((again as ApiError).message).toBe("Your session of 09:00 goes on by itself at 11:40.");
+      // l4-starts-carried (L4g-left-4): the project's card says its own start waits, so the
+      // header offers no Start session that would only meet this 409.
+      expect((await client.project(project.id)).startWait).toBe("goes_on");
       expect(await client.cancelContinuation(project.id)).toEqual({
         cancelled: true,
         sentence: "Cancelled: nothing goes on by itself; its tasks run at your next Start.",
       });
+      expect((await client.project(project.id)).startWait ?? null).toBeNull();
       clock.set(Date.parse("2026-03-05T10:41:00Z"));
       await rt.scheduler.tick();
       await rt.scheduler.tick();
@@ -8649,7 +8653,34 @@ describe("the UI client against the real daemon: a Claude credential at its limi
       const notes = await client.createProject({ name: "Notes", goal: "Two notes" });
       await addTask(client, notes.id, "Write note A");
       await addTask(client, notes.id, "Write note B");
-      const sessionId = await runToEnd(client, notes.id);
+      // l4-starts-carried (L4d-left-2): with the refusal known, a person's Start through the API
+      // is refused in words (the Start dialog's sentence); the session that meets the mark is
+      // one that reached the runner (a start made before the refusal was known).
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const refusedStart = await client.startSession({ agentId, projectId: notes.id }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect((refusedStart as ApiError).message).toBe(
+        "Nothing can run until you save a new API key in Settings.",
+      );
+      await rt.scheduler.requestStart({
+        agentId,
+        projectId: notes.id,
+        trigger: "manual",
+        by: "person",
+        reason: "a start that reached the runner",
+      });
+      await eventually(
+        async () =>
+          (await client.sessions({ projectId: notes.id })).some(
+            (s) => !["running", "paused", "planned"].includes(s.status),
+          ),
+        "the session that met the refusal to end (20 s)",
+        async () => JSON.stringify(await client.sessions({ projectId: notes.id })),
+        20_000,
+      );
+      const sessionId = (await client.sessions({ projectId: notes.id }))[0]?.id ?? "";
       // S-10: the person's session goes on once a new key is saved.
       expect((await client.session(sessionId)).summary?.split("\n")[0]).toBe(
         "Waits for a new API key: save one in Settings; then your session goes on.",
@@ -19113,6 +19144,8 @@ describe("d1109-starts-engine, run C", () => {
         kind: "nothing_runnable",
         sentence: 'Nothing can run: "Build the shop" needs your answer.',
         action: { kind: "link", label: "Open it", to: "/inbox" },
+        // fixup-l4-starts-carried: a task of the work holds it (no "Give your agent work first").
+        holds: "answer",
       });
       // Its row says what its card says (C2-left-1).
       const row = (await client.tasks(project.id)).find((t) => t.id === shop.id);
@@ -27684,9 +27717,24 @@ describe("l4-starts-sessions, run L4", () => {
       const project = await a.client.createProject({ name: "Field notes", goal: "A note" });
       projectId = project.id;
       await readyTask(a.client, project.id, "Write notes/today.md");
-      const started = await a.client.startSession({ agentId: a.agentId, projectId: project.id });
-      waitingId = started.session?.id ?? "";
-      expect(waitingId, JSON.stringify(started)).not.toBe("");
+      // l4-starts-carried (L4d-left-2): with the refusal known, a person's Start through the API
+      // is refused in words; the session that stops at once to wait is one that reached the
+      // runner (a start made before the refusal was known, live check 4's LC-C21).
+      await a.rt.scheduler.requestStart({
+        agentId: a.agentId,
+        projectId: project.id,
+        trigger: "manual",
+        by: "person",
+        reason: "a start that reached the runner",
+      });
+      await eventually(
+        async () => (await a.client.sessions({ projectId: project.id })).length > 0,
+        "the person's session to begin (20 s)",
+        async () => JSON.stringify(await a.client.sessions({ projectId: project.id })),
+        20_000,
+      );
+      waitingId = (await a.client.sessions({ projectId: project.id }))[0]?.id ?? "";
+      expect(waitingId).not.toBe("");
       await ended(a.client, waitingId, "the person's session");
       await settleSessions(a.rt);
       // No run and no money: it met the key's mark, not the API.
@@ -27975,8 +28023,10 @@ describe("l4-starts-sessions, run L4", () => {
         handoff: { stopped: "Half of it.", leftToDo: ["The rest"], stoppedBy: "budget" },
         now: rt.clock.nowIso(),
       });
+      // l4-starts-carried (L4g-left-1): before the raise the check says the limit and what
+      // changes it (it said "needs your answer" though the card asks nothing).
       expect((await client.startCheck(project.id)).blocked?.sentence).toBe(
-        'Nothing can run: "Write the club motto in motto.txt" needs your answer.',
+        'Nothing can run: "Write the club motto in motto.txt" paused at the project\'s budget of CHF 0.06; raise it in Settings.',
       );
       // Settings: Project budget to CHF 0.50, with its yes.
       const asked = await client.executeCommands({
@@ -29055,4 +29105,695 @@ describe("l4-selftasks-carried, run L4", () => {
       await a.rt.close();
     }
   }, 60_000);
+});
+
+describe("l4-starts-carried, run L4", () => {
+  const readyTask = (
+    client: DaemonClient,
+    projectId: string,
+    title: string,
+    dependsOn: string[] = [],
+  ) =>
+    client.createTask(projectId, {
+      title,
+      outcome: `${title} is written`,
+      acceptanceCriteria: ["it is written"],
+      priority: "medium",
+      status: "ready",
+      dependsOn,
+      budgetUsdMicro: 0,
+      specialist: "coder",
+      riskTier: 0,
+    });
+
+  /** A task paused at the project's budget with its card, as a run leaves it (no room). */
+  async function pausedAtProjectBudget(rt: RuntimeApp, taskId: string) {
+    await rt.store.task.patch(taskId, { status: "needs_human", reason: "paused" });
+    await fileBudgetStopCard({
+      store: rt.store,
+      task: await rt.store.task.mustGet(taskId),
+      session: null,
+      humanId: rt.human.id,
+      agentId: rt.agent.id,
+      runId: null,
+      stop: { capUsdMicro: 75_000, spentUsdMicro: 75_000, source: "project", specialist: "coder" },
+      handoff: { stopped: "Half of it.", leftToDo: ["The rest"], stoppedBy: "budget" },
+      now: rt.clock.nowIso(),
+    });
+  }
+
+  // L4g-left-1 (sibling of L4-money-204): a task paused at an outer limit that has no room
+  // (nobody raised it) made the Start dialog and chat's start say 'Nothing can run: "X" needs
+  // your answer.' with Open it, though the card asks nothing: only a raised limit helps.
+  it("L4g-left-1: with a task paused at the project's budget and no room, the Start check and chat's start say the limit and that Settings changes it", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Club motto", goal: "A motto" });
+      const motto = await readyTask(client, project.id, "Write the club motto");
+      await rt.store.project.patch(project.id, { budget_usd_micro: 75_000 });
+      await pausedAtProjectBudget(rt, motto.id);
+      const said =
+        'Nothing can run: "Write the club motto" paused at the project\'s budget of CHF 0.06; raise it in Settings.';
+      const check = await client.startCheck(project.id);
+      expect(check.blocked).toEqual({
+        kind: "nothing_runnable",
+        sentence: said,
+        action: { kind: "link", label: "Open Settings", to: "/settings#other-settings" },
+        // fixup-l4-starts-carried: the work exists; only the limit holds it.
+        holds: "limit",
+      });
+      // Chat's start says the same sentence (it read "no task is ready" before: no card fact).
+      const asked = await client.executeCommands({
+        commands: [{ name: "session.start", params: { project: project.id } }],
+        wordsUsed: "start a session",
+        source: "text",
+        projectId: project.id,
+      });
+      expect(asked.status).toBe("refused");
+      expect((asked as { reason?: string }).reason).toBe(said);
+      // A task that waits on it names the limit too, never "needs your answer".
+      const rules = await readyTask(client, project.id, "Write the club rules", [motto.id]);
+      const waiting = await client.startCheck(project.id);
+      expect(waiting.blocked?.sentence).toBe(
+        'Nothing can run: "Write the club rules" waits on "Write the club motto", paused at the project\'s budget of CHF 0.06; raise it in Settings.',
+      );
+      expect(waiting.blocked?.action).toEqual({
+        kind: "link",
+        label: "Open Settings",
+        to: "/settings#other-settings",
+      });
+      // A dependency the person paused (no card) is said as theirs, never "needs your answer".
+      await rt.store.task.patch(rules.id, { status: "cancelled" });
+      const mine = await readyTask(client, project.id, "Write the club song");
+      const after = await readyTask(client, project.id, "Sing the club song", [mine.id]);
+      await client.taskAction(mine.id, { version: mine.version, action: "pause" });
+      const paused = await client.startCheck(project.id);
+      expect(paused.blocked?.sentence).toBe(
+        'Nothing can run: "Sing the club song" waits on "Write the club song", which you paused.',
+      );
+      expect(paused.blocked?.action).toEqual({
+        kind: "link",
+        label: "Open Tasks",
+        to: `/projects/${project.id}/tasks`,
+      });
+      expect(after.status).toBe("ready");
+      // Nothing started or was spent.
+      expect(await client.sessions({ projectId: project.id })).toEqual([]);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  // fixup-l4-starts-carried (the review's blocking 1 and 2): the Start dialog showed "Give your
+  // agent work first" under the limit's sentence (the work exists; only the limit holds it), and
+  // its waiting list said '"B" waits on "A", which needs your answer, so it cannot run. Answer
+  // it in the Inbox ...' for a dependency paused at the project's budget and for one the person
+  // paused (no card): the check sent only the stored status.
+  it("L4g-left-1 (fixup): the Start check marks a held task's blocker and words each waiting dependency by what holds it, never 'needs your answer' without a card", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Club motto", goal: "A motto" });
+      const motto = await readyTask(client, project.id, "Write the club motto");
+      await rt.store.project.patch(project.id, { budget_usd_micro: 75_000 });
+      await pausedAtProjectBudget(rt, motto.id);
+      // Nothing else: the blocker names the limit and says a task holds the work.
+      const alone = await client.startCheck(project.id);
+      expect(alone.blocked?.holds).toBe("limit");
+      // A task that waits on it: the list says the limit and what changes it.
+      const rules = await readyTask(client, project.id, "Write the club rules", [motto.id]);
+      const byLimit = (await client.startCheck(project.id)).waiting.find(
+        (w) => w.taskId === rules.id,
+      );
+      expect(byLimit?.waitsOn).toEqual([
+        {
+          taskId: motto.id,
+          title: "Write the club motto",
+          status: "needs_human",
+          held: {
+            why: "limit",
+            state: "paused at the project's budget of CHF 0.06",
+            advice:
+              "Raise the project's budget in Settings, or change what it waits for on the Tasks tab.",
+          },
+        },
+      ]);
+      // A dependency the person paused (no card).
+      const song = await readyTask(client, project.id, "Write the club song");
+      const sing = await readyTask(client, project.id, "Sing the club song", [song.id]);
+      await client.taskAction(song.id, { version: song.version, action: "pause" });
+      // A dependency a run left paused with no card, not the person's pause.
+      const flag = await readyTask(client, project.id, "Draw the club flag");
+      const wave = await readyTask(client, project.id, "Wave the club flag", [flag.id]);
+      await rt.store.task.patch(flag.id, {
+        status: "needs_human",
+        reason: "paused",
+        author_human: null,
+        author_agent: rt.agent.id,
+      } as never);
+      // A dependency whose card asks (Continue at its own budget).
+      const logo = await readyTask(client, project.id, "Draw the club logo");
+      const print = await readyTask(client, project.id, "Print the club logo", [logo.id]);
+      await rt.store.task.patch(logo.id, { status: "needs_human", reason: "paused" });
+      await fileBudgetStopCard({
+        store: rt.store,
+        task: await rt.store.task.mustGet(logo.id),
+        session: null,
+        humanId: rt.human.id,
+        agentId: rt.agent.id,
+        runId: null,
+        stop: {
+          capUsdMicro: 75_000,
+          spentUsdMicro: 75_000,
+          source: "task_budget",
+          specialist: "coder",
+        },
+        handoff: { stopped: "Half of it.", leftToDo: ["The rest"], stoppedBy: "budget" },
+        now: rt.clock.nowIso(),
+      });
+      const check = await client.startCheck(project.id);
+      const heldOf = (taskId: string) =>
+        check.waiting.find((w) => w.taskId === taskId)?.waitsOn[0]?.held;
+      expect(heldOf(sing.id)).toEqual({
+        why: "paused",
+        state: "which you paused",
+        advice: 'Resume "Write the club song", or change what it waits for on the Tasks tab.',
+      });
+      expect(heldOf(wave.id)).toEqual({
+        why: "paused",
+        state: "which is paused",
+        advice: 'Resume "Draw the club flag", or change what it waits for on the Tasks tab.',
+      });
+      expect(heldOf(print.id)).toEqual({
+        why: "answer",
+        state: "which needs your answer",
+        advice: "Answer it in the Inbox, or change what it waits for on the Tasks tab.",
+      });
+      expect(check.blocked?.holds).toBe("limit");
+      expect(await client.sessions({ projectId: project.id })).toEqual([]);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  // L4g-left-2 (sibling of L4-money-203): while a CHF 1.00 session ran, chat's read-back of
+  // "make it ready" for a draft larger than its whole work budget said 'It joins this session if
+  // budget is left after its own tasks, else your next Start.': the preview had no estimate.
+  it("L4g-left-2: chat's read-back of Make ready on a draft larger than the running session's budget says it runs at your next Start, as the press does", async () => {
+    let reached: () => void = () => undefined;
+    const reachedP = new Promise<void>((r) => {
+      reached = r;
+    });
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let armed = true;
+    const player = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({
+          file: join(mkdtempSync(join(tmpdir(), "fr-l4carried-left2-")), "c.jsonl"),
+        }),
+      ),
+    );
+    const stream = player.stream.bind(player);
+    player.stream = (req) => {
+      if (!armed || detectRole(req).role !== "specialist") return stream(req);
+      armed = false;
+      return (async function* () {
+        reached();
+        await released;
+        yield* stream(req);
+      })();
+    };
+    const { rt, client } = await composeWithRolePlayer({}, { provider: player });
+    try {
+      const me = await client.me();
+      const project = await client.createProject({ name: "Garden club", goal: "A club page" });
+      const intro = await readyTask(client, project.id, "Write the intro");
+      await rt.store.task.patch(intro.id, { est_cost_usd_micro: 50_000 });
+      const started = await client.startSession({
+        agentId: rt.agent.id,
+        projectId: project.id,
+        budgetUsdMicro: 1_250_000,
+      });
+      const sessionId = started.session?.id ?? "";
+      await reachedP;
+      const draft = async (title: string, est: number) => {
+        const t = await client.createTask(project.id, {
+          title,
+          outcome: `${title} is written`,
+          acceptanceCriteria: ["it is written"],
+          priority: "medium",
+          status: "draft",
+          dependsOn: [],
+          budgetUsdMicro: 0,
+          specialist: "coder",
+          riskTier: 0,
+        });
+        await rt.store.task.patch(t.id, { est_cost_usd_micro: est });
+        return t;
+      };
+      await draft("Research local garden suppliers", 5_000_000);
+      await draft("Write the club motto", 20_000);
+      const say = (text: string) =>
+        client.chat({
+          humanId: me.id,
+          agentId: rt.agent.id,
+          projectId: project.id,
+          projectTab: true,
+          text,
+          source: "text",
+        });
+      const large = await say(
+        'tool: task_transition {"task": "Research local garden suppliers", "to": "ready"}',
+      );
+      expect(large.pendingConfirmation?.readback).toBe(
+        'Make "Research local garden suppliers" ready? It is larger than this session\'s budget, so it runs at your next Start.',
+      );
+      await say("no");
+      // One that fits keeps the room rule's words (the room is decided at the yes).
+      const small = await say(
+        'tool: task_transition {"task": "Write the club motto", "to": "ready"}',
+      );
+      expect(small.pendingConfirmation?.readback).toBe(
+        'Make "Write the club motto" ready? It joins this session if budget is left after its own tasks, else your next Start.',
+      );
+      await say("no");
+      release();
+      await eventually(
+        async () =>
+          ["completed", "stopped", "failed", "killed"].includes(
+            (await client.session(sessionId)).status,
+          ),
+        "the CHF 1.00 session to end (30 s)",
+        async () => (await client.session(sessionId)).status,
+        30_000,
+      );
+    } finally {
+      release();
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  // L4d-left-2 (the session lead's decision at the L4d merge, 2026-11-23; the owner can
+  // overrule): a start under a refused credential is refused in words outright, also with no
+  // session kept, with the Start dialog's sentence. Before, POST /sessions (the Start the API,
+  // the phone and Continue send) started a session that met the refusal and ended to wait,
+  // while the dialog's Start was off and the user guide promised "every Start says the same".
+  it("L4d-left-2: with the API key refused and no session kept, POST /sessions is refused with the Start dialog's sentence and starts nothing", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4carried-refused-"));
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const refusedKey = ["sk-ant-api03-", "refused", "6".repeat(40)].join(""); // not-a-secret
+    const model = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    const standIn = messagesApiStandIn({
+      model,
+      clock,
+      answerFor: keyRule({ refuse: ["refused"] }),
+    });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault({ anthropic_api_key: refusedKey }),
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    try {
+      // The key's refusal is known: the plan from a brief met it first (live check 4's LC-C21).
+      const planned = await client.createProject({
+        name: "Plan first",
+        goal: goalFromBrief("A page that shows a random quote."),
+        brief: "A page that shows a random quote.",
+        intake: true,
+      });
+      await eventually(
+        async () => (await client.intakeStatus(planned.id)).state === "waiting",
+        "the planning to wait for a new key (20 s)",
+        async () => JSON.stringify(await client.intakeStatus(planned.id)),
+        20_000,
+      );
+      const project = await client.createProject({ name: "Field notes", goal: "A note" });
+      await readyTask(client, project.id, "Write notes/today.md");
+      const dialog = (await client.startCheck(project.id)).blocked;
+      expect(dialog?.sentence).toBe("Nothing can run until you save a new API key in Settings.");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const refused = await client.startSession({ agentId, projectId: project.id }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(refused).toBeInstanceOf(ApiError);
+      expect((refused as ApiError).status).toBe(400);
+      expect((refused as ApiError).message).toBe(dialog?.sentence);
+      // Chat's start says the same sentence (L4-creds-8).
+      const chat = await client.executeCommands({
+        commands: [{ name: "session.start", params: { project: project.id } }],
+        wordsUsed: "start a session",
+        source: "text",
+        projectId: project.id,
+      });
+      expect((chat as { reason?: string }).reason).toBe(dialog?.sentence);
+      // Nothing started, nothing is kept, nothing was spent; the task stays ready.
+      expect(await client.sessions({ projectId: project.id })).toEqual([]);
+      expect(rt.scheduler.isActive(rt.agent.id)).toBe(false);
+      expect(await rt.continuations.waiting(project.id)).toBeNull();
+      expect((await client.tasks(project.id)).map((t) => t.status)).toEqual(["ready"]);
+      // The phone's start meets the same refusal (the daemon's one check for a person's start).
+      expect(await rt.refusedStart(project.id)).toBe(dialog?.sentence);
+      // fixup-l4-starts-carried (the review's notes): with Stop all on, the API's Start says Stop
+      // all's sentence, as the dialog does, not the key's; the phone's Start (which lifts Stop
+      // all only when it can start) still meets the key's sentence, before it lifts anything
+      // (the watcher's row: packages/runtime/test/remote-watcher.test.ts).
+      await client.kill({ scope: "all", reason: "stop all from the UI" });
+      const killed = await client.startSession({ agentId, projectId: project.id }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect((killed as ApiError).message).toBe(KILL_ACTIVE_START_MESSAGE);
+      expect(await rt.refusedStart(project.id)).toBeNull();
+      expect(await rt.refusedStart(project.id, { evenStopped: true })).toBe(dialog?.sentence);
+      expect(rt.kill.isFrozen({ agentId: rt.agent.id })).toBe(true);
+      expect(await client.sessions({ projectId: project.id })).toEqual([]);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+      removeHomes([home]);
+    }
+  }, 120_000);
+
+  // L4a-left-5 (L4-creds-8 part 3, never on the cut line since L4a): chat's "run it now" while
+  // the subscription rests read back 'Start a session on Map notes (up to CHF 5.00)?' and the
+  // session then ended at once to wait (nothing moved or was spent). The Start dialog keeps such
+  // a start for the reset ("Start at 11:40"); chat's start does the same, with its own read-back
+  // and an Undo that drops it.
+  it("L4a-left-5: chat's start while the subscription rests is kept for its reset with its own read-back, Undo drops it, and kept again it starts once at the reset", async () => {
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4carried-kept-"));
+    const resetAt = "2026-03-05T10:40:00.000Z";
+    const oauth = ["sk-ant-oat01-", "keptchat", "8".repeat(40)].join(""); // not-a-secret
+    const apiKey = ["sk-ant-api03-", "keptchat", "9".repeat(40)].join(""); // not-a-secret
+    const sdkCalls: string[] = [];
+    const sdkQuery: NonNullable<ComposeOptions["sdkQuery"]> = ({ prompt }) => {
+      sdkCalls.push(prompt);
+      const atLimit = sdkCalls.length <= 1;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "sdk" };
+        if (atLimit) {
+          yield {
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", resetsAt: Date.parse(resetAt) / 1000 },
+          };
+          yield {
+            type: "assistant",
+            error: "rate_limit",
+            message: { content: [{ type: "text", text: "You've hit your limit" }] },
+          };
+          yield { type: "result", subtype: "success", is_error: true, result: "limit" };
+          return;
+        }
+        yield {
+          type: "assistant",
+          message: {
+            id: `m${sdkCalls.length}`,
+            content: [{ type: "text", text: "Wrote it. Lesson: none." }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        };
+        yield { type: "result", subtype: "success", is_error: false, result: "Wrote it." };
+      })();
+    };
+    const onKey = new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock);
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
+      provider: new AcceptingCriticProvider(onKey),
+      sdkQuery,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const ended = (s: { status: string }) => !["running", "paused", "planned"].includes(s.status);
+    try {
+      const project = await client.createProject({ name: "Map notes", goal: "A note" });
+      await readyTask(client, project.id, "Write notes/map.md");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      // The first Start meets the limit (10:40 UTC, 11:40 in Zurich) and ends to wait; the
+      // person cancels that wait: the subscription still rests and nothing is kept.
+      const first = await client.startSession({ agentId, projectId: project.id });
+      const firstId = first.session?.id ?? "";
+      await eventually(
+        async () => ended(await client.session(firstId)),
+        "the first session to end (20 s)",
+        async () => (await client.session(firstId)).status,
+        20_000,
+      );
+      expect((await client.cancelContinuation(project.id)).cancelled).toBe(true);
+      const say = () =>
+        client.executeCommands({
+          commands: [{ name: "session.start", params: { project: project.id } }],
+          wordsUsed: "run it now",
+          source: "text",
+          projectId: project.id,
+        });
+      const asked = await say();
+      expect(asked.status, JSON.stringify(asked)).toBe("pending");
+      expect((asked as { readback?: string }).readback).toMatch(
+        /^Start a session on Map notes at 11:40 \(up to CHF \d+\.\d{2}\)\?$/,
+      );
+      const done = await client.confirmCommand(asked.pendingId ?? "", { answer: "tap" });
+      expect(done.status, JSON.stringify(done)).toBe("done");
+      expect((done as { sentence?: string }).sentence).toBe(
+        "A session of Map notes starts at 11:40.",
+      );
+      // Kept, not started: one session so far, nothing runs, the project says its start waits.
+      expect(await client.sessions({ projectId: project.id })).toHaveLength(1);
+      expect(rt.scheduler.isActive(rt.agent.id)).toBe(false);
+      expect((await client.project(project.id)).startWait).toBe("kept");
+      expect(await rt.continuations.waiting(project.id)).toBe(
+        "A session of Map notes starts at 11:40.",
+      );
+      // Undo drops it: nothing starts at the reset.
+      await client.undoChange(done.changeLogId ?? "");
+      expect(await rt.continuations.waiting(project.id)).toBeNull();
+      expect((await client.project(project.id)).startWait ?? null).toBeNull();
+      // Kept again, it starts once at the reset, by the person.
+      const again = await say();
+      const keptAgain = await client.confirmCommand(again.pendingId ?? "", { answer: "tap" });
+      expect((keptAgain as { sentence?: string }).sentence).toBe(
+        "A session of Map notes starts at 11:40.",
+      );
+      clock.set(Date.parse("2026-03-05T10:41:00Z"));
+      await rt.scheduler.tick();
+      await eventually(
+        async () => (await client.tasks(project.id)).every((t) => t.status === "done"),
+        "the session kept for the reset to finish the task (30 s)",
+        async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+        30_000,
+      );
+      const sessions = await client.sessions({ projectId: project.id });
+      expect(sessions).toHaveLength(2);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+      removeHomes([home]);
+    }
+  }, 120_000);
+
+  // fixup-l4-starts-carried (the review's blocking 3): the Undo of a start kept from chat was
+  // never refused. Once that start had run at the reset, its Undo still answered "Undone: a
+  // session on Map notes on your PC is back to no session.", and it dropped whatever the project
+  // had kept then (a Start kept later from the dialog, or the person's session waiting to go on).
+  it("L4a-left-5 (fixup): the Undo of a start kept from chat drops only that start, after a restart too, and once it ran or was cancelled the Undo is refused in words", async () => {
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4carried-keptundo-"));
+    const resetAt = "2026-03-05T10:40:00.000Z";
+    const oauth = ["sk-ant-oat01-", "keptundo", "8".repeat(40)].join(""); // not-a-secret
+    const apiKey = ["sk-ant-api03-", "keptundo", "9".repeat(40)].join(""); // not-a-secret
+    let calls = 0;
+    const sdkQuery: NonNullable<ComposeOptions["sdkQuery"]> = () => {
+      calls += 1;
+      const atLimit = calls <= 1;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "sdk" };
+        if (atLimit) {
+          yield {
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", resetsAt: Date.parse(resetAt) / 1000 },
+          };
+          yield {
+            type: "assistant",
+            error: "rate_limit",
+            message: { content: [{ type: "text", text: "You've hit your limit" }] },
+          };
+          yield { type: "result", subtype: "success", is_error: true, result: "limit" };
+          return;
+        }
+        yield {
+          type: "assistant",
+          message: {
+            id: `m${calls}`,
+            content: [{ type: "text", text: "Wrote it. Lesson: none." }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        };
+        yield { type: "result", subtype: "success", is_error: false, result: "Wrote it." };
+      })();
+    };
+    // The same home and state file for both boots: the kept start's id is read back after it.
+    const boot = async () => {
+      const onKey = new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock);
+      const rt = await composeRuntime({
+        env: { FORERUNNER_HOME: home },
+        dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+        config: null,
+        clock,
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
+        provider: new AcceptingCriticProvider(onKey),
+        sdkQuery,
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "0.0.0-ui-contract",
+        sandboxDetection: NO_ENGINE,
+        startServices: false,
+      });
+      const { app, token } = createDaemonApp(rt);
+      const client = createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+      return { rt, client };
+    };
+    const ended = (s: { status: string }) => !["running", "paused", "planned"].includes(s.status);
+    const gone =
+      "the start kept for the reset has already run or was cancelled; there is nothing to undo";
+    let { rt, client } = await boot();
+    try {
+      const project = await client.createProject({ name: "Map notes", goal: "A note" });
+      await readyTask(client, project.id, "Write notes/map.md");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const first = await client.startSession({ agentId, projectId: project.id });
+      const firstId = first.session?.id ?? "";
+      await eventually(
+        async () => ended(await client.session(firstId)),
+        "the first session to end to wait (20 s)",
+        async () => (await client.session(firstId)).status,
+        20_000,
+      );
+      expect((await client.cancelContinuation(project.id)).cancelled).toBe(true);
+      const keepFromChat = async () => {
+        const asked = await client.executeCommands({
+          commands: [{ name: "session.start", params: { project: project.id } }],
+          wordsUsed: "run it now",
+          source: "text",
+          projectId: project.id,
+        });
+        const done = await client.confirmCommand(asked.pendingId ?? "", { answer: "tap" });
+        expect((done as { sentence?: string }).sentence).toBe(
+          "A session of Map notes starts at 11:40.",
+        );
+        return done.changeLogId ?? "";
+      };
+      const row = async (id: string) =>
+        (await client.changes({ projectId: project.id })).find((c) => c.id === id);
+      // Kept from chat, then the daemon restarts: the Undo still drops that start.
+      const beforeRestart = await keepFromChat();
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await boot());
+      expect((await row(beforeRestart))?.undoable).toBe(true);
+      const undone = await client.undoChange(beforeRestart);
+      expect(undone.status, JSON.stringify(undone)).toBe("done");
+      expect(await rt.continuations.waiting(project.id)).toBeNull();
+      // Kept from chat, then cancelled on the project's line; the person then keeps a Start from
+      // the dialog. The chat's Undo is refused and the dialog's kept Start stays.
+      const fromChat = await keepFromChat();
+      expect((await client.cancelContinuation(project.id)).cancelled).toBe(true);
+      const fromDialog = await client.startSession({ agentId, projectId: project.id });
+      expect(fromDialog.result).toBe("kept");
+      expect((await row(fromChat))?.undoBlockedReason).toBe(gone);
+      const stale = await client.undoChange(fromChat);
+      expect(stale.status, JSON.stringify(stale)).toBe("refused");
+      expect((stale as { reason?: string }).reason).toBe(gone);
+      expect(await rt.continuations.waiting(project.id)).toBe(
+        "A session of Map notes starts at 11:40.",
+      );
+      expect((await row(fromChat))?.undoState).toBe("irreversible");
+      // The dialog's Start is cancelled; one kept from chat runs at the reset; its Undo is then
+      // refused, never "Undone".
+      expect((await client.cancelContinuation(project.id)).cancelled).toBe(true);
+      const ran = await keepFromChat();
+      clock.set(Date.parse("2026-03-05T10:41:00Z"));
+      await rt.scheduler.tick();
+      await eventually(
+        async () => (await client.tasks(project.id)).every((t) => t.status === "done"),
+        "the start kept from chat to run at the reset and finish the task (30 s)",
+        async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+        30_000,
+      );
+      await settleSessions(rt);
+      expect((await row(ran))?.undoBlockedReason).toBe(gone);
+      const late = await client.undoChange(ran);
+      expect(late.status, JSON.stringify(late)).toBe("refused");
+      expect((late as { reason?: string }).reason).toBe(gone);
+      expect((await row(ran))?.undoState).toBe("irreversible");
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+      removeHomes([home]);
+    }
+  }, 120_000);
 });

@@ -1068,8 +1068,8 @@ const MONTHS = [
   "December",
 ];
 
-/** "1 December": when a month's cap or share resets. */
-function resetDay(iso: unknown): string | null {
+/** "1 December": when a month's cap or share resets (the Start check says it too). */
+export function resetDay(iso: unknown): string | null {
   if (typeof iso !== "string") return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;

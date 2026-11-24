@@ -15,6 +15,14 @@ import { asObject, authorOf, chfExact, type ResolvedProject, resolveProject } fr
  */
 export const DEFAULT_COSTLY_SESSION_USD_MICRO = 2_000_000;
 
+/**
+ * fixup-l4-starts-carried: why the Undo of a start kept from chat for the credential's reset is
+ * refused once that start no longer waits (it ran at the reset, or it was cancelled or dropped by
+ * Stop all). The Changes screen shows it in place of Undo ("Cannot be undone now: ...").
+ */
+export const KEPT_START_GONE_REASON =
+  "the start kept for the reset has already run or was cancelled; there is nothing to undo";
+
 async function requestingDevice(ctx: CommandContext): Promise<DeviceRow | null> {
   if (!ctx.deviceId) return null;
   return (await ctx.store.device.get(ctx.deviceId)) ?? null;
@@ -78,11 +86,19 @@ async function startPlan(p: SessionStartParams, ctx: CommandContext): Promise<St
  * keep): started, waiting behind the running session, or waiting for quiet hours to end. A
  * phone's start is handed to the PC. No "Undo." in the words: the Undo is a button.
  */
-function startSentence(s: StartPlan, outcome?: "started" | "queued" | "deferred"): string {
+function startSentence(
+  s: StartPlan,
+  outcome?: "started" | "queued" | "deferred",
+  /** L4a-left-5: the start is kept for the credential's reset ("at 15:40"). */
+  keptWhen?: string | null,
+): string {
   const where = s.runner === "cloud" ? " on the cloud runner" : "";
   // l4-chat-depth (L4-chat-210): two decimals (design §5 rule 7), "(up to CHF 1.00)".
   const up = `(up to ${chfExact(s.budgetChf)})`;
   const name = s.resolved.project.name;
+  // fixup-l4-starts-carried: "of", as the run's own sentence ("A session of Map notes starts at
+  // 15:40.", `continuations.waiting`); before, the change card said "A session on Map notes".
+  if (keptWhen && !s.remote) return `A session of ${name}${where} starts ${keptWhen} ${up}.`;
   if (s.remote)
     return `Sent a start for ${name}${where} to your PC ${up}; it picks it up in seconds.`;
   if (outcome === "queued")
@@ -131,10 +147,26 @@ async function refuseWhileWaiting(s: StartPlan, ctx: CommandContext): Promise<vo
  * comes after it: it runs if "Build the shop" leaves budget, else in your next session.'), as
  * the port's one text; the start itself is not refused for it.
  */
-function startAsk(s: StartPlan, warning: string | null = null): string {
+function startAsk(
+  s: StartPlan,
+  warning: string | null = null,
+  /**
+   * l4-starts-carried (L4a-left-5): the start is kept for the credential's reset: 'Start a
+   * session on Map notes at 15:40 (up to CHF 5.00)?'; before, the read-back said a start now and
+   * the session then ended at once to wait.
+   */
+  keptWhen: string | null = null,
+): string {
   const where = s.runner === "cloud" ? " on the cloud runner" : "";
-  const ask = `Start a session on ${s.resolved.project.name}${where} (up to ${chfExact(s.budgetChf)})?`;
+  const when = keptWhen ? ` ${keptWhen}` : "";
+  const ask = `Start a session on ${s.resolved.project.name}${where}${when} (up to ${chfExact(s.budgetChf)})?`;
   return warning ? `${ask} ${warning}` : ask;
+}
+
+/** When a start now is kept for the credential's reset ("at 15:40"), or null (L4a-left-5). */
+async function keptWhenOf(s: StartPlan, ctx: CommandContext): Promise<string | null> {
+  if (s.remote || s.runner === "cloud") return null;
+  return (await ctx.ports.startKeptWhen?.(s.resolved.project.id).catch(() => null)) ?? null;
 }
 
 /**
@@ -182,6 +214,7 @@ export const sessionStart: CommandDef<SessionStartParams> = {
     const costly =
       s.budgetUsd > (ctx.ports.costlySessionUsdMicro ?? DEFAULT_COSTLY_SESSION_USD_MICRO);
     const warning = await startWarningOf(s, ctx);
+    const keptWhen = await keptWhenOf(s, ctx);
     return buildCard({
       command: "session.start",
       what: `a session on ${s.resolved.project.name} ${s.where}`,
@@ -189,14 +222,14 @@ export const sessionStart: CommandDef<SessionStartParams> = {
       newValue: `running with a budget of ${chfExact(s.budgetChf)}`,
       scope: "session",
       risk: costly ? "medium" : "low",
-      sentence: startSentence(s),
+      sentence: startSentence(s, undefined, keptWhen),
       reversible: true,
       projectId: s.resolved.project.id,
       projectName: s.resolved.project.name,
       usesActiveProject: s.resolved.usedActive,
       costUsdMicro: s.budgetUsd,
       costChfMicro: s.budgetChf,
-      ask: startAsk(s, warning),
+      ask: startAsk(s, warning, keptWhen),
     });
   },
   async run(p, ctx): Promise<CommandOutcome> {
@@ -233,6 +266,29 @@ export const sessionStart: CommandDef<SessionStartParams> = {
         sentence: startSentence(s),
         projectId: s.resolved.project.id,
       };
+    }
+    // l4-starts-carried (L4a-left-5): while the Claude credential the work needs rests and
+    // nothing is kept for the project, the start is kept for its reset, as the Start dialog's
+    // "Start at 15:40" keeps it: no session now (it would only meet the wait), one at the reset
+    // by the person; Undo drops it. Before, a session started and ended at once to wait.
+    if (s.runner !== "cloud" && ctx.ports.keepStart) {
+      const kept = await ctx.ports.keepStart(s.resolved.project.id, s.budgetUsd);
+      if (kept)
+        return {
+          before: { session_id: null, remote_command_id: null },
+          after: {
+            session_id: null,
+            start_id: null,
+            remote_command_id: null,
+            agent_id: agentId,
+            budget_usd_micro: s.budgetUsd,
+            kept_start: true,
+            kept_id: kept.keptId,
+            project_id: s.resolved.project.id,
+          },
+          sentence: kept.sentence,
+          projectId: s.resolved.project.id,
+        };
     }
     if (!ctx.ports.startSession) {
       throw new ForerunnerError("not_supported", "session start is not available here");
@@ -285,6 +341,16 @@ export const sessionStart: CommandDef<SessionStartParams> = {
   },
   async undo(_p, _before, after, ctx) {
     const a = asObject(after);
+    // L4a-left-5: a start kept for the reset is dropped; nothing starts at the reset.
+    // fixup-l4-starts-carried: only the start this change kept (its id); once it ran or was
+    // cancelled the undo is refused in words before it gets here (`CommandLoop`), and a stale
+    // one that slips through drops nothing else (a continuation, a Start kept later).
+    if (a.kept_start === true) {
+      if (typeof a.project_id !== "string" || typeof a.kept_id !== "string") return;
+      if (!(await ctx.ports.cancelKeptStart?.(a.project_id, a.kept_id)))
+        throw new ForerunnerError("validation", KEPT_START_GONE_REASON);
+      return;
+    }
     let startId = typeof a.start_id === "string" ? a.start_id : undefined;
     if (typeof a.remote_command_id === "string") {
       const row = await ctx.store.remoteCommand.get(a.remote_command_id);

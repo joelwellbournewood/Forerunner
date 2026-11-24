@@ -527,3 +527,10 @@ Signal tests injected `run` and `which`, the voice tests the voice package's `Fa
 - `update_available` links to `/settings` although the UI has a `/updates` page: the desktop
   shell's deep-link roots do not list `updates` yet. When they do, change the link in
   `producers.updateAvailable` and `SHELL_ROOTS` in the producers test together.
+
+## l4-starts-carried (run L4i, 2026-11-24)
+
+- `budgetStop` says the session's spend in the money words ("The session spent less than CHF
+  0.01."; never "CHF 0.00" above zero), and its strip of the result's money line takes "Less than
+  CHF 0.01." too (before, "Less than." was left in the body). Test:
+  notifications-channels.test.ts "l4-starts-carried, run L4".

@@ -148,6 +148,12 @@ import {
   policyChangeWords,
 } from "@forerunner/runtime/daemon/credential-policy-view";
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
+import {
+  type HeldTask,
+  heldBlocker,
+  heldDependency,
+  outerLimitHold,
+} from "@forerunner/runtime/daemon/held-words";
 import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
 import {
   comesAfterSentence,
@@ -165,7 +171,7 @@ import {
   projectStatusLine,
   sinceLines,
 } from "@forerunner/runtime/daemon/project-status";
-import { requestWords } from "@forerunner/runtime/daemon/request-words";
+import { requestWords, resetDay } from "@forerunner/runtime/daemon/request-words";
 import { runText, startOfferOf, stopChoices } from "@forerunner/runtime/daemon/run-words";
 import {
   quoted,
@@ -698,6 +704,11 @@ export interface FakeDaemonState {
       startsAt?: string;
       /** l4-cred-screens (L4-creds-26): under "ask", the stop in a few words; Start asks first. */
       askFirst?: string;
+      /**
+       * fixup-l4-starts-carried, as the daemon's `KeptStart.id`: the start chat kept for the
+       * reset; its Undo drops that start only and is refused once it no longer waits.
+       */
+      keptId?: string;
     }
   >;
   /**
@@ -791,7 +802,8 @@ export interface FakeDaemonState {
   calls: RecordedCall[];
   /** l4-selftasks-carried (L4f-left-6): the paths of the GET requests, in order. */
   gets: string[];
-  pendingConfirmation: { id: string; readback: string } | null;
+  /** `keptAt` (L4a-left-5): chat's start is kept for the credential's reset at that time. */
+  pendingConfirmation: { id: string; readback: string; keptAt?: string; words?: string } | null;
   /**
    * As the daemon (review of l4-chat-answers): the line the parser's "Which project: …?" asked
    * about; the option pressed next (a project's name alone) finishes it.
@@ -1139,6 +1151,38 @@ function fakeContinuing(requests: readonly HumanRequestView[]): Set<string> {
   return ids;
 }
 
+/**
+ * As the daemon's `heldFacts` (l4-starts-carried, L4g-left-1): why each of the project's
+ * `needs_human` tasks holds (an open card asks, a limit only Settings changes, the person's own
+ * pause) and the first one a card or a limit holds.
+ */
+function fakeHeld(
+  tasks: readonly TaskView[],
+  requests: readonly HumanRequestView[],
+  pausedByPerson: ReadonlySet<string>,
+  projectId: string,
+): { needsYou: HeldTask | null; held: Record<string, HeldTask> } {
+  const held: Record<string, HeldTask> = {};
+  let needsYou: HeldTask | null = null;
+  for (const t of tasks) {
+    if (t.projectId !== projectId || t.status !== "needs_human") continue;
+    const open = requests.filter((r) => r.taskId === t.id && r.status === "open");
+    const limit = open
+      .map((r) => outerLimitHold((r.changeCard ?? null) as never, resetDay))
+      .find((h) => h !== null);
+    // fixup-l4-starts-carried, as the daemon: a pause no card asks about that the person did not
+    // make is a pause too ("which is paused").
+    const one: HeldTask = limit
+      ? { title: t.title, why: "limit", ...limit }
+      : open.length > 0
+        ? { title: t.title, why: "answer" }
+        : { title: t.title, why: "paused", byYou: pausedByPerson.has(t.id) };
+    held[t.id] = one;
+    if (!needsYou && one.why !== "paused") needsYou = one;
+  }
+  return { needsYou, held };
+}
+
 function fakeStartCheck(
   tasks: readonly TaskView[],
   projectId: string,
@@ -1156,6 +1200,8 @@ function fakeStartCheck(
     busyHere?: boolean;
     /** OP-0: paused tasks the start takes in their turn (`fakeContinuing`). */
     continuing?: ReadonlySet<string>;
+    /** L4g-left-1: what holds the tasks that wait on the person (`fakeHeld`). */
+    held?: { needsYou: HeldTask | null; held: Record<string, HeldTask> };
   } = {},
 ): StartCheckView {
   const byId = new Map(tasks.map((t) => [t.id, t]));
@@ -1185,11 +1231,17 @@ function fakeStartCheck(
   for (const [at, t] of ready.entries()) {
     const waitsOn = t.dependsOn
       .filter((d) => byId.get(d)?.status !== "done")
-      .map((d) => ({
-        taskId: d,
-        title: byId.get(d)?.title ?? null,
-        status: byId.get(d)?.status ?? null,
-      }));
+      .map((d) => {
+        // fixup-l4-starts-carried, as the daemon: what holds a dependency that waits on the
+        // person, in the dialog's words.
+        const h = byId.get(d)?.status === "needs_human" ? opts.held?.held[d] : undefined;
+        return {
+          taskId: d,
+          title: byId.get(d)?.title ?? null,
+          status: byId.get(d)?.status ?? null,
+          ...(h ? { held: heldDependency(h) } : {}),
+        };
+      });
     if (waitsOn.length) {
       waiting.push({ taskId: t.id, title: t.title, waitsOn });
       continue;
@@ -1306,11 +1358,20 @@ function fakeStartCheck(
       ? null
       : stuckOn
         ? stuckOn.d.status === "needs_human"
-          ? {
-              kind: "nothing_runnable",
-              sentence: `Nothing can run: "${stuckOn.d.title}" needs your answer.`,
-              action: { kind: "link", label: "Open it", to: "/inbox" },
-            }
+          ? // L4g-left-1, as the daemon: a limit only Settings changes, or the person's pause.
+            opts.held?.held[stuckOn.d.taskId ?? ""] &&
+            opts.held.held[stuckOn.d.taskId ?? ""]?.why !== "answer"
+            ? heldBlocker(
+                opts.held.held[stuckOn.d.taskId ?? ""] as HeldTask,
+                stuckOn.w.title,
+                `/projects/${projectId}/tasks`,
+              )
+            : {
+                kind: "nothing_runnable",
+                sentence: `Nothing can run: "${stuckOn.d.title}" needs your answer.`,
+                action: { kind: "link", label: "Open it", to: "/inbox" },
+                holds: "answer",
+              }
           : {
               kind: "nothing_runnable",
               sentence: `Nothing can run: "${stuckOn.w.title}" waits on ${stuckOn.d.title ? `"${stuckOn.d.title}"` : "a task that does not exist"}, which ${stuckOn.d.status === "cancelled" ? "was cancelled" : stuckOn.d.status === "failed" ? "failed" : "does not exist"}.`,
@@ -1322,15 +1383,19 @@ function fakeStartCheck(
               sentence: `Nothing can run: "${sandboxTasks[0].title}" is waiting for Docker.`,
               action: { kind: "link", label: "Set up Docker", to: "/settings#sandbox" },
             }
-          : // D4: a task larger than the work budget is no blocker: the session takes it.
-            {
-              kind: "nothing_runnable",
-              sentence:
-                ready.length === 0
-                  ? "Nothing can run: no task is ready."
-                  : "Nothing can run: every ready task waits on another one.",
-              action: { kind: "link", label: "Open Tasks", to: `/projects/${projectId}/tasks` },
-            };
+          : // C2-left-2, L4g-left-1, as the daemon: nothing is ready because a task waits on
+            // the person's card, or on a limit only Settings changes: name it.
+            ready.length === 0 && opts.held?.needsYou
+            ? heldBlocker(opts.held.needsYou, null, `/projects/${projectId}/tasks`)
+            : // D4: a task larger than the work budget is no blocker: the session takes it.
+              {
+                kind: "nothing_runnable",
+                sentence:
+                  ready.length === 0
+                    ? "Nothing can run: no task is ready."
+                    : "Nothing can run: every ready task waits on another one.",
+                action: { kind: "link", label: "Open Tasks", to: `/projects/${projectId}/tasks` },
+              };
   return {
     projectId,
     sessionBudget: money(cap),
@@ -2241,6 +2306,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         !working && state.startsWait[p.id]?.kind === "queued"
           ? ((state.startsWait[p.id] as { behind: string }).behind ?? null)
           : null,
+      // L4g-left-4, as the daemon: the project's own start waits (goes on, or a kept Start).
+      startWait: working
+        ? null
+        : state.startsWait[p.id]?.kind === "continuation"
+          ? "goes_on"
+          : state.startsWait[p.id]?.kind === "kept_start"
+            ? "kept"
+            : null,
       progress: progressOf(tasks.map((t) => ({ status: t.status as never }))),
       working,
       folder,
@@ -3380,6 +3453,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         busy: (options.startOutcome ?? "started") === "queued",
         busyHere: options.busyProjectId === id,
         continuing: fakeContinuing(state.requests),
+        held: fakeHeld(state.tasks, state.requests, state.taskMeta.pausedByPerson, id),
       },
     );
     // leftovers7-tailrun TR-12: a planning call holds the agent, as the daemon says it.
@@ -3450,21 +3524,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (goesOn && view.blocked) view.blocked = { ...view.blocked, sentence: goesOn };
     else if (stoppedLine && view.blocked?.startable)
       view.blocked = { ...view.blocked, sentence: stoppedLine };
-    // C2-left-2, as the daemon: nothing is ready because a task waits on the person's card.
-    if (view.blocked?.sentence === "Nothing can run: no task is ready.") {
-      const held = state.tasks.find(
-        (t) =>
-          t.projectId === id &&
-          t.status === "needs_human" &&
-          state.requests.some((r) => r.taskId === t.id && r.status === "open"),
-      );
-      if (held)
-        view.blocked = {
-          kind: "nothing_runnable",
-          sentence: `Nothing can run: "${held.title}" needs your answer.`,
-          action: { kind: "link", label: "Open it", to: "/inbox" },
-        };
-    }
+    // C2-left-2 and L4g-left-1 are the start check's own (`fakeHeld`), as in the daemon.
     return c.json(view);
   });
   app.get("/projects/:id/runs", (c) => {
@@ -3636,6 +3696,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const agent = AGENTS.find((a) => a.id === parsed.data.agentId);
     if (!agent) return errorBody(c, 404, "not_found", "no such agent");
+    // S-10 and L4g-left-4, as the daemon: one wait per project: while the project's own session
+    // waits to go on (or a Start is kept for the reset), a start keeps nothing new and starts
+    // nothing (409 with when it goes on). "Use API key" is the wait's own answer (below).
+    const ownWait = parsed.data.projectId ? state.startsWait[parsed.data.projectId] : undefined;
+    if (
+      !parsed.data.useOtherCredential &&
+      (ownWait?.kind === "continuation" || ownWait?.kind === "kept_start")
+    )
+      return errorBody(
+        c,
+        409,
+        "claim_conflict",
+        ownWait.kind === "continuation"
+          ? `${ownWait.head}; then your session goes on.`
+          : `${ownWait.head}.`,
+      );
     // d1109-cred-screens (CS-3), as the daemon: the Start dialog's "Use API key" is the person's
     // yes for this stop; refused in words when the dialog offered none. The project's wait ends
     // (the key serves), and the start goes on as usual below.
@@ -3652,6 +3728,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           busy: (options.startOutcome ?? "started") === "queued",
           busyHere: options.busyProjectId === parsed.data.projectId,
           continuing: fakeContinuing(state.requests),
+          held: fakeHeld(
+            state.tasks,
+            state.requests,
+            state.taskMeta.pausedByPerson,
+            parsed.data.projectId,
+          ),
         },
       );
       if (
@@ -3709,6 +3791,24 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // the work, the Start is kept for the reset: no session now, its sentence says when, and the
     // wait reads as the person's kept Start (Cancel the wait drops it).
     const resting = parsed.data.projectId ? state.credentialWaitNow[parsed.data.projectId] : null;
+    // l4-starts-carried (L4d-left-2), as the daemon: a refused credential the work needs refuses
+    // a person's start in the Start dialog's sentence, kept session or not; nothing starts.
+    if (
+      parsed.data.projectId &&
+      resting &&
+      !resting.startable &&
+      resting.save?.to === "/setup" &&
+      !parsed.data.useOtherCredential &&
+      state.tasks.some((t) => t.projectId === parsed.data.projectId && t.status === "ready")
+    )
+      return errorBody(
+        c,
+        400,
+        "validation",
+        resting.kept && resting.startsAt
+          ? `${resting.startsAt}.`
+          : nothingRunsYetSentence(resting.text),
+      );
     const at = resting?.startable ? fakeResetAt(resting.text) : null;
     if (parsed.data.projectId && resting && at) {
       const project = state.projects.find((p) => p.id === parsed.data.projectId);
@@ -3741,6 +3841,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           busy: (options.startOutcome ?? "started") === "queued",
           busyHere: options.busyProjectId === parsed.data.projectId,
           continuing: fakeContinuing(state.requests),
+          held: fakeHeld(
+            state.tasks,
+            state.requests,
+            state.taskMeta.pausedByPerson,
+            parsed.data.projectId,
+          ),
         },
       );
       // l4-cred-screens (L4-creds-21), as the daemon: a refusal in words is a 400 "validation".
@@ -4574,6 +4680,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
 
   /** The session each chat start began, by its action's id (the daemon's change log row). */
   const startedSessions = new Map<string, string>();
+  /** fixup-l4-starts-carried: the wait a start kept from chat replaced, by its id (its Undo). */
+  const keptBefore = new Map<string, FakeDaemonState["credentialWaitNow"][string]>();
   const chatReply = (
     text: string,
     projectId: string | undefined,
@@ -4687,6 +4795,47 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (state.pendingConfirmation && lower === "yes") {
       const confirmed = state.pendingConfirmation;
       state.pendingConfirmation = null;
+      // l4-starts-carried (L4a-left-5), as the daemon: a start kept for the credential's reset
+      // starts no session now; the wait reads as the person's kept Start (Cancel drops it).
+      if (confirmed.keptAt && turnProject) {
+        const target = state.projects.find((p) => p.id === turnProject);
+        const resting = state.credentialWaitNow[turnProject];
+        const limit = /\(([^)]+)\)/.exec(resting?.text ?? "")?.[1] ?? "its limit";
+        // fixup-l4-starts-carried, as the daemon: the start is kept with its own id, and the
+        // change it records offers an Undo that drops that start only.
+        const keptId = nextId("kept");
+        if (resting) keptBefore.set(keptId, { ...resting });
+        state.credentialWaitNow[turnProject] = {
+          text: `Waits until ${confirmed.keptAt} (${limit}); then your session goes on.`,
+          save: null,
+          kept: true,
+          keptId,
+        };
+        const sentence = `A session of ${target?.name ?? "the project"} starts at ${confirmed.keptAt}.`;
+        const entry = pushChange({
+          commands: [{ name: "session.start", params: { project: turnProject } }],
+          before: { session_id: null, remote_command_id: null },
+          after: { session_id: null, kept_start: true, kept_id: keptId, project_id: turnProject },
+          scope: "session",
+          projectId: turnProject,
+          source: "chat",
+          wordsUsed: confirmed.words ?? line,
+          sentence,
+          reversible: true,
+        });
+        return {
+          ...base,
+          reply: sentence,
+          actions: [
+            {
+              kind: "session.start",
+              summary: sentence,
+              id: confirmed.id,
+              undoToken: entry.id,
+            },
+          ],
+        };
+      }
       // As the daemon's session.start from the chat (phase E): the start waits for its run,
       // the reply is the change's sentence, and the turn's action names the session it began
       // (its change log's `after.session_id`), which the conversation links.
@@ -4773,8 +4922,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (/^(?:run it now|start now|start working now)[.!]?$/.test(lower) && turnProject) {
       const id = nextId("confirm");
       const name = state.projects.find((p) => p.id === turnProject)?.name ?? "this project";
-      const readback = `Start a session on ${name} (up to CHF 5.00)?`;
-      state.pendingConfirmation = { id, readback };
+      // l4-starts-carried (L4a-left-5), as the daemon: while the credential rests and nothing is
+      // kept, the start is kept for its reset and read back with its time.
+      const resting = state.credentialWaitNow[turnProject];
+      const keptAt = resting?.startable ? fakeResetAt(resting.text) : null;
+      const readback = keptAt
+        ? `Start a session on ${name} at ${keptAt} (up to CHF 5.00)?`
+        : `Start a session on ${name} (up to CHF 5.00)?`;
+      state.pendingConfirmation = { id, readback, words: line, ...(keptAt ? { keptAt } : {}) };
       return {
         ...base,
         reply: readback,
@@ -7867,6 +8022,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // As the daemon's `startUndoRefusal` (later #36): a start whose session ended has nothing
     // left to undo, and the row says so instead of offering Undo.
     if (name === "session.start") {
+      // fixup-l4-starts-carried, as the daemon (`KEPT_START_GONE_REASON`): a start kept from chat
+      // for the reset is undone only while that same start still waits.
+      const kept = (ch.after ?? {}) as { kept_start?: unknown; kept_id?: unknown };
+      if (kept.kept_start === true) {
+        const wait = ch.projectId ? state.credentialWaitNow[ch.projectId] : undefined;
+        return wait?.kept && wait.keptId === kept.kept_id
+          ? null
+          : "the start kept for the reset has already run or was cancelled; there is nothing to undo";
+      }
       const s = after.session_id
         ? state.sessions.find((x) => x.id === after.session_id)
         : undefined;
@@ -8063,6 +8227,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       unknown
     > | null;
     const project = state.projects.find((p) => p.id === entry.projectId);
+    // fixup-l4-starts-carried, as the daemon: the Undo of a start kept from chat drops that start
+    // (the wait is as it was before it: "Start at 11:40" again), nothing else.
+    const keptId = (entry.after as { kept_id?: unknown } | null)?.kept_id;
+    if (first?.name === "session.start" && typeof keptId === "string" && entry.projectId) {
+      const was = keptBefore.get(keptId);
+      if (was) state.credentialWaitNow[entry.projectId] = was;
+      else delete state.credentialWaitNow[entry.projectId];
+      keptBefore.delete(keptId);
+      emit("project.changed", { id: entry.projectId });
+    }
     // W15-36: the New project dialog's create: the project goes, the previous one is active.
     if (first?.name === "project.create" && project) {
       state.projects = state.projects.filter((p) => p.id !== project.id);

@@ -2226,3 +2226,36 @@ describe("l4-chat-carried, run L4: the true line after an ask in words (L4c-left
     await w.store.close();
   });
 });
+
+/**
+ * l4-starts-carried, run L4 (L4a-left-5): with chat's start during a rest kept for the reset (as
+ * the Start dialog's "Start at 15:40" is), the hold reply of the project's chat says what a Start
+ * does now; the form stays a hold reply (never the model's own words in its history).
+ */
+describe("l4-starts-carried, run L4", () => {
+  it("L4a-left-5: the hold reply says 'a Start now runs at 15:40' when a Start is kept for the reset, and stays a hold reply", async () => {
+    const { isHoldReply } = await import("../src/conversation/transcript.ts");
+    const { chatHoldReply } = await import("../src/session/credential-words.ts");
+    const limit = { reason: "limit", kind: "subscription", stop: null } as never;
+    const kept = chatHoldReply(limit, "15:40", "at 15:40");
+    expect(kept).toBe(
+      "Your Claude subscription is at its limit until 15:40, so I have not answered. I can still add and change tasks; a Start now runs at 15:40.",
+    );
+    const share = chatHoldReply(
+      { reason: "needs", kind: "subscription", stop: "share" } as never,
+      "1 December",
+      "on 1 Dec",
+    );
+    expect(share).toMatch(/I can still add and change tasks; a Start now runs on 1 Dec\.$/);
+    // A refusal never promises a start (it is refused in words, L4d-left-2).
+    expect(
+      chatHoldReply({ reason: "refused", kind: "api_key", stop: null } as never, null, "at 15:40"),
+    ).not.toMatch(/a Start now/);
+    // Without a kept start: as before.
+    expect(chatHoldReply(limit, "15:40", null)).toBe(
+      "Your Claude subscription is at its limit until 15:40, so I have not answered. I can still add and change tasks.",
+    );
+    for (const text of [kept, share])
+      expect(isHoldReply({ text, notice: true } as never), text).toBe(true);
+  });
+});

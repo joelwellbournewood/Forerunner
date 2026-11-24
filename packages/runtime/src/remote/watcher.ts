@@ -232,6 +232,12 @@ export interface RemoteCommandDeps {
    * the registry's `session.start` port asks the same scheduler and keeps the same id).
    */
   start: (req: StartRequest & { budgetUsdMicro?: number }) => Promise<RemoteStartEntry>;
+  /**
+   * l4-starts-carried (L4d-left-2; fixup): why a plain `start` of this project is refused before
+   * anything moves (the Claude credential its work needs was refused: the Start dialog's
+   * sentence), or null. Asked before the start lifts Stop all, so a refused start lifts nothing.
+   */
+  startRefused?: (projectId: string) => Promise<string | null>;
   /** The command registry in the loop: plans, pauses and the answers to pending cards. */
   commands: Pick<CommandLoop, "compose" | "confirm" | "cancel" | "pending" | "activeProject">;
   /** One conversation turn for `kind: "chat"`; null when no model credential is configured. */
@@ -778,6 +784,10 @@ export class RemoteCommandWatcher {
         `forbidden: agent ${params.agentId} is not this PC's agent`,
       );
     }
+    // l4-starts-carried (fixup): a start refused in words (a refused Claude credential) fails the
+    // row with that sentence and lifts nothing.
+    const refused = params.projectId ? await this.deps.startRefused?.(params.projectId) : null;
+    if (refused) throw new ForerunnerError("validation", refused);
     // A start after a kill lifts the freeze: the human asked for work explicitly.
     this.deps.kill.resume();
     const entry = await this.deps.start({

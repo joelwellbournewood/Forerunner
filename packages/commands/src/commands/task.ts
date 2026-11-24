@@ -1412,15 +1412,22 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
       projectId: project.id,
       projectName: project.name,
       usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
-      ask: moveAsk(
+      // l4-starts-carried (L4g-left-2): a move to ready reads back what happens next, as Resume
+      // and Reopen do (S-9); before, chat's "make it ready" read back no line at all.
+      ask: await withPreview(
+        ctx,
+        moveAsk(
+          task,
+          task.status,
+          params.to,
+          params.to === "cancelled" ? (await waitingOn(ctx, task)).length : 0,
+          ctx.ports.liveWork?.(task.id),
+          params.to === "cancelled"
+            ? await cancelWorkFor(ctx, task, ctx.ports.liveWork?.(task.id))
+            : undefined,
+        ),
         task,
-        task.status,
         params.to,
-        params.to === "cancelled" ? (await waitingOn(ctx, task)).length : 0,
-        ctx.ports.liveWork?.(task.id),
-        params.to === "cancelled"
-          ? await cancelWorkFor(ctx, task, ctx.ports.liveWork?.(task.id))
-          : undefined,
       ),
     });
   },
@@ -1818,7 +1825,7 @@ function afterMove(line: string): string {
 async function withPreview(
   ctx: CommandContext,
   ask: string,
-  task: Pick<TaskRow, "project_id">,
+  task: Pick<TaskRow, "id" | "project_id">,
   to: TaskStatus,
 ): Promise<string> {
   if (to !== "ready" || !ctx.ports.previewWork) return ask;
@@ -1826,6 +1833,8 @@ async function withPreview(
     .previewWork({
       projectId: task.project_id,
       by: ctx.actor.kind === "agent" ? "agent" : "person",
+      // L4g-left-2: the running session reads the task's estimate, as its admit does.
+      taskIds: [task.id],
     })
     .catch(() => null);
   return line ? `${ask} ${afterMove(line)}` : ask;
@@ -2108,6 +2117,7 @@ async function dependenciesNextLine(
           .previewWork({
             projectId: task.project_id,
             by: ctx.actor.kind === "agent" ? "agent" : "person",
+            taskIds: [task.id],
           })
           .catch(() => null)
       : null;
@@ -2120,6 +2130,7 @@ async function dependenciesNextLine(
         .previewWork({
           projectId: task.project_id,
           by: ctx.actor.kind === "agent" ? "agent" : "person",
+          taskIds: [task.id],
         })
         .catch(() => null)
     : null;

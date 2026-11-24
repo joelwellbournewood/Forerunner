@@ -12,6 +12,7 @@ import { type RequestWordsContext, requestWords } from "../daemon/request-words.
 import { plainPlurals, withoutIds } from "../daemon/task-words.ts";
 import type { KillReport, KillScope } from "../enforcement/killswitch.ts";
 import type { InjectionReport } from "../injection/scan.ts";
+import { moneyWords } from "../session/money-words.ts";
 import { isNewsLine, stopWords } from "../session/result.ts";
 import {
   isBudgetStopReason,
@@ -408,22 +409,22 @@ export function budgetStop(humanId: string, r: SessionEndFacts): Notification {
   if (limit) text = text.split(stopWords(r.stopReason, r.stopCapChfMicro)).join(" ");
   const said = text
     .replace(/\s{2,}/g, " ")
-    .replace(/\s*CHF \d+\.\d{2}\.\s*$/, "")
+    // The result's money line ends it ("CHF 0.04.", "Less than CHF 0.01."): the body says it.
+    .replace(/\s*(?:Less than )?CHF \d+\.\d{2}\.\s*$/, "")
     .trim();
+  // L4g-left-3 (l4-starts-carried): one money wording everywhere (W14-6): an amount above zero
+  // never reads "CHF 0.00".
+  const spent = moneyWords(formatChf(chf), chf);
   return {
     kind: "budget_stop",
     humanId,
     title: titled(
       r.projectName,
-      limit ? `stopped at ${limit}` : `stopped, the budget is used (${formatChf(chf)} spent)`,
+      limit ? `stopped at ${limit}` : `stopped, the budget is used (${spent} spent)`,
     ),
     body: bodyOf(
       limit
-        ? [
-            limitAmount(r.stopReason, r.stopCapChfMicro),
-            `The session spent ${formatChf(chf)}.`,
-            said,
-          ]
+        ? [limitAmount(r.stopReason, r.stopCapChfMicro), `The session spent ${spent}.`, said]
             .filter(Boolean)
             .join(" ")
         : said,

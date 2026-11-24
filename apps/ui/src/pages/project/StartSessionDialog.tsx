@@ -69,9 +69,15 @@ export function startNotice(
   }
 }
 
-/** A dependency's state as a clause ("which failed"), never the stored status (later #69). */
-function stateClause(status: string | null): string {
-  switch (status) {
+/**
+ * A dependency's state as a clause ("which failed"), never the stored status (later #69). One
+ * that waits on the person says what holds it, in the daemon's words (fixup-l4-starts-carried:
+ * "paused at the project's budget of CHF 0.06", "which you paused"); before, every such one read
+ * "which needs your answer", also with no card that asks.
+ */
+function stateClause(d: StartCheckView["waiting"][number]["waitsOn"][number]): string {
+  if (d.held) return d.held.state;
+  switch (d.status) {
     case "failed":
       return "which failed";
     case "cancelled":
@@ -99,7 +105,7 @@ function stateClause(status: string | null): string {
  */
 export function waitsOnText(waitsOn: StartCheckView["waiting"][number]["waitsOn"]): string {
   const parts = waitsOn.map((d) =>
-    d.title === null ? "a task that does not exist" : `"${d.title}", ${stateClause(d.status)}`,
+    d.title === null ? "a task that does not exist" : `"${d.title}", ${stateClause(d)}`,
   );
   return parts.length <= 1
     ? (parts[0] ?? "")
@@ -110,8 +116,11 @@ export function waitsOnText(waitsOn: StartCheckView["waiting"][number]["waitsOn"
 function stuckAdvice(w: StartCheckView["waiting"][number]): string {
   const failed = w.waitsOn.find((d) => d.status === "failed" && d.title !== null);
   if (failed) return `Try "${failed.title}" again, or change what it waits for on the Tasks tab.`;
-  if (w.waitsOn.some((d) => d.status === "needs_human"))
-    return "Answer it in the Inbox, or change what it waits for on the Tasks tab.";
+  // fixup-l4-starts-carried: what to do about one that waits on the person is the daemon's (raise
+  // the limit in Settings, Resume it, or answer its card).
+  const held = w.waitsOn.find((d) => d.status === "needs_human");
+  if (held?.held) return held.held.advice;
+  if (held) return "Answer it in the Inbox, or change what it waits for on the Tasks tab.";
   return "Change what it waits for on the Tasks tab.";
 }
 
@@ -395,12 +404,14 @@ export function StartSessionDialog({
   // three statements of one blocker, one pointing to the Tasks tab).
   const planBlocks = intake === "pending" || intake === "drafting" || intake === "waiting";
   // C2-left-2: a task that waits on the person's card is named with Open it (the Inbox): no
-  // "Give your agent work first" beside it.
+  // "Give your agent work first" beside it. fixup-l4-starts-carried: nor beside a task paused at
+  // a limit (Open Settings) or paused (`holds`): the work exists; only that holds it.
   const noReadyTask =
     data !== null &&
     data.ready === 0 &&
     blocked?.kind === "nothing_runnable" &&
     !planBlocks &&
+    !blocked.holds &&
     blocked.action?.to !== "/inbox";
 
   // d1109-cred-screens (CS-3): which Claude does the work, in the daemon's words: one line under

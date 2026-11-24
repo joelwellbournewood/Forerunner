@@ -333,7 +333,11 @@ export interface ConversationDeps {
    * says so once per stop per conversation). `oneOff` is the person's press for this question:
    * nothing is held then. Absent or null: nothing stops the person's first choice.
    */
-  credentialHold?: (opts: { oneOff: boolean }) => Promise<ChatCredentialHold | null>;
+  credentialHold?: (opts: {
+    oneOff: boolean;
+    /** The chat's project (L4a-left-5: whether a Start of it now is kept for the reset). */
+    projectId?: string | null;
+  }) => Promise<ChatCredentialHold | null>;
 }
 
 /** What the person's credential policy does with a chat question now (CE-9). */
@@ -347,6 +351,11 @@ export interface ChatCredentialHold {
   oneOff?: { kind: BillingSourceKind; estimateUsdMicro: number } | null;
   /** Not held: the credential that answers in place of the first choice. */
   answersOn?: BillingSourceKind | null;
+  /**
+   * Held (l4-starts-carried, L4a-left-5): when a Start of the chat's project now is kept for
+   * the reset ("at 15:40"), so the reply can say it; null or absent when it would not be.
+   */
+  startsWhen?: string | null;
 }
 
 /** Docs search results in one chat turn's context at most (tokens, envelope included). */
@@ -1498,12 +1507,12 @@ export class ConversationAgent {
     // question makes no model call and books nothing; the reply says why, with the one-off
     // "Use API key" when another credential could answer now. Commands above ran without a model.
     const credHold = await this.deps
-      .credentialHold?.({ oneOff: req.oneOffSwitch === true })
+      .credentialHold?.({ oneOff: req.oneOffSwitch === true, projectId: req.projectId ?? null })
       .catch(() => null);
     if (credHold?.held) {
       const chfRate = this.deps.chfPerUsd?.() ?? DEFAULT_CHF_PER_USD;
       return finish(
-        chatHoldReply(credHold.wait, credHold.untilText),
+        chatHoldReply(credHold.wait, credHold.untilText, credHold.startsWhen),
         [],
         credHold.oneOff
           ? {
@@ -2520,10 +2529,12 @@ export class ConversationAgent {
       result.outcome !== "completed" &&
       CREDENTIAL_HOLD_CODES.has(result.error?.code ?? "")
     ) {
-      const after = await this.deps.credentialHold?.({ oneOff: false }).catch(() => null);
+      const after = await this.deps
+        .credentialHold?.({ oneOff: false, projectId: req.projectId ?? null })
+        .catch(() => null);
       if (after?.held) {
         heldAfter = after;
-        reply = chatHoldReply(after.wait, after.untilText);
+        reply = chatHoldReply(after.wait, after.untilText, after.startsWhen);
       }
     }
     // "Done." only when a command of the turn did something (l3-chat-claims: a reply with no

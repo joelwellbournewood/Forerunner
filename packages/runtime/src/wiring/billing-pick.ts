@@ -1345,6 +1345,11 @@ export interface KeptStart {
   at: string;
   /** A kept person start: the note the person gave the Start dialog (for every task's brief). */
   note?: string;
+  /**
+   * fixup-l4-starts-carried: a kept person start's own identity (chat's start keeps one with
+   * it), so its Undo drops that start only and is refused once it ran or was cancelled.
+   */
+  id?: string;
 }
 
 /** One project's wait on a source (`limits.waiting`, U-078; S-10's session and kept start). */
@@ -1376,6 +1381,7 @@ function keptOf(v: unknown): KeptStart | undefined {
       : {}),
     at: typeof k.at === "string" ? k.at : "",
     ...(typeof k.note === "string" && k.note.trim() ? { note: k.note } : {}),
+    ...(typeof k.id === "string" && k.id ? { id: k.id } : {}),
   };
 }
 
@@ -1492,27 +1498,29 @@ async function keepOnWait(
 /**
  * Drop a project's kept continuation or start (S-10: Cancel, Stop all, the project's removal);
  * the wait itself stays (its work is prepared at the stop's end). True when one was kept.
+ * fixup-l4-starts-carried: with `only`, just the person start kept with that id (`KeptStart.id`,
+ * the Undo of chat's kept start); a continuation or another kept start stays.
  */
 export async function dropKeptStart(
   store: { billingSource: Pick<StateStore["billingSource"], "list" | "get" | "update"> },
   projectId: string,
+  only?: { id: string },
 ): Promise<boolean> {
+  const mine = (w: WaitEntry) =>
+    w.projectId === projectId &&
+    !!w.kept &&
+    (!only || (w.kept.by === "person" && w.kept.id === only.id));
   let dropped = false;
   for (const row of await store.billingSource.list({}, { limit: 100 })) {
-    if (
-      !waitingOf(row.limits as Record<string, unknown>).some(
-        (w) => w.projectId === projectId && w.kept,
-      )
-    )
-      continue;
+    if (!waitingOf(row.limits as Record<string, unknown>).some(mine)) continue;
     await updateSourceLimits(store, row.id, (limits) => {
       const waiting = waitingOf(limits);
-      if (!waiting.some((w) => w.projectId === projectId && w.kept)) return null;
+      if (!waiting.some(mine)) return null;
       dropped = true;
       return {
         ...limits,
         waiting: waiting.map((w) => {
-          if (w.projectId !== projectId) return w;
+          if (!mine(w)) return w;
           const { kept: _k, ...rest } = w;
           return rest;
         }) as never,
@@ -1520,6 +1528,18 @@ export async function dropKeptStart(
     });
   }
   return dropped;
+}
+
+/**
+ * fixup-l4-starts-carried: the person start kept with this id still waits for the stop's end
+ * (`KeptStart.id`); false once it ran (the start leaves the wait), was cancelled or dropped.
+ */
+export async function keptStartWaits(
+  store: { billingSource: Pick<StateStore["billingSource"], "list"> },
+  projectId: string,
+  id: string,
+): Promise<boolean> {
+  return (await keptStartOf(store, projectId))?.kept.id === id;
 }
 
 /** `FORERUNNER_SDK_HOST_COMMANDS`: "1" grants `cc:Bash` on the SDK path (see `SdkExecutorDeps.hostCommands`). */

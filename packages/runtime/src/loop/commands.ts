@@ -14,6 +14,7 @@ import {
   type ExecuteResult,
   type ExecutorOptions,
   IntentParser,
+  KEPT_START_GONE_REASON,
   type ModelIntentPort,
   type PendingConfirmation,
   SESSION_CAP_KEY,
@@ -70,6 +71,13 @@ export interface CommandLoopDeps {
    * irreversible, before the executor runs anything.
    */
   startUndoState?: SessionCommandPorts["startUndoState"];
+  /**
+   * fixup-l4-starts-carried: whether the start a `session.start` kept for the credential's reset
+   * (`after.kept_id`) still waits for it. Once it ran or was cancelled, its Undo is refused with
+   * `KEPT_START_GONE_REASON` and the row marked irreversible (before, the Undo said "Undone" and
+   * dropped whatever the project had kept then).
+   */
+  keptStartWaits?(projectId: string, keptId: string): Promise<boolean>;
   /**
    * l4-selftasks-chat (L4-selftasks-117): a confirmation lapsed unanswered (a settings-screen or
    * email card; chat read-backs wait until answered). The daemon tells the screens and the person.
@@ -596,8 +604,6 @@ export class CommandLoop implements ConversationCommands {
   private async startUndoRefusal(
     row: ChangeLogRow,
   ): Promise<{ reason: string; code: string; ended: boolean } | null> {
-    const check = this.deps.startUndoState;
-    if (!check) return null;
     const { store } = this.deps;
     if (row.undo_state !== "undoable") return null;
     const commands = row.commands as { name?: unknown }[];
@@ -606,6 +612,20 @@ export class CommandLoop implements ConversationCommands {
       row.after && typeof row.after === "object" && !Array.isArray(row.after)
         ? (row.after as JsonObject)
         : {};
+    // l4-starts-carried (L4a-left-5): a start kept for the credential's reset has no session yet:
+    // while it waits, its Undo drops it (the command's own undo; nothing has run to stop).
+    // fixup-l4-starts-carried: once it no longer waits (it ran at the reset, it was cancelled),
+    // there is nothing left to undo: refused, never "Undone" over a later wait of the project.
+    if (after.kept_start === true) {
+      const waits = this.deps.keptStartWaits;
+      if (!waits) return null;
+      const projectId = typeof after.project_id === "string" ? after.project_id : null;
+      const keptId = typeof after.kept_id === "string" ? after.kept_id : null;
+      if (projectId && keptId && (await waits(projectId, keptId).catch(() => true))) return null;
+      return { reason: KEPT_START_GONE_REASON, code: "validation", ended: true };
+    }
+    const check = this.deps.startUndoState;
+    if (!check) return null;
     // A start that waited for its run names its session ('answers', phase E: the chat's start
     // and `POST /sessions`' way): while that session runs the executor's undo stops it; once it
     // ended there is nothing to undo, as for a start found through the scheduler.

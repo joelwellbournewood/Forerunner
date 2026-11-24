@@ -46,6 +46,13 @@ export interface AdmitHandle {
     context?: AdmitContext,
   ): Promise<Map<string, AdmitOutcome>>;
   /**
+   * What `admit` would answer now, read-only (chat's read-back of a move, l4-starts-carried
+   * L4g-left-2): nothing joins and nothing is noted. A task above the session's whole work budget
+   * reads `too_large`, as the admit decides it (L4-money-203); one that may fit reads `no_room`
+   * (the room rule's words: the room is decided at the move). Absent on an older handle.
+   */
+  preview?(taskIds: readonly string[]): Promise<Map<string, AdmitOutcome>>;
+  /**
    * Take tasks back as the session's own (a task that waited for its Claude credential inside
    * this session, after "Use API key": d1109-cred-engine), so the session runs them again.
    */

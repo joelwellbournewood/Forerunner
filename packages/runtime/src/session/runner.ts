@@ -121,6 +121,7 @@ import {
 import { describeRejectedLessons, type RejectedLesson, screenLessons } from "./lessons.ts";
 import { type HeardDelivery, type HeardLine, heardLineOf } from "./live-chat.ts";
 import type { AdmitHandle, AdmitOutcome, LiveSessions } from "./live-sessions.ts";
+import { moneyWords } from "./money-words.ts";
 import {
   firstSessionPlan,
   isFirstSessionItem,
@@ -2127,6 +2128,25 @@ export class SessionRunner {
                   estimateUsdMicro: est,
                   by,
                 });
+              }
+              return out;
+            },
+            // l4-starts-carried (L4g-left-2): the admit's answer, read-only, for chat's
+            // read-back of a move (before, the preview had no estimate and always said the room
+            // rule's words, also for a task larger than the whole work budget).
+            preview: async (taskIds) => {
+              const out = new Map<string, AdmitOutcome>();
+              const rows = await Promise.all(taskIds.map((id) => store.task.get(id)));
+              const stopping = await takesNothingNew();
+              for (const row of rows) {
+                if (!row) continue;
+                if (stopping) out.set(row.id, "stopping");
+                else if (own.has(row.id) || joined.has(row.id)) out.set(row.id, "joined");
+                else
+                  out.set(
+                    row.id,
+                    (await this.priceNow(row)) > workBudgetUsdMicro ? "too_large" : "no_room",
+                  );
               }
               return out;
             },
@@ -4142,10 +4162,12 @@ export class SessionRunner {
         // L4-money-214: a task the person paused waits on nobody (as `needsYouNow` reads it);
         // before, the note said "Ended: 1 task needs you." for their own Stop.
         const waits = uniq([...needsHuman, ...failed]).filter((id) => !pausedByYou(id));
+        // L4g-left-3 (l4-starts-carried): one money wording everywhere (W14-6): an amount above
+        // zero never reads "CHF 0.00" (the result beside it says "Less than CHF 0.01.").
         const endedNote = `${endedStatusText(status, stopReason, {
           needYou: waits.filter((id) => !pausedIds.has(id)).length,
           paused: waits.filter((id) => pausedIds.has(id)).length,
-        })}. Spent ${formatChf(spentChf)}.`;
+        })}. Spent ${moneyWords(formatChf(spentChf), spentChf)}.`;
         try {
           docsOutcome = await this.deps.docs.writeSessionStatus({
             project,

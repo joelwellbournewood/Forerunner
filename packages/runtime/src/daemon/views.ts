@@ -325,6 +325,13 @@ export async function projectCard(
     statusLine,
     // L4-money-209: the project whose session this project's start waits behind.
     startsAfter: startsWait?.kind === "queued" ? startsWait.behind : null,
+    // L4g-left-4: the project's own start waits (its session goes on, or a kept Start).
+    startWait:
+      startsWait?.kind === "continuation"
+        ? "goes_on"
+        : startsWait?.kind === "kept_start"
+          ? "kept"
+          : null,
     progress: progressOf(tasks),
     working,
     folder,

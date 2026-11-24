@@ -862,3 +862,70 @@ describe("approvalOf", () => {
     expect(approvalOf([], options)).toBe(false);
   });
 });
+
+/**
+ * l4-starts-carried, run L4 (the review's notes on L4d-left-2): the phone's plain Start under a
+ * refused Claude credential failed its row only after it had lifted Stop all, so Stop all was
+ * off and nothing ran. The refusal is asked first: the row fails with the Start dialog's
+ * sentence, Stop all stays, and nothing is started.
+ */
+describe("l4-starts-carried, run L4", () => {
+  it("a phone start refused in words fails its row with that sentence and lifts no Stop all", async () => {
+    const said = "Nothing can run until you save a new API key in Settings.";
+    const asked: string[] = [];
+    const w = new RemoteCommandWatcher({
+      store,
+      clock,
+      kill,
+      start: (req) => scheduler.requestStart(req),
+      startRefused: async (projectId) => {
+        asked.push(projectId);
+        return said;
+      },
+      commands,
+      chat,
+      conversationSessionId: async () => conversationSession,
+      deviceId: pc.id,
+      agentId: agent.id,
+      humanId: human.id,
+    });
+    await kill.stop("all", "stop all from the UI", { by: "stop_all" });
+    expect(kill.isFrozen({ agentId: agent.id })).toBe(true);
+    const row = await store.remoteCommand.enqueue({
+      device_id: phone.id,
+      target: "pc",
+      command: "start",
+      params: { projectId: project.id },
+    });
+    expect(await w.drain()).toBe(1);
+    const done = await store.remoteCommand.mustGet(row.id);
+    expect(done.status).toBe("failed");
+    expect((done.result as { error?: string }).error).toBe(said);
+    expect(asked).toEqual([project.id]);
+    expect(kill.isFrozen({ agentId: agent.id })).toBe(true);
+    expect(started).toEqual([]);
+    // Without a refusal the phone's Start lifts Stop all and starts, as before.
+    const ok = new RemoteCommandWatcher({
+      store,
+      clock,
+      kill,
+      start: (req) => scheduler.requestStart(req),
+      startRefused: async () => null,
+      commands,
+      chat,
+      conversationSessionId: async () => conversationSession,
+      deviceId: pc.id,
+      agentId: agent.id,
+      humanId: human.id,
+    });
+    await store.remoteCommand.enqueue({
+      device_id: phone.id,
+      target: "pc",
+      command: "start",
+      params: { projectId: project.id },
+    });
+    expect(await ok.drain()).toBe(1);
+    expect(kill.isFrozen({ agentId: agent.id })).toBe(false);
+    expect(started).toHaveLength(1);
+  });
+});

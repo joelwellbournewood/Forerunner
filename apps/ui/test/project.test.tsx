@@ -950,3 +950,127 @@ describe("l4-github-merge, run L4", () => {
     ).toBeGreaterThan(0);
   });
 });
+
+/**
+ * l4-starts-carried, run L4 (the review's blocking 1 and 2, L4g-left-1 on screen): with a task
+ * paused at the project's budget, the Start dialog said the limit and Open Settings, then "Give
+ * your agent work first: add a task ..." under it (the work exists; only the limit holds it), and
+ * its waiting list said '"B" waits on "A", which needs your answer ... Answer it in the Inbox'
+ * for a dependency paused at the budget and for one the person paused (no card asks).
+ */
+describe("l4-starts-carried, run L4", () => {
+  const atBudget = (taskId: string, title: string) => ({
+    id: `req_${taskId}`,
+    projectId: "proj_atlas",
+    projectName: "Atlas",
+    taskId,
+    taskTitle: title,
+    sessionId: "sess_1",
+    kind: "approval",
+    why: `"${title}" paused at the project's budget of CHF 0.06.`,
+    steps: [],
+    options: ["Cancel task"],
+    blocking: true,
+    risk: "medium" as const,
+    changeCard: {
+      key: "task:budget_stop",
+      task_id: taskId,
+      task_title: title,
+      title: `"${title}" paused at the project's budget of CHF 0.06`,
+      run_id: "run_1",
+      source: "project",
+      specialist: "coder",
+      cap_usd_micro: 75_000,
+      spent_usd_micro: 75_000,
+      stopped_by: "budget",
+      done: "Half of it.",
+      left: ["The rest"],
+      no_progress: false,
+      chf_per_usd: 0.8,
+      applied_at: null,
+    },
+    status: "open",
+    answer: null,
+    createdAt: "2026-11-10T09:00:00.000Z",
+    version: 1,
+  });
+  /** The project's one ready task paused at the project's budget, with its card. */
+  const pausedAtBudget = (harness: Harness) => {
+    const t = harness.daemon.state.tasks.find((x) => x.id === "task_3");
+    if (!t) throw new Error("fixture changed");
+    t.status = "needs_human";
+    harness.daemon.state.requests.unshift(atBudget(t.id, t.title) as never);
+    return t;
+  };
+  const openStart = async (harness: Harness) => {
+    const user = userEvent.setup();
+    renderApp("/projects/proj_atlas", harness);
+    await screen.findByTestId("summary");
+    await user.click(screen.getByTestId("start-session"));
+    return screen.findByTestId("start-session-dialog");
+  };
+
+  it("L4g-left-1 (fixup): a task paused at the project's budget: the limit and Open Settings, never 'Give your agent work first'", async () => {
+    const harness = createHarness();
+    pausedAtBudget(harness);
+    const dialog = await openStart(harness);
+    const box = await within(dialog).findByTestId("start-session-cannot-run");
+    expect(within(box).getByTestId("start-session-blocked")).toHaveTextContent(
+      /^Nothing can run: "Decide the versioning scheme" paused at the project's budget of CHF 0\.06; raise it in Settings\.$/,
+    );
+    expect(within(box).getByTestId("start-session-unblock")).toHaveTextContent("Open Settings");
+    expect(within(box).getByTestId("start-session-unblock")).toHaveAttribute(
+      "href",
+      "/settings#other-settings",
+    );
+    expect(within(dialog).queryByTestId("start-session-no-work")).toBeNull();
+    expect(dialog).not.toHaveTextContent("Give your agent work first");
+    expect(within(dialog).getByTestId("confirm-start-session")).toBeDisabled();
+  });
+
+  it("L4g-left-1 (fixup): the waiting list says what holds each dependency: the limit, your pause, a pause; 'needs your answer' only when a card asks", async () => {
+    const harness = createHarness();
+    const motto = pausedAtBudget(harness);
+    const tasks = harness.daemon.state.tasks;
+    const base = { ...motto, status: "ready" as const, estimate: money(100_000), dependsOn: [] };
+    tasks.push(
+      { ...base, id: "task_rules", title: "Write the club rules", dependsOn: [motto.id] },
+      { ...base, id: "task_song", title: "Write the club song", status: "needs_human" },
+      { ...base, id: "task_sing", title: "Sing the club song", dependsOn: ["task_song"] },
+      { ...base, id: "task_flag", title: "Draw the club flag", status: "needs_human" },
+      { ...base, id: "task_wave", title: "Wave the club flag", dependsOn: ["task_flag"] },
+    );
+    harness.daemon.state.taskMeta.pausedByPerson.add("task_song");
+    const dialog = await openStart(harness);
+    await within(dialog).findByTestId("start-session-cannot-run");
+    expect(
+      within(dialog)
+        .getAllByTestId("start-session-waiting")
+        .map((l) => l.textContent),
+    ).toEqual([
+      '"Write the club rules" waits on "Decide the versioning scheme", paused at the project\'s budget of CHF 0.06, so it cannot run. Raise the project\'s budget in Settings, or change what it waits for on the Tasks tab.',
+      '"Sing the club song" waits on "Write the club song", which you paused, so it cannot run. Resume "Write the club song", or change what it waits for on the Tasks tab.',
+      '"Wave the club flag" waits on "Draw the club flag", which is paused, so it cannot run. Resume "Draw the club flag", or change what it waits for on the Tasks tab.',
+    ]);
+    expect(dialog).not.toHaveTextContent("needs your answer");
+    expect(dialog).not.toHaveTextContent("Give your agent work first");
+    // A dependency whose card asks still needs the person's answer, in the Inbox.
+    cleanup();
+    const asks = createHarness();
+    const logo = pausedAtBudget(asks);
+    const card = asks.daemon.state.requests[0] as { changeCard?: Record<string, unknown> };
+    if (!card?.changeCard) throw new Error("fixture changed");
+    card.changeCard = { ...card.changeCard, source: "task_budget" };
+    asks.daemon.state.tasks.push({
+      ...logo,
+      id: "task_print",
+      title: "Print the club logo",
+      status: "ready",
+      dependsOn: [logo.id],
+    });
+    const again = await openStart(asks);
+    expect(await within(again).findByTestId("start-session-waiting")).toHaveTextContent(
+      /^"Print the club logo" waits on "Decide the versioning scheme", which needs your answer, so it cannot run\. Answer it in the Inbox, or change what it waits for on the Tasks tab\.$/,
+    );
+  });
+});

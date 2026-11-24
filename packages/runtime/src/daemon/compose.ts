@@ -51,6 +51,7 @@ import {
   isAbsolute,
   join,
   log,
+  newId,
   osFacts,
   type Platform,
   redact as redactLogText,
@@ -379,6 +380,7 @@ import {
   keepStartAtReset,
   keptContinuationOf,
   keptStartOf,
+  keptStartWaits,
   planUsageOf,
   policyOf,
   RouterTaskBilling,
@@ -455,7 +457,7 @@ import {
 } from "./run-indicator.ts";
 import { type ComposedSandbox, composeSandbox } from "./sandbox-wiring.ts";
 import { ShellPresence } from "./shells.ts";
-import { busyHere, startBlocked as startBlockedReason } from "./start-blocked.ts";
+import { busyHere, heldFacts, startBlocked as startBlockedReason } from "./start-blocked.ts";
 import { credentialWaitRow, monthStopOf } from "./task-display.ts";
 import { fileTools } from "./tools.ts";
 import { requestContexts, requestViews } from "./views.ts";
@@ -932,7 +934,13 @@ export interface RuntimeApp {
     keepStart(
       projectId: string,
       agentId: string,
-      opts: { budgetUsdMicro?: number; continues?: string; note?: string },
+      opts: {
+        budgetUsdMicro?: number;
+        continues?: string;
+        note?: string;
+        /** fixup-l4-starts-carried: the kept start's own id (chat's start, for its Undo). */
+        id?: string;
+      },
     ): Promise<string | null>;
   };
   /**
@@ -950,6 +958,17 @@ export interface RuntimeApp {
     wentOn: number;
     prepared: { projectId: string; taskIds: string[]; result: PrepareResult | null }[];
   }>;
+  /**
+   * l4-starts-carried (L4d-left-2; the session lead's decision of 2026-11-23, the owner can
+   * overrule): the sentence a person's start of the project meets while the Claude credential
+   * its work needs was refused, the Start dialog's ("Nothing can run until you save a new API
+   * key in Settings."), or null. `POST /sessions` (the dialog, Continue, the API) and the
+   * phone's start refuse with it, also with no session kept; before, they started a session that
+   * only met the refusal and ended to wait. fixup-l4-starts-carried: with Stop all on it is null
+   * (Stop all's own answer comes first, as in the Start dialog), unless `evenStopped` (the
+   * phone's Start, which lifts Stop all only when it can start).
+   */
+  refusedStart(projectId: string, opts?: { evenStopped?: boolean }): Promise<string | null>;
   /**
    * d1109-run-visible (V-1): the run indicator. `views` is `GET /running` (what runs now, in the
    * daemon's words); `poke` asks for a fresh `run.changed` frame (debounced to one a second, sent
@@ -4059,6 +4078,33 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     now: () => clock.nowIso(),
   };
   const prepareWorkPort = (req: PrepareRequest) => prepareWork(prepareDeps, req);
+  /** `RuntimeApp.refusedStart` (L4d-left-2): the refused credential's sentence for a start. */
+  const refusedStart = async (
+    projectId: string,
+    opts: { evenStopped?: boolean } = {},
+  ): Promise<string | null> => {
+    const project = await store.project.get(projectId).catch(() => undefined);
+    if (!project) return null;
+    const check = await startCheck(
+      { store, estimates, defaultEstimateUsdMicro: 500_000, sandbox: sandbox.gate },
+      project.id,
+      sessionCapFromSettings(project.settings, clock.now(), DEFAULT_SESSION_CAP_USD_MICRO).usdMicro,
+    );
+    if (!(check.runnable.length > 0 || check.oversized)) return null;
+    const wait = await credentialWaits.now(projectId).catch(() => null);
+    // A refused credential's wait links where a new one is saved; a resting one keeps its Start
+    // ("Start at 15:40") or its session goes on by itself.
+    if (!wait || wait.startable || wait.save?.to !== "/setup") return null;
+    const blocked = startBlockedReason(check, {
+      stopped: !opts.evenStopped && kill.isFrozen({ agentId: agent.id }),
+      hasModel: true,
+      busy: busyHere(scheduler.activeStart(agent.id), projectId),
+      projectId,
+      chfPerUsd: chfPerUsd(),
+      credentialWait: wait,
+    });
+    return blocked?.kind === "nothing_runnable" ? blocked.sentence : null;
+  };
   /**
    * budget-resume, S-3 and l4-starts-sessions (L4-money-204): the tasks paused at this month's
    * cap, the project's budget or the subscription's share whose limit changed and has room are
@@ -4449,11 +4495,36 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         ...(opts.budgetUsdMicro ? { budgetUsdMicro: opts.budgetUsdMicro } : {}),
         ...(opts.continues ? { continues: opts.continues } : {}),
         ...(opts.note?.trim() ? { note: opts.note.trim() } : {}),
+        ...(opts.id ? { id: opts.id } : {}),
       });
       if (!kept) return null;
       events.emit("project", { id: projectId });
       return continuations.waiting(projectId);
     },
+  };
+  /**
+   * l4-starts-carried (L4a-left-5): when a person's start of the project now is kept for its
+   * Claude credential's reset ("at 15:40", "on 1 Dec", the Start dialog's "Start at 15:40"), or
+   * null when a start now runs as usual: the work's credential rests (a refusal is refused in
+   * words instead), nothing is kept or runs for the project, Stop all is off, and something
+   * would run. Read-only; chat's start reads it back and the hold reply says it.
+   */
+  const startKeptWhen = async (projectId: string | null | undefined): Promise<string | null> => {
+    if (!projectId || kill.isFrozen({ agentId: agent.id })) return null;
+    if (busyHere(scheduler.activeStart(agent.id), projectId)) return null;
+    if (await continuations.waiting(projectId)) return null;
+    const w = await credentialWaits.now(projectId).catch(() => null);
+    if (!w?.startable || !w.startLabel) return null;
+    const project = await store.project.get(projectId).catch(() => undefined);
+    if (!project) return null;
+    const check = await startCheck(
+      { store, estimates, defaultEstimateUsdMicro: 500_000, sandbox: sandbox.gate },
+      project.id,
+      sessionCapFromSettings(project.settings, clock.now(), DEFAULT_SESSION_CAP_USD_MICRO).usdMicro,
+    );
+    if (!(check.runnable.length > 0 || check.oversized)) return null;
+    const when = w.startLabel.replace(/^Start /, "");
+    return /^(at|on) \S/.test(when) ? when : null;
   };
   // d1109-run-visible (V-1, ADR 0118 point 12): the run indicator. Its words are the daemon's
   // (`run-indicator.ts`): the running sessions from their logs (only the events after the last
@@ -4971,6 +5042,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     store,
     clock,
     startUndoState,
+    // fixup-l4-starts-carried: the Undo of a start kept from chat is refused once that start ran
+    // at the reset or was cancelled (before, it said "Undone" and dropped any later wait).
+    keptStartWaits: (projectId, keptId) => keptStartWaits(store, projectId, keptId),
     // l4-selftasks-carried (L4f-left-1): every card that leaves the executor (a yes, a no, a Yes
     // refused because what it named changed, a lapse), whatever route answered it (chat, the
     // Inbox, Changes, a settings screen, the phone, an email), is told once: the Inbox count,
@@ -5069,6 +5143,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         const planNow =
           check.ready === 0 ? await intake.status(project.id).catch(() => null) : null;
         const plan = planNow?.state;
+        // L4g-left-1: what holds the tasks that wait on the person, as the Start dialog reads it
+        // (before, chat's start had no such fact and said "Nothing can run: no task is ready.").
+        const held =
+          check.ready === 0 || check.waiting.length > 0
+            ? await heldFacts(store, project.id).catch(() => null)
+            : null;
         const blocked = startBlockedReason(check, {
           stopped: kill.isFrozen({ agentId: agent.id }),
           hasModel: !!provider,
@@ -5077,6 +5157,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           chfPerUsd: chfPerUsd(),
           plan: plan === "pending" || plan === "drafting" || plan === "waiting" ? plan : null,
           planWait: planNow?.wait ?? null,
+          needsYou: check.ready === 0 ? (held?.needsYou ?? null) : null,
+          held: held?.held ?? null,
           // l4-cred-engine L4-creds-8: a refused credential refuses chat's start as it refuses
           // the dialog's (its sentence, no read-back); before, chat read the start back and
           // "started" it while Start was off. A resting credential keeps the dialog's Start
@@ -5121,9 +5203,34 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             by,
           })
         )?.line ?? null,
-      previewWork: ({ projectId, by }) =>
-        previewWork(prepareDeps, { agentId: agent.id, projectId, by }),
+      previewWork: ({ projectId, by, taskIds }) =>
+        previewWork(prepareDeps, {
+          agentId: agent.id,
+          projectId,
+          by,
+          ...(taskIds ? { taskIds } : {}),
+        }),
       startWaits: (projectId) => continuations.waiting(projectId),
+      // l4-starts-carried (L4a-left-5): chat's start during a rest is kept for the reset, as the
+      // Start dialog's "Start at 15:40" keeps it, with its own read-back and an Undo.
+      startKeptWhen: (projectId) => startKeptWhen(projectId),
+      // fixup-l4-starts-carried: the start is kept with its own id, so its Undo drops that start
+      // only (never the person's session waiting to go on, or a Start kept later) and is
+      // refused once it ran or was cancelled (`CommandLoop`'s `keptStartWaits`).
+      keepStart: async (projectId, budgetUsdMicro) => {
+        if (!(await startKeptWhen(projectId))) return null;
+        const keptId = newId(clock.now());
+        const sentence = await continuations.keepStart(projectId, agent.id, {
+          ...(budgetUsdMicro > 0 ? { budgetUsdMicro } : {}),
+          id: keptId,
+        });
+        return sentence ? { sentence, keptId } : null;
+      },
+      cancelKeptStart: async (projectId, keptId) => {
+        const dropped = await dropKeptStart(store, projectId, { id: keptId });
+        if (dropped) events.emit("project", { id: projectId });
+        return dropped;
+      },
       // D4 (d1109-oversize-start): the chat's start reads back the Start dialog's warning when
       // the session would take a task larger than its work budget; it never refuses it.
       startWarning: async (projectId, budgetUsdMicro) =>
@@ -5686,7 +5793,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     ...(routed
       ? {
           // d1109-cred-engine CE-9 (ADR 0120): chat follows the person's credential policy too.
-          credentialHold: async ({ oneOff }: { oneOff: boolean }) => {
+          credentialHold: async ({
+            oneOff,
+            projectId,
+          }: {
+            oneOff: boolean;
+            projectId?: string | null;
+          }) => {
             const model = rungModelFor(routed, modelConfig.get().modeDefaults.text_chat.tier);
             // L4-creds-3: the person's time zone and monthly cap are read now, never the ones
             // the daemon was composed with (a zone changed in Settings applies at once).
@@ -5725,11 +5838,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
                 if ((room ?? Number.MAX_SAFE_INTEGER) >= estimate)
                   offer = { kind: held.switchTo.kind, estimateUsdMicro: estimate };
               }
+              // L4a-left-5: a Start of the chat's project now is kept for the reset: say when.
+              const startsWhen =
+                held.wait.reason === "refused"
+                  ? null
+                  : await startKeptWhen(projectId).catch(() => null);
               return {
                 held: true,
                 wait: held.wait,
                 untilText: untilOf(held.wait.until),
                 oneOff: offer,
+                ...(startsWhen ? { startsWhen } : {}),
               };
             }
             // Not held: another credential answers while the first choice is stopped (a standing
@@ -5936,6 +6055,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // The entry, not the bare outcome: its id is the start's identity the row's result
       // carries for the undo (ADR 0049).
       start: (req) => scheduler.requestStart(req),
+      // L4d-left-2: the phone's Start under a refused credential is refused in words, as the
+      // Start dialog's and POST /sessions' are (the row fails with that sentence).
+      // fixup-l4-starts-carried: asked before the phone's Start lifts Stop all, so a refused
+      // start lifts nothing (before, Stop all was lifted and then nothing started).
+      startRefused: (projectId) => refusedStart(projectId, { evenStopped: true }),
       commands,
       // U-047: the phone's chat runs commands without a model too, as the desktop's does.
       chat: (req) => conversation.chat(req),
@@ -6307,6 +6431,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     continuations,
     preparedContext,
     wakeLimitWaits,
+    refusedStart,
     running,
     conversation,
     gitHost,
