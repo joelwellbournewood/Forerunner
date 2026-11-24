@@ -7,7 +7,9 @@ import type { Clock } from "@forerunner/platform";
 import { type AccessSubject, checkRepoAccess, type TokenRecord } from "./auth.ts";
 import type { BareRepo, CommitInfo, DiffFile } from "./git.ts";
 import type {
+  CollaboratorRole,
   HostEvent,
+  OrgBasePermission,
   PermissionLevel,
   RepoPermission,
   RequestLogEntry,
@@ -24,6 +26,8 @@ export interface UserRecord {
   type: "User" | "Organization";
   /** Lowercase member logins (orgs only). */
   members: Set<string>;
+  /** What a member may do in the organisation's repositories (orgs only; default write). */
+  basePermission?: OrgBasePermission;
   createdAt: string;
 }
 
@@ -261,6 +265,15 @@ export interface RepoRecord {
   collaborators: Set<string>;
   /** Lowercase logins with the read role only (`setCollaboratorRole(..., "read")`). */
   readers: Set<string>;
+  /**
+   * Each collaborator's role name (w8-issue-host): `collaborators` holds admin, maintain and
+   * write, `readers` triage and read; the permission read answers the name.
+   */
+  roleNames: Map<string, CollaboratorRole>;
+  /** "Issues" in the repository's settings (`has_issues`); off, issue routes answer 410. */
+  hasIssues: boolean;
+  /** The pinned issues' numbers, in pin order (GitHub pins at most three). */
+  pinned: number[];
   /** "Allow merge commits", "Allow squash merging", "Allow rebase merging" (repository settings). */
   allowMergeCommit: boolean;
   allowSquashMerge: boolean;
@@ -326,12 +339,15 @@ export class HostStore {
     return this.repos.get(fullName.toLowerCase());
   }
 
-  /** The owner itself plus every org it belongs to (lowercase). */
-  affiliations(login: string): Set<string> {
-    const out = new Set<string>([login.toLowerCase()]);
+  /**
+   * The owner itself plus every org it belongs to whose members may write (lowercase); with
+   * `base: "read"`, the orgs whose members may only read (w8-issue-host).
+   */
+  affiliations(login: string, base: "write" | "read" = "write"): Set<string> {
+    const out = new Set<string>(base === "write" ? [login.toLowerCase()] : []);
     for (const u of this.users.values()) {
-      if (u.type === "Organization" && u.members.has(login.toLowerCase()))
-        out.add(u.login.toLowerCase());
+      if (u.type !== "Organization" || !u.members.has(login.toLowerCase())) continue;
+      if ((u.basePermission ?? "write") === base) out.add(u.login.toLowerCase());
     }
     return out;
   }
@@ -340,7 +356,47 @@ export class HostStore {
     return {
       token,
       affiliations: token ? this.affiliations(token.owner) : new Set<string>(),
+      readOrgs: token ? this.affiliations(token.owner, "read") : new Set<string>(),
     };
+  }
+
+  /**
+   * `login`'s role on the repository, as GitHub works it out (w8-issue-host, W8-host-8): the
+   * owner of a person's repository is its admin; else the highest of the collaborator role and
+   * the owning organisation's base permission for a member; anyone reads a public repository;
+   * else none. Null when there is no such user.
+   */
+  roleOf(repo: RepoRecord, login: string): CollaboratorRole | null {
+    const user = this.user(login);
+    if (!user) return null;
+    const l = login.toLowerCase();
+    if (repo.owner.toLowerCase() === l) return "admin";
+    const order: CollaboratorRole[] = ["none", "read", "triage", "write", "maintain", "admin"];
+    const higher = (a: CollaboratorRole, b: CollaboratorRole) =>
+      order.indexOf(a) >= order.indexOf(b) ? a : b;
+    let role: CollaboratorRole =
+      repo.roleNames.get(l) ??
+      (repo.collaborators.has(l) ? "write" : repo.readers.has(l) ? "read" : "none");
+    const owner = this.user(repo.owner);
+    if (owner?.type === "Organization" && owner.members.has(l))
+      role = higher(role, owner.basePermission ?? "write");
+    if (!repo.private) role = higher(role, "read");
+    return role;
+  }
+
+  /**
+   * GitHub's `author_association` of `login` on the repository (w8-issue-host): OWNER for the
+   * repository's owner, MEMBER for a member of the owning organisation (whatever their access),
+   * COLLABORATOR for a collaborator of any role, else NONE. Only a first filter: write access is
+   * `roleOf`.
+   */
+  associationOf(repo: RepoRecord, login: string): string {
+    const l = login.toLowerCase();
+    if (repo.owner.toLowerCase() === l) return "OWNER";
+    const owner = this.user(repo.owner);
+    if (owner?.type === "Organization" && owner.members.has(l)) return "MEMBER";
+    if (repo.collaborators.has(l) || repo.readers.has(l)) return "COLLABORATOR";
+    return "NONE";
   }
 
   issue(repo: RepoRecord, number: number): IssueRecord | undefined {
@@ -410,7 +466,8 @@ export class HostStore {
       avatar_url: this.api(`/avatars/${u.login}.png`),
       html_url: this.api(`/${u.login}`),
       url: this.api(u.type === "Organization" ? `/orgs/${u.login}` : `/users/${u.login}`),
-      type: u.type,
+      // A GitHub App writes as its `<slug>[bot]` account, whose type GitHub gives as Bot.
+      type: /\[bot\]$/.test(u.login) ? "Bot" : u.type,
       site_admin: false,
       name: u.name,
       email: u.email,
@@ -451,7 +508,7 @@ export class HostStore {
       visibility: repo.private ? "private" : "public",
       archived: false,
       disabled: false,
-      has_issues: true,
+      has_issues: repo.hasIssues,
       has_projects: true,
       has_wiki: false,
       topics: [],
@@ -527,7 +584,7 @@ export class HostStore {
       created_at: issue.createdAt,
       updated_at: issue.updatedAt,
       closed_at: issue.closedAt,
-      author_association: "OWNER",
+      author_association: this.associationOf(repo, issue.user),
     };
     if (issue.pull) {
       out.pull_request = {
@@ -595,7 +652,7 @@ export class HostStore {
         user: ownerUser ? this.userJson(ownerUser) : this.ghostUser(repo.owner),
         repo: repoJson,
       },
-      author_association: "OWNER",
+      author_association: this.associationOf(repo, issue.user),
       auto_merge: null,
       merged: p.merged,
       mergeable: p.mergeable,
@@ -623,7 +680,7 @@ export class HostStore {
       pull_request_url: this.api(`/repos/${repo.fullName}/pulls/${issue.number}`),
       commit_id: r.commitId,
       submitted_at: r.submittedAt,
-      author_association: "OWNER",
+      author_association: this.associationOf(repo, r.user),
     };
   }
 
@@ -643,7 +700,7 @@ export class HostStore {
       user: this.userJsonByLogin(rc.user),
       created_at: rc.createdAt,
       updated_at: rc.updatedAt,
-      author_association: "OWNER",
+      author_association: this.associationOf(repo, rc.user),
     };
   }
 
@@ -661,7 +718,7 @@ export class HostStore {
       user: this.userJsonByLogin(c.user),
       created_at: c.createdAt,
       updated_at: c.updatedAt,
-      author_association: "OWNER",
+      author_association: this.associationOf(repo, c.user),
     };
   }
 

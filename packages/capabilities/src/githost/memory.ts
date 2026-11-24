@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
 import { ForerunnerError } from "@forerunner/platform";
 import {
+  type AuthorAssociation,
+  accountTypeOf,
   type BranchRules,
   type CheckRunInfo,
   type CommentInfo,
@@ -7,9 +10,14 @@ import {
   type FileContent,
   FORERUNNER_TASK_ID_FIELD,
   type GitHost,
+  hasWriteAccess,
+  type IssueCommentInfo,
+  type IssueCommentsRead,
   type IssueInfo,
   type MergeMethod,
   markAgentText,
+  PINNED_ISSUES_MAX,
+  type PinResult,
   type ProjectFieldInfo,
   type ProjectFieldSpec,
   type ProjectInfo,
@@ -20,6 +28,7 @@ import {
   type ReleaseInfo,
   type RepoInfo,
   type RepoRef,
+  type RepoRole,
   type ReviewCommentInfo,
   type ReviewInfo,
   type UpsertItemResult,
@@ -33,7 +42,7 @@ import {
 interface Repo extends RepoInfo {
   files: Map<string, Map<string, string>>; // branch -> path -> content
   prs: PullRequestInfo[];
-  issues: IssueInfo[];
+  issues: MemoryIssue[];
   comments: Map<number, CommentInfo[]>;
   reviews: Map<number, ReviewInfo[]>;
   reviewComments: Map<number, ReviewCommentInfo[]>;
@@ -43,6 +52,48 @@ interface Repo extends RepoInfo {
   nextNumber: number;
   allowMergeCommit: boolean;
   rules: Map<string, Partial<BranchRules>>;
+  /**
+   * w8-issue-host: each login's role on this repository (`setCollaboratorRole`), lower-case
+   * logins; with the organisation's base permission (`setOrg`) it decides who sees the issues,
+   * the association and `getRepoPermission`. A repository with neither declared is open to
+   * every login, as its `permissions` (push for everyone) say.
+   */
+  roles: Map<string, RepoRole>;
+  /** A role was ever declared on it: it follows the roles from then on. */
+  followsRoles: boolean;
+  /** Issues turned on (`setIssuesEnabled`); off, every issue call answers `issues_disabled`. */
+  hasIssues: boolean;
+  /** The pinned issues' numbers, in pin order (at most three). */
+  pinned: number[];
+}
+
+/** An issue as the host keeps it; association and author type are worked out at each read. */
+interface MemoryIssue {
+  id: number;
+  number: number;
+  title: string;
+  body: string;
+  state: "open" | "closed";
+  stateReason: string | null;
+  labels: string[];
+  htmlUrl: string;
+  locked: boolean;
+  author: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The roles in rising order of access (the higher of two wins). */
+const ROLE_ORDER: readonly RepoRole[] = ["none", "read", "triage", "write", "maintain", "admin"];
+
+function higher(a: RepoRole, b: RepoRole): RepoRole {
+  return ROLE_ORDER.indexOf(a) >= ROLE_ORDER.indexOf(b) ? a : b;
+}
+
+/** A refusal in the GitHub adapter's shape: its code, and GitHub's status in `details`. */
+function refused(code: "not_found" | "tool_not_allowed" | "issues_disabled", message: string) {
+  const status = code === "not_found" ? 404 : code === "tool_not_allowed" ? 403 : 410;
+  return new ForerunnerError(code, message, { details: { status } });
 }
 
 /** GitHub's owner and repository names are case-insensitive; the stand-in agrees (C2-left-12). */
@@ -87,6 +138,11 @@ interface MemoryHostWorld {
   projectCalls: { op: string; projectId?: string; detail?: string }[];
   writes: MemoryHostWrite[];
   now: () => string;
+  /**
+   * w8-issue-host: organisations by lower-case login, their lower-case members and the access
+   * a member has to the organisation's repositories (GitHub's base permission).
+   */
+  orgs: Map<string, { members: Set<string>; basePermission: "none" | "read" | "write" }>;
 }
 
 export class MemoryGitHost implements GitHost {
@@ -163,6 +219,7 @@ export class MemoryGitHost implements GitHost {
           projectCalls: [],
           writes: [],
           now: () => new Date().toISOString(),
+          orgs: new Map(),
         };
   }
 
@@ -248,6 +305,7 @@ export class MemoryGitHost implements GitHost {
       permissions: r.permissions,
       allowMergeCommit: r.allowMergeCommit,
       ...(r.id !== undefined ? { id: r.id } : {}),
+      hasIssues: r.hasIssues,
     };
   }
 
@@ -301,6 +359,10 @@ export class MemoryGitHost implements GitHost {
       allowMergeCommit: true,
       rules: new Map(),
       id: this.nextRepoId++,
+      roles: new Map(),
+      followsRoles: false,
+      hasIssues: true,
+      pinned: [],
     };
     this.repos.set(fullName.toLowerCase(), repo);
     this.wrote("createRepo", fullName);
@@ -439,15 +501,26 @@ export class MemoryGitHost implements GitHost {
     return this.comment(repo, number, body);
   }
 
-  /** A comment on a pull request or an issue (they share numbers), as this view's login. */
-  private comment(repo: RepoRef, number: number, body: string): CommentInfo {
+  /**
+   * A comment on a pull request or an issue (they share numbers), as this view's login. A pull
+   * request's comment keeps the fixed stamp it always had (the epoch, so `since` tests stay
+   * as they are); an issue's is stamped with the host's clock (`now`, w8-issue-host), as GitHub
+   * stamps `created_at` and `updated_at`, so the newest comment per author can be read.
+   */
+  private comment(
+    repo: RepoRef,
+    number: number,
+    body: string,
+    at = new Date(0).toISOString(),
+  ): CommentInfo {
     const r = this.repo(repo);
     const c: CommentInfo = {
       id: this.nextId++,
       body: markAgentText(body),
       author: this.login,
-      createdAt: new Date(0).toISOString(),
+      createdAt: at,
       htmlUrl: `memory://${r.fullName}/c/${this.nextId - 1}`,
+      updatedAt: at,
     };
     r.comments.set(number, [...(r.comments.get(number) ?? []), c]);
     return c;
@@ -460,7 +533,8 @@ export class MemoryGitHost implements GitHost {
   ): Promise<CommentInfo[]> {
     const all = this.repo(repo).comments.get(number) ?? [];
     const since = opts.since;
-    return since ? all.filter((c) => c.createdAt >= since) : all;
+    // As GitHub reads `since`: comments updated at or after it.
+    return since ? all.filter((c) => (c.updatedAt ?? c.createdAt) >= since) : all;
   }
 
   async listPullRequestReviews(repo: RepoRef, number: number): Promise<ReviewInfo[]> {
@@ -508,22 +582,158 @@ export class MemoryGitHost implements GitHost {
     return { id };
   }
 
+  // ---- issues (w8-issue-host) -----------------------------------------------------------------
+  // As GitHub answers them: who sees and writes follows the roles (`setOrg`,
+  // `setCollaboratorRole`; a repository with none declared is open to every login), issues off
+  // answer `issues_disabled`, the association is worked out at each read, a comment edit moves
+  // `updatedAt`, a repeated read with the ETag is not modified, and three issues can be pinned.
+
+  /**
+   * Test seam (w8-issue-host): an organisation, its members and the access a member has to its
+   * repositories (GitHub's base permission). Its repositories then follow the roles.
+   */
+  setOrg(
+    org: string,
+    opts: { members: string[]; basePermission?: "none" | "read" | "write" },
+  ): void {
+    this.world.orgs.set(org.toLowerCase(), {
+      members: new Set(opts.members.map((m) => m.toLowerCase())),
+      basePermission: opts.basePermission ?? "write",
+    });
+  }
+
+  /**
+   * Test seam (w8-issue-host): `login`'s role on the repository, as its Settings set it; `none`
+   * removes it. The repository then follows the roles. w8-shared-repo builds each login's
+   * `permissions` and its write refusals on the same roles.
+   */
+  setCollaboratorRole(repo: RepoRef, login: string, role: RepoRole): void {
+    const r = this.repo(repo);
+    if (role === "none") r.roles.delete(login.toLowerCase());
+    else r.roles.set(login.toLowerCase(), role);
+    r.followsRoles = true;
+  }
+
+  /** Test seam: the repository's "Issues" setting. */
+  setIssuesEnabled(repo: RepoRef, enabled: boolean): void {
+    this.repo(repo).hasIssues = enabled;
+  }
+
+  /** Test seam: the pinned issues' numbers, in pin order. */
+  pinnedIssues(repo: RepoRef): number[] {
+    return [...this.repo(repo).pinned];
+  }
+
+  /** Test seam: a comment deleted on GitHub's page (the port has no delete). */
+  removeIssueComment(repo: RepoRef, id: number): void {
+    const r = this.repo(repo);
+    for (const [n, list] of r.comments)
+      r.comments.set(
+        n,
+        list.filter((c) => c.id !== id),
+      );
+  }
+
+  /** Whether the repository follows roles: an organisation or a role was declared for it. */
+  private governed(r: Repo): boolean {
+    return r.followsRoles || this.world.orgs.has(r.owner.toLowerCase());
+  }
+
+  /** `login`'s role on the repository, as GitHub works it out (the highest grant wins). */
+  private roleOn(r: Repo, login: string): RepoRole {
+    if (!this.governed(r)) return "write";
+    const l = login.toLowerCase();
+    if (l === r.owner.toLowerCase()) return "admin";
+    let role: RepoRole = r.roles.get(l) ?? "none";
+    const org = this.world.orgs.get(r.owner.toLowerCase());
+    if (org?.members.has(l)) role = higher(role, org.basePermission);
+    if (!r.private) role = higher(role, "read");
+    return role;
+  }
+
+  /** GitHub's `author_association`: the owner, a member of the owning organisation, a collaborator. */
+  private associationOn(r: Repo, login: string): AuthorAssociation {
+    const l = login.toLowerCase();
+    if (l === r.owner.toLowerCase()) return "OWNER";
+    if (this.world.orgs.get(r.owner.toLowerCase())?.members.has(l)) return "MEMBER";
+    const role = r.roles.get(l);
+    if (role && role !== "none") return "COLLABORATOR";
+    return "NONE";
+  }
+
+  /** The repository, when this login sees it (a private one it has no role on is not there). */
+  private seen(repo: RepoRef): Repo {
+    const r = this.repo(repo);
+    if (this.roleOn(r, this.login) === "none")
+      throw refused("not_found", `repo ${this.key(repo)} not found`);
+    return r;
+  }
+
+  /** Issues on, or `issues_disabled`; a pull request's number is not an issue's. */
+  private issuesOn(r: Repo, number?: number): void {
+    if (r.hasIssues) return;
+    if (number !== undefined && r.prs.some((p) => p.number === number)) return;
+    throw refused("issues_disabled", "Issues are disabled for this repo");
+  }
+
+  private issueInfo(r: Repo, i: MemoryIssue): IssueInfo {
+    return {
+      ...i,
+      labels: [...i.labels],
+      nodeId: `I_${i.id}`,
+      authorAssociation: this.associationOn(r, i.author),
+      authorType: accountTypeOf(i.author, undefined),
+      isPullRequest: false,
+    };
+  }
+
+  private issueComment(r: Repo, issueNumber: number, c: CommentInfo): IssueCommentInfo {
+    return {
+      id: c.id,
+      issueNumber,
+      body: c.body,
+      author: c.author,
+      authorAssociation: this.associationOn(r, c.author),
+      authorType: accountTypeOf(c.author, undefined),
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt ?? c.createdAt,
+      htmlUrl: c.htmlUrl,
+    };
+  }
+
+  /** A comment by id, with the number of its issue or pull request. */
+  private commentById(r: Repo, id: number): { number: number; comment: CommentInfo } | null {
+    for (const [number, list] of r.comments) {
+      const comment = list.find((c) => c.id === id);
+      if (comment) return { number, comment };
+    }
+    return null;
+  }
+
   async createIssue(
     repo: RepoRef,
     opts: { title: string; body: string; labels?: string[] },
   ): Promise<IssueInfo> {
-    const r = this.repo(repo);
-    const issue: IssueInfo = {
+    const r = this.seen(repo);
+    this.issuesOn(r);
+    const at = this.now();
+    const issue: MemoryIssue = {
+      id: this.nextId++,
       number: r.nextNumber++,
       title: opts.title,
       body: opts.body,
       state: "open",
+      stateReason: null,
       labels: opts.labels ?? [],
       htmlUrl: `memory://${r.fullName}/issues/${r.nextNumber - 1}`,
+      locked: false,
+      author: this.login,
+      createdAt: at,
+      updatedAt: at,
     };
     r.issues.push(issue);
     this.wrote("createIssue", repo, { number: issue.number });
-    return issue;
+    return this.issueInfo(r, issue);
   }
 
   async updateIssue(
@@ -531,25 +741,157 @@ export class MemoryGitHost implements GitHost {
     number: number,
     patch: { title?: string; body?: string; state?: "open" | "closed"; labels?: string[] },
   ): Promise<IssueInfo> {
-    const issue = this.repo(repo).issues.find((i) => i.number === number);
-    if (!issue) throw new ForerunnerError("not_found", `issue ${number} not found`);
-    Object.assign(issue, patch);
+    const r = this.seen(repo);
+    this.issuesOn(r, number);
+    const issue = r.issues.find((i) => i.number === number);
+    if (!issue) throw refused("not_found", `issue ${number} not found`);
+    if (!hasWriteAccess(this.roleOn(r, this.login)))
+      throw refused("tool_not_allowed", "Resource not accessible by personal access token");
+    if (patch.title !== undefined) issue.title = patch.title;
+    if (patch.body !== undefined) issue.body = patch.body;
+    if (patch.labels !== undefined) issue.labels = [...patch.labels];
+    if (patch.state === "closed" && issue.state === "open") {
+      issue.state = "closed";
+      issue.stateReason = "completed";
+    } else if (patch.state === "open" && issue.state === "closed") {
+      issue.state = "open";
+      issue.stateReason = "reopened";
+    }
+    issue.updatedAt = this.now();
     this.wrote("updateIssue", repo, { number, detail: Object.keys(patch).sort().join(",") });
-    return issue;
+    return this.issueInfo(r, issue);
+  }
+
+  async getIssue(repo: RepoRef, number: number): Promise<IssueInfo> {
+    const r = this.seen(repo);
+    this.issuesOn(r, number);
+    const issue = r.issues.find((i) => i.number === number);
+    if (issue) return this.issueInfo(r, issue);
+    const pr = r.prs.find((p) => p.number === number);
+    if (!pr) throw refused("not_found", `issue ${number} not found`);
+    // GitHub's issues endpoint answers a pull request's number too.
+    return {
+      number: pr.number,
+      title: pr.title,
+      body: pr.body,
+      state: pr.state,
+      labels: [],
+      htmlUrl: pr.htmlUrl,
+      id: pr.number,
+      nodeId: `PR_${pr.number}`,
+      stateReason: null,
+      locked: false,
+      author: pr.authorLogin ?? "",
+      authorAssociation: this.associationOn(r, pr.authorLogin ?? ""),
+      authorType: accountTypeOf(pr.authorLogin ?? "", undefined),
+      createdAt: pr.updatedAt ?? "",
+      updatedAt: pr.updatedAt ?? "",
+      isPullRequest: true,
+    };
   }
 
   async listIssues(
     repo: RepoRef,
-    opts: { state?: "open" | "closed" | "all"; labels?: string[] } = {},
+    opts: {
+      state?: "open" | "closed" | "all";
+      labels?: string[];
+      creator?: string;
+      sort?: "created" | "updated" | "comments";
+      direction?: "asc" | "desc";
+    } = {},
   ): Promise<IssueInfo[]> {
-    return this.repo(repo)
-      .issues.filter((i) => (opts.state ?? "open") === "all" || i.state === (opts.state ?? "open"))
-      .filter((i) => !opts.labels?.length || opts.labels.every((l) => i.labels.includes(l)));
+    const r = this.seen(repo);
+    this.issuesOn(r);
+    const state = opts.state ?? "open";
+    const wanted = (opts.labels ?? []).map((l) => l.toLowerCase());
+    const comments = (i: MemoryIssue) => r.comments.get(i.number)?.length ?? 0;
+    const key = (i: MemoryIssue) =>
+      opts.sort === "updated" ? i.updatedAt : opts.sort === "comments" ? comments(i) : i.createdAt;
+    // As GitHub's: created, newest first, unless asked otherwise; ties by number.
+    const sign = (opts.direction ?? "desc") === "asc" ? 1 : -1;
+    return r.issues
+      .filter((i) => state === "all" || i.state === state)
+      .filter((i) => wanted.every((l) => i.labels.some((have) => have.toLowerCase() === l)))
+      .filter((i) => !opts.creator || i.author.toLowerCase() === opts.creator.toLowerCase())
+      .sort((a, b) => {
+        const ka = key(a);
+        const kb = key(b);
+        const by = ka < kb ? -1 : ka > kb ? 1 : a.number - b.number;
+        return sign * by;
+      })
+      .map((i) => this.issueInfo(r, i));
   }
 
-  async commentOnIssue(repo: RepoRef, number: number, body: string): Promise<CommentInfo> {
+  async commentOnIssue(repo: RepoRef, number: number, body: string): Promise<IssueCommentInfo> {
+    const r = this.seen(repo);
+    this.issuesOn(r, number);
+    if (!r.issues.some((i) => i.number === number) && !r.prs.some((p) => p.number === number))
+      throw refused("not_found", `issue ${number} not found`);
     this.wrote("commentOnIssue", repo, { number });
-    return this.comment(repo, number, body);
+    return this.issueComment(r, number, this.comment(repo, number, body, this.now()));
+  }
+
+  async listIssueComments(
+    repo: RepoRef,
+    number: number,
+    opts: { etag?: string; since?: string } = {},
+  ): Promise<IssueCommentsRead> {
+    const r = this.seen(repo);
+    this.issuesOn(r, number);
+    if (!r.issues.some((i) => i.number === number) && !r.prs.some((p) => p.number === number))
+      throw refused("not_found", `issue ${number} not found`);
+    const since = opts.since;
+    const comments = (r.comments.get(number) ?? [])
+      .filter((c) => !since || (c.updatedAt ?? c.createdAt) >= since)
+      .map((c) => this.issueComment(r, number, c));
+    // The ETag names the answer, as GitHub's does: the same comments, the same ETag.
+    const etag = `W/"${createHash("sha1").update(JSON.stringify(comments)).digest("hex")}"`;
+    return { notModified: opts.etag === etag, etag, comments };
+  }
+
+  async getIssueComment(repo: RepoRef, id: number): Promise<IssueCommentInfo | null> {
+    const r = this.seen(repo);
+    const found = this.commentById(r, id);
+    if (!found) return null;
+    this.issuesOn(r, found.number);
+    return this.issueComment(r, found.number, found.comment);
+  }
+
+  async updateIssueComment(repo: RepoRef, id: number, body: string): Promise<IssueCommentInfo> {
+    const r = this.seen(repo);
+    const found = this.commentById(r, id);
+    if (!found) throw refused("not_found", `comment ${id} not found`);
+    this.issuesOn(r, found.number);
+    // GitHub lets the author edit their comment, and anyone with write access edit any comment.
+    if (
+      found.comment.author.toLowerCase() !== this.login.toLowerCase() &&
+      !hasWriteAccess(this.roleOn(r, this.login))
+    )
+      throw refused("tool_not_allowed", "Resource not accessible by personal access token");
+    found.comment.body = markAgentText(body);
+    found.comment.updatedAt = this.now();
+    this.wrote("updateIssueComment", repo, { number: found.number, detail: String(id) });
+    return this.issueComment(r, found.number, found.comment);
+  }
+
+  async pinIssue(repo: RepoRef, number: number): Promise<PinResult> {
+    const r = this.seen(repo);
+    this.issuesOn(r, number);
+    if (!r.issues.some((i) => i.number === number))
+      throw refused("not_found", `issue ${number} not found`);
+    if (!hasWriteAccess(this.roleOn(r, this.login))) return "forbidden";
+    if (r.pinned.includes(number)) return "pinned";
+    if (r.pinned.length >= PINNED_ISSUES_MAX) return "limit";
+    r.pinned.push(number);
+    this.wrote("pinIssue", repo, { number });
+    return "pinned";
+  }
+
+  async getRepoPermission(repo: RepoRef, login: string): Promise<RepoRole> {
+    const r = this.repos.get(this.slot(repo));
+    // GitHub needs push access to read another's permission; refused, it is none (fails closed).
+    if (!r || !hasWriteAccess(this.roleOn(r, this.login))) return "none";
+    return this.roleOn(r, login);
   }
 
   async listCheckRuns(repo: RepoRef, ref: string): Promise<CheckRunInfo[]> {

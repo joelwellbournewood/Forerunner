@@ -1,5 +1,6 @@
 /**
- * GraphQL documents for GitHub Projects V2 (the REST API has no projects endpoints any more).
+ * GraphQL documents for GitHub Projects V2 (the REST API has no projects endpoints any more)
+ * and for pinning the status issue (w8-issue-host: GitHub pins issues only through GraphQL).
  * Every operation is named so a fake endpoint in tests can dispatch on `operationName`.
  * Inputs follow the public schema: createProjectV2, createProjectV2Field,
  * updateProjectV2Field, addProjectV2DraftIssue, updateProjectV2DraftIssue,
@@ -94,6 +95,27 @@ export const GQL_ARCHIVE_ITEM = `mutation MirrorArchiveItem($projectId: ID!, $it
 
 export const GQL_UNARCHIVE_ITEM = `mutation MirrorUnarchiveItem($projectId: ID!, $itemId: ID!) {
   unarchiveProjectV2Item(input: { projectId: $projectId, itemId: $itemId }) { item { id } }
+}`;
+
+/**
+ * The repository's pinned issues (w8-issue-host): GitHub pins at most three, so the first
+ * three are all of them. Read before a pin, so a pinned issue is not pinned again and a fourth
+ * is refused without a write.
+ */
+export const GQL_PINNED_ISSUES = `query StatusPinnedIssues($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    pinnedIssues(first: 3) {
+      totalCount
+      nodes { issue { id number } }
+    }
+  }
+}`;
+
+/** Pin an issue by its node id (GitHub's `pinIssue`; REST has no pin). */
+export const GQL_PIN_ISSUE = `mutation StatusPinIssue($issueId: ID!) {
+  pinIssue(input: { issueId: $issueId }) {
+    issue { id number isPinned }
+  }
 }`;
 
 /** One field write inside a batched MirrorSetFields mutation. */

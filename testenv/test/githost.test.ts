@@ -1240,8 +1240,22 @@ describe("w8-two-homes, wave 8: two users, an organisation and a collaborator's 
       const read = await repo(carol);
       expect(read.status).toBe(200);
       expect(read.json.permissions).toMatchObject({ pull: true, push: false });
-      expect((await write(carol)).status).toBe(403);
+      // w8-issue-host: as on GitHub, the read role opens issues and comments (so a read-only
+      // person's comment can be on the status issue); every other write answers 403.
+      expect((await write(carol)).status).toBe(201);
+      const push = (t: string) =>
+        api(host.baseUrl, "PUT", "/repos/team/shared/contents/carol.md", {
+          token: t,
+          body: { message: "carol", content: Buffer.from("carol\n").toString("base64") },
+        });
+      expect((await push(carol)).status).toBe(403);
+      const label = await api(host.baseUrl, "POST", "/repos/team/shared/labels", {
+        token: carol,
+        body: { name: "carol" },
+      });
+      expect(label.status).toBe(403);
       host.setCollaboratorRole("team/shared", "carol", "write");
+      expect((await push(carol)).status).toBe(201);
       expect((await repo(carol)).json.permissions).toMatchObject({ pull: true, push: true });
       expect((await write(carol)).status).toBe(201);
       host.setCollaboratorRole("team/shared", "carol", "none");

@@ -56,7 +56,22 @@ export interface CreateOrgInput {
   name?: string;
   /** Logins of member users. Members see the org's private repos with a `repo`-scoped token. */
   members?: string[];
+  /**
+   * What a member may do in every repository of the organisation (GitHub's base permission,
+   * w8-issue-host): `write` (the default here, so members push as before), `read` (members see
+   * and read private repositories; a role on a repository can still give more) or `none`.
+   */
+  basePermission?: OrgBasePermission;
 }
+
+/** An organisation's base permission for its members (Settings -> Member privileges). */
+export type OrgBasePermission = "none" | "read" | "write";
+
+/**
+ * A login's role on one repository, as Settings -> Collaborators sets it: `admin`, `maintain`
+ * and `write` push; `triage` and `read` see and read; `none` removes the person.
+ */
+export type CollaboratorRole = "admin" | "maintain" | "write" | "triage" | "read" | "none";
 
 export type CreateTokenInput =
   | { owner: string; kind: "classic"; scopes: string[]; expiresAt?: string | null }
@@ -155,4 +170,11 @@ export interface RequestLogEntry {
   /** Token kind and owner login; never the token value. */
   auth: { kind: TokenKind; login: string; tokenId: number } | null;
   durationMs: number;
+  /**
+   * The `If-None-Match` the request sent (w8-issue-host): a conditional read, answered 304 when
+   * nothing changed. Null when it sent none.
+   */
+  ifNoneMatch: string | null;
+  /** A GraphQL request's operation name and kind (POST /graphql); absent for REST. */
+  graphql?: { operation: string; kind: "query" | "mutation" };
 }

@@ -4,6 +4,7 @@
  * `git http-backend`, token scopes and permissions, rate limits, webhooks with HMAC
  * signatures and an admin API for seeding. See docs/maintainers/testing.md, "Fake git host".
  */
+import { createHash } from "node:crypto";
 import type { Server } from "node:http";
 import {
   type Clock,
@@ -29,6 +30,8 @@ import { type AuthContext, DOCS_URL, type HostContext, type HostEnv, HttpError }
 import { LOGIN_NAME, RepoOps } from "./ops.ts";
 import { INSTALLATION_TOKEN_TTL_MS, registerAppRoutes } from "./routes-app.ts";
 import { registerCheckRoutes } from "./routes-checks.ts";
+import { registerCollaboratorRoutes } from "./routes-collaborators.ts";
+import { registerGraphqlRoutes } from "./routes-graphql.ts";
 import { registerIssueRoutes } from "./routes-issues.ts";
 import { registerProjectRoutes } from "./routes-projects.ts";
 import { registerPullRoutes } from "./routes-pulls.ts";
@@ -42,6 +45,7 @@ import {
   type UserRecord,
 } from "./store.ts";
 import type {
+  CollaboratorRole,
   CreateAppInput,
   CreateInstallationInput,
   CreateOrgInput,
@@ -51,6 +55,7 @@ import type {
   FakeGitHostOptions,
   HostEvent,
   IssuedToken,
+  OrgBasePermission,
   PermissionLevel,
   RepoPermission,
   RequestLogEntry,
@@ -163,7 +168,26 @@ export class FakeGitHost {
   }
 
   createOrg(input: CreateOrgInput): UserSummary {
-    return this.addAccount(input.login, "Organization", input.name, undefined, input.members ?? []);
+    const org = this.addAccount(
+      input.login,
+      "Organization",
+      input.name,
+      undefined,
+      input.members ?? [],
+    );
+    if (input.basePermission) this.setOrgBasePermission(input.login, input.basePermission);
+    return org;
+  }
+
+  /**
+   * What a member may do in every repository of the organisation (Settings -> Member
+   * privileges -> Base permissions; w8-issue-host): `write` (the default), `read` (members see
+   * and read private repositories, every write but an issue or a comment is 403) or `none`.
+   */
+  setOrgBasePermission(org: string, permission: OrgBasePermission): void {
+    const o = this.store.user(org);
+    if (o?.type !== "Organization") throw new ForerunnerError("not_found", `org ${org} not found`);
+    o.basePermission = permission;
   }
 
   addMember(org: string, login: string): void {
@@ -180,17 +204,32 @@ export class FakeGitHost {
   /**
    * A collaborator's role on one repository, as its Settings -> Collaborators sets it
    * (w8-two-homes, for the access cases of a second person): `write` pushes, opens and merges
-   * pull requests; `read` sees and reads a private repository and every write answers 403;
-   * `none` removes the person (a private repository is 404 again). Org membership is separate.
+   * pull requests; `read` sees and reads a private repository, opens issues and comments, and
+   * every other write answers 403, as on GitHub; `none` removes the person (a private repository
+   * is 404 again). Org membership is separate. w8-issue-host adds the other roles GitHub has:
+   * `admin` and `maintain` push as `write` does, `triage` reads as `read` does; the permission
+   * read (GET /collaborators/:login/permission) answers the role's name.
    */
-  setCollaboratorRole(repo: string, login: string, role: "write" | "read" | "none"): void {
+  setCollaboratorRole(repo: string, login: string, role: CollaboratorRole): void {
     const r = this.requireRepo(repo);
     if (!this.store.user(login)) throw new ForerunnerError("not_found", `user ${login} not found`);
     const key = login.toLowerCase();
     r.collaborators.delete(key);
     r.readers.delete(key);
-    if (role === "write") r.collaborators.add(key);
-    else if (role === "read") r.readers.add(key);
+    r.roleNames.delete(key);
+    if (role === "write" || role === "maintain" || role === "admin") r.collaborators.add(key);
+    else if (role === "read" || role === "triage") r.readers.add(key);
+    if (role !== "none") r.roleNames.set(key, role);
+  }
+
+  /** The repository's "Issues" setting (`has_issues`; w8-issue-host): off, issue routes are 410. */
+  setIssuesEnabled(repo: string | { owner: string; name: string }, enabled: boolean): void {
+    this.requireRepo(repo).hasIssues = enabled;
+  }
+
+  /** The repository's pinned issues' numbers, in pin order (pinned through POST /graphql). */
+  pinnedIssues(repo: string | { owner: string; name: string }): number[] {
+    return [...this.requireRepo(repo).pinned];
   }
 
   createToken(input: CreateTokenInput): IssuedToken {
@@ -545,6 +584,7 @@ export class FakeGitHost {
       const parsed = this.parseAuth(c.req.header("authorization"), c.req.path);
       c.set("auth", parsed);
       c.set("rate", null);
+      c.set("graphql", null);
       await next();
       this.requestCounter += 1;
       const url = new URL(c.req.url);
@@ -559,7 +599,10 @@ export class FakeGitHost {
           ? { kind: parsed.token.kind, login: parsed.token.owner, tokenId: parsed.token.id }
           : null,
         durationMs: Math.round(this.clock.monotonic() - started),
+        ifNoneMatch: c.req.header("if-none-match") ?? null,
       };
+      const graphql = c.get("graphql");
+      if (graphql) entry.graphql = graphql;
       store.requests.push(entry);
       c.res.headers.set("X-GitHub-Request-Id", `FAKE:${entry.id}`);
     });
@@ -577,7 +620,7 @@ export class FakeGitHost {
       if (auth.bad) throw new HttpError(401, "Bad credentials");
       const key = auth.token ? `token:${auth.token.id}` : "anon:127.0.0.1";
       const counted = c.req.path !== "/rate_limit";
-      const rate = counted
+      let rate = counted
         ? this.limiter.consume(key)
         : { ...this.limiter.peek(key), exceeded: false };
       c.set("rate", rate);
@@ -610,7 +653,32 @@ export class FakeGitHost {
         return res;
       }
       await next();
+      // w8-issue-host: as on GitHub, a conditional request answered 304 does not count.
+      if (counted && c.res.status === 304) rate = { ...this.limiter.refund(key), exceeded: false };
       setRateHeaders(c.res.headers);
+    });
+
+    // ETags (w8-issue-host, W8-host-3): every JSON answer to a GET carries the ETag of its body,
+    // and a request whose If-None-Match names it is answered 304 with no body, as GitHub does.
+    app.use("*", async (c, next) => {
+      await next();
+      if (c.req.method !== "GET" || c.res.status !== 200) return;
+      if (!(c.res.headers.get("content-type") ?? "").includes("application/json")) return;
+      const text = await c.res.clone().text();
+      const etag = `W/"${createHash("sha1").update(text).digest("hex")}"`;
+      const asked = (c.req.header("if-none-match") ?? "")
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+      if (asked.includes(etag) || asked.includes("*")) {
+        const headers = new Headers(c.res.headers);
+        headers.delete("content-type");
+        headers.delete("content-length");
+        headers.set("ETag", etag);
+        c.res = new Response(null, { status: 304, headers });
+        return;
+      }
+      c.res.headers.set("ETag", etag);
     });
 
     const ctx = {
@@ -628,6 +696,8 @@ export class FakeGitHost {
     registerCheckRoutes(app, ctx);
     registerProjectRoutes(app, ctx);
     registerAppRoutes(app, ctx);
+    registerCollaboratorRoutes(app, ctx);
+    registerGraphqlRoutes(app, ctx);
 
     app.notFound((c) => c.json({ message: "Not Found", documentation_url: DOCS_URL }, 404));
     app.onError((err, c) => {

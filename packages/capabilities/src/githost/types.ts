@@ -26,6 +26,12 @@ export interface RepoInfo extends RepoRef {
    * the host did not say.
    */
   id?: number;
+  /**
+   * Whether the repository has issues turned on (GitHub's `has_issues`, w8-issue-host): when it
+   * is false every issue call answers `issues_disabled` and the status stays in the app. Absent
+   * when the host did not say.
+   */
+  hasIssues?: boolean;
 }
 
 /** How a pull request is merged; Forerunner itself always uses "merge" (ADR 0111). */
@@ -80,6 +86,90 @@ export interface BranchRules {
   unreadable: boolean;
 }
 
+/**
+ * How a comment's or an issue's author is related to the repository, as GitHub derives it
+ * (`author_association`). Only a cheap first filter (w8-issue-host, D-W8-13): MEMBER is any
+ * member of the organisation and COLLABORATOR includes the read role, so neither is write
+ * access; write access is `getRepoPermission` (D-W8-37).
+ */
+export type AuthorAssociation =
+  | "OWNER"
+  | "MEMBER"
+  | "COLLABORATOR"
+  | "CONTRIBUTOR"
+  | "FIRST_TIME_CONTRIBUTOR"
+  | "FIRST_TIMER"
+  | "MANNEQUIN"
+  | "NONE";
+
+const ASSOCIATIONS: ReadonlySet<string> = new Set<AuthorAssociation>([
+  "OWNER",
+  "MEMBER",
+  "COLLABORATOR",
+  "CONTRIBUTOR",
+  "FIRST_TIME_CONTRIBUTOR",
+  "FIRST_TIMER",
+  "MANNEQUIN",
+  "NONE",
+]);
+
+/** GitHub's `author_association`, read strictly: anything else is NONE (it counts for nothing). */
+export function associationOf(value: unknown): AuthorAssociation {
+  return typeof value === "string" && ASSOCIATIONS.has(value)
+    ? (value as AuthorAssociation)
+    : "NONE";
+}
+
+/** The kind of account that wrote something (`user.type`): a GitHub App writes as a Bot. */
+export type AccountType = "User" | "Bot" | "Organization";
+
+/** `user.type` read strictly: a `[bot]` login is a Bot whatever the host said; anything else a User. */
+export function accountTypeOf(login: string, value: unknown): AccountType {
+  if (value === "Bot" || /\[bot\]$/i.test(login)) return "Bot";
+  return value === "Organization" ? "Organization" : "User";
+}
+
+/**
+ * A login's role on a repository (GitHub's `role_name` of the collaborator permission read,
+ * w8-issue-host W8-host-8): admin, maintain and write may push; triage and read may not; none
+ * has no access.
+ */
+export type RepoRole = "admin" | "maintain" | "write" | "triage" | "read" | "none";
+
+/** The roles that count as write access (D-W8-13, D-W8-37: only these writers count). */
+export const WRITE_ROLES: readonly RepoRole[] = ["admin", "maintain", "write"];
+
+/** Whether the role is write access (write, maintain or admin). */
+export function hasWriteAccess(role: RepoRole): boolean {
+  return WRITE_ROLES.includes(role);
+}
+
+const ROLES: ReadonlySet<string> = new Set<RepoRole>([
+  "admin",
+  "maintain",
+  "write",
+  "triage",
+  "read",
+  "none",
+]);
+
+/**
+ * GitHub's collaborator permission answer as a role: `role_name` when it is one of the five
+ * built-in roles, else the legacy `permission` (a custom role's base: admin, write, read or
+ * none); anything else is none (fails closed).
+ */
+export function roleOf(roleName: unknown, permission: unknown): RepoRole {
+  if (typeof roleName === "string" && ROLES.has(roleName)) return roleName as RepoRole;
+  if (typeof permission === "string" && ROLES.has(permission)) return permission as RepoRole;
+  return "none";
+}
+
+/** GitHub pins at most three issues per repository. */
+export const PINNED_ISSUES_MAX = 3;
+
+/** What `pinIssue` answers: pinned (now or before), the repository's three pins are taken, or refused. */
+export type PinResult = "pinned" | "limit" | "forbidden";
+
 export interface IssueInfo {
   number: number;
   title: string;
@@ -87,6 +177,21 @@ export interface IssueInfo {
   state: "open" | "closed";
   labels: string[];
   htmlUrl: string;
+  /** GitHub's numeric issue id (not the number). */
+  id: number;
+  /** The issue's GraphQL node id: what `pinIssue` sends. */
+  nodeId: string;
+  /** Why it was closed (`completed`, `not_planned`, `reopened`), or null. */
+  stateReason: string | null;
+  locked: boolean;
+  /** The login that opened it. */
+  author: string;
+  authorAssociation: AuthorAssociation;
+  authorType: AccountType;
+  createdAt: string;
+  updatedAt: string;
+  /** GitHub's issues endpoints also answer pull requests: true for one of them. */
+  isPullRequest: boolean;
 }
 
 export interface CommentInfo {
@@ -95,6 +200,88 @@ export interface CommentInfo {
   author: string;
   createdAt: string;
   htmlUrl: string;
+  /** When it was last edited (GitHub's `updated_at`); absent when the host did not say. */
+  updatedAt?: string;
+}
+
+/**
+ * A conversation comment on an issue (w8-issue-host, W8-host-1): exactly the fields GitHub's
+ * REST comment has that the status issue needs. There is no editor: GitHub's REST comment does
+ * not say who edited it, so neither stand-in does; a writer tells a tampered comment by
+ * comparing its body with the text it last sent (w8-status-write).
+ */
+export interface IssueCommentInfo extends CommentInfo {
+  issueNumber: number;
+  updatedAt: string;
+  authorAssociation: AuthorAssociation;
+  authorType: AccountType;
+}
+
+/**
+ * An issue's comments read with an ETag (w8-issue-host, W8-host-2): `etag` names what was read;
+ * passed back as `opts.etag`, `notModified` is true when nothing changed since, and `comments`
+ * is the same list (the adapter answers a 304 from its own copy, which costs no rate-limit
+ * point). `etag` is null when the host gave none (then nothing is ever "not modified").
+ */
+export interface IssueCommentsRead {
+  notModified: boolean;
+  etag: string | null;
+  comments: IssueCommentInfo[];
+}
+
+/** The newest comment of each author (by `updatedAt`, then id): one entry per login. */
+export function newestCommentPerAuthor<T extends IssueCommentInfo>(comments: T[]): Map<string, T> {
+  const out = new Map<string, T>();
+  for (const c of comments) {
+    const key = c.author.toLowerCase();
+    const seen = out.get(key);
+    if (!seen || c.updatedAt > seen.updatedAt || (c.updatedAt === seen.updatedAt && c.id > seen.id))
+      out.set(key, c);
+  }
+  return out;
+}
+
+/**
+ * Why an issue call was refused, for the one sentence a caller says (w8-issue-host, W8-host-6;
+ * the owner's status design: "stays in the app with one sentence when issues are off / no
+ * permission / offline"):
+ * - `issues_off`: the repository has issues turned off (`issues_disabled`, a 410);
+ * - `no_permission`: the token may not do it (`tool_not_allowed`, a 403; or a `not_found` the
+ *   adapter marked `details.reason: "no_permission"`, a 404 on a repository the token sees);
+ * - `token_refused`: GitHub refused the token itself (`provider_auth`, a 401);
+ * - `missing`: the issue or comment is not there (`not_found`, a 404 or a deleted issue's 410);
+ * - `rate_limited`: GitHub's rate limit (`provider_rate_limit`);
+ * - `unreachable`: GitHub did not answer, or answered 5xx after the retries (`provider_error`).
+ * Null for anything else. `details.status` stays on the error for the log.
+ */
+export type IssueRefusal =
+  | "issues_off"
+  | "no_permission"
+  | "token_refused"
+  | "missing"
+  | "rate_limited"
+  | "unreachable";
+
+export function issueRefusalOf(e: unknown): IssueRefusal | null {
+  if (!e || typeof e !== "object") return null;
+  const code = (e as { code?: unknown }).code;
+  const details = ((e as { details?: unknown }).details ?? {}) as Record<string, unknown>;
+  switch (code) {
+    case "issues_disabled":
+      return "issues_off";
+    case "tool_not_allowed":
+      return "no_permission";
+    case "provider_auth":
+      return "token_refused";
+    case "not_found":
+      return details.reason === "no_permission" ? "no_permission" : "missing";
+    case "provider_rate_limit":
+      return "rate_limited";
+    case "provider_error":
+      return "unreachable";
+    default:
+      return null;
+  }
 }
 
 /** A review (line) comment on a pull request's diff (`GET /pulls/:n/comments`). */
@@ -348,6 +535,10 @@ export interface GitHost {
     number: number,
     opts: { event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string },
   ): Promise<{ id: number }>;
+  // ---- issues (w8-issue-host: the status issue's host calls; this port writes nothing by itself)
+  // Every call answers `issues_disabled` (status 410) when the repository has issues off; read
+  // `issueRefusalOf` for the reason of any refusal. Comment and issue text is returned as data,
+  // with its author: nothing here parses or follows it.
   createIssue(
     repo: RepoRef,
     opts: { title: string; body: string; labels?: string[] },
@@ -357,11 +548,60 @@ export interface GitHost {
     number: number,
     patch: { title?: string; body?: string; state?: "open" | "closed"; labels?: string[] },
   ): Promise<IssueInfo>;
+  /**
+   * One issue (read with the ETag: a repeated read is a 304): its node id, state and state
+   * reason, locked flag, author and times. Throws `not_found` when there is none.
+   */
+  getIssue(repo: RepoRef, number: number): Promise<IssueInfo>;
+  /**
+   * The repository's issues, pull requests left out, every page (the adapter follows the
+   * pagination), read with the ETag. `creator` keeps one login's; `labels` those carrying every
+   * label; `sort` and `direction` as GitHub's (default: created, newest first).
+   */
   listIssues(
     repo: RepoRef,
-    opts?: { state?: "open" | "closed" | "all"; labels?: string[] },
+    opts?: {
+      state?: "open" | "closed" | "all";
+      labels?: string[];
+      creator?: string;
+      sort?: "created" | "updated" | "comments";
+      direction?: "asc" | "desc";
+    },
   ): Promise<IssueInfo[]>;
-  commentOnIssue(repo: RepoRef, number: number, body: string): Promise<CommentInfo>;
+  commentOnIssue(repo: RepoRef, number: number, body: string): Promise<IssueCommentInfo>;
+  /**
+   * Every comment of one issue, oldest first, each with its author, the author's association
+   * and type, and its created and updated times (every page). With `opts.etag` from an earlier
+   * read, `notModified` says whether anything changed since; a repeated read is answered by a
+   * 304 the adapter serves from its in-memory copy. `since` keeps comments updated at or after it.
+   */
+  listIssueComments(
+    repo: RepoRef,
+    number: number,
+    opts?: { etag?: string; since?: string },
+  ): Promise<IssueCommentsRead>;
+  /** One issue comment by id, or null when it is gone (deleted). */
+  getIssueComment(repo: RepoRef, id: number): Promise<IssueCommentInfo | null>;
+  /**
+   * Edit an issue comment in place (GitHub's `PATCH /issues/comments/:id`), with the agent's
+   * mark as every comment the port writes. GitHub lets anyone with write access edit any
+   * comment, and so do the stand-ins; Forerunner editing only its own is the caller's rule.
+   * There is no delete: Forerunner never deletes a comment.
+   */
+  updateIssueComment(repo: RepoRef, id: number, body: string): Promise<IssueCommentInfo>;
+  /**
+   * Pin the issue (GitHub pins only through the GraphQL `pinIssue` mutation on the issue's node
+   * id): `pinned` (now or already), `limit` when the repository's three pins are taken (nothing
+   * is unpinned), `forbidden` when the token may not pin.
+   */
+  pinIssue(repo: RepoRef, number: number): Promise<PinResult>;
+  /**
+   * `login`'s role on the repository (GitHub's collaborator permission read, read with the
+   * ETag per login and token): the one source of write access (D-W8-37; association is only a
+   * first filter). A refused read (401, 403 or 404, e.g. a token without push access) answers
+   * `none`: it fails closed. GitHub not answering throws.
+   */
+  getRepoPermission(repo: RepoRef, login: string): Promise<RepoRole>;
   listCheckRuns(repo: RepoRef, ref: string): Promise<CheckRunInfo[]>;
   /** The latest commit status per context on `ref` (the combined status's entries). */
   listCommitStatuses(repo: RepoRef, ref: string): Promise<CommitStatusInfo[]>;

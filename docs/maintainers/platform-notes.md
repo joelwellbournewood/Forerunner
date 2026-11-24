@@ -115,6 +115,11 @@ diff and a set-aside patch ask for `--no-color` (capabilities.md).
 store, thrown by `packages/state`'s `LessonRepo` on the Postgres dialect and by the memory
 package's by-scope store (ADR 0083).
 
+`issues_disabled` (w8-issue-host, wave 8, 2026-11-24): a repository with issues turned off. The
+GitHub adapter throws it for GitHub's 410 "Issues are disabled for this repo" (a 410 for a
+deleted issue stays `not_found`), the in-memory host and the stand-in GitHub the same; read the
+reason with `issueRefusalOf` (capabilities.md, "w8-issue-host").
+
 ## How to change it
 
 Add the OS-specific branch inside `packages/platform`, export a neutral function, and add a test

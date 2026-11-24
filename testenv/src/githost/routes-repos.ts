@@ -6,6 +6,7 @@ import {
   canSeeRepo,
   checkRepoAccess,
   isAffiliated,
+  isReader,
   matchesAllowlist,
 } from "./auth.ts";
 import {
@@ -124,10 +125,11 @@ export function registerRepoRoutes(app: HostApp, ctx: RouteContext): void {
               ? matchesAllowlist(token.repos, r) &&
                 (isAffiliated(auth.subject, r) ||
                   r.collaborators.has(token.owner.toLowerCase()) ||
-                  r.readers.has(token.owner.toLowerCase()))
-              : isAffiliated(auth.subject, r) ||
+                  isReader(auth.subject, r))
+              : // A read role, or a member of an organisation whose members only read.
+                isAffiliated(auth.subject, r) ||
                 r.collaborators.has(token.owner.toLowerCase()) ||
-                r.readers.has(token.owner.toLowerCase()),
+                isReader(auth.subject, r),
         ),
       ),
     );
@@ -194,6 +196,9 @@ export function registerRepoRoutes(app: HostApp, ctx: RouteContext): void {
     if (squash !== undefined) repo.allowSquashMerge = squash;
     const rebase = bool(body, "allow_rebase_merge");
     if (rebase !== undefined) repo.allowRebaseMerge = rebase;
+    // w8-issue-host: the "Issues" setting; off, the issue routes answer 410.
+    const issues = bool(body, "has_issues");
+    if (issues !== undefined) repo.hasIssues = issues;
     const def = str(body, "default_branch");
     if (def !== undefined) {
       if (!(await repo.git.revParse(`refs/heads/${def}`)))
