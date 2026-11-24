@@ -1162,8 +1162,12 @@ l4-money-pause, run L4 (2026-11-22, L4-money-109): `SETTING_SPECS.session_reserv
 - **The executor's answer_on_card refusal** ('Answer it on its card in the Inbox: <title>.')
   ends "Nothing else was filed." with no note, "Nothing else was filed; type your note there with
   <option>." when the option takes a note on the card, and "Nothing else was filed, and your note
-  was not kept." when it takes none ("the note" for a note the model wrote). `cardTitleOf` returns
-  `{ title, takesNote }`.
+  was not kept." when it takes none. fixup-l4-chat-final: only the person's own note
+  (`notesPersons`) is spoken of; a note the model made up gets the plain "Nothing else was
+  filed." (before: "type the note there", a note the person never gave). `cardTitleOf` returns
+  `{ title, takesNote, label }`: the option as its button says it, matched as request.answer
+  matches (case, spaces, `_` and `-` do not matter), so the reply never repeats the model's own
+  "try_again".
 - Tests: packages/commands/test/chat-final.test.ts (the words rule, the move, the card with a
   restart, the no-note option, the high-risk card), packages/commands/test/selftasks-carried.test.ts
   (the parser's own note now answers the card's Try again with it).

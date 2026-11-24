@@ -244,6 +244,9 @@ const ABSENT: RegExp[] = [
  * same way). Anything after the state ("… about the FAQ", "… called …") names what was looked for
  * and is still a claim.
  */
+const NOW_STATE =
+  /^\s*(?:(?:any|no)\s+(?:(?:failed|open|ready|running|waiting|paused|blocked|queued|cancelled|done|finished|new|other|more|unanswered)\s+)*(?:tasks?|cards?|sessions?|questions?|changes?|problems?|errors?|failures?|work)|anything\s+(?:waiting|open|running|left|failed|paused|blocked))(?:\s+(?:right\s+now|now|at\s+the\s+moment|today|yet|left|here|open|running|waiting|for\s+(?:you|your\s+(?:yes|answer))|in\s+(?:this|the)\s+project|in\s+[A-Z][\w-]*(?:\s+[A-Z][\w-]*){0,3}))*\s*[.!]?$/;
+
 /**
  * l4-chat-final, run L4 (L4h-left-7; the review of l4-chat-carried): sessions and changes are
  * history (recall has them), so "I don't see any changes." or "... any sessions." is an absence
@@ -259,9 +262,6 @@ function aboutNow(rest: string): boolean {
   if (!NOW_STATE.test(rest)) return false;
   return !HISTORY_NOUN.test(rest) || SAYS_NOW.test(rest);
 }
-
-const NOW_STATE =
-  /^\s*(?:(?:any|no)\s+(?:(?:failed|open|ready|running|waiting|paused|blocked|queued|cancelled|done|finished|new|other|more|unanswered)\s+)*(?:tasks?|cards?|sessions?|questions?|changes?|problems?|errors?|failures?|work)|anything\s+(?:waiting|open|running|left|failed|paused|blocked))(?:\s+(?:right\s+now|now|at\s+the\s+moment|today|yet|left|here|open|running|waiting|for\s+(?:you|your\s+(?:yes|answer))|in\s+(?:this|the)\s+project|in\s+[A-Z][\w-]*(?:\s+[A-Z][\w-]*){0,3}))*\s*[.!]?$/;
 
 /**
  * Review of l4-chat-answers (blocking 2): a clarifying question asks which, who, where or what

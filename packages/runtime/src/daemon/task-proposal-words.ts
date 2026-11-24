@@ -25,8 +25,11 @@ function appliedChanges(card: Card): unknown[] {
   return changes.filter((c) => {
     const line = (c as { line?: unknown } | null)?.line;
     if (typeof line !== "string") return true;
+    // A left-out entry is the change's line without its period, then ": " and why (task-proposal.ts
+    // `settleProposal`). fixup-l4-chat-final: the whole line then the colon, so a change whose
+    // line only starts another, left-out change's line is not taken for it.
     const head = line.trim().replace(/[.;:]+$/, "");
-    return !left.some((l) => l.trim().startsWith(head));
+    return !left.some((l) => l.trim().startsWith(`${head}: `));
   });
 }
 

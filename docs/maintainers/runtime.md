@@ -10102,7 +10102,9 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   the apply) names each change the made row lacks in `left_out` with why it does not apply now
   (`deps.check`), and admits the touched tasks with the made ones.
 - **The Done line follows what was applied** (daemon/task-proposal-words.ts): `onlyDrops` reads
-  the applied changes (`appliedChanges`: those no `left_out` line starts with); the apply records
+  the applied changes (`appliedChanges`: those whose line, without its period and followed by
+  ": ", starts no `left_out` entry; fixup-l4-chat-final: before, the bare line was matched, so a
+  change whose line only starts a left-out one's was taken as left out); the apply records
   `waits_for_you`, the title of a task only the person can do that every changed task still to
   run waits for (directly or through other tasks; `waitsForYou`), and the line reads 'Changed 1
   task; it waits for "Send the logo", which is yours to do.' ("Changed 2 tasks; they wait ...").

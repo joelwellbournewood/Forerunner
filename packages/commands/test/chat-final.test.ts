@@ -289,8 +289,10 @@ describe("l4-chat-final, run L4: the person's own words in a chat note stay the 
     ).toBe(
       'Answer it on its card in the Inbox: "Write the digest page" failed 4 times. Nothing else was filed, and your note was not kept.',
     );
+    // fixup-l4-chat-final: a note the model made up is no note of the person's to type on the
+    // card (they never gave it and cannot see it); the reply leaves it out, as with no note.
     expect(await ask("ready", MODEL_NOTE, "try the digest page again")).toBe(
-      'Answer it on its card in the Inbox: "Write the digest page" failed 4 times. Nothing else was filed; type the note there with Try again.',
+      'Answer it on its card in the Inbox: "Write the digest page" failed 4 times. Nothing else was filed.',
     );
     // No note: as before.
     const w = await world();
@@ -416,6 +418,28 @@ describe("fixup-l4-chat-final, run L4: a move the task cannot make answers the c
       }),
     });
     expect(cancel.card?.command).toBe("task.transition");
+    await w.store.close();
+  });
+
+  // The review's second item: the reply named the model's raw answer ("with try again"), not the
+  // card's option as its button says it.
+  it("a card that needs this computer's OK, answered by the model in its own words: the reply names the card's option as its button says it", async () => {
+    const w = await world();
+    const { card } = await failedWithCard(w, "high");
+    const r = await w.executor.execute({
+      name: "request.answer",
+      params: { request: card.id, answer: "try_again", note: PERSONS_NOTE },
+      ctx: w.ctx({
+        actor: { kind: "agent", id: w.agent.id },
+        source: "chat",
+        onPersonsWords: true,
+        wordsUsed: PERSONS_LINE,
+      }),
+    });
+    expect(r.status === "refused" ? r.reason : r.status).toBe(
+      'Answer it on its card in the Inbox: "Write the digest page" failed 4 times. Nothing else was filed; type your note there with Try again.',
+    );
+    expect((await w.store.humanRequest.mustGet(card.id)).status).toBe("open");
     await w.store.close();
   });
 });

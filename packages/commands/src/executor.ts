@@ -645,14 +645,17 @@ export class CommandExecutor {
       const on = await this.cardTitleOf(g);
       // l4-chat-final (L4h-left-4): a note said with the answer goes nowhere from here; the reply
       // says where it goes on the card (an option with a note field), or that it was not kept.
-      const params = g.calls?.[0]?.params as { note?: unknown; answer?: unknown } | undefined;
+      // fixup-l4-chat-final: only the person's own note is spoken of; one the model made up is
+      // left out (before: "type the note there", a note the person never gave and cannot see).
+      // The option is named as its button says it (before: the model's own "try again").
+      const params = g.calls?.[0]?.params as { note?: unknown } | undefined;
       const note = typeof params?.note === "string" ? params.note.trim() : "";
-      const whose = note && notesPersons(g.ctx, note) ? "your" : "the";
-      const filed = !note
+      const own = !!note && notesPersons(g.ctx, note);
+      const filed = !own
         ? "Nothing else was filed."
-        : on.takesNote
-          ? `Nothing else was filed; type ${whose} note there with ${String(params?.answer ?? "it")}.`
-          : `Nothing else was filed, and ${whose} note was not kept.`;
+        : on.takesNote && on.label
+          ? `Nothing else was filed; type your note there with ${on.label}.`
+          : "Nothing else was filed, and your note was not kept.";
       return refusal(
         new ForerunnerError(
           "approval_required",
@@ -671,7 +674,9 @@ export class CommandExecutor {
    * The title of the card a `request.answer` answers, as the Inbox shows it, and whether the
    * answer's option takes a note there (its card words' `input`).
    */
-  private async cardTitleOf(g: Gate): Promise<{ title: string; takesNote: boolean }> {
+  private async cardTitleOf(
+    g: Gate,
+  ): Promise<{ title: string; takesNote: boolean; label: string | null }> {
     const fallback = g.card.what.replace(/^the request /, "");
     const params = g.calls?.[0]?.params as { request?: unknown; answer?: unknown } | undefined;
     const id = typeof params?.request === "string" ? params.request : null;
@@ -683,12 +688,19 @@ export class CommandExecutor {
         ))
       : undefined;
     const words = row ? await g.ctx.ports.cardWords?.(row).catch(() => null) : null;
+    // As request.answer compares an answer with the card's options: case, spaces, `_` and `-` do
+    // not matter ("try_again" is Try again).
     const said = (s: unknown) =>
       String(s ?? "")
         .trim()
-        .toLowerCase();
+        .toLowerCase()
+        .replace(/[\s_-]+/g, " ");
     const option = words?.choices.find((c) => said(c.label) === said(params?.answer));
-    return { title: words?.title?.trim() || fallback, takesNote: option?.input === "note" };
+    return {
+      title: words?.title?.trim() || fallback,
+      takesNote: option?.input === "note",
+      label: option?.label ?? null,
+    };
   }
 
   private async createPending(

@@ -228,6 +228,30 @@ describe("l4-chat-final, run L4: the suggestion card's Done line follows what wa
     );
   });
 
+  // fixup-l4-chat-final (the review's prefix item): a left-out line is the change's own line and
+  // then ": why"; a change whose line only starts the left-out one's was applied.
+  it("a change whose line starts a left-out change's line still counts as applied", () => {
+    const change = {
+      line: 'Change "Style the page".',
+      calls: [{ name: "task.update", params: { task: "t1" } }],
+    };
+    const both = {
+      line: 'Change "Style the page" and "Write the FAQ".',
+      calls: [{ name: "task.update", params: { task: "t3" } }],
+    };
+    expect(
+      proposalOutcome({
+        outcome: "applied",
+        changed: 2,
+        running: false,
+        changes: [change, both, drop],
+        left_out: ['Change "Style the page" and "Write the FAQ": "Write the FAQ" is running now'],
+      }),
+    ).toBe(
+      'Changed 2 tasks; your next Start runs them. Left out: Change "Style the page" and "Write the FAQ": "Write the FAQ" is running now.',
+    );
+  });
+
   it("what changed waits for a task only the person can do: the line names it and promises no Start", async () => {
     expect(
       proposalOutcome({
