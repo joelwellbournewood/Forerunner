@@ -1882,3 +1882,18 @@ words ask for ("The reviewer writes no file, so review.md is not written: ..."),
 Chat when it reads back a task for the reviewer; to have a file written, pick another
 specialist or let the agent choose. The name of a tool or a site, such as Node.js, ASP.NET or
 example.com, is never taken for a file, so a review of "the Node.js setup" gets the plain line.
+
+### Your own words in a chat note stay yours (2026-11-24)
+
+When you give words for a task's next attempt in Chat ("pause the FAQ and tell it to wait for
+the logo", "try the digest page again and tell it to use the old layout"), those words are your
+note: Chat does not read them back to you, the Yes says "Your note goes into its next brief.",
+and the next attempt reads them as yours. A failed task's card is answered with Try again and
+your note. A note Chat wrote without your words is still read back first ('Note for its next
+brief: "..."') and stays the agent's; its words never become the task's reason on the drawer. A
+card that needs this computer's OK is answered on the card only; Chat then says where your note
+goes ("type your note there with Try again") or that it was not kept. A suggestion card's
+Answered line says what was really changed, and when the changed tasks wait for a task only you
+can do it says so ('it waits for "Send the logo", which is yours to do') instead of promising
+that your next Start runs them. A Take this work out cut short when Forerunner closed is finished
+the next time it starts.

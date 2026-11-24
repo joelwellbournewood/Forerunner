@@ -1139,3 +1139,31 @@ l4-money-pause, run L4 (2026-11-22, L4-money-109): `SETTING_SPECS.session_reserv
   read back in chat compares the card's `oldValue` at the Yes (`changedSince`), with and
   without a restart (the stored card is `shown`): 'The monthly cap is CHF 120.00 now, not
   CHF 150.00 as I read it back. ...'. Tests: packages/commands/test/selftasks-carried.test.ts.
+
+## l4-chat-final (run L4, 2026-11-24): whose words a note is
+
+- **`notesPersons(ctx, note)`** (commands/shared.ts, ADR 0119 amended 2026-11-24): true for the
+  person's own command (actor human, not `onPersonsWords`), or when the source is chat or voice
+  and `saidInLine(ctx.wordsUsed, note)`: the note's words, together and in order, are in the
+  person's line, not within four words after a turning word of the same clause (`TURNING_WORDS`:
+  not, no, never, nor, without, don't, won't, nicht, kein, nie, ohne, ...). Clauses end at
+  `. ; ! ? : ,` and line breaks. task.ts `ownNote` is it; `noteClause`, `noteGoes(ctx, note)`,
+  `queueNote`'s author (`author_human` = the person) and `moveSentence`'s `notedByAgent` use it;
+  request.ts `askOf` leaves the person's own note out of the read-back.
+- **The redirect** (`moveAsCardAnswer`): every move said in chat on a task whose card offers it
+  is the card's answer, the person's own note included (it goes with an option whose card words
+  say `input: "note"`); a person's note on an option that takes none keeps the move (`null`),
+  unless the card's risk is high (its note travels in `request.answer`'s params so the executor
+  can say it was not kept; `noteOf` still reads a note only for an option that takes one).
+- **Reasons** (`givenReason(ctx, ...texts)`): task.transition, task.update (edit), Redo and
+  task.dependencies keep a given reason or note as the task's reason only when it is not the
+  chat model's own (`source` chat or voice and not `ownNote`); else their own sentence ("Paused by
+  you", "Changed by you: priority to Low").
+- **The executor's answer_on_card refusal** ('Answer it on its card in the Inbox: <title>.')
+  ends "Nothing else was filed." with no note, "Nothing else was filed; type your note there with
+  <option>." when the option takes a note on the card, and "Nothing else was filed, and your note
+  was not kept." when it takes none ("the note" for a note the model wrote). `cardTitleOf` returns
+  `{ title, takesNote }`.
+- Tests: packages/commands/test/chat-final.test.ts (the words rule, the move, the card with a
+  restart, the no-note option, the high-risk card), packages/commands/test/selftasks-carried.test.ts
+  (the parser's own note now answers the card's Try again with it).

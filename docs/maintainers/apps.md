@@ -3185,3 +3185,14 @@ L4 (fixup)").
   `heardChat(reply, projectId, closed)` emits for a closed card; `/requests/:id/answer` closes a
   chat read-back and emits; change rows carry `byYouAndAgent`; `GET /settings/models` names the
   file.
+
+## l4-chat-final (run L4, 2026-11-24)
+
+- **An Update's tone** (InboxPage's Updates list): a warning Update shows an amber dot
+  (`data-testid="message-tone"`, role img, accessible name "Worth a look"), as the session log
+  does, never the stored type "warning" as a word (design section 5 rule 6). Test:
+  apps/ui/test/chat-final.test.tsx. The phone's InboxScreen still shows `message.type` (phone
+  round).
+- Real-daemon cases: apps/ui/test/real-daemon.test.ts describe "l4-chat-final, run L4" (the
+  person's own note on a pause and on a failed task's card; a note the stand-in's model made up,
+  `FORERUNNER_BENCH_CHAT_NOTE`). No route or shape changed, so the fake daemon is unchanged.

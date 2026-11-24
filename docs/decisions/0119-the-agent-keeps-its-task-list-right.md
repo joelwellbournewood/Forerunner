@@ -279,3 +279,40 @@ data in the brief, that the Inbox's Try again with a note gives). An option that
 (Mark done anyway, Cancel task) answers with the option alone and its read-back names no note.
 A card that needs the paired device is still answered on its card in the Inbox, whose Try
 again has the note field.
+
+## Amendment 2026-11-24 (l4-chat-final, run L4): the person's own words in a chat note stay theirs
+
+Session lead decision 2026-11-24 (L4h-left-1): "a note is the person's when its words are in the
+person's own message; a note the model wrote without them is read back (L4f's rule, refined)."
+In chat every note reaches a command through the model's call, so under the rule above every
+chat note was the model's: "try the digest page again and tell it to use the old layout" was
+read back to the person as the model's note and queued as the agent's.
+
+- **Whose note** (`notesPersons`, packages/commands/src/commands/shared.ts): the person's own
+  command (a human actor, not a yes to the model's call), or a note whose words, together and in
+  order, are in the person's own line of a chat or voice turn (`wordsUsed`, set in code, kept
+  with a read-back across a restart; case, quotes and punctuation do not matter), not right
+  after a turning word of its clause ("not", "don't", "without", "nicht", "ohne" within four
+  words). Anything else is the model's.
+- **The person's note** is not read back to them (no 'Note for its next brief' clause), the Yes
+  says "Your note goes into its next brief." and the note is queued as theirs. On a task whose
+  card offers the move it answers the card's Try again with the note; on an option that takes
+  no note (Cancel task) it keeps the move, which carries the note, except on a card that needs
+  this computer's OK, which stays the one way to its answer.
+- **The model's note** is read back as before, said "The note goes into its next brief." and
+  stays the agent's. A reason or note the model wrote is never the task's reason on the
+  drawer's line (L4h-left-6, `givenReason`): in a chat or voice turn only the person's own words
+  stand; the session's and the app's own reasons are as before.
+- **A card that needs this computer's OK**, answered in chat, files nothing as before; its reply
+  now says where the note goes: "Answer it on its card in the Inbox: "X" failed 4 times.
+  Nothing else was filed; type your note there with Try again." or "..., and your note was not
+  kept." for an option without a note field (L4h-left-4).
+
+Not changed, for the session lead: chat's task_create acts at once at every level when the
+person says it (the parser's "add a task: ..." and the model's call alike; U-015, commands.md's
+parser table, the l4-chat-answers review). Design section 3.9 lists "add a task (ready)" among
+what chat can do and says "Changes are read back once in one line"; the owner's 2026-11-17
+answer is about read-backs that wait, not about which changes are read back; ADR 0119 point 7's
+"asks first at Advisor and Assisted" is about the agent's own fixes, not the person's words.
+Whether a new task the person asks for in chat is read back first is a choice about what the
+person sees; it stays as it is until it is decided.

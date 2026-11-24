@@ -10089,3 +10089,35 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 - **A task check's left-out words (L4b-left-3).** `changeWhat` (task-check.ts) says
   'adding "X"', 'splitting "X"', 'dropping "X"', 'the change to "X"', 'the order of "X"', and
   "a change" for a kind it does not know, in Details' "Left out: ..." and chat's `fixLeftOut`.
+
+## l4-chat-final (run L4, 2026-11-24): notes, suggestion cards settled once, take-outs finished
+
+- **Notes in chat** (packages/commands, commands.md "l4-chat-final"): the person's own words the
+  chat model passes as a note are the person's (not read back, "Your note", queued as theirs); a
+  note the model made up is read back and stays the agent's (ADR 0119 amended 2026-11-24).
+- **Suggestion cards settle once** (session/task-proposal.ts `settleProposal`): the mark is a
+  compare-and-set on the card's version (`humanRequest.update(id, version, ...)`); a card a crash
+  left at 'applying' is marked again unchanged the same way, and a `version_conflict` means
+  another sync settled or marked it: "skipped", not counted. The recovered path (a crash after
+  the apply) names each change the made row lacks in `left_out` with why it does not apply now
+  (`deps.check`), and admits the touched tasks with the made ones.
+- **The Done line follows what was applied** (daemon/task-proposal-words.ts): `onlyDrops` reads
+  the applied changes (`appliedChanges`: those no `left_out` line starts with); the apply records
+  `waits_for_you`, the title of a task only the person can do that every changed task still to
+  run waits for (directly or through other tasks; `waitsForYou`), and the line reads 'Changed 1
+  task; it waits for "Send the logo", which is yours to do.' ("Changed 2 tasks; they wait ...").
+- **A take-out cut short** (session/pr-answers.ts `finishTakeOuts`, run first by every
+  `syncPrAnswers`): a merged-through card marked 'taken_out' with no `take_out_result` asks
+  `TaskTakeOut.takeOut` again (it reads the merge record first: an open take-out answers "is
+  being taken out in #N") and writes the answer as the card's Answered line; one this process
+  runs now (`takingOutNow`) is left to it.
+- **Parser questions** (conversation/sentences.ts `parserQuestionReply`): options that hold a
+  comma are joined with "; " ("Options: The session budget, until then; The project budget,
+  permanently; Nothing.").
+- **Absence claims** (conversation/claims.ts `aboutNow`): "I don't see any changes." and "... any
+  sessions." are history (recall has them) and stay absence claims; sessions and changes are free
+  only with a word of now ("running", "open", "waiting", "right now", "for your yes").
+- Tests: packages/runtime/test/chat-fix-tasks.test.ts 'l4-chat-final, run L4' (composed twice on
+  one store), task-proposal-sync.test.ts, pr-answers-takeout.test.ts, chat-final.test.ts,
+  chat-carried-sentences.test.ts; chat-depth.test.ts and conversation-memory.test.ts assert the
+  exact stopped line "You stopped this answer: under CHF 0.01 spent." (L4h-left-2).
