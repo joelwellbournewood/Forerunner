@@ -561,6 +561,20 @@ describe("l4-github-link, run L4", () => {
       "Status on GitHub: the status issue is written when a task starts or a session ends.",
     );
     expect(status).not.toHaveTextContent("The other Forerunner");
+    // W8a-left-4 (c): the tab's line says who keeps these docs, not "Kept by the agent".
+    expect(within(docs).getByTestId("docs-kept-by")).toHaveTextContent(
+      /^The other Forerunner keeps these docs on GitHub; this project keeps only its status\.$/,
+    );
+    expect(docs).not.toHaveTextContent("Kept by the agent");
+  });
+
+  it("W8a-left-4 (c): a project of its own keeps its line: its agent keeps the docs and the critic checks them on a full review", async () => {
+    const harness = createHarness();
+    renderApp("/projects/proj_beacon/docs", harness);
+    const docs = await screen.findByTestId("docs");
+    expect(within(docs).getByTestId("docs-kept-by")).toHaveTextContent(
+      /^Kept by the agent; on a task with a full review the critic also checks they match the work\.$/,
+    );
   });
 
   it("L4-creds-23: the Data tab's import of a repository another project uses shows the daemon's sentence and imports nothing", async () => {

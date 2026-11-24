@@ -20530,7 +20530,7 @@ describe("d1109-onerepo-join, run C", () => {
     }
   }, 120_000);
 
-  it("C2-left-13: GET /projects/:id/docs of a project made with Work together says who writes each doc it does not have (notWrittenHere), never 'not written yet'; the same after the daemon starts again", async () => {
+  it("C2-left-13, W8a-left-4: GET /projects/:id/docs of a project made with Work together lists the ten rows, the guide first and the status last, and says who writes each doc it does not have (notWrittenHere), never 'not written yet'; its card is together; the same after the daemon starts again", async () => {
     const KITE = "01a1a000-0000-7000-8000-00000000c1ab";
     const host = new MemoryGitHost("bob");
     const repo = { owner: "o", name: "kite" };
@@ -20559,6 +20559,22 @@ describe("d1109-onerepo-join, run C", () => {
       expect(made.id).toBe(KITE);
       const check = async (c: DaemonClient) => {
         const rows = await c.docs(KITE);
+        // W8a-left-4 (d): the ten rows, the guide first and the status last.
+        expect(rows.map((r) => r.path)).toEqual([
+          "AGENTS.md",
+          "CLAUDE.md",
+          "README.md",
+          "docs/overview.md",
+          "docs/architecture.md",
+          "docs/decisions/README.md",
+          "docs/runbook.md",
+          "docs/data.md",
+          "docs/testing.md",
+          "docs/status.md",
+        ]);
+        // W8a-left-4 (c): the Docs tab's line reads the card's together kind (the other
+        // Forerunner keeps these docs), the same after the daemon starts again.
+        expect((await c.project(KITE)).repositoryElsewhere?.kind).toBe("together");
         const missing = rows.filter((r) => !r.exists && r.path !== "docs/status.md");
         expect(missing.length).toBeGreaterThan(0);
         for (const r of missing) {

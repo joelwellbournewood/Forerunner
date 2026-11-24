@@ -293,6 +293,14 @@ export function togetherDocNote(name: string): string {
     : "Another Forerunner writes this doc on GitHub; this project does not write docs.";
 }
 
+/**
+ * The Docs tab's line of a together project (W8a-left-4 (c), fixup-w8-status-write): the other
+ * Forerunner writes its docs on GitHub and this project only its status (its own comment on the
+ * status issue, the Status row), so the tab does not say "Kept by the agent".
+ */
+export const TOGETHER_DOCS_KEPT_BY =
+  "The other Forerunner keeps these docs on GitHub; this project keeps only its status.";
+
 /** Why a link was refused (`details.cause` of the 409): the UI's offer reads it. */
 export type LinkRefusalCause =
   | "repository_in_use"
