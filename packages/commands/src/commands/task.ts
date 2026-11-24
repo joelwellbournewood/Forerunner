@@ -467,9 +467,12 @@ const optionWord = (s: string) =>
  */
 export async function moveAsCardAnswer(
   ctx: CommandContext,
-  params: { task: string; project?: string | undefined },
+  params: { task: string; project?: string | undefined; note?: string | undefined },
   option: string,
-): Promise<{ name: "request.answer"; params: { request: string; answer: string } } | null> {
+): Promise<{
+  name: "request.answer";
+  params: { request: string; answer: string; note?: string };
+} | null> {
   if (ctx.source !== "chat" && ctx.source !== "voice") return null;
   if (!ctx.ports.cardWords) return null;
   const task = await findTask(params, ctx).catch(() => null);
@@ -481,7 +484,16 @@ export async function moveAsCardAnswer(
   for (const r of open) {
     const words = await ctx.ports.cardWords(r).catch(() => null);
     const choice = words?.choices.find((c) => optionWord(c.label) === optionWord(option));
-    if (choice) return { name: "request.answer", params: { request: r.id, answer: choice.label } };
+    // fixup-l4-selftasks-carried (the review of L4-selftasks-120): the note the move carried
+    // goes with an option that takes one (Try again), read back so the Yes covers it, and
+    // reaches the task's next brief as the Inbox's Try again with a note does. Before, the
+    // redirect dropped it unsaid.
+    const note = choice?.input === "note" ? params.note?.trim() : undefined;
+    if (choice)
+      return {
+        name: "request.answer",
+        params: { request: r.id, answer: choice.label, ...(note ? { note } : {}) },
+      };
   }
   return null;
 }

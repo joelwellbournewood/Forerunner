@@ -43,7 +43,7 @@ import { FakeContainerEngine } from "@forerunner/runtime/sandbox/fake-engine";
 import { fileBudgetStopCard } from "@forerunner/runtime/session/budget-card";
 import { clockTime } from "@forerunner/runtime/session/credential-wait";
 import { conflictNoticeSentence } from "@forerunner/runtime/session/dependent-branches";
-import { fileReviewFailedRequest } from "@forerunner/runtime/session/findings";
+import { fileFailedTaskCard, fileReviewFailedRequest } from "@forerunner/runtime/session/findings";
 import { answersBlockFor } from "@forerunner/runtime/session/person-questions";
 import { isIntakeSession } from "@forerunner/runtime/session/recovery";
 import { SECRET_NAMES } from "@forerunner/runtime/setup/wizard";
@@ -28749,6 +28749,61 @@ describe("l4-selftasks-carried, run L4", () => {
       ).specialists.find((s) => s.name === "coder");
       expect(coder?.writesNoFile).toBeNull();
     } finally {
+      await a.rt.close();
+    }
+  }, 60_000);
+
+  // fixup-l4-selftasks-carried (the review of L4-selftasks-120): chat's retry of a failed task,
+  // with words the model passed as its note, answers the task's card; the note goes with the
+  // card's Try again (whose words say "with your note, if any"), read back so the Yes covers
+  // it, and reaches the task's next brief. Before, the redirect dropped it unsaid.
+  it("fixup-l4-selftasks-carried: chat's Try again on a failed task's card carries the note the model passed, read back, stored with the choice and queued for the next brief", async () => {
+    const a = await open("fr-ui-real-l4-stcar-note-");
+    try {
+      const project = await a.client.createProject({
+        name: "Digest club",
+        goal: "A weekly digest page",
+      });
+      const task = await a.rt.store.task.insert({
+        project_id: project.id,
+        title: "Write the digest page",
+        outcome: "digest.html lists the week's news",
+        acceptance_criteria: ["digest.html exists"],
+        risk_tier: 1,
+        status: "failed",
+        priority: 5,
+        specialist: "coder",
+        reason: "Claude did not answer (model call failed).",
+        author_agent: a.rt.agent.id,
+      } as never);
+      const { request } = await fileFailedTaskCard({
+        store: a.rt.store,
+        task,
+        session: null,
+        humanId: a.me.id,
+        agentId: a.rt.agent.id,
+        runId: null,
+        reason: "Claude did not answer (model call failed).",
+      });
+      const asked = await a.chat(
+        project.id,
+        'tool: task_transition {"task": "Write the digest page", "to": "ready", "note": "Use the old layout."}',
+      );
+      expect(asked.pendingConfirmation?.readback).toBe(
+        'Try again ("Write the digest page" failed)? Tries again with your note, if any; it runs at your next Start. Note for its next brief: "Use the old layout."',
+      );
+      await a.chat(project.id, "yes");
+      expect((await a.rt.store.humanRequest.mustGet(request.id)).answer).toEqual({
+        choice: "Try again",
+        note: "Use the old layout.",
+      });
+      expect((await a.rt.store.task.mustGet(task.id)).status).toBe("ready");
+      const notes = await a.rt.store.queue.list({ project_id: project.id } as never, { limit: 20 });
+      expect(notes.filter((n) => n.kind === "note").map((n) => n.text)).toEqual([
+        expect.stringContaining("Use the old layout."),
+      ]);
+    } finally {
+      await settleSessions(a.rt);
       await a.rt.close();
     }
   }, 60_000);

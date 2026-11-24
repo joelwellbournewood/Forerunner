@@ -126,10 +126,11 @@ describe("l4-selftasks-carried, run L4: the redirect guards judge a note by who 
       r.id === card.id
         ? {
             title: '"Write the digest page" failed',
+            // As the daemon's card words say them: Try again takes a note (`input`).
             choices: [
-              { label: "Try again", explain: "Starts a session that tries again." },
-              { label: "Mark done anyway", explain: null },
-              { label: "Cancel task", explain: null },
+              { label: "Try again", explain: "Starts a session that tries again.", input: "note" },
+              { label: "Mark done anyway", explain: null, input: null },
+              { label: "Cancel task", explain: null, input: null },
             ],
             outcome: null,
           }
@@ -137,6 +138,7 @@ describe("l4-selftasks-carried, run L4: the redirect guards judge a note by who 
     return { task, card };
   }
   const MODEL_NOTE = "Put on hold by the person.";
+  const MODEL_NOTE_CLAUSE = 'Note for its next brief: "Put on hold by the person."';
 
   it("the chat model's note (as the agent, or on the person's line before their yes) answers the card; the person's own note moves the task with it", async () => {
     const w = await world();
@@ -153,8 +155,10 @@ describe("l4-selftasks-carried, run L4: the redirect guards judge a note by who 
         const asked = await w.executor.execute({ name, params, ctx });
         expect(asked.status, `${name} ${ctx.actor.kind}`).toBe("pending");
         expect(asked.card?.command, `${name} ${ctx.actor.kind}`).toBe("request.answer");
+        // fixup-l4-selftasks-carried (the review's non-blocking item): the note goes with the
+        // card's Try again, read back so the Yes covers it (before, it was dropped unsaid).
         expect((asked as { readback: string }).readback).toBe(
-          'Try again ("Write the digest page" failed)? Starts a session that tries again.',
+          `Try again ("Write the digest page" failed)? Starts a session that tries again. ${MODEL_NOTE_CLAUSE}`,
         );
         await w.executor.cancel((asked as { pendingId: string }).pendingId, w.ctx().actor);
       }
@@ -198,11 +202,59 @@ describe("l4-selftasks-carried, run L4: the redirect guards judge a note by who 
     expect(armed).toContain(pendingId);
     expect(again.getPending(pendingId)?.card.command).toBe("request.answer");
     expect(again.getPending(pendingId)?.readback).toBe(
-      'Try again ("Write the digest page" failed)? Starts a session that tries again.',
+      `Try again ("Write the digest page" failed)? Starts a session that tries again. ${MODEL_NOTE_CLAUSE}`,
     );
     const yes = await again.confirmByText(pendingId, "yes", w.ctx().actor);
     expect(yes.status).toBe("done");
-    expect((await w.store.humanRequest.mustGet(card.id)).answer).toBe("Try again");
+    // The card's answer carries the note as the Inbox's Try again with a note does, so the
+    // card's handler queues it for the task's next brief (`answerNote`).
+    expect((await w.store.humanRequest.mustGet(card.id)).answer).toEqual({
+      choice: "Try again",
+      note: MODEL_NOTE,
+    });
+    await w.store.close();
+  });
+
+  it("an option that takes no note answers the card with the option alone, and says no note; a move with no note answers it as before", async () => {
+    const w = await world();
+    const { card } = await failedWithCard(w);
+    const agent = { kind: "agent", id: w.agent.id } as const;
+    const plain = await w.executor.execute({
+      name: "task.transition",
+      params: { task: "digest", to: "ready" },
+      ctx: w.ctx({ actor: agent, source: "chat" }),
+    });
+    expect((plain as { readback: string }).readback).toBe(
+      'Try again ("Write the digest page" failed)? Starts a session that tries again.',
+    );
+    await w.executor.cancel((plain as { pendingId: string }).pendingId, w.ctx().actor);
+    const cancel = await w.executor.execute({
+      name: "task.transition",
+      params: { task: "digest", to: "cancelled", note: MODEL_NOTE },
+      ctx: w.ctx({ actor: agent, source: "chat" }),
+    });
+    expect(cancel.card?.command).toBe("request.answer");
+    expect((cancel as { readback: string }).readback).toBe(
+      'Cancel task ("Write the digest page" failed)?',
+    );
+    const yes = await w.executor.confirmByText(
+      (cancel as { pendingId: string }).pendingId,
+      "yes",
+      w.ctx().actor,
+    );
+    expect(yes.status).toBe("done");
+    expect((await w.store.humanRequest.mustGet(card.id)).answer).toBe("Cancel task");
+    await w.store.close();
+  });
+
+  it("request.answer's note parameter tells the model what to pass (the exact text it receives)", async () => {
+    const w = await world();
+    const def = w.registry.mustGet("request.answer");
+    const shape = (def.params as unknown as { shape: Record<string, { description?: string }> })
+      .shape;
+    expect(shape.note?.description).toBe(
+      "Only with an option that takes a note (Try again, Send it back): words the person gave for the next attempt, quoted as they said them; leave it out when they gave none.",
+    );
     await w.store.close();
   });
 });

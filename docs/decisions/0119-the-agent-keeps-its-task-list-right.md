@@ -239,3 +239,17 @@ project.changed and, when no turn of that conversation is running, conversation.
 conversation the card was read back in, so no header or Inbox badge keeps a stale "Waiting for
 you" (L4f-left-1). The redirect guards judge a note by who wrote it, the person or the model,
 also after a restart (L4-selftasks-120).
+
+## Amendment 2026-11-24 (fixup-l4-selftasks-carried, run L4): a note goes with the card's answer
+
+The review of the amendment above found that a move said in chat with a note, on a task whose
+card offers the move, became the card's answer and lost the note unsaid, while the card's Try
+again reads "Tries again with your note, if any". The note now goes with an option that takes
+one (Try again, Send it back: the card's words say `input: "note"`): `moveAsCardAnswer` passes
+it to `request.answer`'s new `note`, the read-back ends 'Note for its next brief: "Use the old
+layout."' so the Yes covers it, and the card is answered `{ choice, note }` as the Inbox answers
+it, so its handler queues the note for the task's next brief (the same queued note, quoted as
+data in the brief, that the Inbox's Try again with a note gives). An option that takes no note
+(Mark done anyway, Cancel task) answers with the option alone and its read-back names no note.
+A card that needs the paired device is still answered on its card in the Inbox, whose Try
+again has the note field.

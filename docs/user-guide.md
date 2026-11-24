@@ -1856,7 +1856,10 @@ tasks changed since I checked them" only when a task the changes name changed, o
 added or removed. An Undo you confirm in Chat says what is back ("Undone: the monthly cap is
 back to CHF 150.00."). A change made with your yes beside one the agent asked for is listed on
 Changes under both names ("J and Alice"). A note for a task's next brief is read back too when
-Chat wrote it for you, and only your own note is ever read as your instruction.
+Chat wrote it for you, and only your own note is ever read as your instruction. When you ask in
+Chat to try a failed task again with words for it ("try the digest page again and use the old
+layout"), Chat answers its card's Try again with those words as its note, read back first
+('... Note for its next brief: "Use the old layout."'), and the next attempt reads them.
 
 The reviewer reads and runs checks but writes no file: its findings are its report, which you
 read in the task's drawer. New task and Edit say so when you pick it, naming the file your

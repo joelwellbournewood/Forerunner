@@ -305,7 +305,11 @@ export interface CommandPorts {
    */
   cardWords?(request: HumanRequestRow): Promise<{
     title: string;
-    choices: { label: string; explain: string | null }[];
+    /**
+     * `input: "note"`: the option takes a note for the next attempt (Try again, Send it back),
+     * as the Inbox's note field does (fixup-l4-selftasks-carried); absent or null: none.
+     */
+    choices: { label: string; explain: string | null; input?: "note" | "text" | null }[];
     outcome: string | null;
   } | null>;
   /**

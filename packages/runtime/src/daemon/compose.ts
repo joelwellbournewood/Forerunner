@@ -5157,7 +5157,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         return view
           ? {
               title: view.title ?? request.why,
-              choices: (view.choices ?? []).map((c) => ({ label: c.label, explain: c.explain })),
+              choices: (view.choices ?? []).map((c) => ({
+                label: c.label,
+                explain: c.explain,
+                input: c.input ?? null,
+              })),
               outcome: view.outcome ?? null,
             }
           : null;

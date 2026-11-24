@@ -1105,7 +1105,12 @@ l4-money-pause, run L4 (2026-11-22, L4-money-109): `SETTING_SPECS.session_reserv
 - **The redirect guards judge a note by its author (L4-selftasks-120).** `ownNote(ctx, note)`
   in task.ts: a note is the person's only when `ctx.onPersonsWords` or the actor is the human;
   task.transition and task.resume's answer-the-card redirect uses it, also when the card is
-  armed again after a restart (the stored actor).
+  armed again after a restart (the stored actor). The note a redirected move carries goes with
+  an option that takes one (fixup-l4-selftasks-carried, ADR 0119 amended 2026-11-24): the
+  `cardWords` port's choices say `input: "note"`, `moveAsCardAnswer` passes `note` to
+  `request.answer` (`ANSWER_NOTE_DESCRIPTION`, the text the model is given), whose ask ends 'Note
+  for its next brief: "..."' and whose run answers `{ choice, note }` (`answerNote` reads it);
+  an option without a note field answers with the option alone.
 - **An Undo read back in chat says what is back (L4f-left-3).** `performUndo(changeLogId, ctx,
   shown)` builds the sentence from the card as read back ('Undone: the monthly cap is back to
   CHF 150.00.'), also after a restart (`UNDO_UNKNOWN_BEFORE` when the card holds no value).

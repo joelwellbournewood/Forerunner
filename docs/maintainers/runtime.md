@@ -10013,6 +10013,10 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   in the Inbox (fixup-l4-selftasks-carried; before, a lapse emitted inbox.changed twice, the
   first before the Update was filed). server.ts `heardChat` no longer emits for a card the turn answered; it still
   tells a card the turn filed and the projects its changes touched.
+- **A card's words say which option takes a note.** compose's `cardWords` port passes each
+  choice's `input` (`"note"` for Try again and Send it back), so a move said in chat with a note
+  answers the card with the note (commands.md; fixup-l4-selftasks-carried). Test:
+  apps/ui/test/real-daemon.test.ts "chat's Try again on a failed task's card carries the note".
 - **Change rows by the person and the agent (L4f-left-4).** `ChangeLogView.byYouAndAgent`
   (change-rows.ts) when a row has `author_human` and `author_agent`; recall's `whoOf` says "You
   and Alice" (before, a row by the agent alone read "You").
