@@ -15,6 +15,57 @@ has approved this plan and asked for it to be done thoroughly, hands-on, for rea
   header `x-api-key` and no prefix. **Step 0 below checks which one works.** Never print, log or
   commit the key; never ask the owner to paste it into chat.
 
+## Status at 2026-11-24 10:30 UTC (run L4 complete; wave 8 being re-planned)
+
+**Head: c15d75e** (pushed). CI run 337 on it is green on Windows and Linux; the Desktop app
+workflow run 93 was still running when this was written (run 92 on 0c89b72 was green). Weekly
+usage: 55% at 08:05 UTC, rising about 1% an hour; work wraps up at about 86% and continues after
+the reset on Sunday 2026-11-29 at 05:00 UTC.
+
+- **Run L4 is complete.** Nine sub-runs, L4a to L4i, 15 areas, merged one at a time from 22 to
+  24 November, each fixed, reviewed independently on the bench, fixed up where the review found
+  a blocking problem, merged with the full validation and the smoke journey, then pushed and
+  green in CI. The fixers made 166 fixes and the reviews' fix-ups 50 more. The last sub-run, L4i
+  (`l4-starts-carried`, `l4-chat-final`, `l4-github-carried`, with the owner's Close button for
+  a cancelled task's pull request), merged at c15d75e: 39 signed commits; after the merge 6297
+  unit, 1548 UI, 40 Playwright, 25 e2e, 63 live-harness and 92 injection cases passed, and the
+  smoke journey 25 of 25.
+- **0c89b72** gave three git-heavy cases in `packages/runtime/test/loop-docs.test.ts` the 60 s
+  timeout the runtime's other git cases use (CI 335 on Windows ran one past the 20 s default;
+  no assertion changed).
+- **Leftovers of run L4's last sub-run**: `frbench/leftovers-L4i.json` (67 raw items, many
+  repeated across stages). Never cut: the phone's plain "start" (remote watcher) skips POST
+  /sessions' refusals, the monthly cap among them (phase H, or wave 8 if an area touches the
+  remote watcher); W15-01's sole-linked rule lets the scaffold and Try again write into another
+  project's unmarked open `fr/docs-scaffold` pull request (wave 8). Early: the UpdatesPage
+  `me?.id ?? "human"` race behind one `e2e/updates.spec.ts` failure. Decided: an Assisted chat
+  task's description is read back only when the model wrote it (the L4h-left-1 rule).
+- **Wave 8 re-plan, under way** (workflow `wf_c1e0c5cc-9d7`): readers wrote
+  `frbench/wave8-codemap.md`, `frbench/wave8-oldplan-mapped.json` and
+  `frbench/wave8-leftovers-classified.json`; a planner writes `frbench/wave8-plan.json` (about
+  10 areas in sub-runs of two or three, the run L4 area shape), four independent checkers test
+  it (code truth, the owner's decisions and words, validation, security and money, completeness
+  and size) and the planner revises it. The frame is `frbench/wave8-replan-brief.md` and the
+  owner's D9: each person runs their own Forerunner with their own keys and budgets; one project
+  per repository; the pinned status issue is where each Forerunner announces its work.
+- **Owner items** (none blocking): a second GitHub account for wave 8's live two-person check;
+  requirements F.1 to F.7 re-based on GitHub (asked once the plan is checked); the decisions the
+  owner can overrule are listed in the plan files' decisions and on the status dashboard.
+
+**To continue:**
+
+1. Restore `/tmp/frbench` from `claude/nifty-knuth-f9udt0-backup/plan-files` if it is missing
+   (as in step 1 below).
+2. If `frbench/wave8-plan.json` has its `check_answers`, the re-plan finished; else resume the
+   workflow from its script with `resumeFromRunId: wf_c1e0c5cc-9d7`.
+3. Put wave 8's areas into `frbench/phaseE.json`, build each sub-run's workflow copy from
+   `forerunner-phase-e6.js` the way `build-runL4-args.cjs` does, and run the sub-runs one at a
+   time, with the same post-processing as run L4 (save the stage reports, check the merge, the
+   push and the signatures, CI and the Desktop app on Windows and Linux, place the leftovers,
+   back up the plan files).
+4. Then F (the final check: `runL4-plan.json` final_check plus wave 8's additions; live budget
+   used so far USD 16.50 of the owner's USD 40), G, G2 and H as described below.
+
 ## Status at 2026-11-17 16:50 UTC (run C done, live check 4 done, run L4 planned; paused at the weekly limit)
 
 Session `claude/nifty-knuth-f9udt0` paused here because the owner asked to stop at 90% of the
