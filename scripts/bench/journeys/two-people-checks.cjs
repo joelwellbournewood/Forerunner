@@ -133,8 +133,10 @@ const STEPS = [
       {
         id: "one-status-issue",
         name: "one open issue 'Forerunner status: Team site' after both sessions",
-        known: true,
-        owner: "w8-status-write",
+      },
+      {
+        id: "two-status-comments",
+        name: "one comment of each home on it, by ada and bob, with no money and no raw id",
       },
     ],
   },
@@ -189,8 +191,6 @@ const STEPS = [
       {
         id: "status-words-offline",
         name: "Bob's app: 'Status on GitHub: last updated ...; it updates when GitHub answers.'",
-        known: true,
-        owner: "w8-status-write",
       },
     ],
   },

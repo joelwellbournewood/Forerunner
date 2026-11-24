@@ -788,4 +788,117 @@ describe("w8-status-write, wave 8: the writer", () => {
         github.writesBy("ada").filter((w) => w.number === n && w.op !== "createPullRequest"),
       ).toEqual([]);
   });
+
+  it("A task's start and end change the writer's Working on now line within one update; a paused task is listed with what is done and left and its checks (W8-write-4)", async () => {
+    const { github, make } = await world();
+    const ada = await make("ada", "dev-ada", "Ada's agent");
+    const task = await ada.store.task.insert({
+      project_id: K,
+      title: "Add a footer to footer.html",
+      status: "in_progress",
+    });
+    ada.board.taskStarted(K, task);
+    await ada.board.settled();
+    const comment = async () => (await commentsOn(github, 1))[0]?.body ?? "";
+    expect(await comment()).toMatch(
+      /\nWorking on now\n- "Add a footer to footer\.html" · files footer\.html · since 21:00 · until 22:30 UTC\n/,
+    );
+    // The task ends (paused at its budget, with its handoff and its kept work's checks).
+    await ada.store.task.patch(task.id, { status: "needs_human" });
+    const session = await ada.store.session.insert({
+      agent_id: (await ada.store.agent.list({}))[0]?.id as string,
+      project_id: K,
+      trigger: "manual",
+      plan: {},
+      budget_cap_usd_micro: 1,
+      step_cap: 1,
+      spent_usd_micro: 0,
+      steps: 0,
+      status: "running",
+      summary: "",
+      handoff: {},
+      runner: "pc",
+    });
+    await ada.store.run.insert({
+      task_id: task.id,
+      session_id: session.id,
+      specialist: "coder",
+      model: "m",
+      provider: "fake",
+      effort: "medium",
+      cost_usd_micro: 1000,
+      outcome: "paused",
+      artifacts: [
+        {
+          handoff: {
+            stopped: "The footer is in footer.html; ask ada@example.com, it used CHF 1.20",
+            leftToDo: ["Style the footer", "Link it from @bob's page"],
+            stoppedBy: "budget",
+          },
+        },
+        { kept: { hash: "h", checks: [{ name: "npm run test", passed: true, output: "" }] } },
+      ],
+    });
+    ada.board.taskBoundary(K);
+    await ada.board.settled();
+    const text = await comment();
+    expect(text).not.toContain("Working on now");
+    expect(text).toContain(
+      '\nPaused\n- "Add a footer to footer.html" · done: The footer is in footer.html; ask, it used · left: Style the footer; Link it from bob\'s page · the checks pass on the kept work\n',
+    );
+    for (const line of text.split("\n").filter((l) => !isMarkerLine(l)))
+      expect(holdsPrivateText(line), line).toBe(false);
+  });
+
+  it("W8-write-8: a deleted issue gets one new issue and the person is told once", async () => {
+    const { github, make } = await world();
+    const ada = await make("ada", "dev-ada", "Ada's agent");
+    ada.board.sessionEnded(K, { endedAt: "2026-11-24T21:10:00.000Z", done: [], next: [] });
+    await ada.board.settled();
+    expect(ada.board.read(K).issue).toBe(1);
+    // GitHub's page deleted it: the stored number answers 404 and no list holds it.
+    const gone = new Proxy(github.asLogin("ada"), {
+      get(target, prop) {
+        const value = Reflect.get(target, prop);
+        if (typeof value !== "function") return value;
+        if (prop === "getIssue")
+          return (repo: unknown, n: number) =>
+            n === 1
+              ? Promise.reject(new ForerunnerError("not_found", "issue 1 not found"))
+              : (value as (...a: unknown[]) => unknown).apply(target, [repo, n]);
+        if (prop === "listIssues")
+          return async (...args: unknown[]) =>
+            (
+              (await (value as (...a: unknown[]) => Promise<{ number: number }[]>).apply(
+                target,
+                args,
+              )) as { number: number }[]
+            ).filter((i) => i.number !== 1);
+        return (...args: unknown[]) => (value as (...a: unknown[]) => unknown).apply(target, args);
+      },
+    });
+    const board = new StatusBoard({
+      store: ada.store,
+      clock: new SimulatedClock("2026-11-24T21:20:00.000Z"),
+      host: async () => gone as unknown as GitHost,
+      writerId: () => "dev-ada",
+      agentName: async () => "Ada's agent",
+      projectsRoot: join(ada.root, "projects"),
+      tell: async (_p, body) => {
+        ada.told.push(body);
+      },
+      bodyIntervalMs: 0,
+    });
+    board.sessionEnded(K, { endedAt: "2026-11-24T21:20:00.000Z", done: [], next: [] });
+    await board.settled();
+    const issue = board.read(K).issue as number;
+    expect(issue).toBeGreaterThan(1);
+    expect(ada.told).toEqual([
+      "The status issue #1 is gone from GitHub, so Forerunner opened a new one.",
+    ]);
+    board.sessionEnded(K, { endedAt: "2026-11-24T21:30:00.000Z", done: [], next: [] });
+    await board.settled();
+    expect(board.read(K).issue).toBe(issue);
+    expect(ada.told).toHaveLength(1);
+  });
 });
