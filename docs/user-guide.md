@@ -1942,3 +1942,35 @@ the next time it starts.
   merged.
 - A pull request rebuilt without the one it built on is listed under "Rebuilt since the
   critic's review": look at it before you merge.
+
+### The repository guide, decisions by day, and docs pull requests that are not yours (2026-11-24)
+
+- Every repository a project of yours uses gets **AGENTS.md** and a one-line **CLAUDE.md** with
+  its docs. AGENTS.md is the guide for people and their agents: it says the repository is your
+  Forerunner project, that someone who wants to work on it links it in their own Forerunner and
+  chooses **Work together**, where things are, which branch nobody pushes to, who presses Merge,
+  the checks to run, and what an agent does when it leaves work unfinished. Forerunner writes
+  only its own part, between two hidden marks; whatever you wrote in AGENTS.md stays as you
+  wrote it.
+- Forerunner keeps the guide current: when something it says changes (the project's name or
+  goal, who merges, the checks), the next session's end opens one docs pull request with the new
+  guide. Nothing changed, nothing is opened, also after a restart.
+- There is no docs/status.md in your repository any more: the project's status is in the app
+  (Docs, Status). An untouched status file Forerunner wrote earlier is taken out in its next docs
+  pull request; one you wrote yourself stays.
+- If you work on a project **together** with another Forerunner, its guide and docs are that
+  Forerunner's: your Docs tab says "The other Forerunner of "<name>" writes this doc on GitHub;
+  this project does not write docs.", and your Forerunner never writes them.
+- New decisions are files named by the day, such as `docs/decisions/2026-11-24-hosting.md`, so
+  two people's decisions never clash. Your answers to the plan's questions in the Inbox go to the
+  project's decision record, and the card names the file.
+- A task pull request that changes AGENTS.md or CLAUDE.md says so at the top: read it before you
+  merge, since other people's agents follow it.
+- A docs pull request on your repository that names no project (one somebody else opened) is
+  never written to by your Forerunner. The Overview lists it without Merge: "#N names no
+  project, so it is only listed here: open it on GitHub to see whose it is."
+- **Try again** on a take-over now says what stopped it: another docs pull request is open (close
+  it on GitHub), the scaffold's branches hold another project's docs (delete fr/docs-scaffold on
+  GitHub), GitHub did not answer (try again in a moment), or the saved token cannot push. A
+  take-over you made with a brief whose plan's docs pull request could not be opened shows the
+  same line with Try again.

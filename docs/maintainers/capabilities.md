@@ -1136,3 +1136,13 @@ Tests: `test/githost-issues.test.ts` (describe "w8-issue-host, wave 8: issue hos
 `apps/ui/test/two-installs.test.ts` ("w8-issue-host, wave 8: issue host"). What only real GitHub
 shows (the pin's GraphQL answer, a fourth pin, the permission read's 404 for a read-only token,
 a 304 on GitHub's own ETag) is in the area's live steps.
+
+### Unfinished work and the guide line (w8-repo-guide, wave 8, ADR 0121)
+
+`UNFINISHED_WORK_RULES` (`githost/pr-executor.ts`) is the one list of what an agent does when it
+leaves work unfinished; the repository guide (`renderGuidePart`) and the work-in-progress commit
+(`workInProgressMessage`, headings `WIP_STOPPED_HEADING` "Where I stopped:" and
+`WIP_LEFT_HEADING` "Left to do:") read it (W8-guide-5). `guideChangeLine(changedFiles)` is the
+sentence a task pull request's body and the critic's evidence carry when the task changed
+AGENTS.md or CLAUDE.md: "This changes AGENTS.md, the guide other people's agents follow in this
+repository: read it before merging." (W8-guide-6). Test: `pr-executor.test.ts` "W8-guide-6".

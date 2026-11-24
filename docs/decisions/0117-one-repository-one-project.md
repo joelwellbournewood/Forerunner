@@ -397,3 +397,26 @@ listed nowhere after the join when the kept project's own Status pull request se
    hours; the held start keeps no time to name). A project closed into another drops its stored
    "Left N reviewed pull requests for you to merge." from its last result: the join moved those
    pull requests, and "Its tasks went on in ..." says where.
+
+## Amendment (2026-11-24, wave 8, w8-repo-guide): Try again says what stopped it; an intake's failed docs; the rebuild keeps main's newer files
+
+1. **What a refused Try again says (L4i-left-5, -6, -7).** The repository is named as the line
+   above it names it (`owner/name`, never the URL the person typed). The sentence says what
+   stopped the scaffold: "The docs pull request still could not be opened: another docs pull
+   request is open on team/old; close it on GitHub, then try again." (a docs pull request that
+   is not this project's is open on its branch; before: "another project's docs pull request",
+   untrue for one that names no project); "...: its branches on team/old hold another project's
+   docs; delete fr/docs-scaffold on GitHub, then try again." (every scaffold branch is another's);
+   "...: GitHub did not answer. Try again in a moment." (unreachable, a timeout); "...: check
+   that the saved GitHub token can push to team/old, then try again." (refused). A press with
+   nothing to try answers by the state: "There is nothing to try again: this project has no
+   repository on GitHub." or "There is nothing to try again: this project took no repository
+   over." (else the existing nothing-to-retry line).
+2. **A take-over made with a brief (L4i-left-8).** Its docs are the intake's; the intake now
+   records its docs outcome on the project as the scaffold does (`summary_cache.docs.intake_at`
+   with the pull request or the error), so a docs pull request GitHub did not let it open shows
+   the no-pull-request line with Try again (also after a restart), and Try again opens the
+   scaffold's docs pull request.
+3. **The take-over's rebuild (C4L-2) keeps main's newer files (L4i-left-14).** A file the
+   default branch changed after the scaffold branch left it (another Forerunner's merged docs)
+   keeps the default branch's version; only what the branch alone changed is carried over.

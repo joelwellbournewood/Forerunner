@@ -32,7 +32,6 @@ const STEPS = [
       {
         id: "guide-in-docs-pr",
         name: "Ada's docs pull request has AGENTS.md and CLAUDE.md, and no docs/status.md",
-        known: true,
         owner: "w8-repo-guide",
       },
     ],
