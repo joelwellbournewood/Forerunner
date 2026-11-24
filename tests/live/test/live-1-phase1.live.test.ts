@@ -1,4 +1,9 @@
-import { type ModelTier, modelIdFor, type SessionResult } from "@forerunner/runtime";
+import {
+  DOCS_SCAFFOLD_BRANCH,
+  type ModelTier,
+  modelIdFor,
+  type SessionResult,
+} from "@forerunner/runtime";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { budgetLine } from "../src/budget.ts";
 import { composeLive, type LiveHarness } from "../src/harness.ts";
@@ -235,7 +240,13 @@ describe(`phase 1 gate, live half on the API key${LIVE ? "" : ` (${SKIP_REASON})
         res.completed.length + res.inReview.length + res.retried.length,
         "every task was worked",
       ).toBe(3);
-      expect(prs.filter((p) => p.head.ref.startsWith("fr/"))).toHaveLength(3);
+      // One pull request per task; the guide's docs pull request (W8-guide-1, ADR 0121) that a
+      // session's end opens on a repository without a guide is not a task's.
+      expect(
+        prs.filter(
+          (p) => p.head.ref.startsWith("fr/") && !p.head.ref.startsWith(DOCS_SCAFFOLD_BRANCH),
+        ),
+      ).toHaveLength(3);
       expect(runs.filter((r) => r.outcome === "budget_exceeded")).toEqual([]);
       expect(runs.filter((r) => r.specialist === "coder")).toHaveLength(3);
       expect(runs.every((r) => r.model === modelIdFor("sonnet", "anthropic"))).toBe(true);

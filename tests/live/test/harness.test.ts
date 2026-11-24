@@ -4,6 +4,7 @@ import { closingReply, specialistReportTurn, specialistTurn, submitReview } from
 import { join, Logger, type LogRecord, SimulatedClock } from "@forerunner/platform";
 import {
   BILLING_PICK_AUDIT_TOOL,
+  DOCS_SCAFFOLD_BRANCH,
   loadRegistry,
   type QueryLike,
   SDK_RUN_PROVIDER,
@@ -192,8 +193,21 @@ describe("live harness dry run (scripted provider, no network)", () => {
     expect([...res.completed, ...res.inReview]).toEqual([task.id]);
     expect(events).toContain("task.started");
     const prs = await h.app.gitHost.listPullRequests({ owner: h.repo.owner, name: h.repo.name });
-    expect(prs).toHaveLength(1);
-    expect(prs[0]?.head.ref).toMatch(/^fr\//);
+    // W8-guide-1 (ADR 0121): the repository had no guide, so the session's end also opens the
+    // one docs pull request that brings it, beside the task's own.
+    const taskPrs = prs.filter((p) => p.head.ref !== DOCS_SCAFFOLD_BRANCH);
+    expect(taskPrs).toHaveLength(1);
+    expect(taskPrs[0]?.head.ref).toMatch(/^fr\//);
+    expect(prs.filter((p) => p.head.ref === DOCS_SCAFFOLD_BRANCH)).toHaveLength(1);
+    expect(
+      (
+        await h.app.gitHost.getFile(
+          { owner: h.repo.owner, name: h.repo.name },
+          "AGENTS.md",
+          DOCS_SCAFFOLD_BRANCH,
+        )
+      )?.content,
+    ).toContain('This repository is the Forerunner project "Dry run".');
 
     // Every model call (coder turns, critic turns) is one ledger row of this run, priced.
     const rows = h.ledger.rows();
@@ -417,7 +431,19 @@ describe("live harness dry run of the subscription half (fake SDK query, no netw
     expect(res.failed).toEqual([]);
     expect([...res.completed, ...res.inReview]).toEqual([task.id]);
     const prs = await h.app.gitHost.listPullRequests({ owner: h.repo.owner, name: h.repo.name });
-    expect(prs).toHaveLength(1);
+    // W8-guide-1 (ADR 0121): the repository had no guide, so beside the task's pull request the
+    // session's end opens the one docs pull request that brings it.
+    expect(prs.filter((p) => p.head.ref !== DOCS_SCAFFOLD_BRANCH)).toHaveLength(1);
+    expect(prs.filter((p) => p.head.ref === DOCS_SCAFFOLD_BRANCH)).toHaveLength(1);
+    expect(
+      (
+        await h.app.gitHost.getFile(
+          { owner: h.repo.owner, name: h.repo.name },
+          "AGENTS.md",
+          DOCS_SCAFFOLD_BRANCH,
+        )
+      )?.content,
+    ).toContain('This repository is the Forerunner project "Dry run sub".');
 
     // The SDK driver ran the coder: one fake query call with the token in its environment, the
     // `cc:` names minus Bash, the worktree as its working directory.

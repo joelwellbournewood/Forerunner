@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { closingReply, specialistReportTurn, specialistTurn, submitReview } from "@forerunner/e2e";
 import { type EvalTask, loadEvalSet, runCheck, writeFiles } from "@forerunner/evals";
 import { join, SimulatedClock } from "@forerunner/platform";
-import { MODE_DEFAULTS, modelIdFor, type RunEvent } from "@forerunner/runtime";
+import {
+  DOCS_SCAFFOLD_BRANCH,
+  MODE_DEFAULTS,
+  modelIdFor,
+  type RunEvent,
+} from "@forerunner/runtime";
 import { FakeProvider, textReply, toolReply } from "@forerunner/testenv";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { budgetLine } from "../src/budget.ts";
@@ -180,7 +185,11 @@ async function researcherSession(h: LiveHarness, task: EvalTask): Promise<Resear
     { owner: h.repo.owner, name: h.repo.name },
     { state: "all" },
   );
-  const branch = prs.find((p) => p.head.ref.startsWith("fr/"))?.head.ref ?? null;
+  // The task's own branch: since W8-guide-1 (ADR 0121) the session's end may also open the
+  // guide's docs pull request on a repository that has none.
+  const branch =
+    prs.find((p) => p.head.ref.startsWith("fr/") && !p.head.ref.startsWith(DOCS_SCAFFOLD_BRANCH))
+      ?.head.ref ?? null;
   const file = branch
     ? await h.app.gitHost.getFile({ owner: h.repo.owner, name: h.repo.name }, "answer.md", branch)
     : null;
