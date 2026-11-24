@@ -18487,12 +18487,16 @@ describe("d1109-onerepo-link, run C", () => {
       });
       // L4-github-102 (run L4): the Overview says it too, never nothing (before: no line, as if
       // GitHub now named this project).
+      // l4-github-carried (L4e-left-1, OQ-L4e-1's default): the outcome line carries its Try
+      // again (`outcome`, `tryAgainLine`).
       const saidOnOverview = {
         kind: "elsewhere",
         text: noPr,
         canTakeOver: false,
         takeOverLine: null,
         details: null,
+        outcome: "took_over_no_pull_request",
+        tryAgainLine: "Tries again to open the docs pull request that names this project.",
       };
       expect((await client.project(made.id)).repositoryElsewhere).toEqual(saidOnOverview);
       // The other project's pull request is untouched (no push, comment or close).
