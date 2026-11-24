@@ -77,8 +77,12 @@ fallback), so Ada's Forerunner wrote onto Bob's pull request (L4i-left-2).
    request is this project's by its recorded address (`summary_cache.docs.pr_url`), its hidden
    mark, its L-16 line, or its branch's own `.forerunner/project.json` naming the project; one
    that names no project is never written to, commented on or rebuilt. The Overview lists it
-   without Merge: "#N names no project, so it is only listed here: open it on GitHub to see
-   whose it is." The sole-linked fallback stays only for the status writer (w8-status-write).
+   apart, under "Also open on GitHub", as "Docs pull request #N" with Open and without Merge:
+   "#N names no project, so it is only listed here: open it on GitHub to see whose it is." It is
+   never under "Waiting for you to merge" or "Forerunner's docs, merge them when you like", and
+   never titled "The project's standard docs" (the review of fix/w8-repo-guide: three untrue
+   claims about another person's pull request on one screen). The sole-linked fallback stays
+   only for the status writer (w8-status-write).
 
 ## Consequences
 

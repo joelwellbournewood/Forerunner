@@ -30459,11 +30459,24 @@ describe("w8-repo-guide, wave 8: Try again names the repository as its line does
         head: "fr/docs-scaffold-notes",
       });
       const listed = (await client.projectPullRequests(plain.id)).waiting;
+      // fixup-w8-repo-guide: its own kind, which the Overview lists under "Also open on GitHub",
+      // titled without a claim about it (before: "docs", "The project's standard docs").
+      expect(listed.find((r) => r.number === theirs.number)).toMatchObject({
+        kind: "listed",
+        taskId: null,
+        title: `Docs pull request #${theirs.number}`,
+        review: null,
+      });
       expect(listed.find((r) => r.number === theirs.number)?.merge).toEqual({
         state: "blocked",
         canMerge: false,
         sentence: `#${theirs.number} names no project, so it is only listed here: open it on GitHub to see whose it is.`,
         first: [],
+      });
+      // "Open this version" is not offered for it either: it does not wait to be merged.
+      expect(await client.previewPullRequest(plain.id, theirs.number)).toMatchObject({
+        state: "refused",
+        sentence: `#${theirs.number} does not wait to be merged: it may be merged or closed already.`,
       });
       const named = await host.openPullRequestAs(plainRepo, "bob", {
         title: "docs: more",

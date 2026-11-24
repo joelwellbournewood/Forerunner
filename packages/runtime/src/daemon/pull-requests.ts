@@ -240,6 +240,16 @@ export function unmarkedDocsSentence(n: number): string {
 }
 
 /**
+ * fixup-w8-repo-guide (review of L4i-left-2): the title of such a row (`kind: "listed"`): it
+ * says what it is and nothing about whose it is or what it holds. Before, it was titled "The
+ * project's standard docs" and listed under "Waiting for you to merge" > "Forerunner's docs,
+ * merge them when you like", three untrue claims about another person's pull request.
+ */
+export function listedDocsTitle(n: number): string {
+  return `Docs pull request ${prName(n)}`;
+}
+
+/**
  * L3-github-1: the press whose check of the branch could not run now (its folder busy, GitHub
  * silent): nothing merges, the check is owed and the watcher runs it within a minute.
  */
@@ -529,10 +539,12 @@ export class ProjectPullRequests {
           : docsPrListing(project, pr, { soleLinked });
         if (!listing) continue;
         if (listing === "listed") {
+          // Its own kind, which the Overview lists apart under "Also open on GitHub" (never under
+          // "Waiting for you to merge" or "Forerunner's docs"), with a title that claims nothing.
           rows.push({
-            kind: "docs",
+            kind: "listed",
             taskId: null,
-            title: docsTitle(pr.head.ref),
+            title: listedDocsTitle(pr.number),
             number: pr.number,
             url: pr.htmlUrl,
             branch: pr.head.ref,
@@ -666,8 +678,13 @@ export class ProjectPullRequests {
     if (!ref) return refused("This project has no repository.");
     const view = await this.view(project);
     if (view.error) return refused(view.error);
-    // A cancelled task's open pull request (L3-github-10) does not wait to be merged either.
-    if (!view.waiting.some((r) => r.number === number && r.kind !== "cancelled"))
+    // A cancelled task's open pull request (L3-github-10) does not wait to be merged either, nor
+    // does a docs pull request that names no project (`listed`, L4i-left-2).
+    if (
+      !view.waiting.some(
+        (r) => r.number === number && r.kind !== "cancelled" && r.kind !== "listed",
+      )
+    )
       return refused(
         `${prName(number)} does not wait to be merged: it may be merged or closed already.`,
       );

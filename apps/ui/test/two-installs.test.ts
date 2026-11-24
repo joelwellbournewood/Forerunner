@@ -435,10 +435,27 @@ describe("w8-repo-guide, wave 8: a docs pull request this install did not open i
         });
         expect(await branchSha(shared)).toBe(bobs.sha);
         expect(two.writesBy("ada").filter((w) => w.number === bobs.pr.number)).toEqual([]);
+        // fixup-w8-repo-guide: listed apart ("listed", the Overview's "Also open on GitHub"),
+        // with a title that claims nothing about it (before: "docs", "The project's standard
+        // docs", under "Waiting for you to merge").
         const listed = (await ada.client.projectPullRequests(made.id)).waiting;
-        expect(listed.map((r) => [r.number, r.kind, r.merge?.canMerge, r.merge?.sentence])).toEqual(
-          [[bobs.pr.number, "docs", false, LISTED_ONLY(bobs.pr.number)]],
-        );
+        expect(
+          listed.map((r) => [r.number, r.kind, r.title, r.merge?.canMerge, r.merge?.sentence]),
+        ).toEqual([
+          [
+            bobs.pr.number,
+            "listed",
+            `Docs pull request #${bobs.pr.number}`,
+            false,
+            LISTED_ONLY(bobs.pr.number),
+          ],
+        ]);
+        // Merge on it is refused with its line, and nothing is written to it.
+        expect(await ada.client.mergePullRequest(made.id, bobs.pr.number)).toEqual({
+          state: "refused",
+          sentence: LISTED_ONLY(bobs.pr.number),
+          order: [],
+        });
 
         // 2. A take-over: team/old's main names "Old site", which no computer here has; Bob's
         // unmarked pull request is open on its fr/docs-scaffold. Ada takes it over.
@@ -474,9 +491,14 @@ describe("w8-repo-guide, wave 8: a docs pull request this install did not open i
           (await two.pullRequests(oldRepo)).map((p) => [p.number, p.head.ref, p.authorLogin]),
         ).toEqual([[bobsOld.pr.number, "fr/docs-scaffold", "bob"]]);
         const oldListed = (await ada.client.projectPullRequests(took.id)).waiting;
-        expect(oldListed.map((r) => [r.number, r.merge?.canMerge])).toEqual([
-          [bobsOld.pr.number, false],
+        expect(oldListed.map((r) => [r.number, r.kind, r.title, r.merge?.canMerge])).toEqual([
+          [bobsOld.pr.number, "listed", `Docs pull request #${bobsOld.pr.number}`, false],
         ]);
+        expect(
+          two
+            .writesBy("ada")
+            .filter((w) => w.repo === "team/shared" && w.number === bobs.pr.number),
+        ).toEqual([]);
       } finally {
         removeHomes([work]);
         await two.close();

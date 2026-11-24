@@ -9591,8 +9591,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (!Number.isInteger(number) || number <= 0)
       return errorBody(c, 400, "validation", "not a pull request number");
     const prs = state.pullRequests[id];
-    // A cancelled task's open pull request (L3-github-10) does not wait to be merged either.
-    const row = prs?.waiting.find((r) => r.number === number && r.kind !== "cancelled");
+    // A cancelled task's open pull request (L3-github-10) does not wait to be merged either, nor
+    // does a docs pull request that names no project (`listed`, L4i-left-2).
+    const row = prs?.waiting.find(
+      (r) => r.number === number && r.kind !== "cancelled" && r.kind !== "listed",
+    );
     if (!prs || !row)
       return c.json({
         state: "refused",

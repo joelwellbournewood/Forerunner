@@ -1410,3 +1410,86 @@ describe("l4-github-carried, run L4", () => {
     expect(within(header).queryByTestId("project-status")).toBeNull();
   });
 });
+
+describe("w8-repo-guide, wave 8", () => {
+  // fixup-w8-repo-guide (review of L4i-left-2): a docs pull request that names no project is
+  // listed as information only, under its own heading, with a title that claims nothing about
+  // it. Before, it sat under "Waiting for you to merge" > "Forerunner's docs, merge them when you
+  // like" as '"The project's standard docs" · pull request #12', three untrue claims about
+  // another person's pull request beside a line saying it names no project.
+  const listedRow = (n: number) => ({
+    kind: "listed" as const,
+    taskId: null,
+    title: `Docs pull request #${n}`,
+    number: n,
+    url: `https://example.test/org/atlas/pull/${n}`,
+    branch: "fr/docs-scaffold",
+    review: null,
+    merge: {
+      state: "blocked" as const,
+      canMerge: false,
+      sentence: `#${n} names no project, so it is only listed here: open it on GitHub to see whose it is.`,
+      first: [],
+    },
+  });
+  const docsRow = (n: number) => ({
+    kind: "docs" as const,
+    taskId: null,
+    title: "The project's standard docs",
+    number: n,
+    url: `https://example.test/org/atlas/pull/${n}`,
+    branch: "fr/docs-scaffold-atlas",
+    review: null,
+    merge: { state: "ready" as const, canMerge: true, sentence: null, first: [] },
+  });
+
+  it("L4i-left-2: a docs pull request that names no project is listed apart under 'Also open on GitHub' as 'Docs pull request #12' with Open and its one line, never under 'Waiting for you to merge' or Forerunner's docs, with no Merge and no Open this version", async () => {
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [docsRow(5), listedRow(12)],
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    const block = await within(files).findByTestId("prs-listed");
+    expect(within(block).getByRole("heading")).toHaveTextContent(/^Also open on GitHub$/);
+    const item = within(block).getByTestId("pr-listed");
+    expect(within(item).getByTestId("pr-listed-title")).toHaveTextContent(
+      /^Docs pull request #12$/,
+    );
+    expect(within(item).getByTestId("pr-listed-link")).toHaveAttribute(
+      "href",
+      "https://example.test/org/atlas/pull/12",
+    );
+    expect(within(item).getByTestId("pr-listed-sentence")).toHaveTextContent(
+      /^#12 names no project, so it is only listed here: open it on GitHub to see whose it is\.$/,
+    );
+    expect(within(item).queryByTestId("pr-merge")).toBeNull();
+    expect(within(item).queryByTestId("pr-preview")).toBeNull();
+    expect(item).not.toHaveTextContent("The project's standard docs");
+    // The waiting list has only this project's own docs pull request, with its Merge.
+    const waiting = within(files).getByTestId("prs-waiting");
+    expect(
+      within(waiting)
+        .getAllByTestId("pr-waiting")
+        .map((r) => r.dataset.number),
+    ).toEqual(["5"]);
+    expect(within(waiting).getByTestId("prs-docs")).not.toHaveTextContent("#12");
+    expect(within(waiting).getAllByTestId("pr-merge")).toHaveLength(1);
+  });
+
+  it("L4i-left-2: when the only open docs pull request names no project, 'No pull request waits for you.' stays true and it is listed under 'Also open on GitHub'", async () => {
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = { waiting: [listedRow(12)], error: null };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    expect(await within(files).findByTestId("prs-listed")).toHaveTextContent(
+      "Also open on GitHubDocs pull request #12Open#12 names no project",
+    );
+    expect(within(files).queryByTestId("prs-waiting")).toBeNull();
+    expect(within(files).queryByTestId("pr-merge")).toBeNull();
+    expect(within(files).getByTestId("prs-none")).toHaveTextContent(
+      /^No pull request waits for you\.$/,
+    );
+  });
+});

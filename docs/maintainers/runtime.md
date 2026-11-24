@@ -10272,7 +10272,11 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 - **A docs pull request this install did not open is nobody's** (L4i-left-2): `isProjectDocsPr`
   takes the branch's own marker (`branchMarker`), read in `scaffoldInCopy` and
   `docsInPullRequests`; `docsPrListing` gives `own`, `listed` (no Merge, "#N names no project,
-  so it is only listed here: open it on GitHub to see whose it is.") or nothing.
+  so it is only listed here: open it on GitHub to see whose it is.") or nothing. A `listed` one
+  is its own row kind in `GET /projects/:id/pull-requests` (`kind: "listed"`, titled "Docs pull
+  request #N" by `listedDocsTitle`, fixup-w8-repo-guide): the Overview lists it under "Also open
+  on GitHub", never under "Waiting for you to merge" or Forerunner's docs; Merge is refused with
+  its line and Open this version with "#N does not wait to be merged: ...".
 - **Try again** (`daemon/take-over-retry.ts`): `retryFailureOf` and the scaffold's `stopped`
   (`pull_request_open`, `branches_taken`) pick the sentence; the repository is named by
   `RepositoryUse.locatorOf`; nothing to try answers `TAKE_OVER_NO_REPOSITORY` or

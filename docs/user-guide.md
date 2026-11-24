@@ -1967,8 +1967,9 @@ the next time it starts.
 - A task pull request that changes AGENTS.md or CLAUDE.md says so at the top: read it before you
   merge, since other people's agents follow it.
 - A docs pull request on your repository that names no project (one somebody else opened) is
-  never written to by your Forerunner. The Overview lists it without Merge: "#N names no
-  project, so it is only listed here: open it on GitHub to see whose it is."
+  never written to by your Forerunner. The Overview lists it apart, under "Also open on GitHub",
+  as "Docs pull request #N" with Open and no Merge: "#N names no project, so it is only listed
+  here: open it on GitHub to see whose it is."
 - **Try again** on a take-over now says what stopped it: another docs pull request is open (close
   it on GitHub), the scaffold's branches hold another project's docs (delete fr/docs-scaffold on
   GitHub), GitHub did not answer (try again in a moment), or the saved token cannot push. A
