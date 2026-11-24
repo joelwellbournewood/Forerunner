@@ -43,6 +43,7 @@ import {
   renderGuidePart,
   type ScaffoldResult,
   STATUS_DOC,
+  type StatusIssueState,
   type StatusLists,
   type StatusUpdate,
   scaffoldDocs,
@@ -557,6 +558,12 @@ export { gitAuthFor };
 export class ProjectDocs implements ProjectDocsPort {
   private readonly logger = log("project-docs");
 
+  /**
+   * The status issue's state for the guide (w8-status-write, D-W8-44): the status board sets it
+   * at compose (`StatusBoard.guideState`); unset, the guide reads the Settings switch alone.
+   */
+  statusIssueState: ((project: Pick<ProjectRow, "settings">) => StatusIssueState) | undefined;
+
   constructor(private readonly deps: ProjectDocsDeps) {}
 
   /** `<projectsRoot>/<project id>/workspace`: the doc set of a project without a repository. */
@@ -925,7 +932,11 @@ export class ProjectDocs implements ProjectDocsPort {
         // W8-guide-1: a project kept in a folder gets its guide too (no GitHub part).
         const res = await scaffoldDocs(dir, {
           ...info,
-          guide: guideFactsOf(project, { dir, defaultBranch: null }),
+          guide: guideFactsOf(project, {
+            statusIssue: this.statusIssueState,
+            dir,
+            defaultBranch: null,
+          }),
         });
         const marker = await this.mark(project, dir);
         outcome = {
@@ -1118,7 +1129,11 @@ export class ProjectDocs implements ProjectDocsPort {
     // W8-guide-1: the guide rendered from its facts (this copy's checks, the default branch).
     const res = await scaffoldDocs(dir, {
       ...info,
-      guide: guideFactsOf(project, { dir, defaultBranch: target.base }),
+      guide: guideFactsOf(project, {
+        statusIssue: this.statusIssueState,
+        dir,
+        defaultBranch: target.base,
+      }),
     });
     const marker = await this.mark(project, dir);
     const written = [
@@ -1446,7 +1461,11 @@ export class ProjectDocs implements ProjectDocsPort {
     if (!target) {
       const dir = this.workspaceDir(project.id);
       if (!existsSync(dir)) return none;
-      const facts = guideFactsOf(project, { dir, defaultBranch: null });
+      const facts = guideFactsOf(project, {
+        statusIssue: this.statusIssueState,
+        dir,
+        defaultBranch: null,
+      });
       if (guideIsCurrentIn(dir, facts)) return none;
       const res = await scaffoldDocs(dir, {
         name: project.name,
@@ -1460,7 +1479,11 @@ export class ProjectDocs implements ProjectDocsPort {
     const copy = this.copyDir(project.id);
     // The facts the guide last went out with: unchanged, nothing to read or write.
     if (docs.guide_key === this.guideKeyIn(project, target.base)) return none;
-    const facts = guideFactsOf(project, { dir: copy, defaultBranch: target.base });
+    const facts = guideFactsOf(project, {
+      statusIssue: this.statusIssueState,
+      dir: copy,
+      defaultBranch: target.base,
+    });
     if (existsSync(join(copy, ".git")) && guideIsCurrentIn(copy, facts)) {
       await this.record(project, { ...docs, guide_key: guideKeyOf(facts) });
       return none;
@@ -1495,7 +1518,11 @@ export class ProjectDocs implements ProjectDocsPort {
   /** The key of the guide's facts as this computer's copy (on `base`) gives them now. */
   private guideKeyIn(project: ProjectRow, base: string): string {
     return guideKeyOf(
-      guideFactsOf(project, { dir: this.copyDir(project.id), defaultBranch: base }),
+      guideFactsOf(project, {
+        statusIssue: this.statusIssueState,
+        dir: this.copyDir(project.id),
+        defaultBranch: base,
+      }),
     );
   }
 
@@ -1605,7 +1632,11 @@ export class ProjectDocs implements ProjectDocsPort {
           name: project.name,
           goal: project.goal,
           repos: project.repos,
-          guide: guideFactsOf(project, { dir: scratch, defaultBranch: target.base }),
+          guide: guideFactsOf(project, {
+            statusIssue: this.statusIssueState,
+            dir: scratch,
+            defaultBranch: target.base,
+          }),
         });
         const marker = await this.mark(project, scratch);
         first = { created: res.created, marker };
