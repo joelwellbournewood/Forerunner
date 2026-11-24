@@ -381,6 +381,18 @@ export interface CommandPorts {
    */
   repositoryUse?: {
     check(repos: readonly string[]): Promise<void>;
+    /**
+     * w8-together (W8-join-4): chat's Work together. What `project.create` with `together: true`
+     * would join, read from GitHub now (never from the model): the repository's one other
+     * Forerunner project's name as its marker gives it, cleaned and scanned (null when it has
+     * none or it reads as an instruction). Throws the link's refusal in words otherwise.
+     */
+    together?(repos: readonly string[]): Promise<{ name: string | null }>;
+    /**
+     * The together project made on the yes, through the dialog's own creation (the repository's
+     * id and name read from GitHub again at the run; a removed together row comes back).
+     */
+    createTogether?(params: { name: string; goal: string; repos: string[] }): Promise<ProjectRow>;
   };
   /**
    * d1109-onerepo-link (ADR 0117, OR-07): `repo.take_over` for a project whose repository names

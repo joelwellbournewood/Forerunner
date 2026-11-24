@@ -1,6 +1,9 @@
 import { ForerunnerError } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
-import { PROJECT_CREATE_DESCRIPTION } from "../src/commands/project.ts";
+import {
+  PROJECT_CREATE_DESCRIPTION,
+  PROJECT_CREATE_TOGETHER_PARAM,
+} from "../src/commands/project.ts";
 import type { ExecuteResult } from "../src/executor.ts";
 import { toToolSpecs } from "../src/registry.ts";
 import { world } from "./helpers.ts";
@@ -75,7 +78,7 @@ describe("d1109-onerepo-link, run C: project.create on a link another project us
     const w = await world();
     const def = w.registry.get("project.create");
     expect(def?.description).toBe(
-      "Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead: the person can open it or add the new work to it, never a second project. To open it for the person, call project_switch.",
+      "Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead: the person can open it or add the new work to it, never a second project. To open it for the person, call project_switch. When the refusal says the repository is another Forerunner's project and the person asks to work on it together, call this again with the same repositories and together true.",
     );
     expect(def?.description).toBe(PROJECT_CREATE_DESCRIPTION);
     const spec = toToolSpecs(w.registry, {
@@ -155,6 +158,108 @@ describe("d1109-onerepo-link, run C: project.create's sentence names the project
     const done = r as Extract<ExecuteResult, { status: "done" }>;
     expect(done.sentence).toBe("Created the project Garden and made it the active project. Undo.");
     expect(done.untrusted).toBeUndefined();
+    await w.store.close();
+  });
+});
+
+describe("w8-together, wave 8: chat's Work together, project.create with together true (W8-join-4)", () => {
+  const ASK =
+    'Work on "Kite club" together: this Forerunner joins it as the same project. Nothing on GitHub changes now.';
+
+  it("the model's definition of together is exact; it is read back once (medium) with the repository's name, as data; the yes makes it through the daemon's together creation, never a plain insert", async () => {
+    const w = await world();
+    const made: { name: string; goal: string; repos: string[] }[] = [];
+    w.ports.repositoryUse = {
+      check: async () => {
+        throw new Error("a together create never runs the plain check");
+      },
+      together: async () => ({ name: "Kite club" }),
+      createTogether: async (input) => {
+        made.push(input);
+        return w.store.project.insert({ name: "Kite club", goal: input.goal, repos: input.repos });
+      },
+    };
+    const spec = toToolSpecs(w.registry, {
+      ctxFor: async () => w.ctx(),
+      execute: async () => ({ status: "refused", reason: "x" }) as never,
+    }).find((s) => s.name === "project_create");
+    const schema = (spec?.schema ?? { shape: {} }) as unknown as {
+      shape: Record<string, { description?: string }>;
+    };
+    const shape = schema.shape;
+    expect(shape.together?.description).toBe(PROJECT_CREATE_TOGETHER_PARAM);
+    expect(PROJECT_CREATE_TOGETHER_PARAM).toBe(
+      "true to work on the repository together with the other Forerunner project it names, as the same project; only when the person asked to work on it together. Never a project id: the app reads the project from the repository.",
+    );
+    const pending = await w.executor.execute({
+      name: "project.create",
+      params: { name: "Kites", goal: "The club site", repos: ["o/kite"], together: true },
+      ctx: w.ctx({ actor: { kind: "agent", id: w.agent.id }, source: "chat" }),
+    });
+    expect(pending.status).toBe("pending");
+    const p = pending as Extract<ExecuteResult, { status: "pending" }>;
+    expect(p.readback).toBe(ASK);
+    expect(made).toEqual([]);
+    const done = await w.executor.confirm(p.pendingId, {
+      kind: "yes",
+      by: { kind: "human", id: w.human.id },
+    });
+    expect(done.status).toBe("done");
+    const d = done as Extract<ExecuteResult, { status: "done" }>;
+    expect(d.sentence).toBe('Working on "Kite club" together with the other Forerunner now. Undo.');
+    expect(d.untrusted).toEqual({ source: "repo_file", origin: "repository:o/kite" });
+    expect(made).toEqual([{ name: "Kites", goal: "The club site", repos: ["o/kite"] }]);
+    await w.store.close();
+  });
+
+  it("a name that reads as an instruction is never quoted; without the daemon's port it is refused in words; GitHub's refusal is the tool's answer", async () => {
+    const w = await world();
+    w.ports.repositoryUse = {
+      check: async () => undefined,
+      together: async () => ({ name: null }),
+      createTogether: async () => {
+        throw new Error("never without the yes");
+      },
+    };
+    const pending = await w.executor.execute({
+      name: "project.create",
+      params: { name: "Kites", goal: "g", repos: ["o/kite"], together: true },
+      ctx: w.ctx({ actor: { kind: "agent", id: w.agent.id }, source: "chat" }),
+    });
+    expect((pending as Extract<ExecuteResult, { status: "pending" }>).readback).toBe(
+      "Work on another Forerunner project together: this Forerunner joins it as the same project. Nothing on GitHub changes now.",
+    );
+    w.ports.repositoryUse = { check: async () => undefined };
+    const refused = await w.executor.execute({
+      name: "project.create",
+      params: { name: "Kites", goal: "g", repos: ["o/kite"], together: true },
+      ctx: w.ctx({ source: "ui" }),
+    });
+    expect((refused as Extract<ExecuteResult, { status: "refused" }>).reason).toBe(
+      "Work together cannot be started from here.",
+    );
+    w.ports.repositoryUse = {
+      check: async () => undefined,
+      together: async () => {
+        throw new ForerunnerError(
+          "validation",
+          "GitHub did not answer, so the project cannot be checked. Try again.",
+          { details: { cause: "github_unreadable" } },
+        );
+      },
+      createTogether: async () => {
+        throw new Error("never");
+      },
+    };
+    const unreadable = await w.executor.execute({
+      name: "project.create",
+      params: { name: "Kites", goal: "g", repos: ["o/kite"], together: true },
+      ctx: w.ctx({ actor: { kind: "agent", id: w.agent.id }, source: "chat" }),
+    });
+    expect((unreadable as Extract<ExecuteResult, { status: "refused" }>).reason).toBe(
+      "GitHub did not answer, so the project cannot be checked. Try again.",
+    );
+    expect((await w.store.project.list()).filter((p) => p.name === "Kites")).toEqual([]);
     await w.store.close();
   });
 });

@@ -346,7 +346,7 @@ import {
 import { readConfig, rememberBoundHuman, SECRET_NAMES, type SetupConfig } from "../setup/wizard.ts";
 import { SourceDiscovery } from "../sources/discovery.ts";
 import { repoHostsFor } from "../sources/locators.ts";
-import { chatLinkCheck, RepositoryUse } from "../sources/repository-use.ts";
+import { chatLinkCheck, chatTogetherOffer, RepositoryUse } from "../sources/repository-use.ts";
 import { composeUpdateManager } from "../update/compose.ts";
 import { type UpdateConfig, updateConfigOrClosed } from "../update/config.ts";
 import type { UpdateManager } from "../update/install.ts";
@@ -5348,9 +5348,36 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         if (project) void scaffoldProjectDocs({ docs }, project);
       },
       // d1109-onerepo-link (ADR 0117): project.create by chat, voice or the palette is refused on
-      // a link another project uses, before its read-back; the chat cannot work together yet
-      // (the New project dialog can), so the answer says where.
-      repositoryUse: { check: (repos) => chatLinkCheck(repositoryUse, repos) },
+      // a link another project uses, before its read-back; the answer says how to work on it
+      // together. w8-together (W8-join-4): `together: true` reads the repository's project from
+      // GitHub for its read-back and again at the yes, and makes it as the dialog does.
+      repositoryUse: {
+        check: (repos) => chatLinkCheck(repositoryUse, repos),
+        together: async (repos) => ({
+          name: (await chatTogetherOffer(repositoryUse, repos)).name,
+        }),
+        createTogether: async (input): Promise<ProjectRow> => {
+          const offer = await chatTogetherOffer(repositoryUse, input.repos);
+          // The command makes it the active project itself (`switch`), as with any creation.
+          return createProjectRecord(
+            {
+              store,
+              clock,
+              human: { id: human.id },
+              agent: { id: agent.id },
+              events,
+              docs,
+              repositoryUse,
+            },
+            {
+              name: input.name,
+              goal: input.goal,
+              repos: input.repos,
+              together: { project: offer.id },
+            },
+          );
+        },
+      },
       // OR-07: repo.take_over reads GitHub at the press; its marker goes in this project's docs
       // pull request (the scaffold run again replaces exactly the taken-over marker).
       repositoryTakeOver: {

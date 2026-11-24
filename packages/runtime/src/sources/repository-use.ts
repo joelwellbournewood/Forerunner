@@ -727,6 +727,33 @@ export async function chatLinkCheck(
 }
 
 /**
+ * w8-together (W8-join-4): chat's Work together. The repository's one other Forerunner project,
+ * read from GitHub now (never from the model): its id for the creation and its name for the
+ * read-back (the refusal's, cleaned and scanned: null when it has none or reads as an
+ * instruction). Every other answer is the link's refusal in words: a project here uses it,
+ * GitHub does not answer, it names no project or several, a folder.
+ */
+export async function chatTogetherOffer(
+  use: Pick<RepositoryUse, "check">,
+  repos: readonly string[],
+): Promise<{ id: string; name: string | null }> {
+  try {
+    // An id that matches none: the check answers with the offer it would make.
+    await use.check(repos, { together: { project: "" } });
+  } catch (e) {
+    if (
+      isLinkRefusal(e) &&
+      e.details.cause === "repository_used_elsewhere" &&
+      e.details.canWorkTogether &&
+      e.details.projects?.length === 1
+    )
+      return { id: e.details.projects[0] as string, name: e.details.projectName ?? null };
+    throw e;
+  }
+  throw linkRefusal(TOGETHER_UNREADABLE, { cause: "github_unreadable" });
+}
+
+/**
  * w8-together (OJ-11): what Work together for a project already here joins, read from GitHub at
  * the press (`RepositoryUse.togetherJoinFacts`).
  */

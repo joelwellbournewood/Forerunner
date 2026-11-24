@@ -384,10 +384,11 @@ export function isLinkRefusalCause(cause: unknown): cause is LinkRefusalCause {
 }
 
 /**
- * The chat's last words on a repository whose project is not on this computer (OR-15's cut
- * line: project.create has no together flag yet, the New project dialog has Work together).
+ * The chat's last words on a repository whose project is not on this computer. w8-together
+ * (W8-join-4): project.create takes `together: true` now, so the hint says how to ask in chat
+ * (before: "Open New project to work on it together.", OR-15's cut line).
  */
-export const CHAT_TOGETHER_HINT = "Open New project to work on it together.";
+export const CHAT_TOGETHER_HINT = 'Say "work on it together" to join it here.';
 
 /**
  * OR-07: the Overview line of a project whose repository (this computer's copy of its default

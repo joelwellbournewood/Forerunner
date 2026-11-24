@@ -127,7 +127,11 @@ import {
   fileTaskProposal,
   proposalLine,
 } from "../../packages/runtime/src/session/task-proposal.ts";
-import { chatLinkCheck, RepositoryUse } from "../../packages/runtime/src/sources/repository-use.ts";
+import {
+  chatLinkCheck,
+  chatTogetherOffer,
+  RepositoryUse,
+} from "../../packages/runtime/src/sources/repository-use.ts";
 import { openStore, type StateStore } from "../../packages/state/src/index.ts";
 import { MemoryVault } from "../../packages/vault/src/memory.ts";
 import { resolveSecretRefs } from "../../packages/vault/src/refs.ts";
@@ -1565,6 +1569,15 @@ async function runRecordCase(
               repositoryUse: {
                 check: (repos: readonly string[]) =>
                   chatLinkCheck(repositoryUse as RepositoryUse, repos),
+                // w8-together (W8-join-4): chat's Work together reads the repository's project;
+                // its creation is a way out of the app, recorded (none may run for a record).
+                together: async (repos: readonly string[]) => ({
+                  name: (await chatTogetherOffer(repositoryUse as RepositoryUse, repos)).name,
+                }),
+                createTogether: async (input: { name: string; goal: string; repos: string[] }) => {
+                  executed.push({ tool: "project.create.together", input });
+                  throw new Error("the together project is never made for a record");
+                },
               },
             }
           : {}),
