@@ -3160,7 +3160,11 @@ L4 (fixup)").
   when the count moved; on the live stream it waits for the conversation.changed the daemon
   sends for the conversation whose card closed. Before, every inbox.changed (and every periodic
   count) read GET /conversation again while a chat card waited, which is now as long as it is
-  unanswered. Tests: apps/ui/test/selftasks-carried.test.tsx.
+  unanswered. Tests: apps/ui/test/selftasks-carried.test.tsx. The poll's inbox.changed also
+  carries `openCards` (api/sse.ts: the open requests' ids in order, polling only), so a card
+  that closed while another arrived in the same poll counts as moved although the count is the
+  same (fixup-l4-selftasks-carried; before, the chat kept its Yes and No until the count next
+  moved).
 - **A closed chat card leaves no stale header (L4f-left-1).** The header and the Inbox badge
   follow at once after Yes or No in chat and after the Inbox's answer in another window.
 - **Changes names both who asked (L4f-left-4).** ChangesPage's `whoOf` reads `byYouAndAgent` as

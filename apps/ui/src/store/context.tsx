@@ -87,6 +87,8 @@ export function AppProvider({
     const clearTimer =
       streamOptions?.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
     let retryHandle: unknown = null;
+    // The open cards the last poll read (`inbox.changed`'s `openCards`, polling only).
+    let polledCards: string | null = null;
     // The window plays what the daemon reads aloud on its own (voice alerts, summary.speak by
     // chat; ADR 0063) and says so on /events, so the daemon knows someone can hear it.
     const announcer: SpeechAnnouncer | null =
@@ -118,7 +120,12 @@ export function AppProvider({
             } else if (event.event === "inbox.changed") {
               // The header counts every card that needs you (design §3.8).
               const count = event.data.needsYouCount ?? event.data.blockingCount;
-              const changed = count !== store.getState().blockingCount;
+              // fixup-l4-selftasks-carried: while polling, a card that closed as another came
+              // leaves the count as it was; the open cards the poll read say it moved.
+              const cards = event.data.openCards;
+              const swapped = cards !== undefined && polledCards !== null && cards !== polledCards;
+              if (cards !== undefined) polledCards = cards;
+              const changed = count !== store.getState().blockingCount || swapped;
               store.dispatch({ type: "blockingCount", count });
               // A card came or went: the projects' status sentences follow (design §3.2: Home
               // follows inbox.changed without a reload).

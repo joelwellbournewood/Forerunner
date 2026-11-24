@@ -216,3 +216,67 @@ describe("l4-selftasks-carried, run L4: an open chat is read again only when its
     expect(conversationReads(harness, "proj_atlas")).toBeGreaterThan(before);
   });
 });
+
+/**
+ * fixup-l4-selftasks-carried (the review's non-blocking item): while polling, the chat's card
+ * closes and another card arrives before the next poll, so the count is the same; the open
+ * cards are not, and the chat is read again (before, its Yes and No stayed until the count
+ * next moved).
+ */
+describe("fixup-l4-selftasks-carried, run L4: polling reads the chat again when its card closed, even at the same count", () => {
+  it("the chat's card is answered in the Inbox and a question arrives in the same poll: the chat's Yes and No go", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    for (const r of harness.daemon.state.requests) r.status = "answered";
+    const timers: Array<() => void> = [];
+    render(
+      <AppProvider
+        client={harness.client}
+        store={harness.store}
+        streamOptions={{
+          pollIntervalMs: 10,
+          setTimer: (fn) => {
+            timers.push(fn);
+            return timers.length;
+          },
+          clearTimer: () => {},
+        }}
+      >
+        <MemoryRouter initialEntries={["/projects/proj_atlas/chat"]}>
+          <AppRoutes />
+        </MemoryRouter>
+      </AppProvider>,
+    );
+    const input = await screen.findByTestId("chat-input");
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "please start a session");
+    await user.click(screen.getByTestId("chat-send"));
+    await screen.findByTestId("pending-confirmation");
+    fileReadBack(harness, "proj_atlas");
+    const tick = async () => {
+      const due = timers.splice(0);
+      for (const fn of due) fn();
+      await new Promise((r) => setTimeout(r, 30));
+    };
+    await tick();
+    await tick();
+    const before = conversationReads(harness, "proj_atlas");
+    // Between two polls: the chat's card is answered in the Inbox, and a session's question
+    // arrives. One card went and one came: the count the poll reads is the same.
+    const closing = harness.daemon.state.pendingConfirmation?.id ?? "";
+    await harness.client.answerRequest(closing, { version: 1, answer: "no" });
+    harness.daemon.state.requests.push({
+      ...structuredClone(harness.daemon.state.requests[0]),
+      id: "req_question_after",
+      projectId: "proj_atlas",
+      status: "open",
+      title: "Which colour for the header?",
+      answer: null,
+      version: 1,
+    } as never);
+    expect(harness.daemon.state.requests.filter((r) => r.status === "open")).toHaveLength(1);
+    await tick();
+    await waitFor(() => expect(screen.queryByTestId("confirm-yes")).toBeNull());
+    expect(conversationReads(harness, "proj_atlas")).toBeGreaterThan(before);
+  });
+});
