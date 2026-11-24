@@ -1844,3 +1844,84 @@ describe("w8-issue-host, wave 8: issues off, ETags, associations, the permission
     expect(stranger.status).toBe(404);
   });
 });
+
+describe("w8-status-write, wave 8: the stand-in's repository-wide comment list and its admin flag (W8a-left-2)", () => {
+  // Two answers the status tests meet, as GitHub gives them: the repository's every issue
+  // comment (GET /repos/:o/:r/issues/comments), and `permissions.admin` only for an admin.
+  let host: FakeGitHost;
+  let root: string;
+  const clock = new SimulatedClock("2026-11-24T09:00:00.000Z");
+  const tok: Record<string, string> = {};
+
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), "fr-githost-status-"));
+    host = await FakeGitHost.start({ rootDir: root, clock });
+    for (const login of ["ada", "bob", "carol"]) host.createUser({ login });
+    host.createOrg({ login: "team", members: ["ada", "bob"] });
+    await host.createRepo({
+      owner: "team",
+      name: "site",
+      private: true,
+      initialFiles: { "README.md": "# site\n" },
+    });
+    host.setCollaboratorRole("team/site", "carol", "admin");
+    for (const login of ["ada", "bob", "carol"])
+      tok[login] = host.createToken({ owner: login, kind: "classic", scopes: ["repo"] }).token;
+  });
+  afterAll(async () => {
+    await host?.stop();
+    if (root) await rm(root, { recursive: true, force: true });
+  });
+
+  it("GET /repos/:o/:r/issues/comments lists every issue's comments, oldest first, and /issues/:number still answers an issue", async () => {
+    const one = await api(host.baseUrl, "POST", "/repos/team/site/issues", {
+      token: tok.ada,
+      body: { title: "One" },
+    });
+    const two = await api(host.baseUrl, "POST", "/repos/team/site/issues", {
+      token: tok.ada,
+      body: { title: "Two" },
+    });
+    for (const [n, who, text] of [
+      [one.json.number, "ada", "first"],
+      [two.json.number, "bob", "second"],
+      [one.json.number, "bob", "third"],
+    ] as const)
+      expect(
+        (
+          await api(host.baseUrl, "POST", `/repos/team/site/issues/${n}/comments`, {
+            token: tok[who],
+            body: { body: text },
+          })
+        ).status,
+      ).toBe(201);
+    const all = await api(host.baseUrl, "GET", "/repos/team/site/issues/comments", {
+      token: tok.bob,
+    });
+    expect(all.status).toBe(200);
+    const listed = all.list as unknown as { body: string; user: { login: string } }[];
+    expect(listed.map((c) => [c.body, c.user.login])).toEqual([
+      ["first", "ada"],
+      ["second", "bob"],
+      ["third", "bob"],
+    ]);
+    const issue = await api(host.baseUrl, "GET", `/repos/team/site/issues/${one.json.number}`, {
+      token: tok.bob,
+    });
+    expect(issue.status).toBe(200);
+    expect(issue.json.title).toBe("One");
+  });
+
+  it("permissions.admin is true only for the repository's admin: a member who may push reads push true and admin false", async () => {
+    const asMember = await api(host.baseUrl, "GET", "/repos/team/site", { token: tok.bob });
+    expect(asMember.status).toBe(200);
+    expect(asMember.json.permissions).toMatchObject({ admin: false, push: true, pull: true });
+    const asAdmin = await api(host.baseUrl, "GET", "/repos/team/site", { token: tok.carol });
+    expect(asAdmin.json.permissions).toMatchObject({ admin: true, push: true, pull: true });
+    // The role read agrees with the flag.
+    const role = await api(host.baseUrl, "GET", "/repos/team/site/collaborators/bob/permission", {
+      token: tok.carol,
+    });
+    expect(role.json.role_name).toBe("write");
+  });
+});

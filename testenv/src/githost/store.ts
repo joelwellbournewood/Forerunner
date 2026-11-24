@@ -486,9 +486,15 @@ export class HostStore {
     const base = `/repos/${repo.fullName}`;
     const pull = subject ? checkRepoAccess(subject, repo, "contents", "read") === "ok" : false;
     const push = subject ? checkRepoAccess(subject, repo, "contents", "write") === "ok" : false;
-    const admin = subject
-      ? checkRepoAccess(subject, repo, "administration", "write") === "ok"
-      : false;
+    // W8a-left-2 (w8-status-write): `admin` (and `maintain`) as GitHub gives them, from the
+    // token owner's role on the repository, never from the token's scope alone (before, every
+    // collaborator with push access and a repo-scoped classic token read admin: true).
+    const role = subject?.token ? this.roleOf(repo, subject.token.owner) : null;
+    const admin =
+      !!subject &&
+      checkRepoAccess(subject, repo, "administration", "write") === "ok" &&
+      role === "admin";
+    const maintain = admin || (push && role === "maintain");
     const openIssues = [...repo.issues.values()].filter((i) => i.state === "open").length;
     return {
       id: repo.id,
@@ -516,7 +522,7 @@ export class HostStore {
       created_at: repo.createdAt,
       updated_at: repo.updatedAt,
       pushed_at: repo.pushedAt,
-      permissions: { admin, maintain: admin, push, triage: push, pull },
+      permissions: { admin, maintain, push, triage: push, pull },
       allow_merge_commit: repo.allowMergeCommit,
       allow_squash_merge: repo.allowSquashMerge,
       allow_rebase_merge: repo.allowRebaseMerge,
