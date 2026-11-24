@@ -3197,3 +3197,16 @@ L4 (fixup)").
   card and the 409 for a start while the project's own wait stands (L4g-left-4), the 400 for a
   start under a refused credential (L4d-left-2), and chat's "run it now" kept for the reset
   (`pendingConfirmation.keptAt`, L4a-left-5).
+
+### fixup-l4-starts-carried (run L4i, 2026-11-24)
+
+- The Start dialog (`StartSessionDialog.tsx`) words a waiting dependency that waits on the person
+  by the daemon's `waitsOn[].held` (`state` after its name, `advice` as the line's last sentence),
+  and shows "Give your agent work first" only when `blocked.holds` is absent (before, a task paused
+  at the project's budget, with Open Settings, still got it). The fake daemon sends both through
+  `heldDependency` and `heldBlocker`, and its `fakeHeld` words a pause no card asks about that the
+  person did not make as "which is paused".
+- Fake daemon: chat's start kept for the reset records a `session.start` change with
+  `after.kept_start` and `kept_id`, and its Undo; the Undo is refused with the daemon's reason once
+  the project's kept start is another one or none ("the start kept for the reset has already run
+  or was cancelled; there is nothing to undo").

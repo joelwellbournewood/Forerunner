@@ -964,9 +964,11 @@ export interface RuntimeApp {
    * its work needs was refused, the Start dialog's ("Nothing can run until you save a new API
    * key in Settings."), or null. `POST /sessions` (the dialog, Continue, the API) and the
    * phone's start refuse with it, also with no session kept; before, they started a session that
-   * only met the refusal and ended to wait.
+   * only met the refusal and ended to wait. fixup-l4-starts-carried: with Stop all on it is null
+   * (Stop all's own answer comes first, as in the Start dialog), unless `evenStopped` (the
+   * phone's Start, which lifts Stop all only when it can start).
    */
-  refusedStart(projectId: string): Promise<string | null>;
+  refusedStart(projectId: string, opts?: { evenStopped?: boolean }): Promise<string | null>;
   /**
    * d1109-run-visible (V-1): the run indicator. `views` is `GET /running` (what runs now, in the
    * daemon's words); `poke` asks for a fresh `run.changed` frame (debounced to one a second, sent
@@ -4077,7 +4079,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   };
   const prepareWorkPort = (req: PrepareRequest) => prepareWork(prepareDeps, req);
   /** `RuntimeApp.refusedStart` (L4d-left-2): the refused credential's sentence for a start. */
-  const refusedStart = async (projectId: string): Promise<string | null> => {
+  const refusedStart = async (
+    projectId: string,
+    opts: { evenStopped?: boolean } = {},
+  ): Promise<string | null> => {
     const project = await store.project.get(projectId).catch(() => undefined);
     if (!project) return null;
     const check = await startCheck(
@@ -4091,7 +4096,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     // ("Start at 15:40") or its session goes on by itself.
     if (!wait || wait.startable || wait.save?.to !== "/setup") return null;
     const blocked = startBlockedReason(check, {
-      stopped: false,
+      stopped: !opts.evenStopped && kill.isFrozen({ agentId: agent.id }),
       hasModel: true,
       busy: busyHere(scheduler.activeStart(agent.id), projectId),
       projectId,
@@ -6049,16 +6054,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       kill,
       // The entry, not the bare outcome: its id is the start's identity the row's result
       // carries for the undo (ADR 0049).
+      start: (req) => scheduler.requestStart(req),
       // L4d-left-2: the phone's Start under a refused credential is refused in words, as the
       // Start dialog's and POST /sessions' are (the row fails with that sentence).
-      start: async (req) => {
-        const refused = req.projectId ? await refusedStart(req.projectId) : null;
-        if (refused)
-          throw new ForerunnerError("validation", refused, {
-            details: { cause: "credential_refused" },
-          });
-        return scheduler.requestStart(req);
-      },
+      // fixup-l4-starts-carried: asked before the phone's Start lifts Stop all, so a refused
+      // start lifts nothing (before, Stop all was lifted and then nothing started).
+      startRefused: (projectId) => refusedStart(projectId, { evenStopped: true }),
       commands,
       // U-047: the phone's chat runs commands without a model too, as the desktop's does.
       chat: (req) => conversation.chat(req),

@@ -1228,7 +1228,8 @@ If Anthropic refused your key or sign-in, the Start dialog says "Nothing can run
 new API key in Settings." and offers no Start; every Start says the same and starts nothing:
 Continue, the phone, chat's "start a session" and a Start sent to Forerunner's service, whether
 or not a session of yours waits to go on (a waiting session says it goes on once you save a new
-one).
+one). A Start from the phone that meets this lifts no Stop all; while Stop all is on, the other
+Starts say that first, as the dialog does.
 
 Under "Subscription first, then ask me", while your subscription is out and your API key could
 run, the project's line says "Ready: 2 tasks; your subscription is at its limit until 02:51;
@@ -1323,8 +1324,14 @@ key in Settings.", with **Save a new key**) instead of what a session would run.
 When a task is paused at the project's budget, this month's cap or your subscription's share
 and nothing else can run, the Start dialog says that limit and what changes it ("Nothing can run:
 "Write the motto" paused at the project's budget of CHF 0.06; raise it in Settings." with **Open
-Settings**), never "needs your answer"; a task that waits on one you paused says "... which you
-paused." with **Open Tasks**. While a session runs, chat's read-back of making a task ready says
+Settings**), never "needs your answer", and no "Give your agent work first" (your work is there;
+only the limit holds it); a task that waits on one you paused says "... which you
+paused." with **Open Tasks**. The list under it says what each waiting task waits on the same
+way: '"Write the rules" waits on "Write the motto", paused at the project's budget of CHF 0.06,
+so it cannot run. Raise the project's budget in Settings, or change what it waits for on the
+Tasks tab.', or '..., which you paused, so it cannot run. Resume "Write the song", or ...'; only
+a task whose card in the Inbox asks something "needs your answer". While a session runs, chat's
+read-back of making a task ready says
 what that session does with it ("It is larger than this session's budget, so it runs at your
 next Start." for one above its whole budget). The status note in the project's folder says the
 money as the result does ("Spent less than CHF 0.01.").
@@ -1339,7 +1346,8 @@ says "Nothing can run until 15:40 (your API key's limit); then your session goes
 **Cancel the wait**, and a second Start says "A session of Quote page starts at 15:40.". A start
 you ask for in chat during such a wait is kept the same way: chat asks "Start a session on Quote
 page at 15:40 (up to CHF 5.00)?", your yes keeps it ("A session of Quote page starts at
-15:40.", no session now) and Undo drops it; a question you ask chat meanwhile ends "...; a Start
+15:40.", no session now) and Undo drops that start only; once it has run at 15:40, or you
+cancelled it, Undo says there is nothing to undo; a question you ask chat meanwhile ends "...; a Start
 now runs at 15:40.". While your own session waits to go on, or a Start is kept, the project's
 header offers no Start session (Cancel on the wait drops it, and Start comes back). Only
 looking starts nothing. The

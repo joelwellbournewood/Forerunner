@@ -2046,6 +2046,21 @@ export const StartCheckView = z.object({
           taskId: z.string(),
           title: z.string().nullable(),
           status: z.string().nullable(),
+          /**
+           * fixup-l4-starts-carried (L4g-left-1 on the waiting list): what holds a dependency
+           * that waits on the person (`needs_human`), in the dialog's words (`heldDependency`):
+           * `state` after its name ("paused at the project's budget of CHF 0.06", "which you
+           * paused", "which is paused", "which needs your answer") and `advice`, what to do.
+           * Absent for any other status, or from an older daemon (the dialog then reads the
+           * status alone).
+           */
+          held: z
+            .object({
+              why: z.enum(["answer", "limit", "paused"]),
+              state: z.string(),
+              advice: z.string(),
+            })
+            .optional(),
         }),
       ),
     }),
@@ -2106,6 +2121,12 @@ export const StartCheckView = z.object({
        * for the credential's reset and starts once then (`StartSessionView.result` "kept").
        */
       startLabel: z.string().optional(),
+      /**
+       * fixup-l4-starts-carried: a task of the project's own work holds it (its card asks, a
+       * limit only Settings changes, or a pause): the work exists, so the dialog says no "Give
+       * your agent work first" beside the sentence. Absent for any other blocker.
+       */
+      holds: z.enum(["answer", "limit", "paused"]).optional(),
     })
     .nullable()
     .default(null),

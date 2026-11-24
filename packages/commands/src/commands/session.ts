@@ -96,7 +96,9 @@ function startSentence(
   // l4-chat-depth (L4-chat-210): two decimals (design §5 rule 7), "(up to CHF 1.00)".
   const up = `(up to ${chfExact(s.budgetChf)})`;
   const name = s.resolved.project.name;
-  if (keptWhen && !s.remote) return `A session on ${name}${where} starts ${keptWhen} ${up}.`;
+  // fixup-l4-starts-carried: "of", as the run's own sentence ("A session of Map notes starts at
+  // 15:40.", `continuations.waiting`); before, the change card said "A session on Map notes".
+  if (keptWhen && !s.remote) return `A session of ${name}${where} starts ${keptWhen} ${up}.`;
   if (s.remote)
     return `Sent a start for ${name}${where} to your PC ${up}; it picks it up in seconds.`;
   if (outcome === "queued")

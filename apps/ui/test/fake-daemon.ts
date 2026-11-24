@@ -148,7 +148,12 @@ import {
   policyChangeWords,
 } from "@forerunner/runtime/daemon/credential-policy-view";
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
-import { type HeldTask, heldBlocker, outerLimitHold } from "@forerunner/runtime/daemon/held-words";
+import {
+  type HeldTask,
+  heldBlocker,
+  heldDependency,
+  outerLimitHold,
+} from "@forerunner/runtime/daemon/held-words";
 import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
 import {
   comesAfterSentence,
@@ -1165,14 +1170,13 @@ function fakeHeld(
     const limit = open
       .map((r) => outerLimitHold((r.changeCard ?? null) as never, resetDay))
       .find((h) => h !== null);
-    const one: HeldTask | null = limit
-      ? { title: t.title, why: "limit", clause: limit.clause, to: limit.to }
+    // fixup-l4-starts-carried, as the daemon: a pause no card asks about that the person did not
+    // make is a pause too ("which is paused").
+    const one: HeldTask = limit
+      ? { title: t.title, why: "limit", ...limit }
       : open.length > 0
         ? { title: t.title, why: "answer" }
-        : pausedByPerson.has(t.id)
-          ? { title: t.title, why: "paused" }
-          : null;
-    if (!one) continue;
+        : { title: t.title, why: "paused", byYou: pausedByPerson.has(t.id) };
     held[t.id] = one;
     if (!needsYou && one.why !== "paused") needsYou = one;
   }
@@ -1227,11 +1231,17 @@ function fakeStartCheck(
   for (const [at, t] of ready.entries()) {
     const waitsOn = t.dependsOn
       .filter((d) => byId.get(d)?.status !== "done")
-      .map((d) => ({
-        taskId: d,
-        title: byId.get(d)?.title ?? null,
-        status: byId.get(d)?.status ?? null,
-      }));
+      .map((d) => {
+        // fixup-l4-starts-carried, as the daemon: what holds a dependency that waits on the
+        // person, in the dialog's words.
+        const h = byId.get(d)?.status === "needs_human" ? opts.held?.held[d] : undefined;
+        return {
+          taskId: d,
+          title: byId.get(d)?.title ?? null,
+          status: byId.get(d)?.status ?? null,
+          ...(h ? { held: heldDependency(h) } : {}),
+        };
+      });
     if (waitsOn.length) {
       waiting.push({ taskId: t.id, title: t.title, waitsOn });
       continue;
@@ -1360,6 +1370,7 @@ function fakeStartCheck(
                 kind: "nothing_runnable",
                 sentence: `Nothing can run: "${stuckOn.d.title}" needs your answer.`,
                 action: { kind: "link", label: "Open it", to: "/inbox" },
+                holds: "answer",
               }
           : {
               kind: "nothing_runnable",

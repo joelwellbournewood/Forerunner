@@ -93,14 +93,13 @@ export async function heldFacts(
     const limit = open
       .map((r) => outerLimitHold(r.change_card as JsonObject | null, resetDay))
       .find((h) => h !== null);
-    const one: HeldTask | null = limit
-      ? { title: t.title, why: "limit", clause: limit.clause, to: limit.to }
+    // fixup-l4-starts-carried: a pause no card asks about that the person did not make (a run
+    // left it so) is a pause too ("which is paused"), never "needs your answer".
+    const one: HeldTask = limit
+      ? { title: t.title, why: "limit", ...limit }
       : open.length > 0
         ? { title: t.title, why: "answer" }
-        : isPausedByPerson(t, false)
-          ? { title: t.title, why: "paused" }
-          : null;
-    if (!one) continue;
+        : { title: t.title, why: "paused", byYou: isPausedByPerson(t, false) };
     held[t.id] = one;
     if (!needsYou && one.why !== "paused") needsYou = one;
   }
@@ -223,6 +222,7 @@ function firstBlocker(r: StartCheck, f: StartBlockedFacts): StartCheckView["bloc
         kind: "nothing_runnable",
         sentence: `Nothing can run: ${name} needs your answer.`,
         action: { kind: "link", label: "Open it", to: "/inbox" },
+        holds: "answer",
       };
     }
     return {

@@ -1150,3 +1150,13 @@ l4-money-pause, run L4 (2026-11-22, L4-money-109): `SETTING_SPECS.session_reserv
   credential rests and nothing is kept; its run keeps the start for the reset (the outcome's
   `after.kept_start`, `after.project_id`, the sentence "A session of Map notes starts at
   15:40."), and its undo drops it. A phone's or the cloud runner's start is unchanged.
+
+### fixup-l4-starts-carried (run L4i, 2026-11-24)
+
+- `CommandPorts.keepStart` returns `{ sentence, keptId }`; `session.start`'s run stores
+  `after.kept_id`, and its undo calls `cancelKeptStart(projectId, keptId)`, which drops that kept
+  start only (a stale one throws `KEPT_START_GONE_REASON`). `KEPT_START_GONE_REASON` ("the start
+  kept for the reset has already run or was cancelled; there is nothing to undo") is exported;
+  `CommandLoop` refuses such an Undo before the executor runs. The kept start's change sentence
+  says "A session of Map notes starts at 15:40 (up to CHF 5.00).", as the run's own sentence does
+  (before, "A session on ...").

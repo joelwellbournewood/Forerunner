@@ -19144,6 +19144,8 @@ describe("d1109-starts-engine, run C", () => {
         kind: "nothing_runnable",
         sentence: 'Nothing can run: "Build the shop" needs your answer.',
         action: { kind: "link", label: "Open it", to: "/inbox" },
+        // fixup-l4-starts-carried: a task of the work holds it (no "Give your agent work first").
+        holds: "answer",
       });
       // Its row says what its card says (C2-left-1).
       const row = (await client.tasks(project.id)).find((t) => t.id === shop.id);
@@ -29157,6 +29159,8 @@ describe("l4-starts-carried, run L4", () => {
         kind: "nothing_runnable",
         sentence: said,
         action: { kind: "link", label: "Open Settings", to: "/settings#other-settings" },
+        // fixup-l4-starts-carried: the work exists; only the limit holds it.
+        holds: "limit",
       });
       // Chat's start says the same sentence (it read "no task is ready" before: no card fact).
       const asked = await client.executeCommands({
@@ -29194,6 +29198,98 @@ describe("l4-starts-carried, run L4", () => {
       });
       expect(after.status).toBe("ready");
       // Nothing started or was spent.
+      expect(await client.sessions({ projectId: project.id })).toEqual([]);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  // fixup-l4-starts-carried (the review's blocking 1 and 2): the Start dialog showed "Give your
+  // agent work first" under the limit's sentence (the work exists; only the limit holds it), and
+  // its waiting list said '"B" waits on "A", which needs your answer, so it cannot run. Answer
+  // it in the Inbox ...' for a dependency paused at the project's budget and for one the person
+  // paused (no card): the check sent only the stored status.
+  it("L4g-left-1 (fixup): the Start check marks a held task's blocker and words each waiting dependency by what holds it, never 'needs your answer' without a card", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Club motto", goal: "A motto" });
+      const motto = await readyTask(client, project.id, "Write the club motto");
+      await rt.store.project.patch(project.id, { budget_usd_micro: 75_000 });
+      await pausedAtProjectBudget(rt, motto.id);
+      // Nothing else: the blocker names the limit and says a task holds the work.
+      const alone = await client.startCheck(project.id);
+      expect(alone.blocked?.holds).toBe("limit");
+      // A task that waits on it: the list says the limit and what changes it.
+      const rules = await readyTask(client, project.id, "Write the club rules", [motto.id]);
+      const byLimit = (await client.startCheck(project.id)).waiting.find(
+        (w) => w.taskId === rules.id,
+      );
+      expect(byLimit?.waitsOn).toEqual([
+        {
+          taskId: motto.id,
+          title: "Write the club motto",
+          status: "needs_human",
+          held: {
+            why: "limit",
+            state: "paused at the project's budget of CHF 0.06",
+            advice:
+              "Raise the project's budget in Settings, or change what it waits for on the Tasks tab.",
+          },
+        },
+      ]);
+      // A dependency the person paused (no card).
+      const song = await readyTask(client, project.id, "Write the club song");
+      const sing = await readyTask(client, project.id, "Sing the club song", [song.id]);
+      await client.taskAction(song.id, { version: song.version, action: "pause" });
+      // A dependency a run left paused with no card, not the person's pause.
+      const flag = await readyTask(client, project.id, "Draw the club flag");
+      const wave = await readyTask(client, project.id, "Wave the club flag", [flag.id]);
+      await rt.store.task.patch(flag.id, {
+        status: "needs_human",
+        reason: "paused",
+        author_human: null,
+        author_agent: rt.agent.id,
+      } as never);
+      // A dependency whose card asks (Continue at its own budget).
+      const logo = await readyTask(client, project.id, "Draw the club logo");
+      const print = await readyTask(client, project.id, "Print the club logo", [logo.id]);
+      await rt.store.task.patch(logo.id, { status: "needs_human", reason: "paused" });
+      await fileBudgetStopCard({
+        store: rt.store,
+        task: await rt.store.task.mustGet(logo.id),
+        session: null,
+        humanId: rt.human.id,
+        agentId: rt.agent.id,
+        runId: null,
+        stop: {
+          capUsdMicro: 75_000,
+          spentUsdMicro: 75_000,
+          source: "task_budget",
+          specialist: "coder",
+        },
+        handoff: { stopped: "Half of it.", leftToDo: ["The rest"], stoppedBy: "budget" },
+        now: rt.clock.nowIso(),
+      });
+      const check = await client.startCheck(project.id);
+      const heldOf = (taskId: string) =>
+        check.waiting.find((w) => w.taskId === taskId)?.waitsOn[0]?.held;
+      expect(heldOf(sing.id)).toEqual({
+        why: "paused",
+        state: "which you paused",
+        advice: 'Resume "Write the club song", or change what it waits for on the Tasks tab.',
+      });
+      expect(heldOf(wave.id)).toEqual({
+        why: "paused",
+        state: "which is paused",
+        advice: 'Resume "Draw the club flag", or change what it waits for on the Tasks tab.',
+      });
+      expect(heldOf(print.id)).toEqual({
+        why: "answer",
+        state: "which needs your answer",
+        advice: "Answer it in the Inbox, or change what it waits for on the Tasks tab.",
+      });
+      expect(check.blocked?.holds).toBe("limit");
       expect(await client.sessions({ projectId: project.id })).toEqual([]);
     } finally {
       await settleSessions(rt);
@@ -29392,6 +29488,20 @@ describe("l4-starts-carried, run L4", () => {
       expect((await client.tasks(project.id)).map((t) => t.status)).toEqual(["ready"]);
       // The phone's start meets the same refusal (the daemon's one check for a person's start).
       expect(await rt.refusedStart(project.id)).toBe(dialog?.sentence);
+      // fixup-l4-starts-carried (the review's notes): with Stop all on, the API's Start says Stop
+      // all's sentence, as the dialog does, not the key's; the phone's Start (which lifts Stop
+      // all only when it can start) still meets the key's sentence, before it lifts anything
+      // (the watcher's row: packages/runtime/test/remote-watcher.test.ts).
+      await client.kill({ scope: "all", reason: "stop all from the UI" });
+      const killed = await client.startSession({ agentId, projectId: project.id }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect((killed as ApiError).message).toBe(KILL_ACTIVE_START_MESSAGE);
+      expect(await rt.refusedStart(project.id)).toBeNull();
+      expect(await rt.refusedStart(project.id, { evenStopped: true })).toBe(dialog?.sentence);
+      expect(rt.kill.isFrozen({ agentId: rt.agent.id })).toBe(true);
+      expect(await client.sessions({ projectId: project.id })).toEqual([]);
     } finally {
       await settleSessions(rt);
       await rt.close();

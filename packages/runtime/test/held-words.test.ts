@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { heldBlocker, outerLimitHold } from "../src/daemon/held-words.ts";
+import { heldBlocker, heldDependency, outerLimitHold } from "../src/daemon/held-words.ts";
 import { resetDay } from "../src/daemon/request-words.ts";
 
 /**
@@ -22,6 +22,9 @@ describe("l4-starts-carried, run L4", () => {
       clause:
         "paused at this month's cap of CHF 5.00; raise it in Settings, or it resets on 1 December",
       to: "/settings",
+      // fixup-l4-starts-carried: the limit alone and what changes it, for the waiting list.
+      limit: "paused at this month's cap of CHF 5.00",
+      raise: "Raise the monthly cap in Settings",
     });
     const share = outerLimitHold(
       card({
@@ -39,7 +42,7 @@ describe("l4-starts-carried, run L4", () => {
         {
           title: "Write the club motto",
           why: "limit",
-          ...(share as { clause: string; to: string }),
+          ...(share as NonNullable<typeof share>),
         },
         null,
         "/projects/p/tasks",
@@ -58,6 +61,49 @@ describe("l4-starts-carried, run L4", () => {
       kind: "nothing_runnable",
       sentence: 'Nothing can run: "A" needs your answer.',
       action: { kind: "link", label: "Open it", to: "/inbox" },
+      holds: "answer",
+    });
+  });
+
+  // fixup-l4-starts-carried (the review's blocking 2): the Start dialog's waiting list said
+  // "which needs your answer ... Answer it in the Inbox" for every dependency that waits on the
+  // person; it now says what holds each, as the blocker does.
+  it("fixup: the waiting list's words for a dependency held by a limit, by your pause, by a pause, or by a card that asks", () => {
+    const project = outerLimitHold(
+      card({
+        source: "project",
+        title: '"Write the club motto" paused at the project\'s budget of CHF 0.06',
+      }),
+      resetDay,
+    );
+    if (!project) throw new Error("no hold");
+    expect(heldDependency({ title: "Write the club motto", why: "limit", ...project })).toEqual({
+      why: "limit",
+      state: "paused at the project's budget of CHF 0.06",
+      advice:
+        "Raise the project's budget in Settings, or change what it waits for on the Tasks tab.",
+    });
+    expect(heldDependency({ title: "Write the song", why: "paused" })).toEqual({
+      why: "paused",
+      state: "which you paused",
+      advice: 'Resume "Write the song", or change what it waits for on the Tasks tab.',
+    });
+    expect(heldDependency({ title: "Draw the flag", why: "paused", byYou: false }).state).toBe(
+      "which is paused",
+    );
+    expect(heldDependency({ title: "A", why: "answer" })).toEqual({
+      why: "answer",
+      state: "which needs your answer",
+      advice: "Answer it in the Inbox, or change what it waits for on the Tasks tab.",
+    });
+    // The blocker of a task that waits on a pause no card asks about and not the person's.
+    expect(
+      heldBlocker({ title: "Draw the flag", why: "paused", byYou: false }, "Wave the flag", "/t"),
+    ).toEqual({
+      kind: "nothing_runnable",
+      sentence: 'Nothing can run: "Wave the flag" waits on "Draw the flag", which is paused.',
+      action: { kind: "link", label: "Open Tasks", to: "/t" },
+      holds: "paused",
     });
   });
 });

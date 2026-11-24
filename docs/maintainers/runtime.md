@@ -10134,3 +10134,38 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   L4d-left-2, L4a-left-5), the S-10 case's `startWait` lines; `packages/runtime/test/
   held-words.test.ts`; loop-docs, notifications-channels and conversation-memory
   "l4-starts-carried, run L4".
+
+### fixup-l4-starts-carried (run L4i, 2026-11-24): the review's blocking findings
+
+- **Each waiting dependency says what holds it (blocking 2).** `held-words.ts` `heldDependency(h)`
+  gives the Start dialog's waiting list `{ why, state, advice }` for a dependency that waits on the
+  person: "paused at the project's budget of CHF 0.06" with "Raise the project's budget in
+  Settings, or change what it waits for on the Tasks tab." (`outerLimitHold` now also returns
+  `limit` and `raise`: "Raise the monthly cap in Settings", "Raise the share in Settings"),
+  "which you paused" or "which is paused" with 'Resume "A", or change what it waits for on the
+  Tasks tab.', and "which needs your answer" with the Inbox only when an open card asks.
+  `GET /projects/:id/start-check` sends it as `waiting[].waitsOn[].held` (read with `heldFacts`
+  once for the blocker and the list). `heldFacts` now words every `needs_human` task: a pause no
+  card asks about that the person did not make is `paused` with `byYou: false`.
+- **The blocker says a task of the work holds it (blocking 1).** `heldBlocker` (and the inline
+  answer path of `startBlocked`) set `blocked.holds` (`answer`, `limit`, `paused`); the Start
+  dialog then shows no "Give your agent work first" beside the sentence.
+- **Chat's kept start has its own id (blocking 3).** `KeptStart.id` (billing-pick.ts) is stored
+  on the wait and read back after a restart. The commands' `keepStart` port keeps the start with
+  `newId()` and returns `{ sentence, keptId }`; `cancelKeptStart(projectId, keptId)` is
+  `dropKeptStart(store, projectId, { id })`, which drops that person start only (never a
+  continuation or a Start kept later). `CommandLoop` gets `keptStartWaits(projectId, keptId)`
+  (`keptStartWaits` in billing-pick.ts): once that start no longer waits (it ran at the reset, it
+  was cancelled, Stop all dropped it), the Undo is refused with `KEPT_START_GONE_REASON` and the
+  row marked irreversible, and the Changes screen shows that reason in place of Undo. Before, the
+  loop let every kept start's Undo through, and it said "Undone" after the start had run.
+- **The phone's Start lifts no Stop all when it is refused.** `RemoteCommandDeps.startRefused`
+  (compose: `refusedStart(projectId, { evenStopped: true })`) is asked before the watcher's
+  `kill.resume()`; the row fails with the sentence and Stop all stays. `RuntimeApp.refusedStart`
+  is null while Stop all is on unless `evenStopped`, so POST /sessions answers Stop all's 409 first,
+  as the Start dialog does.
+- Tests: `apps/ui/test/real-daemon.test.ts` "l4-starts-carried, run L4" > "L4g-left-1 (fixup)",
+  "L4a-left-5 (fixup)" (with a restart) and the L4d-left-2 case's Stop all lines;
+  `apps/ui/test/project.test.tsx` "l4-starts-carried, run L4"; `packages/runtime/test/
+  held-words.test.ts` "fixup"; `packages/runtime/test/remote-watcher.test.ts` "l4-starts-carried,
+  run L4".
