@@ -295,6 +295,13 @@ describe("l4-selftasks-carried, run L4: chat's read-back of a reviewer task says
     );
     const plain = await card("reviewer", "The gaps found in notes/plan.md are listed");
     expect(plain?.ask).toBe(`Add "Review the plan" to PharmaWatch? ${PLAIN}`);
+    // fixup-l4-selftasks-carried (the review's blocking item): a technology's dotted name is no
+    // file the words ask for (before: "so Node.js is not written").
+    const tech = await card("reviewer", "Write a review of the Node.js setup");
+    expect(tech?.ask).toBe(`Add "Review the plan" to PharmaWatch? ${PLAIN}`);
+    expect(tech?.sentence).toBe(
+      `Added "Review the plan" to PharmaWatch, for the reviewer. ${PLAIN}`,
+    );
     const coder = await card("coder", "review.md lists the gaps");
     expect(coder?.ask).toBe('Add "Review the plan" to PharmaWatch?');
     await w.store.close();

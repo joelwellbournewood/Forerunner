@@ -1862,4 +1862,5 @@ The reviewer reads and runs checks but writes no file: its findings are its repo
 read in the task's drawer. New task and Edit say so when you pick it, naming the file your
 words ask for ("The reviewer writes no file, so review.md is not written: ..."), and so does
 Chat when it reads back a task for the reviewer; to have a file written, pick another
-specialist or let the agent choose.
+specialist or let the agent choose. The name of a tool or a site, such as Node.js, ASP.NET or
+example.com, is never taken for a file, so a review of "the Node.js setup" gets the plain line.

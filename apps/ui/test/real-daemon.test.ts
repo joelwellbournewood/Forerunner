@@ -28714,6 +28714,19 @@ describe("l4-selftasks-carried, run L4", () => {
       expect(await lineFor("The gaps and risks found in notes/plan.md are listed")).toBe(
         "The reviewer writes no file: its findings are its report, which you read in the task's drawer.",
       );
+      // fixup-l4-selftasks-carried (the review's blocking item, bench walk D): a technology's
+      // dotted name is no file; before, the line said "so Node.js is not written".
+      for (const words of [
+        "Write a review of the Node.js setup",
+        "Create a report on the Express.js routes",
+        "Write up the risks in the ASP.NET app",
+      ])
+        expect(await lineFor(words), words).toBe(
+          "The reviewer writes no file: its findings are its report, which you read in the task's drawer.",
+        );
+      expect(await lineFor("Write a review of the Node.js setup to review.md")).toBe(
+        "The reviewer writes no file, so review.md is not written: its findings are its report, which you read in the task's drawer.",
+      );
       const coder = (
         await a.client.modelSettings(undefined, project.id, {
           title: "Review the plan",

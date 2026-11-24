@@ -2363,6 +2363,20 @@ describe("l4-selftasks-carried, run L4: the reviewer's line names a file the wor
     await waitFor(() =>
       expect(within(dialog).getByTestId("task-who-writes-no-file")).toHaveTextContent(PLAIN),
     );
+    // fixup-l4-selftasks-carried (the review's blocking item, bench walk D): a technology's
+    // dotted name is no file (before: "so Node.js is not written"). Pasted whole, so the line
+    // changes only when the daemon answered for these words (the words are asked again 400 ms
+    // after typing stops).
+    await user.clear(outcome);
+    await user.paste("Write a review of the Node.js setup to review.md");
+    await waitFor(() =>
+      expect(within(dialog).getByTestId("task-who-writes-no-file").textContent).toBe(NAMED),
+    );
+    await user.clear(outcome);
+    await user.paste("Write a review of the Node.js setup");
+    await waitFor(() =>
+      expect(within(dialog).getByTestId("task-who-writes-no-file").textContent).toBe(PLAIN),
+    );
   });
 
   it("Edit: the task's own words ask for review.md, so choosing reviewer names it (Edit asks with the project and the words)", async () => {

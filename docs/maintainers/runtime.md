@@ -10020,7 +10020,14 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   gaps", "The review.md file lists ..."); `GET /settings/models` passes the typed words
   (`model-settings-view.ts` `input.words`), so `writesNoFile` reads "The reviewer writes no
   file, so review.md is not written: its findings are its report, which you read in the task's
-  drawer." compose's `modelSettings.writesNoFile` answers the commands' port.
+  drawer." compose's `modelSettings.writesNoFile` answers the commands' port. A dotted word
+  is a file only when `isFileName` says so (fixup-l4-selftasks-carried, the review's blocking
+  item: "so Node.js is not written"): its ending is in `FILE_EXTENSIONS` (md, csv, json, html,
+  js and the like; not NET, IO or com) and it is no `TECHNOLOGY` ("Node.js", "Vue.js",
+  "D3.js", "node.js"; a path such as "src/App.js" still is a file). Every other dotted word
+  loses its dots before the clause is read, so it is never the file and never ends the clause
+  a later file is written in. Tests: packages/runtime/test/reviewer-file-line.test.ts, the
+  D-5 case in apps/ui/test/real-daemon.test.ts.
 - **Others' words (L4b-left-4).** `quotesOthersWords` counts a `task_proposal` card: a chat
   turn that lists it in full reads every change back first (ADR 0114).
 - **A task check's left-out words (L4b-left-3).** `changeWhat` (task-check.ts) says

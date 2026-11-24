@@ -99,8 +99,39 @@ export function writesNoFileLine(specialist: string, file: string | null = null)
     : `The ${specialist} writes no file: its findings are its report, which you read in the task's drawer.`;
 }
 
-/** A file name as task words write it: a path ending in a short extension ("review.md"). */
-const FILE = String.raw`[\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4}`;
+/**
+ * A dotted word as task words write a file: a path ending in an extension ("review.md"). Whether
+ * it is a file is `isFileName`'s to say: "Node.js", "ASP.NET" and "example.com" are dotted too.
+ */
+const FILE = String.raw`[\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,7}(?![\w-])`;
+/** Every dotted word of a clause, to tell the files from the names that only look like one. */
+const DOTTED = new RegExp(FILE, "g");
+/**
+ * fixup-l4-selftasks-carried (the review's blocking item): the endings of files a task may ask
+ * for, in lower case. A dotted word ending otherwise is no file: a technology ("ASP.NET",
+ * "Socket.IO"), a site ("example.com"), an abbreviation ("e.g").
+ */
+const FILE_EXTENSIONS = new Set(
+  (
+    "md markdown mdx txt text rst adoc csv tsv json jsonl yaml yml toml xml ini cfg conf " +
+    "html htm css scss sass less js mjs cjs jsx ts mts cts tsx vue svelte py ipynb rb go rs " +
+    "java kt swift cs php sh bash ps1 sql pdf doc docx odt rtf xls xlsx ods ppt pptx odp " +
+    "png jpg jpeg gif svg webp log diff patch tex bib mmd graphql proto tf"
+  ).split(" "),
+);
+/**
+ * A technology's name, not a file in the folder: a capitalised one-word name with ".js" or ".ts"
+ * ("Node.js", "Vue.js", "D3.js", as the bench's stand-in critic reads them) and the well-known
+ * ones in lower case ("node.js"). A path ("src/App.js") is still a file.
+ */
+const TECHNOLOGY =
+  /^(?:[A-Z][A-Za-z0-9]*\.(?:[jJ][sS]|[tT][sS])|(?:node|vue|next|nuxt|express|react|angular|ember|backbone|alpine|svelte|three|chart|d3|p5|moment|socket|knockout|meteor|deno|nest|solid|preact|jquery)\.(?:js|ts))$/;
+
+/** Whether a dotted word of a task's words is a file ("review.md") rather than a name. */
+function isFileName(word: string): boolean {
+  const ext = word.slice(word.lastIndexOf(".") + 1).toLowerCase();
+  return FILE_EXTENSIONS.has(ext) && (word.includes("/") || !TECHNOLOGY.test(word));
+}
 /** "<file> lists|holds|... ": the file is the subject the outcome describes, so it is written. */
 const FILE_AS_SUBJECT = new RegExp(
   String.raw`^\s*(?:(?:a|an|the|new)\s+)*(?:file\s+)?` +
@@ -131,11 +162,15 @@ const FILE_READ = new RegExp(
  * l4-selftasks-carried (L4-other-1 D-5): the file a task's words ask to be written, if any: the
  * outcome's or a criterion's subject ("review.md lists the gaps ..."), or what a write verb
  * makes ("write the findings to review.md", "create review.md"). A file the words only read
- * ("the gaps found in notes/plan.md", "Review README.md") is never it.
+ * ("the gaps found in notes/plan.md", "Review README.md") is never it, nor is a dotted name
+ * that is no file ("Node.js", "ASP.NET", "example.com"; `isFileName`).
  */
 export function fileTheWordsWrite(texts: readonly string[]): string | null {
   for (const text of texts) {
-    for (const clause of text.split(/(?<=[.;])\s+|\n/)) {
+    for (const words of text.split(/(?<=[.;])\s+|\n/)) {
+      // A dotted name that is no file loses its dots, so it is neither taken for the file nor
+      // ends the clause a later file is written in ("a review of the Node.js setup to review.md").
+      const clause = words.replace(DOTTED, (w) => (isFileName(w) ? w : w.replaceAll(".", "_")));
       const subject = FILE_AS_SUBJECT.exec(clause);
       if (subject?.[1]) return subject[1];
       const written = FILE_WRITTEN.exec(clause);

@@ -24,6 +24,19 @@ describe("l4-selftasks-carried, run L4: the file a task's words ask to be writte
     [["Write notes on report.md"], null],
     [["A short list of the risks"], null],
     [[], null],
+    // fixup-l4-selftasks-carried (the review's blocking item): a technology's or a site's dotted
+    // name is no file the words ask for ("so Node.js is not written" was a false sentence).
+    [["Write a review of the Node.js setup"], null],
+    [["Write a review of the node.js setup"], null],
+    [["Create a report on the Express.js routes"], null],
+    [["Write up the risks in the ASP.NET app"], null],
+    [["Produce a list of issues with the Vue.js components"], null],
+    [["Create a summary of the Next.js and D3.js code"], null],
+    [["Write the findings about the Socket.IO server"], null],
+    [["Write the findings for example.com"], null],
+    [["Write e.g. the risks and the gaps"], null],
+    [["Write a review of the Node.js setup to review.md"], "review.md"],
+    [["Save the review as review.markdown"], "review.markdown"],
   ];
   for (const [words, file] of golden)
     it(`${JSON.stringify(words)} -> ${file ?? "none"}`, () => {
