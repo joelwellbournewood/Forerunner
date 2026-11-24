@@ -220,3 +220,29 @@ that the text is quoted as data on labelled lines and that the obedient speciali
 refused (brief-001..003, controls 101 and 102). report-008 checks that a task for the researcher
 after the coder's work waits on the card with the reach reason. The reason given with a change
 reaching the next brief is unchanged.
+
+## Amendment 2026-11-23 (l4-chat-carried, run L4): carried items
+
+- Point 7 (dated note, C4-left-7): a suggestion card a crash left between its mark
+  ("Making the changes…") and its apply is settled at the next start: applied once (its one
+  change log row is found when the apply had run, else the changes are checked and made now),
+  never twice and never left at "Making the changes…" (validation rule 4).
+- Point 6 (dated note, C4-left-6 and L4-selftasks-129; ADR 0030 point 6, undo is state-based): a
+  split's Undo puts back what the tasks after it waited for and cancels the parts, so after a
+  later change to what one of them waits for (a step added before it) the Undo is refused in
+  words naming that change, never done in part; undoing the later change first lets the split go
+  back. A part a session holds reads "is running now", not "has run since".
+- Point 9 (dated note, SC-13): the session review counts a planned task that was split, or
+  dropped as the same as another, while the session ran as replaced, never as planned and left
+  undone ("1/1 planned, 1 replaced"): a correct fix must not lower the session's grade. An undone
+  change counts as before.
+
+## Amendment 2026-11-23 (fixup-l4-chat-carried, run L4): a split task's first part that ran is measured
+
+Point 9 above held a split task as replaced for the whole session. A split keeps the task as its
+first part, so a first part that then ran and failed, or waits for the person, left every measure
+and a session whose only planned work failed read "accepted (grade 100, 0 findings)". A split task
+is replaced only while its first part has not run in the session (draft or ready, no work run, not
+sent back or paused); once it ran it is measured as it ran. A task dropped as the same as another
+stays replaced. The session page's line names the count: "Session review measured: 1 of 1 planned
+task done, 1 replaced; …", or "1 planned task replaced; …" when that was the whole plan.

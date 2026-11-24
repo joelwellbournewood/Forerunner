@@ -315,3 +315,36 @@ that rested on a hit line had no From line.
   its date only when the hit was strong and no other hit of this turn has that day. A name found
   only inside another source's title does not count. There are at most three sources, and none
   appears twice.
+
+## Amendment 2026-11-23 (l4-chat-carried, run L4): a Stop during the claim guard's nudge
+
+A Stop pressed while the claim guard's nudge runs ends the turn as stopped, as a Stop at any other
+point of the turn does: "You stopped this answer: CHF … spent." with what the turn cost, and never
+the guard's "Nothing changed, and nothing waits for your yes." line (C3-left-11). The claim the
+model streamed was already taken back when the nudge began; nothing changes.
+
+## Amendment 2026-11-23 (l4-chat-carried, run L4): the app's lines in any case
+
+Only the app writes "The app did: …" and "The app asked, with Yes and No: …": a line the model
+writes in any letter case ("the app did: …"), at a line's start, behind a short bracketed lead or
+after a sentence, is left out of the reply, the stored row and every later turn's history, and
+is a change claim the guard nudges (L4c-left-6). Before, the check was case-sensitive.
+
+## Amendment 2026-11-23 (l4-chat-carried, run L4): the true line after a yes asked in words
+
+When the reply still asks for a yes in its own words after the nudge ("Shall I resume it?") and
+the turn changed nothing and nothing waits, the reply is "Nothing changed, and nothing waits for
+your yes. If you want a change, say what you want done." (L4c-left-7). The person may have asked
+no change at all (a status question), so "Say it again to try once more" would presume one; a
+change said that way comes back as the app's question with Yes and No, as the user guide says. A
+claimed change or a claimed read-back keeps "Say it again to try once more."
+
+## Amendment 2026-11-23 (fixup-l4-chat-carried, run L4): what a Stop during the nudge shows
+
+A Stop during the claim guard's nudge shows what any Stop shows: the complete sentences the nudge
+call streamed before it, under "You stopped this answer: CHF … spent." The guard does not check
+them again, so a nudge answer that repeats the claim and streams a whole sentence of it before the
+Stop would show that sentence. This is the same as a Stop during the first call, before the guard
+runs; the composed tests assert the common case exactly (the held nudge call streamed nothing: an
+empty reply with the stopped line). Checking the stopped text with the guard is left for a later
+round.

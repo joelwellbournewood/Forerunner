@@ -342,3 +342,49 @@ describe("l4-github-merge, run L4", () => {
     expect(screen.getByTestId("your-files")).not.toHaveTextContent("proj_beacon");
   });
 });
+
+describe("l4-chat-carried, run L4: Talk on a joined project (C4-left-9)", () => {
+  // Talk shows the conversation of the project on screen (design section 3.9). On a project closed
+  // into another it said nothing of that and kept its message box and Talk button: a change asked
+  // there was refused in words. It says what the joined page's Chat says, with no message box.
+  const joinedBeacon = () => {
+    const harness = createHarness();
+    const { state } = harness.daemon;
+    state.joined.proj_beacon = {
+      projectId: "proj_atlas",
+      name: "Atlas",
+      at: "2026-11-09T10:00:00.000Z",
+      text: 'Joined into "Atlas" on 9 Nov.',
+    };
+    for (const p of state.projects) if (p.id === "proj_beacon") p.status = "archived";
+    return harness;
+  };
+
+  it("on the joined project's page Talk says the chat is kept to read, with Open it, and has no message box, examples or Talk button; Open it leads to Atlas's chat, where Talk has them", async () => {
+    const user = userEvent.setup();
+    const harness = joinedBeacon();
+    renderApp("/projects/proj_beacon/summary", harness);
+    await screen.findByTestId("project-joined");
+    await user.click(screen.getByTestId("talk-open"));
+    const talk = await screen.findByTestId("conversation");
+    const line = await within(talk).findByTestId("conversation-closed");
+    expect(line).toHaveTextContent(
+      'This chat is kept to read; ask about its work in the Chat of "Atlas".',
+    );
+    expect(within(line).getByRole("link", { name: "Open it" })).toHaveAttribute(
+      "href",
+      "/projects/proj_atlas/chat",
+    );
+    expect(within(talk).queryByTestId("conversation-input")).toBeNull();
+    expect(within(talk).queryByTestId("conversation-send")).toBeNull();
+    expect(within(talk).queryByTestId("conversation-examples")).toBeNull();
+    expect(within(talk).queryByTestId("voice-talk")).toBeNull();
+    // Nothing reached the daemon's chat from it.
+    expect(postedCalls(harness, "/chat")).toEqual([]);
+    await user.click(within(line).getByRole("link", { name: "Open it" }));
+    expect(await within(talk).findByTestId("conversation-input")).toBeEnabled();
+    expect(within(talk).queryByTestId("conversation-closed")).toBeNull();
+    expect(within(talk).getByTestId("voice-talk")).toBeInTheDocument();
+    expect(within(talk).getByTestId("conversation-about")).toHaveTextContent("About Atlas");
+  });
+});

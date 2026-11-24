@@ -2386,7 +2386,13 @@ export const taskSplit: CommandDef<TaskSplitParams> = {
         title: kept.title,
         fields: fieldsOf(kept, SPLIT_FIELDS),
         attempt: kept.attempt,
-        parts: made.map((m) => ({ task_id: m.id, title: m.title, attempt: m.attempt })),
+        // What each part waits for as the split made it (C4-left-6: its Undo checks it).
+        parts: made.map((m) => ({
+          task_id: m.id,
+          title: m.title,
+          attempt: m.attempt,
+          depends_on: m.depends_on,
+        })),
         ...(waited.length ? { waited } : {}),
       },
       sentence: splitSentence(task.title, titles),
@@ -2394,7 +2400,7 @@ export const taskSplit: CommandDef<TaskSplitParams> = {
       reversible: true,
     };
   },
-  async undoBlocked(_params, _before, after, ctx) {
+  async undoBlocked(params, _before, after, ctx, change) {
     const a = asObject(after);
     if (typeof a.task_id !== "string") return "this change does not name the task it split";
     const task = await ctx.store.task.get(a.task_id);
@@ -2402,14 +2408,18 @@ export const taskSplit: CommandDef<TaskSplitParams> = {
     for (const part of splitPartsOf(after)) {
       const row = await ctx.store.task.get(part.task_id);
       if (!row) continue;
-      if ((row.status !== "draft" && row.status !== "ready") || row.attempt !== part.attempt)
-        return `${quote(row.title)} has run since, so the split cannot be undone`;
+      const moved = movedSinceSplit(row, part.attempt);
+      if (moved) return moved;
     }
-    if ((task.status !== "draft" && task.status !== "ready") || task.attempt !== a.attempt)
-      return `${quote(task.title)} has run since, so the split cannot be undone`;
+    const moved = movedSinceSplit(task, typeof a.attempt === "number" ? a.attempt : 0);
+    if (moved) return moved;
     if (JSON.stringify(fieldsOf(task, SPLIT_FIELDS)) !== JSON.stringify(asObject(a.fields)))
       return `${quote(task.title)} was changed again since; undo would not put it back as it was`;
-    return null;
+    // l4-chat-carried (C4-left-6, ADR 0030 point 6): the Undo puts back what the tasks after it
+    // waited for and cancels the parts, so a wait added or taken away after the split (a step
+    // before one of them) would be lost: refused in words, never done in part. The same change's
+    // own steps (the task check's set) are no later change.
+    return waitsChangedSinceSplit(params, after, ctx, sameChangeTasks(change));
   },
   undoSentence(_params, before) {
     const b = asObject(before);
@@ -2460,7 +2470,9 @@ export const taskSplit: CommandDef<TaskSplitParams> = {
 };
 
 /** The new parts a split made (`after.parts`), with the try each had then. */
-function splitPartsOf(after: JsonValue): { task_id: string; attempt: number }[] {
+function splitPartsOf(
+  after: JsonValue,
+): { task_id: string; attempt: number; depends_on: string[] | null }[] {
   const list = asObject(after).parts;
   if (!Array.isArray(list)) return [];
   return list
@@ -2469,5 +2481,80 @@ function splitPartsOf(after: JsonValue): { task_id: string; attempt: number }[] 
     .map((x) => ({
       task_id: String(x.task_id),
       attempt: typeof x.attempt === "number" ? x.attempt : 0,
+      // Absent on a split recorded before l4-chat-carried.
+      depends_on: Array.isArray(x.depends_on)
+        ? x.depends_on.filter((d): d is string => typeof d === "string")
+        : null,
     }));
+}
+
+/**
+ * Why a part (or the task kept as the first part) keeps its split from being undone, in words
+ * (L4-selftasks-129): a part a session took or works on is running now; one that ran, failed or
+ * waits for the person has run since; a cancelled one was cancelled. Never "has run since" for a
+ * part that has not started (before: any status but draft or ready read so).
+ */
+function movedSinceSplit(row: TaskRow, attempt: number): string | null {
+  if ((row.status === "draft" || row.status === "ready") && row.attempt === attempt) return null;
+  if (row.status === "claimed" || row.status === "in_progress" || row.status === "in_review")
+    return `${quote(row.title)} is running now, so the split cannot be undone`;
+  if (row.status === "cancelled")
+    return `${quote(row.title)} was cancelled since, so the split cannot be undone`;
+  return `${quote(row.title)} has run since, so the split cannot be undone`;
+}
+
+/** The tasks the other steps of the same change made (a step added with the split). */
+function sameChangeTasks(change?: {
+  steps: readonly { name: string; after: JsonValue }[];
+}): Set<string> {
+  const out = new Set<string>();
+  for (const s of change?.steps ?? []) {
+    const a = asObject(s.after);
+    if (s.name === "task.create" && typeof a.task_id === "string") out.add(a.task_id);
+  }
+  return out;
+}
+
+/**
+ * l4-chat-carried (C4-left-6): a wait added or taken away after the split, on a task that waited
+ * for it or on one of its parts, in words naming the task and what came after ('"Publish" was made
+ * to wait for "Check the links" after the split; undo would drop that'); null when every one
+ * waits as the split left it (or as the same change's own steps left it).
+ */
+async function waitsChangedSinceSplit(
+  params: TaskSplitParams,
+  after: JsonValue,
+  ctx: CommandContext,
+  sameChange: ReadonlySet<string>,
+): Promise<string | null> {
+  const a = asObject(after);
+  const parts = splitPartsOf(after);
+  const partIds = parts.map((p) => p.task_id);
+  const expected: { taskId: string; dependsOn: string[] }[] = [];
+  for (const item of Array.isArray(a.waited) ? a.waited : []) {
+    const w = asObject(item);
+    if (typeof w.task_id !== "string" || !Array.isArray(w.depends_on)) continue;
+    const before = w.depends_on.filter((d): d is string => typeof d === "string");
+    expected.push({ taskId: w.task_id, dependsOn: [...new Set([...before, ...partIds])] });
+  }
+  for (const [i, part] of parts.entries()) {
+    // A split recorded before the parts' waits were kept: in turn, each waited for the one before.
+    const dependsOn =
+      part.depends_on ??
+      (params.order === "in_turn" ? [i === 0 ? String(a.task_id) : String(partIds[i - 1])] : null);
+    if (dependsOn) expected.push({ taskId: part.task_id, dependsOn });
+  }
+  for (const e of expected) {
+    const row = await ctx.store.task.get(e.taskId);
+    if (!row || row.status === "cancelled") continue;
+    const added = row.depends_on.filter((d) => !e.dependsOn.includes(d) && !sameChange.has(d));
+    if (added.length) {
+      const titles: string[] = [];
+      for (const id of added) titles.push((await ctx.store.task.get(id))?.title ?? "another task");
+      return `${quote(row.title)} was made to wait for ${namesList(titles)} after the split; undo would drop that`;
+    }
+    if (e.dependsOn.some((d) => !row.depends_on.includes(d)))
+      return `what ${quote(row.title)} waits for was changed after the split; undo would not put it back as it was`;
+  }
+  return null;
 }

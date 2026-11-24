@@ -124,7 +124,8 @@ const CHANGED: ClaimPattern[] = [
   // every reply (`withoutAppMarkers`); a turn whose command changed nothing is nudged for it.
   // A short bracketed lead before it ("[stand-in model] The app did: …") is still the line
   // (review of l4-chat-answers: the bench's stand-in prefix kept the guard from firing).
-  { re: /^(?:\[[^\]]{1,40}\]\s*)?The app did:/g },
+  // l4-chat-carried (L4c-left-6): in any case ("the app did: …").
+  { re: /^(?:\[[^\]]{1,40}\]\s*)?The app did:/gi },
   // "I've set research to …", "I have changed the budget", "I've now paused it".
   {
     re: /\bI(?:'ve|’ve| have)\s+(?:now\s+|just\s+|also\s+|already\s+)?(?:changed|set|updated|switched|turned (?:on|off)|added|paused|resumed|cancell?ed|removed|deleted|stopped|started|raised|lowered|widened|narrowed|limited|restricted|allowed|enabled|disabled|reopened|moved|renamed)\b/gi,
@@ -237,6 +238,16 @@ const ABSENT: RegExp[] = [
 ];
 
 /**
+ * l4-chat-carried, run L4 (L4c-left-8): what follows "I don't see" when the sentence is about now,
+ * from the facts ("any failed tasks", "any open questions in Quote Page", "anything waiting for
+ * your answer"): no record named, so no absence claim ("There is no ready task" stays free the
+ * same way). Anything after the state ("… about the FAQ", "… called …") names what was looked for
+ * and is still a claim.
+ */
+const NOW_STATE =
+  /^\s*(?:(?:any|no)\s+(?:(?:failed|open|ready|running|waiting|paused|blocked|queued|cancelled|done|finished|new|other|more|unanswered)\s+)*(?:tasks?|cards?|sessions?|questions?|changes?|problems?|errors?|failures?|work)|anything\s+(?:waiting|open|running|left|failed|paused|blocked))(?:\s+(?:right\s+now|now|at\s+the\s+moment|today|yet|left|here|open|running|waiting|for\s+(?:you|your\s+(?:yes|answer))|in\s+(?:this|the)\s+project|in\s+[A-Z][\w-]*(?:\s+[A-Z][\w-]*){0,3}))*\s*[.!]?$/;
+
+/**
  * Review of l4-chat-answers (blocking 2): a clarifying question asks which, who, where or what
  * ("Which task should I add it to?", "Where should I put the new page?") or offers a choice ("Add
  * it to Notes or to Site?", "Start it now or wait for the next session?"). It asks for no yes and
@@ -294,6 +305,7 @@ export function claimsOf(text: string): ReplyClaim[] {
   absent: for (const s of own)
     for (const re of ABSENT)
       for (const m of s.matchAll(re)) {
+        if (NOW_STATE.test(s.slice((m.index ?? 0) + m[0].length))) continue;
         out.push({ kind: "absent", phrase: m[0].trim() });
         break absent;
       }
@@ -390,6 +402,16 @@ export function claimNudge(claim: ReplyClaim, did: TurnDid): string {
  */
 export const NOTHING_CHANGED_REPLY =
   "Nothing changed, and nothing waits for your yes. Say it again to try once more.";
+
+/**
+ * l4-chat-carried, run L4 (L4c-left-7): the same after a reply that only asked for a yes in words
+ * ("Shall I resume it?"): the person may have asked no change (a status question), so "Say it
+ * again to try once more" would presume one; the line says how to ask for one instead, and a
+ * change asked for that way comes back as the app's question with Yes and No. A claimed change
+ * or a claimed read-back keeps the try-again clause.
+ */
+export const NOTHING_CHANGED_ASKS_REPLY =
+  "Nothing changed, and nothing waits for your yes. If you want a change, say what you want done.";
 
 /**
  * The same when a card an earlier turn read back still waits for the person's yes (its Yes and

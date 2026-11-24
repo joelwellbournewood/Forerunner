@@ -933,7 +933,7 @@ describe("d1109-chat-depth, run C: the exact text", () => {
     ).principals.get("conversation-agent");
     // l4-chat-depth (L4-chat-202, L4-chat-203) made 1.5.0: who writes the ask, and whose section.
     // l4-chat-answers (L4c) made 1.5.1 (what it is given, what it looks up, how it answers).
-    expect(role?.version).toBe("1.5.2");
+    expect(role?.version).toBe("1.5.3");
     expect(role?.prompt).toContain("## Thinking longer");
     expect(role?.prompt).toContain(
       "- `answer_thoroughly` hands a question to a stronger model that thinks it through. Call it\n  first, before any lookup, and write nothing before it",
@@ -1032,7 +1032,9 @@ describe("d1109-chat-depth fixup: the claim guard's step resets the live text", 
     expect(r.reply).toBe(TRUE_LINE);
   });
 
-  it("Stop pressed during the nudge: the reply is the true line (never the claim), and it says the person stopped it", async () => {
+  // l4-chat-carried (C3-left-11): a Stop during the nudge ends the turn stopped, as at any other
+  // point: never the claim, and never the guard's true line either (before: TRUE_LINE).
+  it("Stop pressed during the nudge: the reply is neither the claim nor the guard's line, and it says the person stopped it", async () => {
     const slow = new FakeProvider({
       replies: [textReply(CLAIM, { ttftMs: 0 }), textReply(CLAIM, { ttftMs: 600_000 })],
       latency: "simulated",
@@ -1049,7 +1051,9 @@ describe("d1109-chat-depth fixup: the claim guard's step resets the live text", 
       },
     });
     expect(slow.calls).toHaveLength(2);
-    expect(r.reply).toBe(TRUE_LINE);
+    // Nothing of the held nudge call had streamed: the reply is empty, the footer says why
+    // (review of 2026-11-23: asserted exactly, as the case did before with TRUE_LINE).
+    expect(r.reply).toBe("");
     expect(r.footer).toMatch(/^You stopped this answer: (?:under )?CHF \d+\.\d{2} spent\.$/);
     const row = await w.lastRow();
     expect(row.outcome).toBe("stopped");

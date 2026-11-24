@@ -640,6 +640,11 @@ export interface CommandDef<P = unknown> {
     before: JsonValue,
     after: JsonValue,
     ctx: CommandContext,
+    /**
+     * l4-chat-carried (C4-left-6): the steps of the whole change this step is part of (a composed
+     * row), so a check can tell what the same change did from what came after it.
+     */
+    change?: { steps: readonly { name: string; after: JsonValue }[] },
   ): Promise<string | null>;
   /**
    * l4-selftasks-chat (L4-selftasks-117): what the change names as it is now (a task's fields),

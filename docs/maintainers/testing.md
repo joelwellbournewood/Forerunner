@@ -2764,6 +2764,12 @@ plan), I.3 (a temporary budget in CHF at the day's rate).
   millisecond carry no order between them (`ORDER BY created_at, id` ties break arbitrarily).
   Scenarios compare such rows as sets, or move the clock between steps (scenario 7 advances a
   minute per step); scenario 6 waits for the notifier (`settled()`) before reading its records.
+  A screen that lists rows in run order breaks the tie the same way everywhere (`runOrder`:
+  priority, then `created_at`, then `id`), so a case that reads such a list expects the order
+  that comparator gives the stored rows (real-daemon.test.ts, d1109-selftasks-run's restart
+  case: two tasks one answer makes after the restart). l4-chat-carried (C5-left-6) checked it
+  with the restart's clock frozen so both rows share one `created_at` (the forced tie passes),
+  then ran the case green 10 times in a row.
 - Phase 8 decisions the spec leaves open (the hold mechanism in place of sleeps, the per-install
   composition on one store, the session-cap reading in scenario 5) are recorded here; no ADR
   number was reserved for this work.

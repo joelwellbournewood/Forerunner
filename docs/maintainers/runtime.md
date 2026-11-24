@@ -4727,7 +4727,10 @@ if it will switch models and do an expensive task, it should warn/ask first."
   (the hand-over step carries `reset`). The claim guard runs after the last pass with that pass's
   calls left; when it catches a claim it sends `CHECKING_STEP` ("Checking what changed…") with
   `reset`, so the live bubble drops the false claim while it checks (L3-left-9; a spoken turn has
-  said it already), and a Stop during its nudge leaves the true line with the stopped footer.
+  said it already). A Stop during its nudge ends the turn as stopped, as at any other point
+  (l4-chat-carried, C3-left-11): no guard line ("Nothing changed, ..."), the stopped footer with
+  what the turn cost, the row's outcome `stopped` and its `claimGuard.replaced` false; before, the
+  true line was the reply under "You stopped this answer".
 - *Turns in flight* (`src/conversation/chat-turns.ts`, `ChatTurns`): one entry per turn from its
   line to its reply (step, since, depth, the controller, Answer now); the daemon's registry
   (`ConversationDeps.turns`, its `startedAt` the daemon's start) or the agent's own. Every run of
@@ -4846,7 +4849,11 @@ parsed into commands first (no model call), a combined request becomes one chang
 back in the reply (`pendingConfirmation` with the commands and whether a yes or the paired
 device confirms), a plain "yes"/"ja" or "no" answers the card without a model call, "undo"
 undoes the latest undoable change, the parser's questions (an ambiguous project, a budget
-without a time) are asked with options (`question`), text that is data (the envelope) is
+without a time) are asked with options (`question`; the reply text adds " Options: …" only
+when the question does not already name every option as whole words, so "Which project: Notes
+or Site?" is read once and 'No project named "siteworks". Which one?' keeps " Options: Site,
+Works."; `parserQuestionReply` in `conversation/sentences.ts`, l4-chat-carried L4c-left-9 and
+its review), text that is data (the envelope) is
 refused without a model call, and only a sentence no pattern understands goes to the model,
 which is offered the registry's command tools and nothing else. A stop in any clause of the
 line runs at once even when the rest was not understood ("stop and tell me what happened":
@@ -4955,7 +4962,13 @@ in one project cancelled a task in another. Now:
   the read-back of the turn's card is the reply; else `NOTHING_CHANGED_REPLY` ("Nothing changed,
   and nothing waits for your yes. Say it again to try once more."), or
   `NOTHING_CHANGED_CARD_WAITS_REPLY` ("Nothing changed; the change I asked about earlier still
-  waits for your yes.") while an earlier card waits; only these two are marked `notice`. So the
+  waits for your yes.") while an earlier card waits; only these are marked `notice`.
+  l4-chat-carried (L4c-left-7): when the claim is a yes asked in words (kind `asks`, for example
+  "Shall I resume it?" under a status question), the line is `NOTHING_CHANGED_ASKS_REPLY`
+  ("Nothing changed, and nothing waits for your yes. If you want a change, say what you want
+  done."): the person may have asked no change, so "say it again" would presume one
+  (`trueLine(results, did, kind)`; conversation-memory.test.ts "the true line after an ask in
+  words"). So the
   app never writes "nothing waits" above a Yes/No card, nor "Nothing changed" above a change (the
   review of l3-chat-claims found both). The `chat.reply` row keeps `claimGuard: { kind, phrase,
   nudged, replaced }` and the log says "chat reply claimed what no command did".
@@ -4989,7 +5002,10 @@ in one project cancelled a task in another. Now:
   which is nudged once more while the turn's calls last. Only the app writes its lines: the reply
   the person sees and the stored row leave out any "The app did: …" or "The app asked, with Yes
   and No: …" line the model wrote (`withoutAppMarkers`, a security rule: a forged change line can
-  no longer pose as a change in the conversation or a later turn's history), and the history says
+  no longer pose as a change in the conversation or a later turn's history; l4-chat-carried,
+  L4c-left-6: in any case, at a line's start, behind a short bracketed lead or after a sentence,
+  so "the app did: …" is left out too and is a change claim; "what the app did: …" inside the
+  model's own sentence stays its prose), and the history says
   an earlier read-back as the app's question, "The app asked, with Yes and No: <read-back>"
   (`HISTORY_ASK_LEAD`, `replyInHistory`), never as the model's own prose it would copy. A set to
   the value already in force goes back to the model as "Nothing to change: <what> is already
@@ -5011,6 +5027,11 @@ in one project cancelled a task in another. Now:
   said after a lookup stands, and an absence is never replaced by a "Nothing changed" line: the
   answer after the nudge is the reply (with no call left the first one stays; the guard is on the
   row as `claimGuard.kind: "absent"`). "There is no ready task" names no record and stays free.
+  l4-chat-carried (L4c-left-8): so does "I don't see" before a state about now and nothing more
+  ("any failed tasks", "any open questions in Quote Page", "anything waiting for your answer";
+  `NOW_STATE`), so a 'what is left?' answer costs no nudge and no recall call; "… any failed
+  tasks about the FAQ" or "… a task called …" names what was looked for and is still nudged
+  (chat-recall.test.ts "an absence about now is no claim").
   The facts' task line names a renamed task's earlier title ('"Write the guide" (earlier "Write
   the README"): Done'; `earlierTitlesOf`, moved from `read-tools.ts` to `project-facts.ts`), and
   the rules say a lookup needs no yes (`CHAT_RECALL_RULES`, the prompt's "What you look up" and
@@ -7366,7 +7387,7 @@ finished run without its report (before "... Summary: <report>"), the plan line'
 sentence of its own with a capital (`sentenceOf`; the runner's summary says "1 task", "2 tasks",
 never "task(s)"), and the session review's measure the work against the estimate with the
 reviews apart (W15B-19: "... the work cost CHF 0.05 against an estimate of CHF 0.23, and the
-reviews CHF 0.05.", from `workUsdMicro` and `reviewsUsdMicro`; an event without them reads as before). d1116-budget-all (BA-8): a plan the runner marked `counts: "all"` (`PLAN_COUNTS_ALL`: its estimates hold each task's review) is measured as one figure, "... the planned tasks cost CHF 0.20 against an estimate of CHF 0.19, and the session's own checks CHF 0.02.", from the metrics' `counts`, `tasksUsdMicro` (the ledger rows of its planned tasks) and `otherUsdMicro` (the task check, lesson reviews); metrics written before read as written. Person-facing money
+reviews CHF 0.05.", from `workUsdMicro` and `reviewsUsdMicro`; an event without them reads as before). l4-chat-carried (SC-13): plan tasks the critic counts as replaced (`replacedTasks`: split before their first part ran, or dropped as a duplicate) are said apart, "Session review measured: 1 of 1 planned task done, 1 replaced; …", or alone, "1 planned task replaced; …", when they were the whole plan (before: "0 of 0 planned tasks done"); `event-lines.test.ts` "l4-chat-carried, run L4". d1116-budget-all (BA-8): a plan the runner marked `counts: "all"` (`PLAN_COUNTS_ALL`: its estimates hold each task's review) is measured as one figure, "... the planned tasks cost CHF 0.20 against an estimate of CHF 0.19, and the session's own checks CHF 0.02.", from the metrics' `counts`, `tasksUsdMicro` (the ledger rows of its planned tasks) and `otherUsdMicro` (the task check, lesson reviews); metrics written before read as written. Person-facing money
 elsewhere is CHF too: the session summary and the status doc's note use the cost ledger's own
 `chf_micro`; the plan-approval card's estimates use the runner's `chfPerUsd` dep (compose's
 rate); the budget-stop notification the run's `spentChfMicro`; the chat-turn refusal, the
@@ -8232,7 +8253,18 @@ and fixes it as the autonomy level allows. The pieces:
   each change checked again on the tasks now, a change that no longer applies left out and
   named; the approved new tasks join a running session by the admit rule; no answer starts one.
   The card's words: `daemon/task-proposal-words.ts` (import-free; the fake daemon reads it) and
-  `request-words.ts`'s `taskProposalCard`.
+  `request-words.ts`'s `taskProposalCard`. Its Done line agrees with the count ('Changed 1 task;
+  your next Start runs it.', 'the session takes it if it fits'; l4-chat-carried, C4-left-5), and
+  a set that only dropped duplicates promises no Start ('Changed 1 task.').
+- **A crash between the mark and the apply** (l4-chat-carried, C4-left-7): the card is marked
+  `outcome: "applying"` with `applying_at` before its changes are made, so a second sync never
+  applies it twice. A card found at `applying` that this process is not applying now
+  (`applyingNow`) is a crash's leftover and is settled at the next sync (the daemon's start runs
+  one): when its change log row exists (`changeOfCard`: the person's `ui` row in the card's
+  project since `applying_at`, whose commands are the card's calls in order) the card is marked
+  `applied` with that row; otherwise its changes are checked and applied now, once. It never
+  stays at "Making the changes…". Tests: real-daemon.test.ts "l4-chat-carried, run L4" (both
+  crash points, composed again on one home, read from `GET /inbox` and `GET /changes`).
 - **What the person reads**: the check's line in the session log (`session.task_checked`:
   'Checked the task list after "Create the page": no change (CHF 0.03).'), each change's
   sentence, the result's 'Changed 2 tasks: split "Style the page"; added "Check the links".',
@@ -8265,7 +8297,9 @@ The results loop composes several pending task changes of one model turn into on
 (`CommandLoop.recompose`): the separate cards are marked `chat_only` and cancelled, so the Inbox
 holds one. GET /sessions/:id/events gives each `change` line `changeId`, `undoable`,
 `undoBlocked` and `undone` (`withUndo` in server.ts, from the change log row and
-`CommandLoop.undoBlocked`); `ChangeLogView.byAgent` marks the agent's own changes; the task
+`CommandLoop.undoBlocked`), and an undone line `undoneSentence`, the undo row's own sentence (the
+project's rows whose first command is `undo` with the change's `change_log_id`, read once per
+project; l4-chat-carried, L4-selftasks-129: after a reload the line read only "Undone."); `ChangeLogView.byAgent` marks the agent's own changes; the task
 check's model is chosen as the intake's (C5-left-7). An added step marks only itself as written
 by the agent (C4-left-1).
 
@@ -8554,7 +8588,8 @@ log's lines stay in `session/credential-words.ts`); the shapes are in
   fixup-l4-cred-screens: every hold reply is the app's own words, never an assistant turn of the
   history. Both hold forms (held before the call, held on the way) write `hold: true` on their
   `chat.reply` row (`TranscriptReply.hold`; a notice with `oneOff` reads as one on older rows,
-  `isHoldReply`), and `historyMessages` treats a held turn as the person's line alone (merged
+  and so does a row whose text is `chatHoldReply`'s sentence, stored before the mark and without
+  the press: l4-chat-carried, L4d-left-5; `isHoldReply`), and `historyMessages` treats a held turn as the person's line alone (merged
   with the next, dropped when it is the last). The conversation view still shows it. Before,
   two held questions and the press on the newest showed the model the first one's "... so I
   have not answered. I can still add and change tasks." as its own reply (real-daemon "with two
@@ -8702,6 +8737,14 @@ line, the Run rows, the result, the page's line, Costs, the notification, and co
   no task (fix-up of the review: before, every card oldest first, 500 at most, so on an install
   with more cards the stop's card was never found; test `credential-ask-words.test.ts` "... more
   than 500 earlier cards ...").
+- **"there" after a switch in the header** (l4-chat-carried, run L4, 2026-11-23, L4c-left-10).
+  `CommandTurn.namedProjectId` is the project the newest `project.switch` of this conversation
+  made active, read from that action's change-log row (`after.active_project`; a switch undone
+  since does not count; `ConversationAgent.switchedHere`). Before, it was the registry's active
+  project whenever any earlier turn had switched, so after "switch to Site" here and a switch to
+  Shop in the header, "add a task there: …" added to Shop (real-daemon.test.ts "after 'switch to
+  Site' here and a header switch to Shop …"). A reply row kept before actions carried their ids
+  gives the registry's record, as before.
 - **The option pressed under the parser's "Which project: …?"** (review of l4-chat-answers,
   2026-11-22). A parser question with options (the pronoun question of "add a task there: …" or
   "open it" with two or more projects and none named in this conversation) is answered by the
@@ -9994,6 +10037,13 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   and conversation-agent 1.5.2 say the card speaks for the change. compose wires the executor's
   `onExpired`: `events.emit("inbox")`, `ChatTurns.touched(projectId)` (conversation.changed) and
   one Update (`lapsedCardUpdate`, loop/answered-cards.ts).
+- **A review that waits, in the chat's facts (l4-chat-carried, L4c-left-5).** The `# Last
+  session` block (`lastSessionBlock`, project-facts.ts) says 'Review waits: "X" is done; its
+  review waits for room in its budget of CHF 0.40' for a paused item with `reviewWaits` (the
+  Result line and the card say the work is done), never 'Paused: "X" at its budget'.
+  conversation-agent 1.5.3 names the line in its facts list. Tests:
+  `test/chat-carried-sentences.test.ts`, which also asserts every "fix the tasks" sentence and
+  the suggestion card's Done lines word for word (SC-10).
 - **The criterion of a task with no criteria (L4-other-1, ADR 0109).** `outcomeCriterion(outcome,
   { writesNoFile })`: for a specialist none of whose tools writes a file (`writesNoFile` in
   registry/tools.ts, today the reviewer) 'The report shows this outcome (this specialist writes

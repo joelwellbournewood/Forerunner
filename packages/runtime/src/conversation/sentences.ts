@@ -115,6 +115,32 @@ export function fixUnreadableReply(project: string): string {
   return `The agent's answer about the tasks of ${project} could not be read; nothing changed.`;
 }
 
+/**
+ * l4-chat-carried (L4c-left-9): the reply to a parser question. A question that names its options
+ * ("Which project: Notes or Site?") is not followed by them again: the buttons show them, and
+ * voice and the phone read the text. One that does not name them ("Which budget did you mean?")
+ * keeps them in the text. An option counts as named only as whole words (review of 2026-11-23:
+ * "No" is not named by "Notes", nor "Site" by "siteworks").
+ */
+export function parserQuestionReply(q: { text: string; options: readonly string[] }): string {
+  const named = q.options.every((o) => namesWords(q.text, o));
+  return `${q.text}${q.options.length && !named ? ` Options: ${q.options.join(", ")}.` : ""}`;
+}
+
+/** Whether `text` holds `words` with no letter or digit right before or after them. */
+function namesWords(text: string, words: string): boolean {
+  const target = words.trim().toLowerCase();
+  if (!target) return true;
+  const hay = text.toLowerCase();
+  const wordChar = /[\p{L}\p{N}]/u;
+  for (let at = hay.indexOf(target); at >= 0; at = hay.indexOf(target, at + 1)) {
+    const before = at > 0 ? (hay[at - 1] ?? "") : "";
+    const after = hay[at + target.length] ?? "";
+    if (!wordChar.test(before) && !wordChar.test(after)) return true;
+  }
+  return false;
+}
+
 /** Talk without a project on screen: which project's tasks. */
 export function fixWhichProject(names: readonly string[]): string {
   const shown = names.slice(0, 3);

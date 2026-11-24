@@ -68,12 +68,25 @@ export interface SessionReviewData {
    * (their runs' costs when the session has no ledger row, as the actual figure falls back).
    */
   plannedTasksUsdMicro?: number;
+  /**
+   * l4-chat-carried (SC-13): tasks split, or dropped as the same as another, while the session ran
+   * (a change of the task list not undone), with how (`replacedDuring`). A dropped one is
+   * replaced; a split one only while its kept first part has not run (`sessionChecks`). Absent:
+   * none.
+   */
+  replaced?: ReplacedTask[];
 }
 
 export interface SessionMetrics {
+  /** The plan's tasks the measure counts: those it planned, less those replaced (SC-13). */
   plannedTasks: number;
   /** Done tasks among the plan items. */
   plannedDoneTasks: number;
+  /**
+   * l4-chat-carried (SC-13): planned tasks split, or dropped as a duplicate, while the session
+   * ran: replaced, out of the planned count. Absent when none.
+   */
+  replacedTasks?: number;
   /** Done tasks among everything the session planned or ran. */
   doneTasks: number;
   estimateUsdMicro: number;
@@ -288,6 +301,7 @@ export async function loadSessionReviewData(
           plannedTasksUsdMicro += Math.max(0, r.cost_usd_micro);
     }
   }
+  const replaced = await replacedDuring(store, session);
   return {
     session,
     planItems,
@@ -297,7 +311,48 @@ export async function loadSessionReviewData(
     ledgerUsdMicro: ledger.entries > 0 ? ledger.usd_micro : null,
     ledgerChfMicro: ledger.entries > 0 ? ledger.chf_micro : null,
     ...(countsAll ? { countsAll: true, plannedTasksUsdMicro } : {}),
+    ...(replaced.length ? { replaced } : {}),
   };
+}
+
+/** A task a change of the task list replaced while the session ran, and how. */
+export interface ReplacedTask {
+  taskId: string;
+  /** `split`: the task `task.split` split (kept as its first part); `duplicate`: dropped. */
+  by: "split" | "duplicate";
+}
+
+/**
+ * l4-chat-carried (SC-13, ADR 0119 dated note 2026-11-23): the tasks of the session's project
+ * that a change of the task list made while the session ran replaced: split (`task.split`: the
+ * task it split) or dropped as the same as another (`task.transition` with `duplicate_of`), the
+ * change not undone. The session's own check makes them, so does chat's "fix the tasks" or the
+ * person; each is a correct fix, which must not read as planned work left undone.
+ */
+export async function replacedDuring(
+  store: Pick<StateStore, "changeLog">,
+  session: Pick<SessionRow, "project_id" | "started_at" | "ended_at" | "created_at">,
+): Promise<ReplacedTask[]> {
+  if (!session.project_id) return [];
+  const since = session.started_at ?? session.created_at;
+  const until = session.ended_at;
+  const out = new Map<string, ReplacedTask["by"]>();
+  for (const row of await store.changeLog.forProject(session.project_id, { limit: 500 })) {
+    if (row.undo_state === "undone") continue;
+    if (row.created_at < since || (until && row.created_at > until)) continue;
+    const commands = Array.isArray(row.commands) ? row.commands : [];
+    const afters = commands.length === 1 ? [row.after] : Array.isArray(row.after) ? row.after : [];
+    for (const [i, cmd] of commands.entries()) {
+      const name = (cmd as { name?: unknown } | null)?.name;
+      const after = (afters[i] ?? {}) as { task_id?: unknown; duplicate_of?: unknown };
+      if (typeof after.task_id !== "string") continue;
+      // A task dropped once is dropped, whatever split it before.
+      if (name === "task.split" && !out.has(after.task_id)) out.set(after.task_id, "split");
+      if (name === "task.transition" && typeof after.duplicate_of === "string")
+        out.set(after.task_id, "duplicate");
+    }
+  }
+  return [...out].map(([taskId, by]) => ({ taskId, by }));
 }
 
 /** d1116-budget-all: whether a plan's estimates hold each task's review (`counts: "all"`). */
@@ -423,6 +478,30 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
       );
     }
   }
+  // l4-chat-carried (SC-13): a planned task split, or dropped as the same as another, while the
+  // session ran is replaced: out of the measure's planned tasks, never planned and left undone (a
+  // correct fix of the task list must not lower the grade). A split keeps the task as its first
+  // part (the plan's id), so a split task is replaced only while that part has not run here
+  // (draft or ready, no work run, not sent back or paused): once it ran it is measured as it ran,
+  // done, failed, sent back or waiting (review of 2026-11-23: a first part that failed read
+  // "accepted (grade 100, 0 findings)"). The new parts were never planned.
+  // A task paused at a budget (ADR 0112) ran here; the measure below reads the same set.
+  const paused = new Set(pausedOf(session.handoff));
+  const notRunHere = (id: string) => {
+    const status = data.tasks.get(id)?.status;
+    return (
+      (status === "draft" || status === "ready") &&
+      !ranHereBefore.has(id) &&
+      !sentBackHere.has(id) &&
+      !paused.has(id)
+    );
+  };
+  const replaced = new Set(
+    (data.replaced ?? [])
+      .filter((r) => planned.has(r.taskId) && (r.by === "duplicate" || notRunHere(r.taskId)))
+      .map((r) => r.taskId),
+  );
+  const measured = [...planned].filter((id) => !replaced.has(id));
   const actual = data.ledgerUsdMicro ?? session.spent_usd_micro;
   // W15-18 (live check 2, RUN-16): the estimate counts the work only, so the overrun compares
   // the work's cost with it; the reviews are said apart ("CHF 0.17 spent of a CHF 0.05
@@ -453,9 +532,7 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
   );
 
   // Cost efficiency. Done is counted over every task the session planned or ran.
-  const plannedDoneTasks = [...planned].filter(
-    (id) => data.tasks.get(id)?.status === "done",
-  ).length;
+  const plannedDoneTasks = measured.filter((id) => data.tasks.get(id)?.status === "done").length;
   const doneTasks = [...data.tasks.values()].filter((t) => t.status === "done").length;
   if (
     estimate > 0 &&
@@ -496,10 +573,9 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
   }
   // A task paused at a budget (ADR 0112) is neither done nor failed nor a question for the
   // person: a session whose every planned task that is not done paused did what its budget held.
-  const paused = new Set(pausedOf(session.handoff));
   const onlyPaused =
-    paused.size > 0 &&
-    [...planned].every((id) => paused.has(id) || data.tasks.get(id)?.status === "done");
+    (paused.size > 0 || replaced.size > 0) &&
+    measured.every((id) => paused.has(id) || data.tasks.get(id)?.status === "done");
   if (
     actual > 0 &&
     planItems.length > 0 &&
@@ -516,14 +592,15 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
   // U-017: a session whose every task failed at once spends nothing, and graded 100.
   // U-072: the same for the tasks the critic sent back (the handoff's `sent_back`): a session
   // whose only task was sent back did nothing that holds, and graded as if it had.
-  const plannedFailed = [...planned].filter((id) => data.tasks.get(id)?.status === "failed");
+  const plannedFailed = measured.filter((id) => data.tasks.get(id)?.status === "failed");
   const plannedSentBack = sentBackOf(session.handoff).filter(
-    (id) => planned.has(id) && data.tasks.get(id)?.status !== "done" && !plannedFailed.includes(id),
+    (id) =>
+      measured.includes(id) && data.tasks.get(id)?.status !== "done" && !plannedFailed.includes(id),
   );
   // Live (2026-11-02, D): a session whose only task was refused at once and waits for the
   // person read "Session review: accepted (grade 100, 0 finding(s))". Work that waits for the
   // person is not done either.
-  const plannedWaiting = [...planned].filter(
+  const plannedWaiting = measured.filter(
     (id) =>
       data.tasks.get(id)?.status === "needs_human" &&
       !paused.has(id) &&
@@ -535,15 +612,15 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
     plannedFailed.length + plannedSentBack.length + plannedWaiting.length > 0
   ) {
     const parts = [
-      ...(plannedFailed.length ? [`${plannedFailed.length} of ${planned.size} failed`] : []),
+      ...(plannedFailed.length ? [`${plannedFailed.length} of ${measured.length} failed`] : []),
       ...(plannedSentBack.length
         ? [
-            `${plannedSentBack.length}${plannedFailed.length ? "" : ` of ${planned.size}`} sent back by the critic`,
+            `${plannedSentBack.length}${plannedFailed.length ? "" : ` of ${measured.length}`} sent back by the critic`,
           ]
         : []),
       ...(plannedWaiting.length
         ? [
-            `${plannedWaiting.length}${plannedFailed.length + plannedSentBack.length ? "" : ` of ${planned.size}`} ${plannedWaiting.length === 1 ? "waits" : "wait"} for the person`,
+            `${plannedWaiting.length}${plannedFailed.length + plannedSentBack.length ? "" : ` of ${measured.length}`} ${plannedWaiting.length === 1 ? "waits" : "wait"} for the person`,
           ]
         : []),
     ];
@@ -583,6 +660,7 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
   const honestCounts = new Set([
     doneTasks,
     plannedDoneTasks,
+    [...planned].filter((id) => data.tasks.get(id)?.status === "done").length,
     doneAtEnd(data.tasks.keys()),
     doneAtEnd(planned),
     doneAtEnd(ranHere),
@@ -649,8 +727,9 @@ export function sessionChecks(data: SessionReviewData): SessionChecks {
     findings,
     evidence,
     metrics: {
-      plannedTasks: planned.size,
+      plannedTasks: measured.length,
       plannedDoneTasks,
+      ...(replaced.size ? { replacedTasks: replaced.size } : {}),
       doneTasks,
       estimateUsdMicro: estimate,
       actualUsdMicro: actual,
@@ -836,9 +915,15 @@ export async function reviewSession(opts: ReviewSessionOptions): Promise<ReviewO
       : reviewsUsd > 0
         ? `cost ${chfText(spentChf)} (work ${chfText(Math.round((checks.metrics.workUsdMicro ?? 0) * rate))} against an estimate of ${estimateText}, reviews ${chfText(Math.round(reviewsUsd * rate))})`
         : `cost ${chfText(spentChf)} against an estimate of ${estimateText}`;
+  // l4-chat-carried (SC-13): replaced tasks are said apart, out of the planned count.
+  const replacedN = checks.metrics.replacedTasks ?? 0;
+  const plannedText =
+    replacedN && checks.metrics.plannedTasks === 0
+      ? `${countWords(replacedN, "planned task")} replaced`
+      : `${checks.metrics.plannedDoneTasks}/${checks.metrics.plannedTasks} planned${replacedN ? `, ${replacedN} replaced` : ""}`;
   const summary =
     // P7-34 (polish-words): plurals as the number says, never "(s)".
-    `Session review: ${countWords(checks.metrics.doneTasks, "done task")} (${checks.metrics.plannedDoneTasks}/${checks.metrics.plannedTasks} planned), ` +
+    `Session review: ${countWords(checks.metrics.doneTasks, "done task")} (${plannedText}), ` +
     `${costText}; ` +
     `${countWords(checks.findings.length, "finding")}.`;
   const out: ReviewOutput = {

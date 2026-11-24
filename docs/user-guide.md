@@ -179,8 +179,9 @@ moved tasks keep working: Merge and the reviews go on from "Site".
 A project that joined another is closed: its page says 'Joined into "Site" on 9 Nov.' with
 **Open it**, and nothing starts from it. It takes no new work: its Tasks tab has no New task
 and says 'Its tasks are in "Site".' with **Open it**, its Chat is kept to read ('This chat is
-kept to read; ask about its work in the Chat of "Site".'), and its Overview has no note for a
-next session. A task, a note or a change asked for it anyway is answered '"Kite club" joined
+kept to read; ask about its work in the Chat of "Site".'), and so is Talk on its pages (the same
+line with **Open it**, no message box and no Talk button; the hotkey and the palette's Talk
+start no voice turn there), and its Overview has no note for a next session. A task, a note or a change asked for it anyway is answered '"Kite club" joined
 "Site", so its work runs there.' and nothing is written. "Site"'s Overview says 'Includes the work of "Kite
 club".', its Sessions tab '"Kite club" had 3 sessions before it joined.' with Open, and its
 Costs tab 'Spent in "Kite club" before it joined: CHF 3.20'. Chat answers about "Site" with
@@ -418,7 +419,10 @@ them as you left them; an open file or task stays on its own tab.
   its answer claimed more than it did, Chat tries once more, and when it still claims it, Chat
   says only what is true: the change it made, its Yes/No question, or "Nothing changed, and
   nothing waits for your yes. Say it again to try once more." ("Nothing changed; the change I
-  asked about earlier still waits for your yes." while an earlier question still waits). A rule
+  asked about earlier still waits for your yes." while an earlier question still waits). When
+  its answer asked for your yes in its own words again ("Shall I resume it?"), the line is
+  "Nothing changed, and nothing waits for your yes. If you want a change, say what you want
+  done.": say the change, and it comes back as the app's question with **Yes** and **No**. A rule
   like that is a setting,
   never a lesson: "remember that …" keeps a lesson for later sessions, and its line says it
   changes no setting. A change to a task is read back once in one line ('Make "Write the FAQ"
@@ -910,7 +914,10 @@ findings)."): answer the card in the Inbox and the work goes on. A session revie
 back: when it notes something, such as the planned tasks costing more than their estimate, its
 line says what it noted, and under **More ▾ → Reviews → Session checks** it reads "noted" (or
 "accepted", "needs you"), its findings "noted", with no "To fix" line: there is nothing for you
-to fix there.
+to fix there. A planned task that the session split, or dropped as the same as
+another, counts as replaced, not as planned work left undone ("Session review measured: 1 of 1
+planned task done, 1 replaced; …"); once the first part of a split task has run, it counts as it
+ran, done, failed or waiting for you.
 
 **Every session of a project** is listed under **More ▾ → Sessions** (also **All 3 sessions** on
 the Overview's Last result, and **All sessions** on every session page). The heading is the
@@ -1120,6 +1127,14 @@ for you, and for any line that reads like an instruction (it is quoted on the ca
 followed). It never touches a running or finished task or another project, and it never raises a
 budget or starts a session: a new task joins the running session only if it fits, else it waits
 for your next Start ("Left for your next Start: ...").
+
+A split's Undo puts the task back as one and makes the tasks after it wait as before, so once
+something else changed what they wait for, it is not done in part: Changes says why ('Cannot be
+undone now: "Publish" was made to wait for "Check the links" after the split; undo would drop
+that.'). Undo that later change first, then the split. A part a session holds reads "is running
+now", one that ran "has run since". If Forerunner closes while it makes the changes you approved
+on a suggestion card, it finishes them once when it starts again; the card never stays at
+"Making the changes…".
 
 Only real evidence starts a check: a report's "For the task list:" lines or a problem the critic
 measured that the task did not cause; an ordinary note of the critic's about the task's own work

@@ -920,7 +920,14 @@ function lineOf(type: string, p: Record<string, unknown>, chfPerUsd: number): st
     case "critic.session_review_metrics": {
       const m = (p.metrics ?? {}) as Record<string, unknown>;
       const k = (key: string) => (typeof m[key] === "number" ? (m[key] as number) : 0);
-      const done = `${k("plannedDoneTasks")} of ${k("plannedTasks")} planned ${k("plannedTasks") === 1 ? "task" : "tasks"} done`;
+      // l4-chat-carried (SC-13): plan tasks split or dropped as a duplicate while the session ran
+      // are out of the count and said apart; when they were all the plan, only that is said
+      // (before: "0 of 0 planned tasks done"). A review written before the count reads as before.
+      const replaced = k("replacedTasks");
+      const done =
+        replaced > 0 && k("plannedTasks") === 0
+          ? `${replaced} planned ${replaced === 1 ? "task" : "tasks"} replaced`
+          : `${k("plannedDoneTasks")} of ${k("plannedTasks")} planned ${k("plannedTasks") === 1 ? "task" : "tasks"} done${replaced > 0 ? `, ${replaced} replaced` : ""}`;
       const money = (key: string) => moneyWords(chfOf(k(key), chfPerUsd), k(key));
       // W15B-19: the work against the estimate, the reviews named apart (the estimate is the
       // work's: W15-18). Before: "CHF 0.10 spent of a CHF 0.23 estimate", reviews included.

@@ -792,10 +792,12 @@ function ChangeUndo({ line }: { line: EventView }) {
         {said}
       </p>
     );
+  // l4-chat-carried (L4-selftasks-129): read again (a reload), an undone line keeps the undo's
+  // own sentence, as the click showed it.
   if (line.undone)
     return (
       <p className="text-xs text-neutral-500" data-testid="change-undone">
-        Undone.
+        {line.undoneSentence ?? "Undone."}
       </p>
     );
   if (line.undoable)

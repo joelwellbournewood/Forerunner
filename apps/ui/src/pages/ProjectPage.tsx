@@ -1,8 +1,9 @@
-import { joinedChatSentence, joinedTasksSentence } from "@forerunner/runtime/daemon/join-words";
+import { joinedTasksSentence } from "@forerunner/runtime/daemon/join-words";
 import { useEffect, useState } from "react";
 import { Link, Navigate, NavLink, useLocation, useParams } from "react-router";
 import { ProjectStatus } from "../components/ProjectState.tsx";
 import { Button, buttonClassName, ErrorBanner, Loading } from "../components/ui.tsx";
+import { closedChatOf } from "../lib/closed-chat.ts";
 import { useAsync } from "../lib/use-async.ts";
 import { useClient, useUiState, useUiStore } from "../store/context.tsx";
 import { ChatTab } from "./project/ChatTab.tsx";
@@ -19,9 +20,8 @@ import { StartSessionDialog } from "./project/StartSessionDialog.tsx";
 import { SummaryTab } from "./project/SummaryTab.tsx";
 import { TasksTab } from "./project/TasksTab.tsx";
 
-/** W15B-02, OJ-06: a removed project's Tasks tab with no task, and its Chat, kept to read. */
+/** W15B-02, OJ-06: a removed project's Tasks tab with no task (its Chat: `closedChatOf`). */
 const REMOVED_TASKS = "No tasks: this project was removed.";
-const REMOVED_CHAT = "This chat is kept to read; the project was removed.";
 
 /**
  * The project's tabs (design §6): Overview, Tasks, Chat and Files in the bar; Sessions, Plan,
@@ -121,11 +121,8 @@ export function ProjectPage() {
     : removed
       ? { text: REMOVED_TASKS, to: null }
       : null;
-  const closedChat = joined
-    ? { text: joinedChatSentence(joined.name), to: `${into}/chat` }
-    : removed
-      ? { text: REMOVED_CHAT, to: null }
-      : null;
+  // l4-chat-carried (C4-left-9): the same line as Talk's on this page (`closedChatOf`).
+  const closedChat = closedChatOf(view);
   // The plan banner says "Drafting the plan…" / "Waiting for you: approve the plan" itself.
   const planBanner =
     !closed &&

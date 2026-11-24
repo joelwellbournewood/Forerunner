@@ -3807,12 +3807,21 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const entry = state.changes.find((ch) => ch.id === changeLogId);
     if (!entry) return e;
     const view = withUndoable(entry, new Date().toISOString());
+    // l4-chat-carried (L4-selftasks-129), as the daemon: an undone line keeps the undo's sentence.
+    const undoneSentence =
+      entry.undoState === "undone"
+        ? state.changes.find((ch) => {
+            const step = ch.commands[0] as { name?: string; params?: { of?: unknown } } | undefined;
+            return step?.name === "undo" && step.params?.of === entry.id;
+          })?.sentence
+        : undefined;
     return {
       ...e,
       changeId: entry.id,
       undoable: view.undoable,
       undoBlocked: view.undoable ? null : (view.undoBlockedReason ?? null),
       undone: entry.undoState === "undone",
+      ...(undoneSentence ? { undoneSentence } : {}),
     };
   };
   app.get("/sessions/:id/events", (c) => {
@@ -4630,7 +4639,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const ask = `Which project: ${names.slice(0, -1).join(", ")} or ${names.at(-1)}?`;
       return {
         ...base,
-        reply: `${ask} Options: ${names.join(", ")}.`,
+        reply: ask,
         question: { text: ask, options: names },
       };
     }
@@ -7836,9 +7845,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       for (const id of [...proposal.restore.map((r) => r.id), ...proposal.created]) {
         const t = state.tasks.find((x) => x.id === id);
         if (!t || ["draft", "ready", "cancelled"].includes(t.status)) continue;
+        // l4-chat-carried (L4-selftasks-129): a part a session took reads as running.
         return proposal.added.includes(t.id)
           ? `the task "${t.title}" is ${t.status}; a ${t.status} task cannot be cancelled, so its creation cannot be undone`
-          : `"${t.title}" has run since, so the split cannot be undone`;
+          : ["claimed", "in_progress", "in_review"].includes(t.status)
+            ? `"${t.title}" is running now, so the split cannot be undone`
+            : `"${t.title}" has run since, so the split cannot be undone`;
       }
       return null;
     }

@@ -468,3 +468,49 @@ describe("l4-github-merge, run L4", () => {
     expect(line.match(/[.!?](\s|$)/g)).toHaveLength(1);
   });
 });
+
+describe("l4-chat-carried, run L4: a split asked for a closed project's task (C4-left-9)", () => {
+  // task.split is not among the commands a closed project still answers (OPEN_ON_A_CLOSED_PROJECT):
+  // chat's split of a task left on Kite club after the join is refused in the same sentence as
+  // any other new work, and nothing is split.
+  it('from chat and from the app: \'"Kite club" joined "Site", so its work runs there.\', nothing written', async () => {
+    const w = await world();
+    w.ports.projectJoin = joinPort(w);
+    const { site, kite } = await seedPair(w);
+    expect((await join(w, site.id, [kite.id])).status).toBe("done");
+    const left = await w.store.task.insert({
+      project_id: kite.id,
+      title: "Style the page",
+      outcome: "Styled",
+      acceptance_criteria: ["a", "b"],
+      risk_tier: 1,
+      status: "ready",
+      priority: 5,
+      reason: "planned",
+    } as never);
+    const tap = { kind: "tap" as const, by: { kind: "human" as const, id: w.human.id } };
+    for (const source of ["chat", "ui"] as const) {
+      const r = await w.executor.execute({
+        name: "task.split",
+        params: {
+          task: left.id,
+          parts: [
+            { title: "Style the layout", acceptance_criteria: ["a"] },
+            { title: "Style the colours", acceptance_criteria: ["b"] },
+          ],
+          order: "in_turn",
+        },
+        ctx: w.ctx({ source, activeProjectId: kite.id }),
+        confirmation: tap,
+      });
+      expect(r, source).toMatchObject({
+        status: "refused",
+        code: "validation",
+        reason: '"Kite club" joined "Site", so its work runs there.',
+      });
+    }
+    expect((await w.store.task.mustGet(left.id)).title).toBe("Style the page");
+    expect((await w.store.task.forProject(kite.id)).length).toBe(1);
+    await w.store.close();
+  });
+});

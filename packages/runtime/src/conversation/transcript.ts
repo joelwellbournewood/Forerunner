@@ -172,8 +172,22 @@ function replyOf(p: Record<string, unknown>): TranscriptReply {
  * press (only a hold reply carries it).
  */
 export function isHoldReply(reply: TranscriptReply): boolean {
-  return reply.hold === true || (reply.notice && !!reply.oneOff);
+  return (
+    reply.hold === true ||
+    (reply.notice && !!reply.oneOff) ||
+    // l4-chat-carried (L4d-left-5): a row stored before the mark and without the press (no other
+    // credential could answer) is the hold reply's own sentence (`chatHoldReply`).
+    HOLD_REPLY_RE.test(reply.text.trim())
+  );
 }
+
+/**
+ * The sentence `chatHoldReply` (session/credential-words.ts) writes: '<what stopped>, so I have
+ * not answered. I can still add and change tasks.', or '...; until then I can still add and
+ * change tasks.' for a refused credential. A test keeps the two in step.
+ */
+const HOLD_REPLY_RE =
+  /, so I have not answered\. (?:.+; until then )?I can still add and change tasks\.$/i;
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
@@ -399,6 +413,14 @@ export const HISTORY_ASK_LEAD = "The app asked, with Yes and No: ";
  * conversation and in every later turn's history as a change that never happened.
  */
 const APP_MARKER_RE = /(?:^|(?<=[\s.!?]))The app (?:did|asked, with Yes and No):[^\n]*/g;
+/**
+ * l4-chat-carried (L4c-left-6, a security rule): the same line in any case ("the app did: …",
+ * "THE APP DID: …"), where it stands as a line of its own: at a line's start (behind a short
+ * bracketed lead too) or after a sentence. "what the app did: …" inside the model's own sentence
+ * is its prose and stays.
+ */
+const APP_MARKER_ANY_CASE_RE =
+  /(?:^|(?<=^[ \t]*\[[^\]\n]{1,40}\][ \t]*)|(?<=[.!?][ \t]+))the app (?:did|asked, with yes and no):[^\n]*/gim;
 
 /**
  * A reply's own words without any line only the app writes (`APP_MARKER_RE`), its blank lines
@@ -406,9 +428,10 @@ const APP_MARKER_RE = /(?:^|(?<=[\s.!?]))The app (?:did|asked, with Yes and No):
  * stored row (`actionLines`), never from the model's text.
  */
 export function withoutAppMarkers(text: string): string {
-  if (!text.includes("The app ")) return text;
+  if (!/the app /i.test(text)) return text;
   return text
     .replace(APP_MARKER_RE, "")
+    .replace(APP_MARKER_ANY_CASE_RE, "")
     .split("\n")
     .map((l) => l.replace(/[ \t]+$/, ""))
     .join("\n")

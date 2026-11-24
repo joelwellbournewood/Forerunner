@@ -533,7 +533,7 @@ and each clause goes through the patterns, in English and German:
 | remember that ..., lesson: ..., lesson learned: ..., merk dir, dass ..., Lektion: ..., Lehre: ... | `memory.record` |
 | note: ..., idea: ..., correction: ..., Notiz:, Idee:, Korrektur:, remember ..., merk dir ... | `note.add` |
 | read me the summary [of X] [aloud], speak the project summary for X, summary, lies mir die Zusammenfassung [von X] vor | `summary.speak` (the active project unless one is named; "Which project?" when neither) |
-| add a task: ..., create a [new] task: ..., new task: ..., neue Aufgabe: ... | `task.create` with status `ready` (U-015: the app told people to say it, and nothing matched it); a level said at the end ("…, priority high", "… (low priority)", "… with medium priority", "…, Priorität hoch", "… mit niedriger Priorität"; `priorityPhrase`) is the `priority` parameter and is cut from the title (U-041); the title is `taskTitleOf` the words (phase E, live walk 2 C2): the first line without a leading "to", "please", "can you" or "could you", capitalised, cut at a word to at most 80 characters with "…" (never on "of", "and", "with" and the like), while the words as said stay the outcome; "add a task to write the README" matches too. A target project before a real separator (l4-chat-answers, run L4, 2026-11-22, L4-selftasks-119: in Notes' Chat "add a task to Site: …" added "Site: …" to Notes): "add a task to/in/into/for <project>: …", "neue Aufgabe für/in/zu <project>: …" sets `params.project` when the words name exactly one project by `projectsNamedBy` (`commands/shared.ts`: the id or the whole name, else words held whole or from a word's start in one name; never by word overlap, never when the words hold more than the name). A separator is a colon, a comma, or a dash with a space before it, never the hyphen in a word ("re-check", "e-mail", "follow-up"). Words that name no project, or several, stay the task's own words as before: "add a task to fix the login: users cannot sign in" adds "Fix the login: users cannot sign in" at once, with Undo (review of l4-chat-answers: it asked "Which project: Notes or Site?" and added nothing). "there", "it", "that project", "dort" (a pronoun) mean `IntentContext.namedProjectId`, the project this conversation switched to (the chat fills it); with none and two or more projects the parser asks "Which project: Notes or Site?" with the projects as options (the only question this reading asks); with one project the pronoun is that project. "here", "this project", "hier" are the tab's project. `taskTitleOf` drops a leading "there:" or "dort:" (a real separator only) |
+| add a task: ..., create a [new] task: ..., new task: ..., neue Aufgabe: ... | `task.create` with status `ready` (U-015: the app told people to say it, and nothing matched it); a level said at the end ("…, priority high", "… (low priority)", "… with medium priority", "…, Priorität hoch", "… mit niedriger Priorität"; `priorityPhrase`) is the `priority` parameter and is cut from the title (U-041); the title is `taskTitleOf` the words (phase E, live walk 2 C2): the first line without a leading "to", "please", "can you" or "could you", capitalised, cut at a word to at most 80 characters with "…" (never on "of", "and", "with" and the like), while the words as said stay the outcome; "add a task to write the README" matches too. A target project before a real separator (l4-chat-answers, run L4, 2026-11-22, L4-selftasks-119: in Notes' Chat "add a task to Site: …" added "Site: …" to Notes): "add a task to/in/into/for <project>: …", "neue Aufgabe für/in/zu <project>: …" sets `params.project` when the words name exactly one project by `projectsNamedBy` (`commands/shared.ts`: the id or the whole name, else words held whole or from a word's start in one name; never by word overlap, never when the words hold more than the name). A separator is a colon, a comma, or a dash with a space before it, never the hyphen in a word ("re-check", "e-mail", "follow-up"). Words that name no project, or several, stay the task's own words as before: "add a task to fix the login: users cannot sign in" adds "Fix the login: users cannot sign in" at once, with Undo (review of l4-chat-answers: it asked "Which project: Notes or Site?" and added nothing). "there", "it", "that project", "dort" (a pronoun) mean `IntentContext.namedProjectId`, the project this conversation switched to (the chat fills it from the newest switch of the conversation's own change-log row, `after.active_project`, not from the registry's active project, so a later switch in the header does not move it; a switch undone since does not count; l4-chat-carried, L4c-left-10); with none and two or more projects the parser asks "Which project: Notes or Site?" with the projects as options (the only question this reading asks); with one project the pronoun is that project. "here", "this project", "hier" are the tab's project. `taskTitleOf` drops a leading "there:" or "dort:" (a real separator only) |
 | make this a task, mach daraus eine Aufgabe | `task.create` from `ctx.lastMessage`, status `ready` (U-016, ADR 0093), titled by `taskTitleOf` |
 
 A lesson ("remember that", "lesson:") is matched before a note, so "remember that X" records X
@@ -829,7 +829,17 @@ run C").
   one part (else '"X" ... The parts leave out a criterion of "X": "c". Nothing was split.'), the
   budget left and the estimate are shared by criteria, the tasks that waited for it wait for
   every part. Sentence 'Split "X" into "A" and "B".'; Undo 'Undone: "X" is one task again.',
-  refused once a part ran ('"P" has run since, so the split cannot be undone').
+  refused once a part ran ('"P" has run since, so the split cannot be undone'), while a session
+  holds or works on one ('"P" is running now, so the split cannot be undone'; L4-selftasks-129:
+  before, a part a session had only taken read "has run since"), and when a wait was added or
+  taken away after it on a task that waited for it or on a part (l4-chat-carried, C4-left-6:
+  '"Publish" was made to wait for "Check the links" after the split; undo would drop that', or
+  'what "Publish" waits for was changed after the split; undo would not put it back as it was'):
+  the Undo resets those waits, so it is refused in words, never done in part (ADR 0030 point 6).
+  Each part's waits as the split made them are kept on the row (`after.parts[].depends_on`; a
+  row from before is read as the split's `in_turn` order made them). The steps of the same
+  change (a task check's split plus a step before, one row) are no later change:
+  `CommandDef.undoBlocked` gets the whole change's steps as its fifth argument.
 - **`task.create` `before` and `why`**: a step added before named Draft or Ready tasks of the
   same project ('Added "X" before "Y".'; a cycle is refused: '"X" cannot both wait for "Y" and
   come before it. Nothing was added.'); its Undo takes it out of what they wait for first. (The
@@ -844,7 +854,11 @@ run C").
   and strips `planFix`).
 - **A set's Undo** in one sentence: when every command of a composed row words its own Undo,
   the executor joins them ('Undone: "Style the page" is one task again; cancelled the task
-  "Check the links" you created.'); else the card's "<what> is back to <old value>".
+  "Check the links" you created.'); else the card's "<what> is back to <old value>". A step of
+  the set that renamed a task (a split's first part, a title edit) gets its old title back with
+  the Undo, so the other steps' words name the task as it is after it (l4-chat-carried,
+  C4-left-5: '...; cancelled "Pick the grid"; "Style the page" waits for what it waited for
+  before.', never the first part's title that no longer exists; `stepWords`).
 
 Tests: `test/selftasks-run.test.ts` (ST-2, ST-3, ST-5), `test/registry.test.ts` (no
 `task_split` tool).

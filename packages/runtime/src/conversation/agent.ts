@@ -68,6 +68,7 @@ import {
   claimNudge,
   claimsOf,
   LOOKING_STEP,
+  NOTHING_CHANGED_ASKS_REPLY,
   NOTHING_CHANGED_CARD_WAITS_REPLY,
   NOTHING_CHANGED_REPLY,
   type ReplyClaim,
@@ -141,7 +142,13 @@ import {
 } from "./recall.ts";
 import { stepLine } from "./recall-steps.ts";
 import { scopeOf } from "./scope.ts";
-import { completeSentencesOf, FIX_NO_PROJECT, fixWhichProject, SentenceGate } from "./sentences.ts";
+import {
+  completeSentencesOf,
+  FIX_NO_PROJECT,
+  fixWhichProject,
+  parserQuestionReply,
+  SentenceGate,
+} from "./sentences.ts";
 import { type ChatTaskFixResult, fixTasksInChat, fixTasksTool } from "./task-fix-tool.ts";
 import {
   DEFAULT_CHAT_HISTORY_TOKENS,
@@ -1196,6 +1203,7 @@ export class ConversationAgent {
       req.onStep?.(line, opts);
     };
     let quickBudget = 0;
+    const switchedHere = await this.switchedHere(earlier, recorded);
     const turn: CommandTurn = {
       humanId: req.humanId,
       agentId: agent.id,
@@ -1207,11 +1215,11 @@ export class ConversationAgent {
       // "make this a task": the person's own line before this one, in this conversation.
       ...(lastLine(earlier) ? { lastMessage: lastLine(earlier) } : {}),
       // l4-chat-answers (L4-selftasks-119, L4-chat-104): "there", "it", "that project" mean the
-      // project this conversation switched to (the active one the registry recorded since);
-      // with no switch here the parser asks which project, never reads the word as a name.
-      ...(recorded && earlier.some((t) => t.reply?.actions.some((a) => a.kind === "project.switch"))
-        ? { namedProjectId: recorded }
-        : {}),
+      // project this conversation switched to; with no switch here the parser asks which
+      // project, never reads the word as a name. l4-chat-carried (L4c-left-10): the project the
+      // newest switch of this conversation named, not the one the registry holds now (a later
+      // switch in the header is not this conversation's "there").
+      ...(switchedHere ? { namedProjectId: switchedHere } : {}),
     };
     /** Set when a stop cancelled the pending card on its way to the registry (spec O.9). */
     let cancelledForStop = false;
@@ -1432,8 +1440,9 @@ export class ConversationAgent {
       // to the model with the command tools instead of the parser's fallback question.
       if (parsed.question && parsed.matched !== "none") {
         const q = parsed.question;
-        const reply = `${q.text}${q.options.length ? ` Options: ${q.options.join(", ")}.` : ""}`;
-        return finish(reply, [], { question: q });
+        // l4-chat-carried (L4c-left-9): a question that names its options ("Which project: Notes
+        // or Site?") is not followed by them again (`parserQuestionReply`, whole words only).
+        return finish(parserQuestionReply(q), [], { question: q });
       }
       if (parsed.commands.length) {
         const r = await this.deps.commands.compose(parsed.commands, lineTurn);
@@ -2344,8 +2353,12 @@ export class ConversationAgent {
         nudged,
         replaced,
       });
-      // A Stop pressed during the nudge: the reply is the true line, and it says it was stopped.
+      // l4-chat-carried (C3-left-11, ADR 0114 dated note 2026-11-23): a Stop pressed during the
+      // nudge ends the turn as stopped, as a Stop at any other point does: its stopped line with
+      // what it cost, never the guard's "Nothing changed, ..." line (before, the true line was the
+      // reply under "You stopped this answer"). The claim streamed was taken back at the nudge.
       stopped = entry.stopped;
+      if (stopped) claimGuard = { ...claimGuard, replaced: false };
       if (replaced || stopped) break;
       // A new kind the answer after the nudge claims gets its own nudge while calls are left (with
       // none left, a change or ask claim is put right at once, as before).
@@ -2394,7 +2407,7 @@ export class ConversationAgent {
     // …") is never the model's: it is left out of what the person is shown and what is stored, so
     // a forged change line cannot pose as a change in the conversation or a later turn's history.
     let reply = claimGuard?.replaced
-      ? this.trueLine(results, didAll)
+      ? this.trueLine(results, didAll, claimGuard.kind)
       : withoutAppMarkers(
           stopped
             ? completeSentencesOf(streamed)
@@ -2985,19 +2998,46 @@ export class ConversationAgent {
   }
 
   /**
+   * l4-chat-carried (L4c-left-10): the project the newest project switch of this conversation
+   * made active, read from its change-log row (`after.active_project`); a switch undone since does
+   * not count. A row kept before replies named their change-log ids gives the registry's record,
+   * as before. Null when this conversation never switched.
+   */
+  private async switchedHere(
+    earlier: readonly TranscriptTurn[],
+    recorded: string | null,
+  ): Promise<string | null> {
+    for (const t of [...earlier].reverse())
+      for (const a of [...(t.reply?.actions ?? [])].reverse()) {
+        if (a.kind !== "project.switch") continue;
+        if (!a.id) return recorded;
+        const row = await this.deps.store.changeLog.get(a.id);
+        const to = (row?.after as { active_project?: unknown } | null)?.active_project;
+        if (row && !row.undone_at && typeof to === "string") return to;
+      }
+    return null;
+  }
+
+  /**
    * What the person reads in place of a claim no command backed (l3-chat-claims): the turn's
    * change sentences, as a command's own reply says them (the changes' rows with Undo show the
    * same words, so the reply shows once); else nothing, and the read-back of the turn's card is
    * the reply; else "Nothing changed", with the earlier card that still waits when there is one.
-   * Never "nothing waits" above a Yes/No card, nor "Nothing changed" above a change.
+   * Never "nothing waits" above a Yes/No card, nor "Nothing changed" above a change. A claimed
+   * ask (`kind` "asks", L4c-left-7) never says "Say it again": nobody asked for a change.
    */
-  private trueLine(results: readonly CommandResultView[], did: TurnDid): string {
+  private trueLine(
+    results: readonly CommandResultView[],
+    did: TurnDid,
+    kind: ReplyClaim["kind"],
+  ): string {
     const changes = results
       .filter((r) => r.status === "done" || r.status === "partial")
       .map((r) => this.sentenceOf(r, "Done"));
     if (changes.length) return changes.join(" ");
     if (did.asked) return "";
-    return did.waiting ? NOTHING_CHANGED_CARD_WAITS_REPLY : NOTHING_CHANGED_REPLY;
+    if (did.waiting) return NOTHING_CHANGED_CARD_WAITS_REPLY;
+    return kind === "asks" ? NOTHING_CHANGED_ASKS_REPLY : NOTHING_CHANGED_REPLY;
   }
 
   private sentenceOf(r: CommandResultView, prefix: string): string {

@@ -930,6 +930,11 @@ export const EventView = z.object({
   undoable: z.boolean().optional(),
   undoBlocked: z.string().nullable().optional(),
   undone: z.boolean().optional(),
+  /**
+   * l4-chat-carried (L4-selftasks-129): on an undone change line, the undo's own sentence (its
+   * change log row's), so a reload reads it as the click did, never "Undone." alone.
+   */
+  undoneSentence: z.string().optional(),
 });
 export type EventView = z.infer<typeof EventView>;
 

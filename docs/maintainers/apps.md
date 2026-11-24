@@ -208,7 +208,14 @@ task** and, with no task, says 'Its tasks are in "Site".' with **Open it** (`Tas
 box, no examples, no Make this a task, no Yes and No, Undo, question options or Go ahead; an
 empty one says "Nothing was said here.") under
 'This chat is kept to read; ask about its work in the Chat of "Site".' with **Open it**
-(`chat-closed`); its Overview shows no Research reads line and no Note for the next session,
+(`chat-closed`); Talk opened on its pages says the same line (`conversation-closed`, l4-chat-carried
+C4-left-9) over the conversation kept to read, with no message box and no voice turn (the line
+is `closedChatOf` in `lib/closed-chat.ts`, shared with the Chat tab; Talk reads the project's
+card when the projects list leaves it out, and a voice request from the hotkey or the palette
+waits for that card (`closedKnown`), then starts no capture and no voice session on a closed
+project; a turn that starts, listens or waits for its reply when the project closes is ended
+with `endVoice`, its words sent nowhere, and no voice reason such as "or type below" shows;
+`test/hotkey.test.tsx` 'l4-chat-carried, run L4'); its Overview shows no Research reads line and no Note for the next session,
 and a joined project no Decisions (they moved with its work). The words are `joinedTasksSentence`
 and `joinedChatSentence` in `join-words.ts`. Tests:
 `test/onerepo-join.test.tsx` and the real-daemon 'd1109-onerepo-join, run C' cases; the fake
@@ -3095,7 +3102,9 @@ named) and "Keep the tasks" changes nothing; nothing starts a session. Tests:
 ## Undo where a change is shown (d1109-selftasks-chat, ADR 0119)
 
 The session page's change lines carry their Undo (`ChangeUndo` in SessionPage.tsx, POST
-/changes/:id/undo; a blocked one says "Cannot be undone now: …"); Changes shows "In a session"
+/changes/:id/undo; a blocked one says "Cannot be undone now: …"; an undone one keeps the undo's
+own sentence after a reload, `EventView.undoneSentence`, and reads "Undone." only when the daemon
+has none, l4-chat-carried L4-selftasks-129); Changes shows "In a session"
 for source `session` and the agent's name for `byAgent` rows; an Inbox card with `openDetails`
 (the agent's suggested task changes) lists its details open. Tests: `test/session.test.tsx`,
 `test/changes.test.tsx`, `test/selftasks.test.tsx`, `test/real-daemon.test.ts` (describe

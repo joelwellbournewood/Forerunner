@@ -1415,10 +1415,11 @@ export class CommandExecutor {
       const joined = project ? joinedProjectWords(project) : null;
       if (joined) return joined;
     }
-    for (const step of stepsOf(row)) {
+    const steps = stepsOf(row);
+    for (const step of steps) {
       const def = this.registry.get(step.name);
       if (!def?.undoBlocked) continue;
-      const reason = await def.undoBlocked(step.params, step.before, step.after, ctx);
+      const reason = await def.undoBlocked(step.params, step.before, step.after, ctx, { steps });
       if (reason) return reason;
     }
     return null;
@@ -1785,15 +1786,26 @@ function stepWords(
   steps: readonly UndoStep[],
   defOf: (name: string) => CommandDef | undefined,
 ): string | null {
+  // l4-chat-carried (C4-left-5, design section 5 rule 4): a step of the set that renamed a task
+  // (a split's first part, an edit of the title) gets its old title back with the Undo, so the
+  // other steps' words name the task as it is after it ('"Style the page" waits for what it
+  // waited for before', never the first part's title that no longer exists).
+  const renamed = new Map<string, string>();
+  for (const s of steps) {
+    const b = (s.before ?? {}) as { title?: unknown };
+    const a = (s.after ?? {}) as { title?: unknown };
+    if (typeof b.title === "string" && typeof a.title === "string" && a.title !== b.title)
+      renamed.set(`"${a.title}"`, `"${b.title}"`);
+  }
   const said: string[] = [];
   for (const s of steps) {
     const own = defOf(s.name)?.undoSentence;
     if (!own) return null;
-    said.push(
-      own(s.params as never, s.before, s.after)
-        .trim()
-        .replace(/[.\s]+$/, ""),
-    );
+    let words = own(s.params as never, s.before, s.after)
+      .trim()
+      .replace(/[.\s]+$/, "");
+    for (const [now, then] of renamed) words = words.split(now).join(then);
+    said.push(words);
   }
   const [first, ...rest] = said;
   if (!first) return null;

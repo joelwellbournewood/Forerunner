@@ -2343,8 +2343,32 @@ export function createDaemonApp(
    * whether its Undo works now, read when the log is read (after a restart too); the Undo is
    * POST /changes/:id/undo, as on Changes.
    */
-  const withUndo = async (views: EventView[]): Promise<EventView[]> =>
-    Promise.all(
+  const withUndo = async (views: EventView[]): Promise<EventView[]> => {
+    // l4-chat-carried (L4-selftasks-129): an undone line keeps the undo's own sentence, read from
+    // the undo's change log row (`commands[0]` is "undo" with the change's id), once per project.
+    const undoRows = new Map<string, Promise<Map<string, string>>>();
+    const undoSentence = async (projectId: string | null, changeId: string) => {
+      if (!projectId) return undefined;
+      let rows = undoRows.get(projectId);
+      if (!rows) {
+        rows = rt.store.changeLog
+          .forProject(projectId, { limit: 500 })
+          .then((list) => {
+            const out = new Map<string, string>();
+            for (const r of list) {
+              const step = (r.commands as { name?: unknown; params?: unknown }[] | null)?.[0];
+              const of = (step?.params as { change_log_id?: unknown } | undefined)?.change_log_id;
+              if (step?.name === "undo" && typeof of === "string" && r.sentence && !out.has(of))
+                out.set(of, r.sentence);
+            }
+            return out;
+          })
+          .catch(() => new Map<string, string>());
+        undoRows.set(projectId, rows);
+      }
+      return (await rows).get(changeId);
+    };
+    return Promise.all(
       views.map(async (v) => {
         const id = (v.payload as { changeLogId?: unknown } | null)?.changeLogId;
         if (v.type !== "change" || typeof id !== "string") return v;
@@ -2353,15 +2377,19 @@ export function createDaemonApp(
         const now = rt.clock.nowIso();
         const open = row.undo_state === "undoable" && (!row.expires_at || row.expires_at > now);
         const blocked = open ? await rt.commands.undoBlocked(row) : null;
+        const undone = row.undo_state === "undone";
+        const said = undone ? await undoSentence(row.project_id, row.id) : undefined;
         return {
           ...v,
           changeId: row.id,
           undoable: open && !blocked,
           undoBlocked: blocked,
-          undone: row.undo_state === "undone",
+          undone,
+          ...(said ? { undoneSentence: said } : {}),
         };
       }),
     );
+  };
   app.get("/sessions/:id/events", async (c) => {
     const id = c.req.param("id");
     const afterSeq = intQuery(c, "afterSeq", 0, Number.MAX_SAFE_INTEGER);

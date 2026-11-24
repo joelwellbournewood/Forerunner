@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { saidByName } from "@forerunner/critic";
 import { type Clock, errorMessage, log } from "@forerunner/platform";
 import type {
+  ChangeLogRow,
   HumanRequestRow,
   JsonObject,
   JsonValue,
@@ -270,11 +271,78 @@ export interface ProposalSyncDeps {
   admit(projectId: string, taskIds: readonly string[]): Promise<boolean>;
 }
 
+/** The cards this process is applying now (ids are unique across stores). */
+const applyingNow = new Set<string>();
+
+/** Whether a stored command is the card's call: the same command, and every param it gave. */
+function sameCall(stored: JsonValue, call: CommandCallLike): boolean {
+  const s = (stored ?? {}) as { name?: unknown; params?: unknown };
+  if (s.name !== call.name) return false;
+  const have = (s.params ?? {}) as Record<string, unknown>;
+  const want = (call.params ?? {}) as Record<string, unknown>;
+  return Object.keys(want).every(
+    (k) => !(k in have) || JSON.stringify(have[k]) === JSON.stringify(want[k]),
+  );
+}
+
+/** The tasks a change log row made (task.create's task, task.split's new parts). */
+function madeBy(row: ChangeLogRow): string[] {
+  const afters = Array.isArray(row.after) ? row.after : [row.after];
+  const out: string[] = [];
+  for (const [i, cmd] of row.commands.entries()) {
+    const name = (cmd as { name?: unknown } | null)?.name;
+    const after = (afters[i] ?? {}) as { task_id?: unknown; parts?: unknown };
+    if (name === "task.create" && typeof after.task_id === "string") out.push(after.task_id);
+    if (name === "task.split" && Array.isArray(after.parts))
+      for (const p of after.parts) {
+        const id = (p as { task_id?: unknown } | null)?.task_id;
+        if (typeof id === "string") out.push(id);
+      }
+  }
+  return out;
+}
+
+/**
+ * l4-chat-carried (C4-left-7, ADR 0119 dated note 2026-11-23): the change log row a card left at
+ * 'applying' already made, when the crash came after the apply and before the outcome was
+ * written: the person's row in the card's project, made since the card was marked, whose commands
+ * are the card's calls in their order. Undefined when the apply never ran.
+ */
+async function changeOfCard(
+  store: StateStore,
+  row: HumanRequestRow,
+  card: JsonObject,
+  projectId: string,
+): Promise<ChangeLogRow | undefined> {
+  const since =
+    typeof card.applying_at === "string" ? card.applying_at : (row.answered_at ?? row.updated_at);
+  const calls = (Array.isArray(card.changes) ? (card.changes as unknown as ProposedChange[]) : [])
+    .flatMap((c) => c.calls ?? [])
+    .filter((c) => c && typeof c.name === "string");
+  if (!calls.length) return undefined;
+  const rows = await store.changeLog.forProject(projectId, { limit: 200 });
+  return rows.find((r) => {
+    if (r.created_at < since || r.human_id !== row.human_id || r.source !== "ui") return false;
+    if (!r.commands.length) return false;
+    // The stored commands are a part of the card's calls, in order (a change that no longer
+    // applied was left out of the apply).
+    let at = 0;
+    for (const cmd of r.commands) {
+      while (at < calls.length && !sameCall(cmd, calls[at] as CommandCallLike)) at++;
+      if (at >= calls.length) return false;
+      at++;
+    }
+    return true;
+  });
+}
+
 /**
  * The answered suggestion cards, applied once (marked first, then applied): "Make these changes"
  * re-checks each change on the state now, leaves out and names what no longer applies, and
  * applies the rest as one change; "Keep the tasks" changes nothing. Survives a restart: the
- * calls are on the card.
+ * calls are on the card. A card a crash left at 'applying' (l4-chat-carried, C4-left-7) is
+ * settled at the next sync: its change, when the apply had run, is found and named; otherwise
+ * it is applied now, once. It never stays at "Making the changes…".
  */
 export async function syncTaskProposals(
   deps: ProposalSyncDeps,
@@ -288,84 +356,139 @@ export async function syncTaskProposals(
     },
   );
   for (const row of answered) {
-    const card = (row.change_card ?? {}) as JsonObject;
-    if (card.key !== TASK_PROPOSAL_KEY || card.outcome !== undefined) continue;
-    // Marked first, so a second sync never applies the set twice.
-    let marked: HumanRequestRow;
+    const stored = (row.change_card ?? {}) as JsonObject;
+    if (stored.key !== TASK_PROPOSAL_KEY) continue;
+    const leftApplying = stored.outcome === "applying";
+    if (stored.outcome !== undefined && !leftApplying) continue;
+    // A card this process applies right now is no leftover of a crash.
+    if (applyingNow.has(row.id)) continue;
+    applyingNow.add(row.id);
     try {
-      marked = await store.humanRequest.patch(row.id, {
-        change_card: { ...card, outcome: "applying" },
-      });
-    } catch {
-      continue;
+      const settled = await settleProposal(deps, row, stored, leftApplying);
+      out[settled]++;
+    } catch (e) {
+      logger.warn("a suggestion card was not settled", { id: row.id, error: errorMessage(e) });
+    } finally {
+      applyingNow.delete(row.id);
     }
-    const answer = answerOf(row);
-    if (answer !== TASK_PROPOSAL_OPTIONS[0]) {
-      await store.humanRequest.patch(marked.id, {
-        change_card: { ...card, outcome: "kept" },
-      });
-      out.kept++;
-      continue;
-    }
-    const projectId = typeof card.project_id === "string" ? card.project_id : row.project_id;
-    const changes = Array.isArray(card.changes)
-      ? (card.changes as unknown as ProposedChange[])
-      : [];
-    const calls: CommandCallLike[] = [];
-    const leftOut: string[] = [];
-    let applies = 0;
-    for (const c of changes) {
-      const why = await deps.check(c.calls).catch((e: unknown) => errorMessage(e));
-      if (why) {
-        leftOut.push(`${c.line.replace(/\.$/, "")}: ${why}`);
-        continue;
-      }
-      calls.push(...c.calls);
-      applies++;
-    }
-    const before = projectId
-      ? new Set((await store.task.forProject(projectId, {}, { limit: 10_000 })).map((t) => t.id))
-      : new Set<string>();
-    let result: { changeLogId: string } | { refused: string } = { refused: "nothing to change" };
-    if (calls.length && projectId)
-      result = await deps.apply(calls, { projectId, requestId: row.id }).catch((e: unknown) => ({
-        refused: errorMessage(e),
-      }));
-    if ("refused" in result) {
+  }
+  return out;
+}
+
+/** One answered card, marked and then applied (or found applied, after a crash). */
+async function settleProposal(
+  deps: ProposalSyncDeps,
+  row: HumanRequestRow,
+  stored: JsonObject,
+  leftApplying: boolean,
+): Promise<"applied" | "kept" | "failed"> {
+  const { store } = deps;
+  const { outcome: _left, applying_at: _at, ...card } = stored;
+  const projectId = typeof card.project_id === "string" ? card.project_id : row.project_id;
+  // Marked first, so a second sync never applies the set twice; the mark's time tells a later
+  // start which change the apply made, when a crash comes between the two.
+  let marked: HumanRequestRow = row;
+  if (!leftApplying) {
+    marked = await store.humanRequest.patch(row.id, {
+      change_card: { ...card, outcome: "applying", applying_at: deps.clock.nowIso() },
+    });
+  }
+  const answer = answerOf(row);
+  if (leftApplying && answer === TASK_PROPOSAL_OPTIONS[0] && projectId) {
+    const made = await changeOfCard(store, row, stored, projectId);
+    if (made) {
+      const changes = Array.isArray(card.changes)
+        ? (card.changes as unknown as ProposedChange[])
+        : [];
+      const applies = changes.filter((c) =>
+        (c.calls ?? []).every((call) => made.commands.some((cmd) => sameCall(cmd, call))),
+      ).length;
+      const ids = madeBy(made);
+      const running = await deps.admit(projectId, ids).catch(() => false);
       await store.humanRequest.patch(marked.id, {
         change_card: {
           ...card,
-          outcome: "not_applied",
-          left_out: [...leftOut, ...(calls.length ? [result.refused] : [])],
+          outcome: "applied",
+          changed: applies,
+          change_log_id: made.id,
+          approved_task_ids: ids,
+          running,
         },
       });
-      out.failed++;
+      return "applied";
+    }
+  }
+  return applyMarked(deps, row, marked, card, projectId);
+}
+
+/** The marked card applied: each change checked on the state now, the rest as one change. */
+async function applyMarked(
+  deps: ProposalSyncDeps,
+  row: HumanRequestRow,
+  marked: HumanRequestRow,
+  card: JsonObject,
+  projectId: string | null,
+): Promise<"applied" | "kept" | "failed"> {
+  const { store } = deps;
+  if (answerOf(row) !== TASK_PROPOSAL_OPTIONS[0]) {
+    await store.humanRequest.patch(marked.id, {
+      change_card: { ...card, outcome: "kept" },
+    });
+    return "kept";
+  }
+  const changes = Array.isArray(card.changes) ? (card.changes as unknown as ProposedChange[]) : [];
+  const calls: CommandCallLike[] = [];
+  const leftOut: string[] = [];
+  let applies = 0;
+  for (const c of changes) {
+    const why = await deps.check(c.calls).catch((e: unknown) => errorMessage(e));
+    if (why) {
+      leftOut.push(`${c.line.replace(/\.$/, "")}: ${why}`);
       continue;
     }
-    const made = projectId
-      ? (await store.task.forProject(projectId, {}, { limit: 10_000 }))
-          .filter((t) => !before.has(t.id))
-          .map((t) => t.id)
-      : [];
-    const touched = changes
-      .flatMap((c) => c.calls)
-      .map((c) => (c.params as { task?: unknown } | null)?.task)
-      .filter((t): t is string => typeof t === "string");
-    const running = projectId
-      ? await deps.admit(projectId, [...made, ...touched]).catch(() => false)
-      : false;
+    calls.push(...c.calls);
+    applies++;
+  }
+  const before = projectId
+    ? new Set((await store.task.forProject(projectId, {}, { limit: 10_000 })).map((t) => t.id))
+    : new Set<string>();
+  let result: { changeLogId: string } | { refused: string } = { refused: "nothing to change" };
+  if (calls.length && projectId)
+    result = await deps.apply(calls, { projectId, requestId: row.id }).catch((e: unknown) => ({
+      refused: errorMessage(e),
+    }));
+  if ("refused" in result) {
     await store.humanRequest.patch(marked.id, {
       change_card: {
         ...card,
-        outcome: "applied",
-        changed: applies,
-        change_log_id: result.changeLogId,
-        approved_task_ids: made,
-        running,
-        ...(leftOut.length ? { left_out: leftOut } : {}),
+        outcome: "not_applied",
+        left_out: [...leftOut, ...(calls.length ? [result.refused] : [])],
       },
     });
-    out.applied++;
+    return "failed";
   }
-  return out;
+  const made = projectId
+    ? (await store.task.forProject(projectId, {}, { limit: 10_000 }))
+        .filter((t) => !before.has(t.id))
+        .map((t) => t.id)
+    : [];
+  const touched = changes
+    .flatMap((c) => c.calls)
+    .map((c) => (c.params as { task?: unknown } | null)?.task)
+    .filter((t): t is string => typeof t === "string");
+  const running = projectId
+    ? await deps.admit(projectId, [...made, ...touched]).catch(() => false)
+    : false;
+  await store.humanRequest.patch(marked.id, {
+    change_card: {
+      ...card,
+      outcome: "applied",
+      changed: applies,
+      change_log_id: result.changeLogId,
+      approved_task_ids: made,
+      running,
+      ...(leftOut.length ? { left_out: leftOut } : {}),
+    },
+  });
+  return "applied";
 }
