@@ -552,3 +552,34 @@ describe("l4-selftasks-chat, run L4: the open chat follows a card answered in th
     await waitFor(() => expect(screen.queryByTestId("confirm-yes")).toBeNull());
   });
 });
+
+// l4-starts-carried (L4a-left-5): chat's "run it now" while the subscription rests is kept for
+// its reset, as the Start dialog's "Start at 15:40" is: the read-back names the time and Yes
+// starts no session now.
+describe("l4-starts-carried, run L4", () => {
+  it("L4a-left-5: 'run it now' while the subscription rests reads back 'Start a session on Atlas at 15:40 (up to CHF 5.00)?'; Yes keeps it and starts nothing now", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.credentialWaitNow.proj_atlas = {
+      text: "Nothing can run until 15:40 (your subscription's limit). Press Start and the work starts then.",
+      save: null,
+      startable: true,
+    };
+    renderApp("/projects/proj_atlas/chat", harness);
+    const input = await screen.findByTestId("chat-input");
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "run it now");
+    await user.click(screen.getByTestId("chat-send"));
+    const confirmation = await screen.findByTestId("pending-confirmation");
+    expect(confirmation).toHaveTextContent("Start a session on Atlas at 15:40 (up to CHF 5.00)?");
+    const sessionsBefore = harness.daemon.state.sessions.length;
+    await user.click(within(confirmation).getByTestId("confirm-yes"));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("chat-agent").at(-1)).toHaveTextContent(
+        "A session of Atlas starts at 15:40.",
+      ),
+    );
+    expect(harness.daemon.state.sessions).toHaveLength(sessionsBefore);
+    expect(harness.daemon.state.credentialWaitNow.proj_atlas?.kept).toBe(true);
+  });
+});

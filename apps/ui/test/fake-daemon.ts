@@ -792,7 +792,8 @@ export interface FakeDaemonState {
   calls: RecordedCall[];
   /** l4-selftasks-carried (L4f-left-6): the paths of the GET requests, in order. */
   gets: string[];
-  pendingConfirmation: { id: string; readback: string } | null;
+  /** `keptAt` (L4a-left-5): chat's start is kept for the credential's reset at that time. */
+  pendingConfirmation: { id: string; readback: string; keptAt?: string } | null;
   /**
    * As the daemon (review of l4-chat-answers): the line the parser's "Which project: …?" asked
    * about; the option pressed next (a project's name alone) finishes it.
@@ -4776,6 +4777,24 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (state.pendingConfirmation && lower === "yes") {
       const confirmed = state.pendingConfirmation;
       state.pendingConfirmation = null;
+      // l4-starts-carried (L4a-left-5), as the daemon: a start kept for the credential's reset
+      // starts no session now; the wait reads as the person's kept Start (Cancel drops it).
+      if (confirmed.keptAt && turnProject) {
+        const target = state.projects.find((p) => p.id === turnProject);
+        const resting = state.credentialWaitNow[turnProject];
+        const limit = /\(([^)]+)\)/.exec(resting?.text ?? "")?.[1] ?? "its limit";
+        state.credentialWaitNow[turnProject] = {
+          text: `Waits until ${confirmed.keptAt} (${limit}); then your session goes on.`,
+          save: null,
+          kept: true,
+        };
+        const sentence = `A session of ${target?.name ?? "the project"} starts at ${confirmed.keptAt}.`;
+        return {
+          ...base,
+          reply: sentence,
+          actions: [{ kind: "session.start", summary: sentence, id: confirmed.id }],
+        };
+      }
       // As the daemon's session.start from the chat (phase E): the start waits for its run,
       // the reply is the change's sentence, and the turn's action names the session it began
       // (its change log's `after.session_id`), which the conversation links.
@@ -4862,8 +4881,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (/^(?:run it now|start now|start working now)[.!]?$/.test(lower) && turnProject) {
       const id = nextId("confirm");
       const name = state.projects.find((p) => p.id === turnProject)?.name ?? "this project";
-      const readback = `Start a session on ${name} (up to CHF 5.00)?`;
-      state.pendingConfirmation = { id, readback };
+      // l4-starts-carried (L4a-left-5), as the daemon: while the credential rests and nothing is
+      // kept, the start is kept for its reset and read back with its time.
+      const resting = state.credentialWaitNow[turnProject];
+      const keptAt = resting?.startable ? fakeResetAt(resting.text) : null;
+      const readback = keptAt
+        ? `Start a session on ${name} at ${keptAt} (up to CHF 5.00)?`
+        : `Start a session on ${name} (up to CHF 5.00)?`;
+      state.pendingConfirmation = { id, readback, ...(keptAt ? { keptAt } : {}) };
       return {
         ...base,
         reply: readback,

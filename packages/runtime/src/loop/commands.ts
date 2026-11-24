@@ -606,6 +606,9 @@ export class CommandLoop implements ConversationCommands {
       row.after && typeof row.after === "object" && !Array.isArray(row.after)
         ? (row.after as JsonObject)
         : {};
+    // l4-starts-carried (L4a-left-5): a start kept for the credential's reset has no session yet:
+    // its Undo drops it (the command's own undo); nothing has run to stop.
+    if (after.kept_start === true) return null;
     // A start that waited for its run names its session ('answers', phase E: the chat's start
     // and `POST /sessions`' way): while that session runs the executor's undo stops it; once it
     // ended there is nothing to undo, as for a start found through the scheduler.

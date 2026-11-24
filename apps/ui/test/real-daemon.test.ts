@@ -29398,4 +29398,140 @@ describe("l4-starts-carried, run L4", () => {
       removeHomes([home]);
     }
   }, 120_000);
+
+  // L4a-left-5 (L4-creds-8 part 3, never on the cut line since L4a): chat's "run it now" while
+  // the subscription rests read back 'Start a session on Map notes (up to CHF 5.00)?' and the
+  // session then ended at once to wait (nothing moved or was spent). The Start dialog keeps such
+  // a start for the reset ("Start at 11:40"); chat's start does the same, with its own read-back
+  // and an Undo that drops it.
+  it("L4a-left-5: chat's start while the subscription rests is kept for its reset with its own read-back, Undo drops it, and kept again it starts once at the reset", async () => {
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4carried-kept-"));
+    const resetAt = "2026-03-05T10:40:00.000Z";
+    const oauth = ["sk-ant-oat01-", "keptchat", "8".repeat(40)].join(""); // not-a-secret
+    const apiKey = ["sk-ant-api03-", "keptchat", "9".repeat(40)].join(""); // not-a-secret
+    const sdkCalls: string[] = [];
+    const sdkQuery: NonNullable<ComposeOptions["sdkQuery"]> = ({ prompt }) => {
+      sdkCalls.push(prompt);
+      const atLimit = sdkCalls.length <= 1;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "sdk" };
+        if (atLimit) {
+          yield {
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", resetsAt: Date.parse(resetAt) / 1000 },
+          };
+          yield {
+            type: "assistant",
+            error: "rate_limit",
+            message: { content: [{ type: "text", text: "You've hit your limit" }] },
+          };
+          yield { type: "result", subtype: "success", is_error: true, result: "limit" };
+          return;
+        }
+        yield {
+          type: "assistant",
+          message: {
+            id: `m${sdkCalls.length}`,
+            content: [{ type: "text", text: "Wrote it. Lesson: none." }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        };
+        yield { type: "result", subtype: "success", is_error: false, result: "Wrote it." };
+      })();
+    };
+    const onKey = new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock);
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: "sqlite::memory:",
+      vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
+      provider: new AcceptingCriticProvider(onKey),
+      sdkQuery,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const ended = (s: { status: string }) => !["running", "paused", "planned"].includes(s.status);
+    try {
+      const project = await client.createProject({ name: "Map notes", goal: "A note" });
+      await readyTask(client, project.id, "Write notes/map.md");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      // The first Start meets the limit (10:40 UTC, 11:40 in Zurich) and ends to wait; the
+      // person cancels that wait: the subscription still rests and nothing is kept.
+      const first = await client.startSession({ agentId, projectId: project.id });
+      const firstId = first.session?.id ?? "";
+      await eventually(
+        async () => ended(await client.session(firstId)),
+        "the first session to end (20 s)",
+        async () => (await client.session(firstId)).status,
+        20_000,
+      );
+      expect((await client.cancelContinuation(project.id)).cancelled).toBe(true);
+      const say = () =>
+        client.executeCommands({
+          commands: [{ name: "session.start", params: { project: project.id } }],
+          wordsUsed: "run it now",
+          source: "text",
+          projectId: project.id,
+        });
+      const asked = await say();
+      expect(asked.status, JSON.stringify(asked)).toBe("pending");
+      expect((asked as { readback?: string }).readback).toMatch(
+        /^Start a session on Map notes at 11:40 \(up to CHF \d+\.\d{2}\)\?$/,
+      );
+      const done = await client.confirmCommand(asked.pendingId ?? "", { answer: "tap" });
+      expect(done.status, JSON.stringify(done)).toBe("done");
+      expect((done as { sentence?: string }).sentence).toBe(
+        "A session of Map notes starts at 11:40.",
+      );
+      // Kept, not started: one session so far, nothing runs, the project says its start waits.
+      expect(await client.sessions({ projectId: project.id })).toHaveLength(1);
+      expect(rt.scheduler.isActive(rt.agent.id)).toBe(false);
+      expect((await client.project(project.id)).startWait).toBe("kept");
+      expect(await rt.continuations.waiting(project.id)).toBe(
+        "A session of Map notes starts at 11:40.",
+      );
+      // Undo drops it: nothing starts at the reset.
+      await client.undoChange(done.changeLogId ?? "");
+      expect(await rt.continuations.waiting(project.id)).toBeNull();
+      expect((await client.project(project.id)).startWait ?? null).toBeNull();
+      // Kept again, it starts once at the reset, by the person.
+      const again = await say();
+      const keptAgain = await client.confirmCommand(again.pendingId ?? "", { answer: "tap" });
+      expect((keptAgain as { sentence?: string }).sentence).toBe(
+        "A session of Map notes starts at 11:40.",
+      );
+      clock.set(Date.parse("2026-03-05T10:41:00Z"));
+      await rt.scheduler.tick();
+      await eventually(
+        async () => (await client.tasks(project.id)).every((t) => t.status === "done"),
+        "the session kept for the reset to finish the task (30 s)",
+        async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+        30_000,
+      );
+      const sessions = await client.sessions({ projectId: project.id });
+      expect(sessions).toHaveLength(2);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+      removeHomes([home]);
+    }
+  }, 120_000);
 });

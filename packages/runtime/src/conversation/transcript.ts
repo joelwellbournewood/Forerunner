@@ -212,7 +212,7 @@ export function isHoldReply(reply: TranscriptReply): boolean {
  * change tasks.' for a refused credential. A test keeps the two in step.
  */
 const HOLD_REPLY_RE =
-  /, so I have not answered\. (?:.+; until then )?I can still add and change tasks\.$/i;
+  /, so I have not answered\. (?:.+; until then )?I can still add and change tasks(?:; a Start now runs (?:at|on) [^.]+)?\.$/i;
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 

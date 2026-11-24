@@ -350,13 +350,21 @@ export function switchNotificationWords(input: {
 export function chatHoldReply(
   wait: Pick<CredentialWait, "reason" | "kind" | "stop">,
   until: string | null,
+  /**
+   * l4-starts-carried (L4a-left-5): when a Start of the chat's project now is kept for the
+   * reset ("at 15:40", the Start dialog's and chat's own start keep it): the reply says so
+   * ("...; a Start now runs at 15:40."). Absent: a Start now would not be kept (nothing would
+   * run, a session or a kept start already waits, no project).
+   */
+  startsWhen?: string | null,
 ): string {
   const reason = wait.reason === "needs" ? (wait.stop ?? "limit") : wait.reason;
   if (reason === "refused")
     return `${stoppedPhrase(wait, until)}, so I have not answered. ${
       wait.kind === "subscription" ? "Sign in again in Settings" : "Save a new key in Settings"
     }; until then I can still add and change tasks.`;
-  return `${stoppedPhrase(wait, until)}, so I have not answered. I can still add and change tasks.`;
+  const start = startsWhen ? `; a Start now runs ${startsWhen}` : "";
+  return `${stoppedPhrase(wait, until)}, so I have not answered. I can still add and change tasks${start}.`;
 }
 
 /** The one-off press's consequence line: "Answers this question on your API key: about CHF 0.02." */

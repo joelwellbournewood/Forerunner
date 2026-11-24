@@ -412,6 +412,22 @@ export interface CommandPorts {
    */
   startWaits?(projectId: string): Promise<string | null>;
   /**
+   * l4-starts-carried (L4a-left-5, S-10's "Start at 15:40" for chat): when a person's start of
+   * the project now is kept for its Claude credential's reset ("at 15:40", "on 1 Dec": the
+   * credential the work needs rests, nothing is kept or runs for the project), read-only; null
+   * when a start now runs as usual. `session.start` reads it back ('Start a session on Map notes
+   * at 15:40 (up to CHF 5.00)?').
+   */
+  startKeptWhen?(projectId: string): Promise<string | null>;
+  /**
+   * The same start kept for the reset (`RuntimeApp.continuations.keepStart`): its sentence ("A
+   * session of Map notes starts at 15:40."), or null when nothing waits for a reset now (the
+   * start then runs as usual).
+   */
+  keepStart?(projectId: string, budgetUsdMicro: number): Promise<string | null>;
+  /** Undo of a kept start: it is dropped and nothing starts at the reset. */
+  cancelKeptStart?(projectId: string): Promise<boolean>;
+  /**
    * d1109-onerepo-join (ADR 0117 amended): Make one project's checks, read by `project.join` in
    * its plan and again at its run. Absent: the command is refused as unavailable.
    */

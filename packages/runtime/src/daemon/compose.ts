@@ -4068,20 +4068,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     now: () => clock.nowIso(),
   };
   const prepareWorkPort = (req: PrepareRequest) => prepareWork(prepareDeps, req);
-  /**
-   * budget-resume, S-3 and l4-starts-sessions (L4-money-204): the tasks paused at this month's
-   * cap, the project's budget or the subscription's share whose limit changed and has room are
-   * made ready again and prepared (they join the running session if they fit, else wait for the
-   * person's next Start; the hands-off setting may start one as built). Called by the scheduler's
-   * tick, by budget.set right after it writes a limit (CommandPorts.limitChanged) and by the
-   * start check before it reads the tasks, so the Start dialog never reads a card the raise
-   * already answered. Never throws.
-   */
   /** `RuntimeApp.refusedStart` (L4d-left-2): the refused credential's sentence for a start. */
   const refusedStart = async (projectId: string): Promise<string | null> => {
+    const project = await store.project.get(projectId).catch(() => undefined);
+    if (!project) return null;
     const check = await startCheck(
       { store, estimates, defaultEstimateUsdMicro: 500_000, sandbox: sandbox.gate },
-      projectId,
+      project.id,
+      sessionCapFromSettings(project.settings, clock.now(), DEFAULT_SESSION_CAP_USD_MICRO).usdMicro,
     );
     if (!(check.runnable.length > 0 || check.oversized)) return null;
     const wait = await credentialWaits.now(projectId).catch(() => null);
@@ -4098,6 +4092,15 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     });
     return blocked?.kind === "nothing_runnable" ? blocked.sentence : null;
   };
+  /**
+   * budget-resume, S-3 and l4-starts-sessions (L4-money-204): the tasks paused at this month's
+   * cap, the project's budget or the subscription's share whose limit changed and has room are
+   * made ready again and prepared (they join the running session if they fit, else wait for the
+   * person's next Start; the hands-off setting may start one as built). Called by the scheduler's
+   * tick, by budget.set right after it writes a limit (CommandPorts.limitChanged) and by the
+   * start check before it reads the tasks, so the Start dialog never reads a card the raise
+   * already answered. Never throws.
+   */
   const wakeLimitWaits = () =>
     wakeBudgetWaitsDetailed({
       store,
@@ -4484,6 +4487,30 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       events.emit("project", { id: projectId });
       return continuations.waiting(projectId);
     },
+  };
+  /**
+   * l4-starts-carried (L4a-left-5): when a person's start of the project now is kept for its
+   * Claude credential's reset ("at 15:40", "on 1 Dec", the Start dialog's "Start at 15:40"), or
+   * null when a start now runs as usual: the work's credential rests (a refusal is refused in
+   * words instead), nothing is kept or runs for the project, Stop all is off, and something
+   * would run. Read-only; chat's start reads it back and the hold reply says it.
+   */
+  const startKeptWhen = async (projectId: string | null | undefined): Promise<string | null> => {
+    if (!projectId || kill.isFrozen({ agentId: agent.id })) return null;
+    if (busyHere(scheduler.activeStart(agent.id), projectId)) return null;
+    if (await continuations.waiting(projectId)) return null;
+    const w = await credentialWaits.now(projectId).catch(() => null);
+    if (!w?.startable || !w.startLabel) return null;
+    const project = await store.project.get(projectId).catch(() => undefined);
+    if (!project) return null;
+    const check = await startCheck(
+      { store, estimates, defaultEstimateUsdMicro: 500_000, sandbox: sandbox.gate },
+      project.id,
+      sessionCapFromSettings(project.settings, clock.now(), DEFAULT_SESSION_CAP_USD_MICRO).usdMicro,
+    );
+    if (!(check.runnable.length > 0 || check.oversized)) return null;
+    const when = w.startLabel.replace(/^Start /, "");
+    return /^(at|on) \S/.test(when) ? when : null;
   };
   // d1109-run-visible (V-1, ADR 0118 point 12): the run indicator. Its words are the daemon's
   // (`run-indicator.ts`): the running sessions from their logs (only the events after the last
@@ -5167,6 +5194,16 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           ...(taskIds ? { taskIds } : {}),
         }),
       startWaits: (projectId) => continuations.waiting(projectId),
+      // l4-starts-carried (L4a-left-5): chat's start during a rest is kept for the reset, as the
+      // Start dialog's "Start at 15:40" keeps it, with its own read-back and an Undo.
+      startKeptWhen: (projectId) => startKeptWhen(projectId),
+      keepStart: async (projectId, budgetUsdMicro) =>
+        (await startKeptWhen(projectId))
+          ? continuations.keepStart(projectId, agent.id, {
+              ...(budgetUsdMicro > 0 ? { budgetUsdMicro } : {}),
+            })
+          : null,
+      cancelKeptStart: (projectId) => continuations.cancel(projectId),
       // D4 (d1109-oversize-start): the chat's start reads back the Start dialog's warning when
       // the session would take a task larger than its work budget; it never refuses it.
       startWarning: async (projectId, budgetUsdMicro) =>
@@ -5729,7 +5766,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     ...(routed
       ? {
           // d1109-cred-engine CE-9 (ADR 0120): chat follows the person's credential policy too.
-          credentialHold: async ({ oneOff }: { oneOff: boolean }) => {
+          credentialHold: async ({
+            oneOff,
+            projectId,
+          }: {
+            oneOff: boolean;
+            projectId?: string | null;
+          }) => {
             const model = rungModelFor(routed, modelConfig.get().modeDefaults.text_chat.tier);
             // L4-creds-3: the person's time zone and monthly cap are read now, never the ones
             // the daemon was composed with (a zone changed in Settings applies at once).
@@ -5768,11 +5811,17 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
                 if ((room ?? Number.MAX_SAFE_INTEGER) >= estimate)
                   offer = { kind: held.switchTo.kind, estimateUsdMicro: estimate };
               }
+              // L4a-left-5: a Start of the chat's project now is kept for the reset: say when.
+              const startsWhen =
+                held.wait.reason === "refused"
+                  ? null
+                  : await startKeptWhen(projectId).catch(() => null);
               return {
                 held: true,
                 wait: held.wait,
                 untilText: untilOf(held.wait.until),
                 oneOff: offer,
+                ...(startsWhen ? { startsWhen } : {}),
               };
             }
             // Not held: another credential answers while the first choice is stopped (a standing
