@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { appDirs, join, SimulatedClock } from "@forerunner/platform";
 import type { TaskRow } from "@forerunner/state";
@@ -7,11 +7,14 @@ import { MemoryVault } from "@forerunner/vault";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
+import type { ModelProvider } from "../src/provider/types.ts";
 import {
   ASK_PERSON_TOOL,
   DECISION_DOC_DIR,
+  DECISION_RECORD_MARK,
   DEFAULT_DECISION_DOC,
 } from "../src/session/person-questions.ts";
+import { removeHomes, ScriptedProvider, type ScriptReply, settleSessions } from "./helpers.ts";
 import { closingReply, submitReply } from "./loop-helpers.ts";
 
 /**
@@ -54,9 +57,15 @@ function provider(clock: SimulatedClock) {
   });
 }
 
-async function compose(home: string, clock: SimulatedClock, fake: FakeProvider) {
+async function compose(
+  home: string,
+  clock: SimulatedClock,
+  fake: ModelProvider,
+  extra: { startServices?: boolean } = {},
+) {
   const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
   const rt = await composeRuntime({
+    ...extra,
     env: { FORERUNNER_HOME: home },
     dirs,
     config: null,
@@ -381,4 +390,243 @@ describe("questions only the person can answer, on the daemon (U-022)", () => {
     expect(sent).toContain(ANSWER_ME);
     expect(sent).toContain("Cloudflare Pages");
   }, 60_000);
+});
+
+describe("w8-repo-guide, wave 8: the Inbox answers go to the file the card names (W8-guide-3)", () => {
+  // fixup-w8-repo-guide (review of W8-guide-3): the card named the record by the day it was
+  // filed, and the answers were written to a file named by the day they were answered, so the
+  // card's sentence was untrue whenever the person answered on another day (the review's probe:
+  // filed 2026-10-31, answered 2026-11-01, the card named 2026-10-31-project-decisions.md and
+  // only 2026-11-01-project-decisions.md was written).
+  type Req = Awaited<ReturnType<typeof compose>>["req"];
+  const inboxOf = async (req: Req) => (await (await req("/inbox")).json()) as { requests: Json[] };
+  const openCard = async (req: Req, taskId: string) =>
+    (await inboxOf(req)).requests.find((r) => r.taskId === taskId && r.status === "open");
+  const recordLine = (file: string) =>
+    `Your answers are written to the project's decision record (${file}).`;
+  const plannedWhy = (title: string, file: string) =>
+    `"${title}" needs your answers. No specialist works on it: answer the questions below. ${recordLine(file)} The task is then done.`;
+  const decisionsIn = (rt: RuntimeApp, projectId: string) =>
+    readdirSync(join(rt.intake.workspaceDir(projectId), ...DECISION_DOC_DIR.split("/"))).sort();
+  const answerCard = async (req: Req, card: Json, pairs: [string, string][]) => {
+    const res = await req(`/requests/${card.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({
+        version: card.version,
+        answer: { answers: pairs.map(([question, answer]) => ({ question, answer })) },
+      }),
+    });
+    expect(res.status).toBe(200);
+  };
+  const personTask = (rt: RuntimeApp, projectId: string, title: string, questions: string[]) =>
+    rt.store.task.insert({
+      project_id: projectId,
+      outcome: "decided",
+      risk_tier: 1,
+      status: "ready",
+      priority: 5,
+      budget_usd_micro: 1_000_000,
+      est_cost_usd_micro: 100_000,
+      reason: "planned by the intake",
+      author_agent: rt.agent.id,
+      title,
+      specialist: "person",
+      acceptance_criteria: questions,
+    } as never);
+
+  it("a card filed one evening and answered the next morning: the answers go to the file the card named, also after the daemon starts again; no file named by the answer's day and no 0001 file", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-person-record-"));
+    const evening = new SimulatedClock("2026-10-31T20:00:00Z");
+    let { rt, req } = await compose(home, evening, provider(evening));
+    try {
+      const projectId = (
+        await rt.store.project.insert({
+          name: "Site",
+          goal: "A site for the club",
+          autonomy_level: 2,
+          settings: { members: [rt.agent.id] },
+        })
+      ).id;
+      const task = await personTask(rt, projectId, "Choose the domain", [
+        "Which domain should the site use?",
+      ]);
+      await rt.syncApprovals();
+      const named = "docs/decisions/2026-10-31-project-decisions.md";
+      expect((await openCard(req, task.id))?.why).toBe(plannedWhy("Choose the domain", named));
+      // The daemon starts again the next morning: the card still names the same file.
+      await settleSessions(rt);
+      await rt.close();
+      const morning = new SimulatedClock("2026-11-01T08:00:00Z");
+      ({ rt, req } = await compose(home, morning, provider(morning)));
+      const card = (await openCard(req, task.id)) as Json;
+      expect(card.why).toBe(plannedWhy("Choose the domain", named));
+      await answerCard(req, card, [["Which domain should the site use?", "club-site.example"]]);
+      expect((await rt.store.task.mustGet(task.id)).status).toBe("done");
+      // Written to the file the card named, and to no other.
+      expect(decisionsIn(rt, projectId)).toEqual(["2026-10-31-project-decisions.md"]);
+      const text = readFileSync(
+        join(rt.intake.workspaceDir(projectId), ...named.split("/")),
+        "utf8",
+      );
+      expect(text).toContain(DECISION_RECORD_MARK);
+      expect(text).toContain('## Answers for "Choose the domain" (2026-11-01)');
+      expect(text).toContain("**Which domain should the site use?**\n\nclub-site.example");
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+      removeHomes([home]);
+    }
+  }, 120_000);
+
+  it("two person tasks whose cards are filed on two days before either is answered name the same record, and both answers land in it", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-person-record-"));
+    const day1 = new SimulatedClock("2026-10-31T09:00:00Z");
+    let { rt, req } = await compose(home, day1, provider(day1));
+    try {
+      const projectId = (
+        await rt.store.project.insert({
+          name: "Site",
+          goal: "A site for the club",
+          autonomy_level: 2,
+          settings: { members: [rt.agent.id] },
+        })
+      ).id;
+      const first = await personTask(rt, projectId, "Choose the domain", [
+        "Which domain should the site use?",
+      ]);
+      await rt.syncApprovals();
+      const named = "docs/decisions/2026-10-31-project-decisions.md";
+      expect((await openCard(req, first.id))?.why).toBe(plannedWhy("Choose the domain", named));
+      await settleSessions(rt);
+      await rt.close();
+      // The next day a second question task becomes ready; the first card is still open, so no
+      // record exists yet: the second card names the record the first one named.
+      const day2 = new SimulatedClock("2026-11-01T09:00:00Z");
+      ({ rt, req } = await compose(home, day2, provider(day2)));
+      const second = await personTask(rt, projectId, "Choose the mail address", [
+        "Which address gets the mail?",
+      ]);
+      await rt.syncApprovals();
+      expect((await openCard(req, second.id))?.why).toBe(
+        plannedWhy("Choose the mail address", named),
+      );
+      await answerCard(req, (await openCard(req, second.id)) as Json, [
+        ["Which address gets the mail?", "board@club-site.example"],
+      ]);
+      await answerCard(req, (await openCard(req, first.id)) as Json, [
+        ["Which domain should the site use?", "club-site.example"],
+      ]);
+      expect(decisionsIn(rt, projectId)).toEqual(["2026-10-31-project-decisions.md"]);
+      const text = readFileSync(
+        join(rt.intake.workspaceDir(projectId), ...named.split("/")),
+        "utf8",
+      );
+      expect(text.match(/## Answers for/g)).toHaveLength(2);
+      expect(text.split(DECISION_RECORD_MARK)).toHaveLength(2);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+      removeHomes([home]);
+    }
+  }, 120_000);
+
+  it("after the plan from the brief wrote its date-named decision record, the person's answers land in that record, also after a restart and on a later day; the card names that file and no 0001 file is made", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-person-record-"));
+    const day1 = new SimulatedClock("2026-10-31T09:00:00Z");
+    const replies: ScriptReply[] = [];
+    let { rt, req } = await compose(home, day1, new ScriptedProvider(replies, day1), {
+      startServices: false,
+    });
+    try {
+      const created = await req("/projects", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Club page",
+          goal: "A page for the club",
+          brief: [
+            "A one-page site for the club: plain HTML and CSS.",
+            "- A list of the next meetings.",
+            "- A contact address.",
+          ].join("\n"),
+        }),
+      });
+      expect(created.status).toBe(201);
+      const projectId = String(((await created.json()) as Json).id);
+      // The model names the first decision by number, as a reply may: the intake renames it
+      // to the day's name and marks it as the project's decision record.
+      replies.push({
+        text: `\`\`\`json\n${JSON.stringify({
+          plan: {
+            reason: "planned from the brief",
+            milestones: [
+              {
+                name: "The page",
+                successCriteria: ["The page is online"],
+                targetDate: null,
+                tasks: [
+                  {
+                    key: "domain",
+                    title: "Choose the domain",
+                    outcome: "The domain is chosen",
+                    acceptanceCriteria: ["Which domain should the site use?"],
+                    priority: 8,
+                    specialist: "person",
+                  },
+                ],
+              },
+            ],
+            tasks: [],
+          },
+          docs: {
+            "README.md": "# Club page\n\nA page for the club.\n",
+            "docs/decisions/0001-plain-static-page.md":
+              "# A plain static page\n\nStatus: accepted\n\nPlain HTML and CSS, no build step.\n",
+          },
+          firstSession: {
+            summary: "The domain first.",
+            items: [{ key: "domain", estimateUsdMicro: 10_000 }],
+          },
+        })}\n\`\`\``,
+      });
+      const proposed = await req(`/projects/${projectId}/intake`, { method: "POST", body: "{}" });
+      expect(proposed.status, await proposed.clone().text()).toBe(202);
+      const intakeRequest = String(((await proposed.json()) as Json).requestId);
+      const plan = await rt.store.humanRequest.mustGet(intakeRequest);
+      const approved = await req(`/requests/${intakeRequest}/answer`, {
+        method: "POST",
+        body: JSON.stringify({ version: plan.version, answer: "Approve and start" }),
+      });
+      expect(approved.status).toBe(200);
+      const record = "docs/decisions/2026-10-31-plain-static-page.md";
+      expect(decisionsIn(rt, projectId)).toEqual(["2026-10-31-plain-static-page.md", "README.md"]);
+      const task = (await rt.store.task.list({ project_id: projectId } as never)).find(
+        (t) => t.title === "Choose the domain",
+      );
+      if (!task) throw new Error("no person task in the plan");
+      await rt.syncApprovals();
+      expect((await openCard(req, task.id))?.why).toBe(plannedWhy("Choose the domain", record));
+      // The daemon starts again the next day; the answer goes to the plan's record.
+      await settleSessions(rt);
+      await rt.close();
+      const day2 = new SimulatedClock("2026-11-01T09:00:00Z");
+      ({ rt, req } = await compose(home, day2, new ScriptedProvider([], day2), {
+        startServices: false,
+      }));
+      const card = (await openCard(req, task.id)) as Json;
+      expect(card.why).toBe(plannedWhy("Choose the domain", record));
+      await answerCard(req, card, [["Which domain should the site use?", "club.example"]]);
+      expect(decisionsIn(rt, projectId)).toEqual(["2026-10-31-plain-static-page.md", "README.md"]);
+      const text = readFileSync(
+        join(rt.intake.workspaceDir(projectId), ...record.split("/")),
+        "utf8",
+      );
+      expect(text).toContain("Plain HTML and CSS, no build step.");
+      expect(text).toContain('## Answers for "Choose the domain" (2026-11-01)');
+      expect(text).toContain("**Which domain should the site use?**\n\nclub.example");
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+      removeHomes([home]);
+    }
+  }, 120_000);
 });

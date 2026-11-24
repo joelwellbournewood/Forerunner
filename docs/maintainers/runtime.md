@@ -10266,8 +10266,14 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   `FIRST_DECISION_PATH` is `docs/decisions/YYYY-MM-DD-<slug>.md`; a reply's numbered first
   decision is renamed to the day's name and carries `DECISION_RECORD_MARK`; a reply's
   docs/status.md, AGENTS.md or CLAUDE.md is dropped (`INTAKE_DOCS_LEFT_OUT`). The Inbox's
-  answers go to `decisionRecordFor(workspace, day)`: an existing `0001-*.md`, else the marked
-  record, else `<day>-project-decisions.md`; the card's line names it. The specialist's brief
+  answers go to the record the card names: `decisionRecordForProject` picks it when the card is
+  filed (an existing `0001-*.md`, else the marked record, else the one an earlier open card of
+  the project names, else `<day>-project-decisions.md` by the filing day), the card keeps it in
+  `decision_doc` and `writeAnswersToDecisionDoc` writes there whatever day the answers come
+  (`namedDecisionRecord` accepts only `docs/decisions/<name>.md`; a card naming the folder, a
+  specialist's or an older one, finds the record when the answers are written). Before
+  (fixup-w8-repo-guide) the card named the filing day's file and the answers went to the
+  answering day's. The specialist's brief
   (`session/task-context.ts`) says a new decision is its own dated file.
 - **A docs pull request this install did not open is nobody's** (L4i-left-2): `isProjectDocsPr`
   takes the branch's own marker (`branchMarker`), read in `scaffoldInCopy` and

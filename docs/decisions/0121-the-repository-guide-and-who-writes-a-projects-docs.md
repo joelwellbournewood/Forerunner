@@ -65,8 +65,12 @@ fallback), so Ada's Forerunner wrote onto Bob's pull request (L4i-left-2).
    renamed), with a hidden mark (`<!-- forerunner:decision-record -->`); the model and the
    specialists' briefs are told the form. The Inbox's answers go to an existing
    `docs/decisions/0001-*.md` (a record made before this stays as it is), else the marked
-   record, else a new `<day>-project-decisions.md`; the card names that file. Two Forerunners'
-   decision files never collide by number.
+   record, else the one an earlier open card of the project names, else a new
+   `<day>-project-decisions.md` named by the day the card is filed; the card names that file
+   and keeps it, and the answers are written to it on whatever day they come (the review of
+   fix/w8-repo-guide: a card filed one evening named that day's file, and the answers given the
+   next morning went to a file named by the morning). Two Forerunners' decision files never
+   collide by number.
 6. **One source of the unfinished-work rules (W8-guide-5).** `UNFINISHED_WORK_RULES`
    (`packages/capabilities/src/githost/pr-executor.ts`) feeds both the guide and the
    work-in-progress commit's headings ("Where I stopped:", "Left to do:").

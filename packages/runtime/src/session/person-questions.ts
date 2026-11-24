@@ -602,7 +602,10 @@ export async function filePersonQuestions(
     run_id: input.runId ?? null,
     context: input.context ? input.context.slice(0, 2000) : null,
     go_ahead: input.goAhead !== false,
-    decision_doc: DECISION_DOC_DIR,
+    // fixup-w8-repo-guide (W8-guide-3): the file the card names is the file the answers go to
+    // (`writeAnswersToDecisionDoc` reads it back), whatever day they are answered; a card that
+    // names no file keeps the folder, and its answers find the record when they are written.
+    decision_doc: namedDecisionRecord(input.decisionRecord) ?? DECISION_DOC_DIR,
     applied_at: null,
   };
   const request = await store.humanRequest.insert({
@@ -877,6 +880,14 @@ function renderPairs(questions: readonly string[], answers: readonly PersonAnswe
  * started for answers), else a new one named by the day (`<day>-project-decisions.md`).
  */
 async function decisionDocPath(workspace: string, day: string): Promise<string> {
+  return (
+    (await existingDecisionDoc(workspace)) ??
+    join(workspace, ...DECISION_DOC_DIR.split("/"), `${day.slice(0, 10)}-${DEFAULT_DECISION_DOC}`)
+  );
+}
+
+/** The record `decisionDocPath` finds in the workspace (a `0001-*.md`, else the marked one). */
+async function existingDecisionDoc(workspace: string): Promise<string | null> {
   const dir = join(workspace, ...DECISION_DOC_DIR.split("/"));
   let names: string[] = [];
   try {
@@ -890,7 +901,19 @@ async function decisionDocPath(workspace: string, day: string): Promise<string> 
     const text = await readFile(join(dir, name), "utf8").catch(() => "");
     if (text.includes(DECISION_RECORD_MARK)) return join(dir, name);
   }
-  return join(dir, `${day.slice(0, 10)}-${DEFAULT_DECISION_DOC}`);
+  return null;
+}
+
+/**
+ * A decision record as a card names it, `docs/decisions/<name>.md` and nothing else (no other
+ * folder, no `..`, not the folder's README); null for anything else, such as the bare folder an
+ * older card or a specialist's card names.
+ */
+export function namedDecisionRecord(record: string | null | undefined): string | null {
+  if (typeof record !== "string") return null;
+  const m = /^docs\/decisions\/([A-Za-z0-9][A-Za-z0-9._-]*\.md)$/.exec(record);
+  if (!m || m[1] === undefined || /^readme\.md$/i.test(m[1]) || m[1].includes("..")) return null;
+  return record;
 }
 
 /**
@@ -900,6 +923,33 @@ async function decisionDocPath(workspace: string, day: string): Promise<string> 
 export async function decisionRecordFor(workspace: string, day: string): Promise<string> {
   const path = await decisionDocPath(workspace, day);
   return `${DECISION_DOC_DIR}/${path.split(/[\\/]/).pop()}`;
+}
+
+/**
+ * fixup-w8-repo-guide (W8-guide-3): the record a new card of `projectId` names. The record in
+ * the workspace when there is one; else the one an earlier card of the project, open or
+ * answered and not applied yet, already names (its answers start that file, so a project keeps
+ * one record however many days its cards are filed apart); else a new one named by `day`.
+ */
+export async function decisionRecordForProject(
+  store: Pick<StateStore, "humanRequest">,
+  workspace: string,
+  projectId: string,
+  day: string,
+): Promise<string> {
+  const found = await existingDecisionDoc(workspace);
+  if (found) return `${DECISION_DOC_DIR}/${found.split(/[\\/]/).pop()}`;
+  const rows = await store.humanRequest.list({ project_id: projectId } as never, { limit: 500 });
+  const named = rows
+    .filter(
+      (r) =>
+        isPersonQuestionsRequest(r) &&
+        (r.status === "open" || (r.status === "answered" && !answerApplied(r))),
+    )
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .map((r) => namedDecisionRecord(personQuestionsCardOf(r)?.decision_doc))
+    .find((n): n is string => n !== null);
+  return named ?? `${DECISION_DOC_DIR}/${day.slice(0, 10)}-${DEFAULT_DECISION_DOC}`;
 }
 
 const marker = (requestId: string) => `<!-- forerunner:answers ${requestId} -->`;
@@ -916,8 +966,17 @@ export async function writeAnswersToDecisionDoc(input: {
   answers: readonly PersonAnswerItem[];
   answeredBy: string;
   date: string;
+  /**
+   * fixup-w8-repo-guide (W8-guide-3): the record the card named when it was filed
+   * (`card.decision_doc`); the answers go there, whatever day they are given. Without one (the
+   * folder, an older card), the record the workspace has, else a new one named by `date`.
+   */
+  record?: string | null;
 }): Promise<string> {
-  const path = await decisionDocPath(input.workspace, input.date);
+  const named = namedDecisionRecord(input.record);
+  const path = named
+    ? join(input.workspace, ...named.split("/"))
+    : await decisionDocPath(input.workspace, input.date);
   let current = "";
   try {
     current = await readFile(path, "utf8");
@@ -1075,9 +1134,13 @@ async function fileDueQuestions(deps: PersonQuestionsSyncDeps): Promise<number> 
           humanId: deps.humanId,
           agentId: deps.agentId,
           source: "planned",
-          // W8-guide-3: the card names the record the answers will be written to.
-          decisionRecord: await decisionRecordFor(
+          // W8-guide-3: the card names the record the answers will be written to, and the
+          // answers go to that file (fixup-w8-repo-guide: they went to one named by the day
+          // they were answered); an earlier card's record when the workspace has none yet.
+          decisionRecord: await decisionRecordForProject(
+            tx,
             deps.workspaceDir(task.project_id),
+            task.project_id,
             deps.clock.nowIso(),
           ).catch(() => null),
         });
@@ -1219,6 +1282,7 @@ async function applyAnswers(
               answers: answer.answers,
               answeredBy: human?.name ?? "you",
               date: row.answered_at ?? clock.nowIso(),
+              record: card.decision_doc,
             }),
           };
         } catch (e) {
