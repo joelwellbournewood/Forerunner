@@ -699,6 +699,11 @@ export interface FakeDaemonState {
       startsAt?: string;
       /** l4-cred-screens (L4-creds-26): under "ask", the stop in a few words; Start asks first. */
       askFirst?: string;
+      /**
+       * fixup-l4-starts-carried, as the daemon's `KeptStart.id`: the start chat kept for the
+       * reset; its Undo drops that start only and is refused once it no longer waits.
+       */
+      keptId?: string;
     }
   >;
   /**
@@ -793,7 +798,7 @@ export interface FakeDaemonState {
   /** l4-selftasks-carried (L4f-left-6): the paths of the GET requests, in order. */
   gets: string[];
   /** `keptAt` (L4a-left-5): chat's start is kept for the credential's reset at that time. */
-  pendingConfirmation: { id: string; readback: string; keptAt?: string } | null;
+  pendingConfirmation: { id: string; readback: string; keptAt?: string; words?: string } | null;
   /**
    * As the daemon (review of l4-chat-answers): the line the parser's "Which project: …?" asked
    * about; the option pressed next (a project's name alone) finishes it.
@@ -4664,6 +4669,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
 
   /** The session each chat start began, by its action's id (the daemon's change log row). */
   const startedSessions = new Map<string, string>();
+  /** fixup-l4-starts-carried: the wait a start kept from chat replaced, by its id (its Undo). */
+  const keptBefore = new Map<string, FakeDaemonState["credentialWaitNow"][string]>();
   const chatReply = (
     text: string,
     projectId: string | undefined,
@@ -4783,16 +4790,39 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         const target = state.projects.find((p) => p.id === turnProject);
         const resting = state.credentialWaitNow[turnProject];
         const limit = /\(([^)]+)\)/.exec(resting?.text ?? "")?.[1] ?? "its limit";
+        // fixup-l4-starts-carried, as the daemon: the start is kept with its own id, and the
+        // change it records offers an Undo that drops that start only.
+        const keptId = nextId("kept");
+        if (resting) keptBefore.set(keptId, { ...resting });
         state.credentialWaitNow[turnProject] = {
           text: `Waits until ${confirmed.keptAt} (${limit}); then your session goes on.`,
           save: null,
           kept: true,
+          keptId,
         };
         const sentence = `A session of ${target?.name ?? "the project"} starts at ${confirmed.keptAt}.`;
+        const entry = pushChange({
+          commands: [{ name: "session.start", params: { project: turnProject } }],
+          before: { session_id: null, remote_command_id: null },
+          after: { session_id: null, kept_start: true, kept_id: keptId, project_id: turnProject },
+          scope: "session",
+          projectId: turnProject,
+          source: "chat",
+          wordsUsed: confirmed.words ?? line,
+          sentence,
+          reversible: true,
+        });
         return {
           ...base,
           reply: sentence,
-          actions: [{ kind: "session.start", summary: sentence, id: confirmed.id }],
+          actions: [
+            {
+              kind: "session.start",
+              summary: sentence,
+              id: confirmed.id,
+              undoToken: entry.id,
+            },
+          ],
         };
       }
       // As the daemon's session.start from the chat (phase E): the start waits for its run,
@@ -4888,7 +4918,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const readback = keptAt
         ? `Start a session on ${name} at ${keptAt} (up to CHF 5.00)?`
         : `Start a session on ${name} (up to CHF 5.00)?`;
-      state.pendingConfirmation = { id, readback, ...(keptAt ? { keptAt } : {}) };
+      state.pendingConfirmation = { id, readback, words: line, ...(keptAt ? { keptAt } : {}) };
       return {
         ...base,
         reply: readback,
@@ -7981,6 +8011,15 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // As the daemon's `startUndoRefusal` (later #36): a start whose session ended has nothing
     // left to undo, and the row says so instead of offering Undo.
     if (name === "session.start") {
+      // fixup-l4-starts-carried, as the daemon (`KEPT_START_GONE_REASON`): a start kept from chat
+      // for the reset is undone only while that same start still waits.
+      const kept = (ch.after ?? {}) as { kept_start?: unknown; kept_id?: unknown };
+      if (kept.kept_start === true) {
+        const wait = ch.projectId ? state.credentialWaitNow[ch.projectId] : undefined;
+        return wait?.kept && wait.keptId === kept.kept_id
+          ? null
+          : "the start kept for the reset has already run or was cancelled; there is nothing to undo";
+      }
       const s = after.session_id
         ? state.sessions.find((x) => x.id === after.session_id)
         : undefined;
@@ -8177,6 +8216,16 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       unknown
     > | null;
     const project = state.projects.find((p) => p.id === entry.projectId);
+    // fixup-l4-starts-carried, as the daemon: the Undo of a start kept from chat drops that start
+    // (the wait is as it was before it: "Start at 11:40" again), nothing else.
+    const keptId = (entry.after as { kept_id?: unknown } | null)?.kept_id;
+    if (first?.name === "session.start" && typeof keptId === "string" && entry.projectId) {
+      const was = keptBefore.get(keptId);
+      if (was) state.credentialWaitNow[entry.projectId] = was;
+      else delete state.credentialWaitNow[entry.projectId];
+      keptBefore.delete(keptId);
+      emit("project.changed", { id: entry.projectId });
+    }
     // W15-36: the New project dialog's create: the project goes, the previous one is active.
     if (first?.name === "project.create" && project) {
       state.projects = state.projects.filter((p) => p.id !== project.id);

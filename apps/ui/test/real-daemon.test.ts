@@ -29534,4 +29534,156 @@ describe("l4-starts-carried, run L4", () => {
       removeHomes([home]);
     }
   }, 120_000);
+
+  // fixup-l4-starts-carried (the review's blocking 3): the Undo of a start kept from chat was
+  // never refused. Once that start had run at the reset, its Undo still answered "Undone: a
+  // session on Map notes on your PC is back to no session.", and it dropped whatever the project
+  // had kept then (a Start kept later from the dialog, or the person's session waiting to go on).
+  it("L4a-left-5 (fixup): the Undo of a start kept from chat drops only that start, after a restart too, and once it ran or was cancelled the Undo is refused in words", async () => {
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4carried-keptundo-"));
+    const resetAt = "2026-03-05T10:40:00.000Z";
+    const oauth = ["sk-ant-oat01-", "keptundo", "8".repeat(40)].join(""); // not-a-secret
+    const apiKey = ["sk-ant-api03-", "keptundo", "9".repeat(40)].join(""); // not-a-secret
+    let calls = 0;
+    const sdkQuery: NonNullable<ComposeOptions["sdkQuery"]> = () => {
+      calls += 1;
+      const atLimit = calls <= 1;
+      return (async function* () {
+        yield { type: "system", subtype: "init", session_id: "sdk" };
+        if (atLimit) {
+          yield {
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", resetsAt: Date.parse(resetAt) / 1000 },
+          };
+          yield {
+            type: "assistant",
+            error: "rate_limit",
+            message: { content: [{ type: "text", text: "You've hit your limit" }] },
+          };
+          yield { type: "result", subtype: "success", is_error: true, result: "limit" };
+          return;
+        }
+        yield {
+          type: "assistant",
+          message: {
+            id: `m${calls}`,
+            content: [{ type: "text", text: "Wrote it. Lesson: none." }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        };
+        yield { type: "result", subtype: "success", is_error: false, result: "Wrote it." };
+      })();
+    };
+    // The same home and state file for both boots: the kept start's id is read back after it.
+    const boot = async () => {
+      const onKey = new ScriptedProvider([{ text: "Done on the API key. Lesson: none." }], clock);
+      const rt = await composeRuntime({
+        env: { FORERUNNER_HOME: home },
+        dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+        config: null,
+        clock,
+        stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        vault: new MemoryVault({ anthropic_subscription_token: oauth, anthropic_api_key: apiKey }),
+        provider: new AcceptingCriticProvider(onKey),
+        sdkQuery,
+        registryDir: REGISTRY,
+        identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+        appVersion: "0.0.0-ui-contract",
+        sandboxDetection: NO_ENGINE,
+        startServices: false,
+      });
+      const { app, token } = createDaemonApp(rt);
+      const client = createClient(
+        {
+          baseUrl: "http://daemon.test",
+          token,
+          source: "env",
+          installId: null,
+          platform: null,
+          shellVersion: null,
+        },
+        (input, init) => Promise.resolve(app.request(input, init)),
+      );
+      return { rt, client };
+    };
+    const ended = (s: { status: string }) => !["running", "paused", "planned"].includes(s.status);
+    const gone =
+      "the start kept for the reset has already run or was cancelled; there is nothing to undo";
+    let { rt, client } = await boot();
+    try {
+      const project = await client.createProject({ name: "Map notes", goal: "A note" });
+      await readyTask(client, project.id, "Write notes/map.md");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const first = await client.startSession({ agentId, projectId: project.id });
+      const firstId = first.session?.id ?? "";
+      await eventually(
+        async () => ended(await client.session(firstId)),
+        "the first session to end to wait (20 s)",
+        async () => (await client.session(firstId)).status,
+        20_000,
+      );
+      expect((await client.cancelContinuation(project.id)).cancelled).toBe(true);
+      const keepFromChat = async () => {
+        const asked = await client.executeCommands({
+          commands: [{ name: "session.start", params: { project: project.id } }],
+          wordsUsed: "run it now",
+          source: "text",
+          projectId: project.id,
+        });
+        const done = await client.confirmCommand(asked.pendingId ?? "", { answer: "tap" });
+        expect((done as { sentence?: string }).sentence).toBe(
+          "A session of Map notes starts at 11:40.",
+        );
+        return done.changeLogId ?? "";
+      };
+      const row = async (id: string) =>
+        (await client.changes({ projectId: project.id })).find((c) => c.id === id);
+      // Kept from chat, then the daemon restarts: the Undo still drops that start.
+      const beforeRestart = await keepFromChat();
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await boot());
+      expect((await row(beforeRestart))?.undoable).toBe(true);
+      const undone = await client.undoChange(beforeRestart);
+      expect(undone.status, JSON.stringify(undone)).toBe("done");
+      expect(await rt.continuations.waiting(project.id)).toBeNull();
+      // Kept from chat, then cancelled on the project's line; the person then keeps a Start from
+      // the dialog. The chat's Undo is refused and the dialog's kept Start stays.
+      const fromChat = await keepFromChat();
+      expect((await client.cancelContinuation(project.id)).cancelled).toBe(true);
+      const fromDialog = await client.startSession({ agentId, projectId: project.id });
+      expect(fromDialog.result).toBe("kept");
+      expect((await row(fromChat))?.undoBlockedReason).toBe(gone);
+      const stale = await client.undoChange(fromChat);
+      expect(stale.status, JSON.stringify(stale)).toBe("refused");
+      expect((stale as { reason?: string }).reason).toBe(gone);
+      expect(await rt.continuations.waiting(project.id)).toBe(
+        "A session of Map notes starts at 11:40.",
+      );
+      expect((await row(fromChat))?.undoState).toBe("irreversible");
+      // The dialog's Start is cancelled; one kept from chat runs at the reset; its Undo is then
+      // refused, never "Undone".
+      expect((await client.cancelContinuation(project.id)).cancelled).toBe(true);
+      const ran = await keepFromChat();
+      clock.set(Date.parse("2026-03-05T10:41:00Z"));
+      await rt.scheduler.tick();
+      await eventually(
+        async () => (await client.tasks(project.id)).every((t) => t.status === "done"),
+        "the start kept from chat to run at the reset and finish the task (30 s)",
+        async () => (await client.tasks(project.id)).map((t) => t.status).join(", "),
+        30_000,
+      );
+      await settleSessions(rt);
+      expect((await row(ran))?.undoBlockedReason).toBe(gone);
+      const late = await client.undoChange(ran);
+      expect(late.status, JSON.stringify(late)).toBe("refused");
+      expect((late as { reason?: string }).reason).toBe(gone);
+      expect((await row(ran))?.undoState).toBe("irreversible");
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+      removeHomes([home]);
+    }
+  }, 120_000);
 });

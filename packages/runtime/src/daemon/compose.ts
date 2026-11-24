@@ -51,6 +51,7 @@ import {
   isAbsolute,
   join,
   log,
+  newId,
   osFacts,
   type Platform,
   redact as redactLogText,
@@ -379,6 +380,7 @@ import {
   keepStartAtReset,
   keptContinuationOf,
   keptStartOf,
+  keptStartWaits,
   planUsageOf,
   policyOf,
   RouterTaskBilling,
@@ -932,7 +934,13 @@ export interface RuntimeApp {
     keepStart(
       projectId: string,
       agentId: string,
-      opts: { budgetUsdMicro?: number; continues?: string; note?: string },
+      opts: {
+        budgetUsdMicro?: number;
+        continues?: string;
+        note?: string;
+        /** fixup-l4-starts-carried: the kept start's own id (chat's start, for its Undo). */
+        id?: string;
+      },
     ): Promise<string | null>;
   };
   /**
@@ -4482,6 +4490,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         ...(opts.budgetUsdMicro ? { budgetUsdMicro: opts.budgetUsdMicro } : {}),
         ...(opts.continues ? { continues: opts.continues } : {}),
         ...(opts.note?.trim() ? { note: opts.note.trim() } : {}),
+        ...(opts.id ? { id: opts.id } : {}),
       });
       if (!kept) return null;
       events.emit("project", { id: projectId });
@@ -5028,6 +5037,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     store,
     clock,
     startUndoState,
+    // fixup-l4-starts-carried: the Undo of a start kept from chat is refused once that start ran
+    // at the reset or was cancelled (before, it said "Undone" and dropped any later wait).
+    keptStartWaits: (projectId, keptId) => keptStartWaits(store, projectId, keptId),
     // l4-selftasks-carried (L4f-left-1): every card that leaves the executor (a yes, a no, a Yes
     // refused because what it named changed, a lapse), whatever route answered it (chat, the
     // Inbox, Changes, a settings screen, the phone, an email), is told once: the Inbox count,
@@ -5197,13 +5209,23 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       // l4-starts-carried (L4a-left-5): chat's start during a rest is kept for the reset, as the
       // Start dialog's "Start at 15:40" keeps it, with its own read-back and an Undo.
       startKeptWhen: (projectId) => startKeptWhen(projectId),
-      keepStart: async (projectId, budgetUsdMicro) =>
-        (await startKeptWhen(projectId))
-          ? continuations.keepStart(projectId, agent.id, {
-              ...(budgetUsdMicro > 0 ? { budgetUsdMicro } : {}),
-            })
-          : null,
-      cancelKeptStart: (projectId) => continuations.cancel(projectId),
+      // fixup-l4-starts-carried: the start is kept with its own id, so its Undo drops that start
+      // only (never the person's session waiting to go on, or a Start kept later) and is
+      // refused once it ran or was cancelled (`CommandLoop`'s `keptStartWaits`).
+      keepStart: async (projectId, budgetUsdMicro) => {
+        if (!(await startKeptWhen(projectId))) return null;
+        const keptId = newId(clock.now());
+        const sentence = await continuations.keepStart(projectId, agent.id, {
+          ...(budgetUsdMicro > 0 ? { budgetUsdMicro } : {}),
+          id: keptId,
+        });
+        return sentence ? { sentence, keptId } : null;
+      },
+      cancelKeptStart: async (projectId, keptId) => {
+        const dropped = await dropKeptStart(store, projectId, { id: keptId });
+        if (dropped) events.emit("project", { id: projectId });
+        return dropped;
+      },
       // D4 (d1109-oversize-start): the chat's start reads back the Start dialog's warning when
       // the session would take a task larger than its work budget; it never refuses it.
       startWarning: async (projectId, budgetUsdMicro) =>

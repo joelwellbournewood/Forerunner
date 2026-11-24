@@ -15,6 +15,14 @@ import { asObject, authorOf, chfExact, type ResolvedProject, resolveProject } fr
  */
 export const DEFAULT_COSTLY_SESSION_USD_MICRO = 2_000_000;
 
+/**
+ * fixup-l4-starts-carried: why the Undo of a start kept from chat for the credential's reset is
+ * refused once that start no longer waits (it ran at the reset, or it was cancelled or dropped by
+ * Stop all). The Changes screen shows it in place of Undo ("Cannot be undone now: ...").
+ */
+export const KEPT_START_GONE_REASON =
+  "the start kept for the reset has already run or was cancelled; there is nothing to undo";
+
 async function requestingDevice(ctx: CommandContext): Promise<DeviceRow | null> {
   if (!ctx.deviceId) return null;
   return (await ctx.store.device.get(ctx.deviceId)) ?? null;
@@ -273,9 +281,10 @@ export const sessionStart: CommandDef<SessionStartParams> = {
             agent_id: agentId,
             budget_usd_micro: s.budgetUsd,
             kept_start: true,
+            kept_id: kept.keptId,
             project_id: s.resolved.project.id,
           },
-          sentence: kept,
+          sentence: kept.sentence,
           projectId: s.resolved.project.id,
         };
     }
@@ -331,8 +340,13 @@ export const sessionStart: CommandDef<SessionStartParams> = {
   async undo(_p, _before, after, ctx) {
     const a = asObject(after);
     // L4a-left-5: a start kept for the reset is dropped; nothing starts at the reset.
-    if (a.kept_start === true && typeof a.project_id === "string") {
-      await ctx.ports.cancelKeptStart?.(a.project_id);
+    // fixup-l4-starts-carried: only the start this change kept (its id); once it ran or was
+    // cancelled the undo is refused in words before it gets here (`CommandLoop`), and a stale
+    // one that slips through drops nothing else (a continuation, a Start kept later).
+    if (a.kept_start === true) {
+      if (typeof a.project_id !== "string" || typeof a.kept_id !== "string") return;
+      if (!(await ctx.ports.cancelKeptStart?.(a.project_id, a.kept_id)))
+        throw new ForerunnerError("validation", KEPT_START_GONE_REASON);
       return;
     }
     let startId = typeof a.start_id === "string" ? a.start_id : undefined;

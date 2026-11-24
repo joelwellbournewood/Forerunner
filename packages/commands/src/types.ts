@@ -421,12 +421,20 @@ export interface CommandPorts {
   startKeptWhen?(projectId: string): Promise<string | null>;
   /**
    * The same start kept for the reset (`RuntimeApp.continuations.keepStart`): its sentence ("A
-   * session of Map notes starts at 15:40."), or null when nothing waits for a reset now (the
-   * start then runs as usual).
+   * session of Map notes starts at 15:40.") and the kept start's own id (fixup-l4-starts-carried:
+   * its Undo drops that start only), or null when nothing waits for a reset now (the start then
+   * runs as usual).
    */
-  keepStart?(projectId: string, budgetUsdMicro: number): Promise<string | null>;
-  /** Undo of a kept start: it is dropped and nothing starts at the reset. */
-  cancelKeptStart?(projectId: string): Promise<boolean>;
+  keepStart?(
+    projectId: string,
+    budgetUsdMicro: number,
+  ): Promise<{ sentence: string; keptId: string } | null>;
+  /**
+   * Undo of a kept start: the start kept with that id is dropped and nothing starts at the
+   * reset; a continuation or another kept start of the project stays. False when it no longer
+   * waits (it ran, or it was cancelled).
+   */
+  cancelKeptStart?(projectId: string, keptId: string): Promise<boolean>;
   /**
    * d1109-onerepo-join (ADR 0117 amended): Make one project's checks, read by `project.join` in
    * its plan and again at its run. Absent: the command is refused as unavailable.
