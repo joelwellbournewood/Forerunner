@@ -352,14 +352,17 @@ async function main() {
 
     // 9 The status issue (w8-status-write): one pinned issue, one comment per install. The
     // host lists pull requests in /issues too, so only entries without pull_request count.
+    // Only open ones count (W8a-left-19): two first writes at once leave the higher number
+    // closed with one line, and that closed copy is the rule working, not a second issue.
     const issues = (await github("/repos/team/shared/issues?state=all")).filter(
       (i) => !i.pull_request,
     );
-    const statusIssues = issues.filter((i) => i.title === `Forerunner status: ${PROJECT}`);
+    const titled = issues.filter((i) => i.title === `Forerunner status: ${PROJECT}`);
+    const statusIssues = titled.filter((i) => i.state === "open");
     check(
       "one-status-issue",
       statusIssues.length === 1,
-      `${statusIssues.length} status issues of ${issues.length} issues on the host`,
+      `${statusIssues.length} open status issues (${titled.length - statusIssues.length} closed) of ${issues.length} issues on the host`,
     );
     const statusComments = statusIssues.length
       ? await github(`/repos/team/shared/issues/${statusIssues[0].number}/comments`)
