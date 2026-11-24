@@ -601,6 +601,17 @@ function RepositoryFiles({
   useEffect(() => {
     if (version) reload();
   }, [version, reload]);
+  // l4-github-carried (the bench walk of L4e-left-1): Try again that opened the take-over's docs
+  // pull request changes the card's repository line, not the summary: read the list again then,
+  // so the new pull request is listed at once (before: "No pull request waits for you." until a
+  // reload).
+  const takeOverOutcome = card?.repositoryElsewhere?.outcome ?? null;
+  const lastTakeOverOutcome = useRef(takeOverOutcome);
+  useEffect(() => {
+    if (lastTakeOverOutcome.current === takeOverOutcome) return;
+    lastTakeOverOutcome.current = takeOverOutcome;
+    reload();
+  }, [takeOverOutcome, reload]);
   // The Merge pressed last: what the daemon answered, the pull requests it merges, and the list
   // as it was read before the answer (until a read after it comes, the click's sentence stands).
   const [pressed, setPressed] = useState<{

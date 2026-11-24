@@ -1343,6 +1343,14 @@ describe("l4-github-carried, run L4", () => {
     );
     await waitFor(() => expect(screen.queryByTestId("repository-elsewhere-line")).toBeNull());
     expect(postedCalls(harness, "/projects/proj_atlas/take-over/retry")).toHaveLength(2);
+    // The bench walk (l4-github-carried): the docs pull request it opened is listed at once
+    // under Waiting for you to merge (before: "No pull request waits for you." until a reload).
+    const opened = Number(
+      /#(\d+)/.exec(screen.getByTestId("repository-try-again-opened").textContent ?? "")?.[1],
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("your-files")).toHaveTextContent(`pull request #${opened}`),
+    );
   });
 
   it("L4e-left-4 (the session lead's decision of 2026-11-23) with L4e-left-1: Docs shows the take-over's outcome line with its Try again, and never OR-07's offer, which stays on the Overview with Take it over", async () => {
