@@ -626,7 +626,8 @@ describe("cancelling a run keeps the person's answers in the decision record (ph
     const record = () => {
       const dir = join(workspace, "docs", "decisions");
       const name = existsSync(dir)
-        ? readdirSync(dir).find((n) => /^0001-.+\.md$/.test(n))
+        ? // W8-guide-3: the record is named by the day (`<day>-project-decisions.md`).
+          readdirSync(dir).find((n) => /^\d{4}-\d\d-\d\d-project-decisions\.md$/.test(n))
         : undefined;
       return name ? readFileSync(join(dir, name), "utf8") : "";
     };
