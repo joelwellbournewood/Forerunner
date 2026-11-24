@@ -1,7 +1,7 @@
 import { DEFAULT_SESSION_CAP_CHF, formatChf } from "@forerunner/billing";
 import type { ProjectRow, StateStore, TaskRow } from "@forerunner/state";
-import { statusPullRequestOn } from "../loop/docs.ts";
 import { isClosedRecord, MERGE_MODE_WORDS, mergeModeOf } from "../loop/merge-mode.ts";
+import { statusIssuePolicy } from "../loop/status-board-words.ts";
 import { moneyWords } from "../session/money-words.ts";
 import { startPendingOf } from "../session/prepared-work.ts";
 import { type LinkIdentity, linkWords, type RepositoryIndex } from "../sources/repository-use.ts";
@@ -307,10 +307,9 @@ export async function joinPreview(
       ...(onRepository(deps, p)
         ? [{ label: "Who merges", value: MERGE_MODE_WORDS[mergeModeOf(p.settings)] }]
         : []),
-      // L4-github-113: the status pull request moves too, so its setting is named (a project
-      // worked on together has none, L4-github-103).
-      ...(onRepository(deps, p) && !isTogether(p)
-        ? [{ label: "Status pull request", value: statusPullRequestOn(p) ? "On" : "Off" }]
+      // w8-status-write: the status issue's switch (the status pull request went; amendment 2).
+      ...(onRepository(deps, p)
+        ? [{ label: "Status issue", value: statusIssuePolicy(p).on ? "On" : "Off" }]
         : []),
       {
         label: "Research reads",

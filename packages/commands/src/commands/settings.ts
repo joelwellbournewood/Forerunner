@@ -18,13 +18,10 @@ import {
   MERGE_MODES,
   mergeModeEffect,
 } from "@forerunner/runtime/loop/merge-mode";
+import { STATUS_ISSUE_SETTING } from "@forerunner/runtime/loop/status-board-words";
 import { FAST_MODE_SETTING, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
 import { DEFAULT_CEILING, TIERS } from "@forerunner/runtime/models/ladder";
 import { PUSH_UNFINISHED_SETTING } from "@forerunner/runtime/session/push-unfinished";
-import {
-  isTogether,
-  togetherStatusPullRequestSentence,
-} from "@forerunner/runtime/sources/repository-words";
 import {
   cleanSiteList,
   WEB_ACCESS_SETTING,
@@ -410,29 +407,25 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     // W15-47: in CHF at the day's rate, never the provider's USD (design §5 rule 7).
     effect: (value, ctx) => fastModeEffect(value === true, ctx.pricing, ctx.chfPerUsd),
   },
-  // C-57 (ADR 0106, the session lead's default): off, a repository project's docs/status.md
-  // stays in the app; on, each session's status goes to the repository as one pull request.
-  status_pull_request: {
-    key: "status_pull_request",
-    label: "the status pull request",
+  // w8-status-write (W8-write-10; D-W8-13: owner question 7 of 2026-11-02, decided by the session
+  // lead from the brief's proposal, the owner can overrule it here and in `statusIssuePolicy`):
+  // the project's status issue on GitHub, on by default. Off, this install writes no issue and no
+  // comment for the project and its status stays in the app. Turning it off acts at once; it
+  // replaces C-57's status pull request, which went with the status issue (amendment 2).
+  [STATUS_ISSUE_SETTING]: {
+    key: STATUS_ISSUE_SETTING,
+    label: "the status issue on GitHub",
     scope: "project",
     risk: "low",
     schema: z.boolean(),
-    narrows: (to) => to !== true,
+    narrows: (to) => to === false,
     description:
-      "A repository project's status (docs/status.md) as one pull request on GitHub, which each session adds to; off, it stays in the app.",
+      "A repository project's status on GitHub: this Forerunner's own comment on the project's pinned status issue (what it works on, what waits for Merge, its last session; no costs); off, it stays in the app.",
     effect: (value) =>
-      value === true
-        ? "each session's status goes to the repository as one pull request, docs: project status, which you merge when you like"
-        : "each session's status stays in the app (Docs, Status); no status pull request is opened",
-    display: (value) => (value === true ? "on" : "off"),
-    // L4-github-103 (D9): a project worked on together writes nothing to the repository, so
-    // its status stays in the app whatever the setting; turning it on would promise a pull
-    // request that never opens. Turning it off still acts.
-    refuseFor: (value, project) =>
-      value === true && isTogether(project)
-        ? { sentence: togetherStatusPullRequestSentence(project.name), cause: "together" }
-        : null,
+      value === false
+        ? "this Forerunner writes no status issue or comment for the project; its status stays in the app (Docs, Status)"
+        : "this Forerunner keeps its own comment on the project's pinned status issue on GitHub, with no costs",
+    display: (value) => (value === false ? "off" : "on"),
   },
   // merge-in-app (the owner's decision of 2026-11-02, ADR 0111 amended): who merges a
   // repository project's accepted work. "you" (the default): each pull request waits for the

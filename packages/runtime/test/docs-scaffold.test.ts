@@ -13,7 +13,6 @@ import {
   docsPrMarker,
   gitAuthFor,
   parseRepoRef,
-  STATUS_BRANCH,
   WORKSPACE_DIR,
 } from "../src/loop/docs.ts";
 import { INSTALL_MARKER_FILE, parseInstallMarker } from "../src/sources/marker.ts";
@@ -365,29 +364,8 @@ describe("standard doc set at project creation (G.5)", () => {
     expect(lessons.map((l) => l.text)).toEqual(["the mount drifts while the dome heater is on"]);
   });
 
-  it("a session through the composed runner writes its status update on a pull request of the project's repository, once the person turned the status pull request on", async () => {
-    // C-57: off by default (the status stays in the app); Settings turns it on with the same
-    // command the Other settings row sends.
-    const on = await req("/commands/execute", {
-      method: "POST",
-      body: JSON.stringify({
-        commands: [
-          {
-            name: "settings.set",
-            params: { key: "status_pull_request", value: true, project: gammaId },
-          },
-        ],
-        wordsUsed: "Settings: project.status_pull_request to true",
-        source: "ui",
-        projectId: gammaId,
-      }),
-    });
-    const onBody = (await on.json()) as { status: string; sentence: string };
-    expect(onBody.status).toBe("done");
-    expect(onBody.sentence).toContain(
-      "each session's status goes to the repository as one pull request",
-    );
-    expect((await rt.store.project.mustGet(gammaId)).settings.status_pull_request).toBe(true);
+  it("w8-status-write: a session through the composed runner writes this install's comment on the project's pinned status issue and opens no status pull request; the Settings switch turns it off and the next session writes nothing to GitHub", async () => {
+    const repo = { owner: "o", name: "gamma" };
     const task = await rt.store.task.insert({
       project_id: gammaId,
       title: "Add a clamp",
@@ -403,20 +381,19 @@ describe("standard doc set at project creation (G.5)", () => {
       attempt: 0,
       reason: "seed",
     });
+    const grant = {
+      allowedTools: rt.toolsForRun().names(),
+      allowedPaths: [],
+      allowedDomains: [],
+      grantedSecrets: [],
+    };
     const events: { type: string; payload: Record<string, unknown> }[] = [];
-    // The scripted provider answers with text only, so the composed PR executor finds no
-    // change in the worktree and opens no pull request: the status update gets its own.
     const result = await rt.runner.start({
       agentId: rt.agent.id,
       projectId: gammaId,
       trigger: "manual",
       budgetCapUsdMicro: 2_000_000,
-      grant: {
-        allowedTools: rt.toolsForRun().names(),
-        allowedPaths: [],
-        allowedDomains: [],
-        grantedSecrets: [],
-      },
+      grant,
       onEvent: (type, payload) => events.push({ type, payload }),
     });
     expect(result.status).toBe("completed");
@@ -426,30 +403,108 @@ describe("standard doc set at project creation (G.5)", () => {
       ...result.inReview,
       ...result.needsHuman,
     ]).toEqual([task.id]);
-    const branch = STATUS_BRANCH;
+    // The app keeps docs/status.md (the person's own record, with the spend); nothing of it on
+    // GitHub, and no status pull request (amendment 2).
     expect(events.find((e) => e.type === "docs.status_written")?.payload).toMatchObject({
-      location: "repo",
-      branch,
+      location: "app",
       path: "docs/status.md",
-      created: true,
     });
-    const status = await show(gammaBare, branch, "docs/status.md");
-    // Named by when the session started, never by its id (l3-small, run L3, L3-github-6).
-    const started = (await rt.store.session.mustGet(result.sessionId)).started_at ?? "";
-    expect(status).toContain(
-      `### Session started ${started.slice(0, 10)} ${started.slice(11, 16)} UTC\n`,
-    );
-    expect(status).not.toContain(result.sessionId);
-    expect(status).toContain("Add a clamp");
+    expect(await show(gammaBare, "fr/status", "docs/status.md")).toBeNull();
     expect(await show(gammaBare, "main", "docs/status.md")).toBeNull();
-    const prs = await host.listPullRequests({ owner: "o", name: "gamma" }, { state: "open" });
-    expect(prs.map((p) => p.head.ref).sort()).toEqual([DOCS_SCAFFOLD_BRANCH, branch].sort());
-    // W15-08: the session by when it started, never its id; the project in the hidden mark.
-    const statusBody = prs.find((p) => p.head.ref === branch)?.body ?? "";
-    expect(statusBody).toContain("Status update of the session started 2026-03-05");
-    expect(statusBody).not.toContain(result.sessionId);
-    const session = await rt.store.session.mustGet(result.sessionId);
-    expect((session.handoff as { docs?: { branch?: string } }).docs?.branch).toBe(branch);
+    await rt.statusBoard.settled();
+    const prs = await host.listPullRequests(repo, { state: "open" });
+    expect(prs.map((p) => p.head.ref)).not.toContain("fr/status");
+    // One pinned issue with the marker, and this install's one comment on it.
+    const issues = await host.listIssues(repo, { state: "all" });
+    expect(issues.map((i) => [i.title, i.state, i.labels])).toEqual([
+      ["Forerunner status: Gamma", "open", ["forerunner:status"]],
+    ]);
+    const issue = issues[0] as (typeof issues)[number];
+    expect(issue.body.split("\n")[0]).toBe(`<!-- forerunner:status v1 key=${gammaId} -->`);
+    expect(host.pinnedIssues(repo)).toEqual([issue.number]);
+    const comments = (await host.listIssueComments(repo, issue.number)).comments;
+    expect(comments).toHaveLength(1);
+    const comment = comments[0]?.body ?? "";
+    const deviceId = rt.remote.device?.id ?? "";
+    expect(deviceId).not.toBe("");
+    expect(comment.split("\n")[0]).toMatch(
+      new RegExp(`^<!-- forerunner:status-writer v1 key=${gammaId} writer=[0-9a-f]{16} -->$`),
+    );
+    expect(comment).toContain("**Alice (Forerunner)** · alice · updated ");
+    expect(comment).toMatch(/\nLast session \(\d+ \w{3} \d\d:\d\d UTC\): /);
+    for (const text of [issue.body, comment]) {
+      expect(text).not.toContain(deviceId);
+      expect(text).not.toContain(result.sessionId);
+      expect(text).not.toMatch(/CHF|USD|Spent/);
+    }
+    // Settings shows where it is.
+    const settings = (await json(await req("/settings"))) as unknown as {
+      key: string;
+      scopeId?: string | null;
+      description: string;
+      value: unknown;
+    }[];
+    const row = settings.find((r) => r.key === "project.status_issue" && r.scopeId === gammaId);
+    expect(row?.value).toBe(true);
+    expect(row?.description).toContain(`Status on GitHub: issue #${issue.number} (pinned)`);
+    // The switch off (the same command the Settings row sends): the next session writes
+    // nothing to GitHub for the project.
+    const off = await req("/commands/execute", {
+      method: "POST",
+      body: JSON.stringify({
+        commands: [
+          { name: "settings.set", params: { key: "status_issue", value: false, project: gammaId } },
+        ],
+        wordsUsed: "Settings: project.status_issue to false",
+        source: "ui",
+        projectId: gammaId,
+      }),
+    });
+    const offBody = (await off.json()) as { status: string; sentence: string };
+    expect(offBody.status).toBe("done");
+    expect(offBody.sentence).toContain(
+      "this Forerunner writes no status issue or comment for the project; its status stays in the app (Docs, Status)",
+    );
+    const writes = host.writesBy("alice").length;
+    await rt.store.task.insert({
+      project_id: gammaId,
+      title: "Add a second clamp",
+      outcome: "a second clamp exists",
+      acceptance_criteria: ["it works"],
+      risk_tier: 1,
+      status: "ready",
+      priority: 5,
+      depends_on: [],
+      budget_usd_micro: 500_000,
+      est_cost_usd_micro: 0,
+      actual_cost_usd_micro: 0,
+      attempt: 0,
+      reason: "seed",
+    });
+    await rt.runner.start({
+      agentId: rt.agent.id,
+      projectId: gammaId,
+      trigger: "manual",
+      budgetCapUsdMicro: 2_000_000,
+      grant,
+    });
+    await rt.statusBoard.settled();
+    expect(
+      host
+        .writesBy("alice")
+        .slice(writes)
+        .filter((w) => /Issue/.test(w.op)),
+    ).toEqual([]);
+    const offRow = (
+      (await json(await req("/settings"))) as unknown as {
+        key: string;
+        scopeId?: string | null;
+        description: string;
+      }[]
+    ).find((r) => r.key === "project.status_issue" && r.scopeId === gammaId);
+    expect(offRow?.description).toContain(
+      'Status stays in the app: the status issue is turned off for "Gamma" in Settings.',
+    );
   });
 
   it("a git host that cannot serve the repository never fails the creation", async () => {

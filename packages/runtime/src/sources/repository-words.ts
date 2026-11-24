@@ -275,36 +275,13 @@ export function togetherFolderSentence(locator: string | null): string {
 /** The Overview line of a together project (D9). */
 export const TOGETHER_OVERVIEW_LINE =
   "Shared on GitHub with another Forerunner: each keeps its own tasks.";
+/**
+ * The together line's Details (w8-status-write, W8-write-6; exact text from the checkers'
+ * review: "you" only for the person looking): the status issue is where the other Forerunner's
+ * work shows, beside its pull requests.
+ */
 export const TOGETHER_OVERVIEW_DETAILS =
-  "What the other Forerunner does shows in its pull requests on GitHub; each of you merges your own.";
-
-/**
- * OR-09 (L3-github-5): the Docs row of a status kept in the app because another status pull
- * request is open on `fr/status` while this project's status pull request is on: the holder by
- * its name when it is a project here, else what it is, and what to do. Never "(Settings turns
- * it on)", which was untrue while the setting is on.
- */
-export function heldStatusNote(holder: { projectName: string | null; marked: boolean }): string {
-  if (holder.projectName)
-    return `Kept in the app while the status pull request of "${holder.projectName}" is open on GitHub.`;
-  return holder.marked
-    ? "Kept in the app while another project's status pull request is open on GitHub; close it there to have this one's there."
-    : "Kept in the app while another status pull request is open on GitHub; close it there to have this one's there.";
-}
-
-/**
- * L4-github-103 (D9): `settings.set status_pull_request` on a project worked on together is
- * refused in this sentence (Settings, chat and voice alike): such a project writes nothing to
- * the repository, so a status pull request is never opened for it.
- */
-export function togetherStatusPullRequestSentence(name: string): string {
-  return `You work on "${name}" together with another Forerunner, so its status stays in the app (Docs, Status); no status pull request is opened.`;
-}
-
-/** The Docs row of a together project's status (D9). */
-export function togetherStatusNote(name: string): string {
-  return `Kept in the app: you work on "${name}" together, so GitHub's copy is left as it is.`;
-}
+  "What the other Forerunner does shows in its comment on the status issue and its pull requests on GitHub. You merge yours; its person merges theirs.";
 
 /**
  * The Docs row of a doc a together project does not have (D9, C2-left-13): a together project

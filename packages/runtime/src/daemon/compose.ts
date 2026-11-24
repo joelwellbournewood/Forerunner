@@ -2809,8 +2809,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // per project, this install's own comment on it. The writer is this runtime's device row (made
   // further down: `registerDevice` holds whenever the board is wired) and the token's login; it
   // writes only with the configured host and a saved token (an injected host stands for one).
-  // The cloud runner composes it unwired (`billing.runner: "cloud"`): its runner row is its own.
-  const statusBoardWired = opts.billing?.runner !== "cloud";
+  // It is wired when this runtime can reach GitHub (a saved token, or a host a test injects),
+  // except on the cloud runner (`billing.runner: "cloud"`), whose runner row is its own writer
+  // and which writes no status comment yet.
+  const statusBoardWired =
+    opts.billing?.runner !== "cloud" && (opts.gitHost !== undefined || !!ghToken);
   const guideRefreshes = new Set<Promise<unknown>>();
   const statusBoard = new StatusBoard({
     store,

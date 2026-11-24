@@ -349,7 +349,7 @@ describe("settingsView (U-060)", () => {
     await store.close();
   });
 
-  it("offers Status pull request only for a project on a host repository, not for a linked local folder (C-57 review)", async () => {
+  it("offers the Status issue on GitHub switch only for a project on a host repository, not for a linked local folder (C-57 review, w8-status-write)", async () => {
     // Review of fix/decisions: the row showed for a project linked to a folder on this computer,
     // where turning it on changes nothing (no pull request can be opened there).
     const clock = new SimulatedClock("2026-10-20T18:00:00Z");
@@ -369,9 +369,9 @@ describe("settingsView (U-060)", () => {
       registryDir: "registry",
       pricing: BUILTIN_PRICING,
     });
-    expect(
-      rows.filter((r) => r.key === "project.status_pull_request").map((r) => r.scopeId),
-    ).toEqual([onHost.id]);
+    expect(rows.filter((r) => r.key === "project.status_issue").map((r) => r.scopeId)).toEqual([
+      onHost.id,
+    ]);
     await store.close();
   });
 });

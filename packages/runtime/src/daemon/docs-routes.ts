@@ -19,12 +19,7 @@ import {
 import type { ProjectRow, StateStore } from "@forerunner/state";
 import { Hono } from "hono";
 import { type CopyView, type DocInPullRequest, WORKSPACE_DIR } from "../loop/docs.ts";
-import {
-  heldStatusNote,
-  togetherDocNote,
-  togetherOf,
-  togetherStatusNote,
-} from "../sources/repository-words.ts";
+import { togetherDocNote, togetherOf } from "../sources/repository-words.ts";
 import type {
   DocContentView,
   DocView,
@@ -61,13 +56,10 @@ export interface DocsRoutesDeps {
    */
   statusDocRoot?: (project: ProjectRow) => string | null;
   /**
-   * OR-09 (L3-github-5, d1109-onerepo-link): why the status was last kept in the app although
-   * the status pull request is on (`ProjectDocs.statusHeld`): the open status pull request that
-   * held it, by its number and the project its mark names (null: unmarked); null when none did.
+   * The Status row's note (w8-status-write): where the project's status is on GitHub, from the
+   * status board's record ("In the app; also on GitHub: issue #12", or why it stays in the app).
    */
-  statusHeld?: (
-    project: ProjectRow,
-  ) => { prNumber: number | null; projectId: string | null } | null;
+  statusNote?: (project: ProjectRow) => string | null;
   /** A repository project's pull requests that wait for the person (`ProjectPullRequests.view`). */
   pullRequests?: (project: ProjectRow) => Promise<ProjectPullRequestsView>;
   /** The person's Merge in the app (`ProjectPullRequests.merge`, merge-in-app). */
@@ -261,18 +253,10 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
     const project = await owned(c.req.param("id"));
     if (!project) return c.json({ code: "forbidden", message: "not your project" }, 403);
     const statusRoot = deps.statusDocRoot?.(project) ?? null;
-    // OR-09 and D9 (d1109-onerepo-link): why the status is kept in the app, in words.
+    // w8-status-write (amendment 1): the status is the app's, and GitHub's copy is the status
+    // issue, for a together project too; the note says where it is, in one sentence.
     const together = togetherOf(project);
-    const held = together ? null : (deps.statusHeld?.(project) ?? null);
-    const holder =
-      held?.projectId && held.projectId !== project.id
-        ? ((await deps.store.project.get(held.projectId))?.name ?? null)
-        : null;
-    const keptNote = together
-      ? togetherStatusNote(together.name || project.name)
-      : held
-        ? heldStatusNote({ projectName: holder, marked: !!held.projectId })
-        : "kept in the app: no status pull request (Settings turns it on)";
+    const keptNote = deps.statusNote?.(project) ?? "In the app";
     const reviews = await reviewsView(deps.store, { projectId: project.id, limit: 50 });
     // Before (GitHub walk, 2026-11-02) the docs read "missing · not written yet" while they
     // waited in the scaffold's pull request #1, which nothing showed.

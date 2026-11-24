@@ -15,6 +15,7 @@ import type { StatusIssueState } from "@forerunner/memory";
 import { type Clock, errorMessage, isAbsolute, join, log, safeSegment } from "@forerunner/platform";
 import type { ProjectRow, StateStore, TaskRow } from "@forerunner/state";
 import { handoffOf, keptOf } from "../session/budget-pause.ts";
+import { clockTime } from "../session/credential-wait.ts";
 import { extractPathHints } from "../session/peers.ts";
 import { INSTALL_MARKER_FILE, parseInstallMarker } from "../sources/marker.ts";
 import { markerNameOf } from "../sources/repository-use.ts";
@@ -22,6 +23,7 @@ import { isTogether } from "../sources/repository-words.ts";
 import {
   type BodyWriter,
   commentChangedUpdate,
+  docsStatusNote,
   duplicateIssueLine,
   issueDeletedUpdate,
   type LastSessionLine,
@@ -36,6 +38,7 @@ import {
   type StatusPlace,
   statusIssuePolicy,
   statusIssueTitle,
+  statusPlaceSentence,
   type WaitingLine,
   WORKING_HOLD_MS,
   type WorkingLine,
@@ -353,6 +356,28 @@ export class StatusBoard implements StatusBoardPort {
       default:
         return s.pending !== null ? { kind: "waiting", lastAt: s.sentAt } : { kind: "not_yet" };
     }
+  }
+
+  /**
+   * The words the screens show for the project (W8-write-7): Settings' sentence under the
+   * switch, the Docs tab's Status note, and whether the repository is public. Times in the
+   * person's zone. Asking also sends a write that waits for GitHub (`resume`).
+   */
+  words(
+    project: ProjectRow,
+    timezone: string | undefined,
+  ): { sentence: string | null; docsNote: string; public: boolean | null } {
+    this.resume(project.id);
+    const place = this.place(project);
+    const last =
+      (place.kind === "waiting" || place.kind === "on") && place.lastAt
+        ? clockTime(place.lastAt, timezone, this.deps.clock.now())
+        : null;
+    return {
+      sentence: statusPlaceSentence(place, last),
+      docsNote: docsStatusNote(place, last),
+      public: this.isPublic(project.id),
+    };
   }
 
   /** Whether the repository is public (null: not known yet). */

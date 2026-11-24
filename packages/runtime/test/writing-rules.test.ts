@@ -1046,19 +1046,15 @@ describe("l4-starts-sessions, run L4: the result says what the person paused (L4
 });
 
 describe("l4-github-link, run L4", () => {
-  it("L4-github-108: no person-facing line puts a possessive after a quoted name; the take-over and held-status lines read 'the project \"X\"' and 'the status pull request of \"X\"'", async () => {
+  it("L4-github-108: no person-facing line puts a possessive after a quoted name; the take-over line reads 'the project \"X\"' (the held-status line went with the status pull request, w8-status-write)", async () => {
     const { readdirSync, readFileSync, statSync } = await import("node:fs");
     const { join } = await import("@forerunner/platform");
-    const { heldStatusNote } = await import("../src/sources/repository-words.ts");
     const { tookOverLine } = await import("../src/sources/repository-use.ts");
     expect(tookOverLine("Kite club", "Kite flyers")).toBe(
       'This repository was the Forerunner project "Kite club"; it is now the project "Kite flyers".',
     );
     expect(tookOverLine(null, "Kite flyers")).toBe(
       'This repository was another Forerunner project; it is now the project "Kite flyers".',
-    );
-    expect(heldStatusNote({ projectName: "Kite club", marked: true })).toBe(
-      'Kept in the app while the status pull request of "Kite club" is open on GitHub.',
     );
     // The sweep: a template that quotes a name and then adds "'s" (live check 4: 'it is now
     // "Kite flyers"'s.'). Comments are left out. Every file is swept: join-words.ts'

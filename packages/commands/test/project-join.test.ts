@@ -316,7 +316,7 @@ describe("d1109-onerepo-join, run C: a closed project takes no new work (OJ-06)"
     const asked = [
       { name: "task.create", params: { title: "Probe task", project: kite.id } },
       { name: "note.add", params: { text: "Use the red kite." } },
-      { name: "settings.set", params: { key: "status_pull_request", value: true } },
+      { name: "settings.set", params: { key: "status_issue", value: false } },
       { name: "autonomy.set", params: { level: 2 } },
       { name: "project.switch", params: { project: kite.id } },
     ];
@@ -343,7 +343,7 @@ describe("d1109-onerepo-join, run C: a closed project takes no new work (OJ-06)"
     }
     expect(await kiteRows()).toEqual(before);
     const kept = await w.store.project.mustGet(kite.id);
-    expect(kept.settings.status_pull_request).toBeUndefined();
+    expect(kept.settings.status_issue).toBeUndefined();
     expect(kept.autonomy_level).toBe(kite.autonomy_level);
     // Site, which has the work now, takes it.
     const onSite = await w.executor.execute({
