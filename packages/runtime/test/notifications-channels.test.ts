@@ -1077,3 +1077,34 @@ describe("producers", () => {
     expect(deepLinkFor("/sessions/s-1")).toBe("fr://sessions/s-1");
   });
 });
+
+describe("l4-starts-carried, run L4", () => {
+  // L4g-left-3's sibling (validation rule 8): the budget-stop notification said "The session
+  // spent CHF 0.00." and "(CHF 0.00 spent)" for a session that spent under a centime, beside a
+  // result that said "Less than CHF 0.01." (W14-6: one money wording everywhere).
+  it("L4g-left-3 sibling: a budget stop that spent under a centime says 'less than CHF 0.01', never CHF 0.00", () => {
+    const facts = {
+      sessionId: "s-3",
+      status: "stopped",
+      stopReason: "budget_project",
+      stopCapChfMicro: 400_000,
+      summary: "Stopped at the project's budget of CHF 0.40. Less than CHF 0.01.",
+      news: ["Stopped at the project's budget of CHF 0.40. Less than CHF 0.01."],
+      spentUsdMicro: 3_000,
+      spentChfMicro: 2_400,
+      completed: [],
+      needsHuman: ["t-1"],
+      projectId: "p-1",
+      projectName: "Quote page",
+    };
+    const project = producers.sessionEnded("h-1", facts);
+    expect(project.body).toBe(
+      "The project's budget is CHF 0.40. The session spent less than CHF 0.01. Raise the project budget in Settings to go on.",
+    );
+    const used = producers.budgetStop("h-1", { ...facts, stopReason: "budget", news: [] });
+    // The title keeps its 60 characters (design §5 rule 1); it never says CHF 0.00.
+    expect(used.title).toMatch(/^Quote page: stopped, the budget is used \(less than CHF/);
+    expect(used.title.length).toBeLessThanOrEqual(60);
+    expect(`${used.title} ${used.body}`).not.toContain("CHF 0.00");
+  });
+});
