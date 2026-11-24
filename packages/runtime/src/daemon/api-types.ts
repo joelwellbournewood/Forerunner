@@ -260,6 +260,17 @@ export const ProjectCard = z.object({
       canTakeOver: z.boolean(),
       takeOverLine: z.string().nullable(),
       details: z.string().nullable(),
+      /**
+       * l4-github-carried (L4e-left-4): the line is a take-over's outcome ('Took over o/kite
+       * from "Kite club" here, but the docs pull request ... could not be opened, ...'), not
+       * OR-07's offer; the Docs tab shows only such a line. Absent on any other line.
+       */
+      outcome: z.enum(["took_over_no_pull_request"]).optional(),
+      /**
+       * L4e-left-1 (owner question OQ-L4e-1's default): Try again's consequence line beside the
+       * outcome line (`POST /projects/:id/take-over/retry`); absent without the button.
+       */
+      tryAgainLine: z.string().optional(),
     })
     .nullable()
     .optional(),
@@ -3972,6 +3983,10 @@ export const DAEMON_ROUTES = {
   // l4-github-carried (run L4, L4-github-130): the owner's Close on a cancelled task's row.
   closePullRequest:
     "POST /projects/:id/pull-requests/:number/close (PullRequestCloseAnswer: closed once GitHub closed that one pull request with the project's saved token, its branch kept, and the row is gone from GET pull-requests; refused with the sentence why, nothing changed: not a cancelled task's open pull request, no repository or token, GitHub refused or did not answer; the owner's decision of 2026-11-18, ADR 0105 point 4)",
+  // l4-github-carried (L4e-left-1, owner question OQ-L4e-1's default): Try again beside the
+  // take-over's no-pull-request line.
+  retryTakeOver:
+    "POST /projects/:id/take-over/retry (TakeOverRetryAnswer: opened once the take-over's docs pull request that names this project is open, by the scaffold's own rules: this project's own branch, a push with a lease, never the default branch, never another project's open pull request; the Overview's line then goes; refused with the sentence why while nothing names it, or when the project's line is not that outcome)",
 } as const;
 
 /**
@@ -3988,3 +4003,17 @@ export const PullRequestCloseAnswer = z.object({
   number: z.number().int(),
 });
 export type PullRequestCloseAnswer = z.infer<typeof PullRequestCloseAnswer>;
+
+/**
+ * `POST /projects/:id/take-over/retry` (l4-github-carried, L4e-left-1; owner question
+ * OQ-L4e-1's default): Try again beside the take-over's line that says its docs pull request
+ * could not be opened. `opened`: the scaffold ran again and a docs pull request that names this
+ * project is open (`prUrl`); the Overview's and Docs' line goes. `refused`: nothing names the
+ * project yet, or there was nothing to try again, and `sentence` says why and what to do.
+ */
+export const TakeOverRetryAnswer = z.object({
+  state: z.enum(["opened", "refused"]),
+  sentence: z.string(),
+  prUrl: z.string().nullable(),
+});
+export type TakeOverRetryAnswer = z.infer<typeof TakeOverRetryAnswer>;

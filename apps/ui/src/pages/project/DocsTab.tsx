@@ -7,6 +7,7 @@ import { formatBytes } from "../../lib/format.ts";
 import { formatDateTime } from "../../lib/time.ts";
 import { useAsync } from "../../lib/use-async.ts";
 import { useClient } from "../../store/context.tsx";
+import { TakeOverTryAgain } from "./TakeOverTryAgain.tsx";
 
 /**
  * Docs tab (spec G.5): the standard doc set with the critic's drift check and a reader. A line
@@ -18,6 +19,8 @@ export function DocsTab({ projectId, project }: { projectId: string; project?: P
   const client = useClient();
   const docs = useAsync((signal) => client.docs(projectId, signal), [client, projectId]);
   const [selected, setSelected] = useState<string | null>(null);
+  // L4e-left-1: what Try again opened, kept once the line it stood beside is gone.
+  const [reopened, setReopened] = useState<string | null>(null);
   const content = useAsync(
     (signal) => (selected ? client.doc(projectId, selected, signal) : Promise.resolve(null)),
     [client, projectId, selected],
@@ -30,14 +33,34 @@ export function DocsTab({ projectId, project }: { projectId: string; project?: P
   const present = rows.filter((d) => d.exists).length;
   const drifted = rows.filter((d) => d.drift).length;
 
-  const repositoryLine =
-    project?.repositoryElsewhere?.kind === "elsewhere" ? project.repositoryElsewhere.text : null;
+  // L4e-left-4 (the session lead's decision of 2026-11-23): Docs shows only a take-over's
+  // outcome line (its docs pull request could not be opened), with its Try again (L4e-left-1);
+  // OR-07's offer ("o/kite is also the Forerunner project ...") stays on the Overview with its
+  // Take it over, and is not repeated here (design §5 rule 10).
+  const outcome =
+    project?.repositoryElsewhere?.outcome === "took_over_no_pull_request"
+      ? project.repositoryElsewhere
+      : null;
+  const repositoryLine = outcome?.text ?? null;
 
   return (
     <div className="space-y-3" data-testid="docs">
       {repositoryLine ? (
         <p className="text-sm" data-testid="docs-repository-line">
           {repositoryLine}
+        </p>
+      ) : null}
+      {outcome?.tryAgainLine ? (
+        <TakeOverTryAgain
+          projectId={projectId}
+          line={outcome.tryAgainLine}
+          testId="docs-try-again"
+          onOpened={setReopened}
+        />
+      ) : null}
+      {reopened && !outcome ? (
+        <p className="text-sm" data-testid="docs-try-again-opened" role="status">
+          {reopened}
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-2 text-sm">

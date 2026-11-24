@@ -398,6 +398,37 @@ export function tookOverNoPullRequestSentence(
   return `Took over ${locator} from ${from} here, but the docs pull request that names this project could not be opened, so GitHub still names ${from}.`;
 }
 
+/**
+ * L4e-left-1 (the default of owner question OQ-L4e-1, built until the owner answers): what the
+ * take-over's no-pull-request line offers beside it, on the Overview and Docs. The one place
+ * the answer changes: `RepositoryUse.overviewOf` sets `tryAgainLine` from this, the screens show
+ * Try again only with it, and `POST /projects/:id/take-over/retry` runs the scaffold again.
+ */
+export const TAKE_OVER_TRY_AGAIN_LINE =
+  "Tries again to open the docs pull request that names this project.";
+
+/** L4e-left-1: Try again opened the docs pull request that names this project. */
+export function takeOverRetryOpenedSentence(n: number | null): string {
+  return n
+    ? `Opened #${n}: once you merge it, GitHub names this project.`
+    : "Opened the docs pull request: once you merge it, GitHub names this project.";
+}
+
+/**
+ * L4e-left-1: Try again could not open it either, in one sentence with what to do: GitHub
+ * refused the push or did not answer (`refused`), or another project's docs pull request or
+ * branch is in its way (`blocked`: Forerunner never writes over another project's).
+ */
+export function takeOverRetryFailedSentence(locator: string, why: "refused" | "blocked"): string {
+  return why === "blocked"
+    ? `The docs pull request still could not be opened: another project's docs pull request is open on ${locator}; close it on GitHub, then try again.`
+    : `The docs pull request still could not be opened: check that the saved GitHub token can push to ${locator}, then try again.`;
+}
+
+/** L4e-left-1: a Try again with nothing to try (a pull request already names this project). */
+export const TAKE_OVER_NOTHING_TO_RETRY =
+  "There is nothing to try again: a docs pull request already names this project.";
+
 /** OR-07: repo.take_over's read-back question. */
 export function takeOverAsk(locator: string, e: Pick<Elsewhere, "ids" | "name">): string {
   return `Take over ${locator} from ${projectFromWords(e)}? ${takeOverLine(e)}`;

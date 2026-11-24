@@ -1256,4 +1256,76 @@ describe("l4-github-carried, run L4", () => {
     );
     expect(within(block).getAllByTestId("pr-cancelled-close")).toHaveLength(2);
   });
+
+  const noPrLine = {
+    kind: "elsewhere" as const,
+    text: 'Took over org/atlas from "Kite club" here, but the docs pull request that names this project could not be opened, so GitHub still names "Kite club".',
+    canTakeOver: false,
+    takeOverLine: null,
+    details: null,
+    outcome: "took_over_no_pull_request" as const,
+    tryAgainLine: "Tries again to open the docs pull request that names this project.",
+  };
+
+  it("L4e-left-1 (OQ-L4e-1's default): the take-over's no-pull-request line on the Overview has Try again with its consequence line; a refused press says why and keeps the line; a press that opens it says so and the line goes", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.repositoryOverview.proj_atlas = noPrLine;
+    harness.daemon.state.takeOverRetryFails.proj_atlas = "refused";
+    renderApp("/projects/proj_atlas", harness);
+    const section = await screen.findByTestId("repository-elsewhere");
+    expect(within(section).getByTestId("repository-elsewhere-line")).toHaveTextContent(
+      noPrLine.text,
+    );
+    // Before: the line alone, with no next step (design §5 rule 8).
+    const button = within(section).getByTestId("repository-try-again-button");
+    expect(button).toHaveTextContent("Try again");
+    expect(within(section).getByTestId("repository-try-again-line")).toHaveTextContent(
+      "Tries again to open the docs pull request that names this project.",
+    );
+    expect(within(section).queryByTestId("repository-take-over")).toBeNull();
+    await user.click(button);
+    expect(await within(section).findByTestId("repository-try-again-refused")).toHaveTextContent(
+      "The docs pull request still could not be opened: check that the saved GitHub token can push to org/atlas, then try again.",
+    );
+    expect(within(section).getByTestId("repository-elsewhere-line")).toBeInTheDocument();
+    await user.click(within(section).getByTestId("repository-try-again-button"));
+    expect(await screen.findByTestId("repository-try-again-opened")).toHaveTextContent(
+      /^Opened #\d+: once you merge it, GitHub names this project\.$/,
+    );
+    await waitFor(() => expect(screen.queryByTestId("repository-elsewhere-line")).toBeNull());
+    expect(postedCalls(harness, "/projects/proj_atlas/take-over/retry")).toHaveLength(2);
+  });
+
+  it("L4e-left-4 (the session lead's decision of 2026-11-23) with L4e-left-1: Docs shows the take-over's outcome line with its Try again, and never OR-07's offer, which stays on the Overview with Take it over", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.repositoryOverview.proj_atlas = noPrLine;
+    renderApp("/projects/proj_atlas/docs", harness);
+    const docs = await screen.findByTestId("docs");
+    expect(within(docs).getByTestId("docs-repository-line")).toHaveTextContent(noPrLine.text);
+    await user.click(within(docs).getByTestId("docs-try-again-button"));
+    expect(await within(docs).findByTestId("docs-try-again-opened")).toHaveTextContent(
+      /^Opened #\d+: once you merge it, GitHub names this project\.$/,
+    );
+    await waitFor(() => expect(within(docs).queryByTestId("docs-repository-line")).toBeNull());
+  });
+
+  it("L4e-left-4: OR-07's offer ('... is also the Forerunner project ...') is not repeated on Docs", async () => {
+    const harness = createHarness();
+    harness.daemon.state.repositoryOverview.proj_atlas = {
+      kind: "elsewhere",
+      text: 'org/atlas is also the Forerunner project "Kite club", which is not on this computer.',
+      canTakeOver: true,
+      takeOverLine:
+        "Makes this project the repository's project; Kite club's work stays on GitHub.",
+      details: null,
+    };
+    renderApp("/projects/proj_atlas/docs", harness);
+    const docs = await screen.findByTestId("docs");
+    await within(docs).findByTestId("docs-present");
+    // Before: the offer's line stood on Docs too, without its Take it over.
+    expect(within(docs).queryByTestId("docs-repository-line")).toBeNull();
+    expect(within(docs).queryByTestId("docs-try-again-button")).toBeNull();
+  });
 });

@@ -24,6 +24,7 @@ import { DecisionsSection } from "./DecisionsSection.tsx";
 import { JoinProjectsDialog } from "./JoinProjectsDialog.tsx";
 import { PeersSection } from "./PeersSection.tsx";
 import { QueueSection } from "./QueueSection.tsx";
+import { TakeOverTryAgain } from "./TakeOverTryAgain.tsx";
 
 /**
  * Overview (design §3.4, was Summary): where this project stands and what happens next. Its
@@ -316,8 +317,10 @@ function RepositoryElsewhere({ projectId, project }: { projectId: string; projec
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // L4e-left-1: what Try again opened, kept once the line it stood beside is gone.
+  const [reopened, setReopened] = useState<string | null>(null);
   const line = project?.repositoryElsewhere ?? null;
-  if (!line && !done) return null;
+  if (!line && !done && !reopened) return null;
   const takeOver = async () => {
     setBusy(true);
     setError(null);
@@ -365,6 +368,19 @@ function RepositoryElsewhere({ projectId, project }: { projectId: string; projec
               Details
             </button>
           ) : null}
+        </p>
+      ) : null}
+      {line?.tryAgainLine ? (
+        <TakeOverTryAgain
+          projectId={projectId}
+          line={line.tryAgainLine}
+          testId="repository-try-again"
+          onOpened={setReopened}
+        />
+      ) : null}
+      {reopened && !line?.tryAgainLine ? (
+        <p data-testid="repository-try-again-opened" role="status">
+          {reopened}
         </p>
       ) : null}
       {line?.takeOverLine && line.canTakeOver ? (

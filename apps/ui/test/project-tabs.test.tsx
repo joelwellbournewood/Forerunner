@@ -318,12 +318,16 @@ describe("Docs tab", () => {
     const harness = createHarness();
     const text =
       'Took over org/atlas from "Kite club" here, but the docs pull request that names this project could not be opened, so GitHub still names "Kite club".';
+    // l4-github-carried (L4e-left-4): the daemon marks the take-over's outcome line, which is
+    // the only repository line Docs shows (with its Try again, L4e-left-1).
     harness.daemon.state.repositoryOverview.proj_atlas = {
       kind: "elsewhere",
       text,
       canTakeOver: false,
       takeOverLine: null,
       details: null,
+      outcome: "took_over_no_pull_request",
+      tryAgainLine: "Tries again to open the docs pull request that names this project.",
     };
     renderApp("/projects/proj_atlas/docs", harness);
     const docs = await screen.findByTestId("docs");

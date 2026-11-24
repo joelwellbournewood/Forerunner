@@ -114,11 +114,14 @@ import {
   inUseSentence,
   nothingToTakeOverSentence,
   otherHostSentence,
+  TAKE_OVER_NOTHING_TO_RETRY,
   TOGETHER_OVERVIEW_DETAILS,
   TOGETHER_OVERVIEW_LINE,
   takeOverAsk,
   takeOverDetails,
   takeOverLine,
+  takeOverRetryFailedSentence,
+  takeOverRetryOpenedSentence,
   togetherDocNote,
   togetherLine,
   togetherStatusPullRequestSentence,
@@ -658,6 +661,12 @@ export interface FakeDaemonState {
    * Undo works. A test sets it.
    */
   takeOverUndoBlocked: string | null;
+  /**
+   * l4-github-carried (L4e-left-1): set by a test, the next Try again of the take-over's docs
+   * pull request for this project id fails (`refused`: GitHub refused the push; `blocked`:
+   * another project's docs pull request is in its way), as `retryTakeOverDocs` answers it.
+   */
+  takeOverRetryFails: Record<string, "refused" | "blocked">;
   /**
    * d1109-onerepo-join (OJ-01): per project id, the Overview's line about the other projects here
    * on its repository or folder, as the daemon's `sharesRepositoryWith` gives it. A test sets it;
@@ -1499,6 +1508,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     repositoryElsewhere: {},
     repositoryOverview: {},
     takeOverUndoBlocked: null,
+    takeOverRetryFails: {},
     sharedRepository: {},
     joinPreviews: {},
     joined: {},
@@ -9405,6 +9415,41 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     for (const r of prs.waiting) delete r.preview;
     row.preview = { folder, sentence };
     return c.json({ state: "ready", sentence, folder, number });
+  });
+  // l4-github-carried (L4e-left-1, owner question OQ-L4e-1's default), as the daemon's
+  // `retryTakeOverDocs`: only the take-over's no-pull-request line is tried again; opened, the
+  // line goes and the docs pull request waits on the Overview; a failure set by a test keeps it.
+  app.post("/projects/:id/take-over/retry", (c) => {
+    const id = c.req.param("id");
+    const project = state.projects.find((p) => p.id === id);
+    if (!project) return errorBody(c, 404, "not_found", "no such project");
+    const refused = (sentence: string) => c.json({ state: "refused", sentence, prUrl: null });
+    const line = state.repositoryOverview[id];
+    if (line?.outcome !== "took_over_no_pull_request") return refused(TAKE_OVER_NOTHING_TO_RETRY);
+    const locator = project.repos?.[0] ?? "";
+    const fails = state.takeOverRetryFails[id];
+    if (fails) {
+      delete state.takeOverRetryFails[id];
+      return refused(takeOverRetryFailedSentence(locator, fails));
+    }
+    delete state.repositoryOverview[id];
+    const prs = state.pullRequests[id] ?? { waiting: [], error: null };
+    state.pullRequests[id] = prs;
+    const number = Math.max(1, ...prs.waiting.map((r) => r.number + 1));
+    const repository = repositoryOf(project.repos);
+    const url = `${repository?.url ?? "https://github.com/o/repo"}/pull/${number}`;
+    prs.waiting.push({
+      kind: "docs",
+      taskId: null,
+      title: "The project's standard docs",
+      number,
+      url,
+      branch: "fr/docs-scaffold",
+      review: null,
+      merge: { state: "ready", canMerge: true, sentence: null, first: [] },
+    });
+    emit("project.changed", { id });
+    return c.json({ state: "opened", sentence: takeOverRetryOpenedSentence(number), prUrl: url });
   });
   // l4-github-carried (L4-github-130, the owner's decision of 2026-11-18), as the daemon's
   // `ProjectPullRequests.close` answers it: only a cancelled task's open pull request is closed

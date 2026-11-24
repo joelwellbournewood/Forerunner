@@ -186,6 +186,8 @@ import {
   StoredSecretsView as StoredSecretsViewSchema,
   type StoreSecretView,
   StoreSecretView as StoreSecretViewSchema,
+  type TakeOverRetryAnswer,
+  TakeOverRetryAnswer as TakeOverRetryAnswerSchema,
   type TaskAction,
   type TaskActionBody,
   type TaskCheck,
@@ -382,6 +384,7 @@ export type {
   StartSessionView,
   StoredSecretsView,
   StoreSecretView,
+  TakeOverRetryAnswer,
   TaskAction,
   TaskActionBody,
   TaskCheck,
@@ -983,6 +986,11 @@ export interface DaemonClient {
    * request (it can be reopened there); read `projectPullRequests` again for the row's going.
    */
   closePullRequest(projectId: string, number: number): Promise<PullRequestCloseAnswer>;
+  /**
+   * l4-github-carried (L4e-left-1, owner question OQ-L4e-1's default): Try again beside the
+   * take-over's line that says its docs pull request could not be opened.
+   */
+  retryTakeOver(projectId: string): Promise<TakeOverRetryAnswer>;
 }
 
 function isAbort(error: unknown): boolean {
@@ -1504,6 +1512,8 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
         PullRequestCloseAnswerSchema,
         {},
       ),
+    retryTakeOver: (projectId) =>
+      post(routePath("retryTakeOver", { id: projectId }), TakeOverRetryAnswerSchema, {}),
     auditExport: async (filter, signal) => {
       const format: AuditExportFormat = filter?.format ?? "jsonl";
       const res = await raw({
