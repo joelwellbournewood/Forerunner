@@ -3969,4 +3969,22 @@ export const DAEMON_ROUTES = {
     "GET /sessions/:id/tasks (SessionTasksView: the tasks a session worked on, in the order it first ran them, each with what happened to it there, what it is now when that differs and what the session spent on it (the ledger's rows for the session and the task, reviews included); none for a planning call; 404 for an unknown session; d1109-sessions)",
   // d1109-cred-screens (run C, C6): Settings' "Which Claude does the work".
   ...CREDENTIAL_POLICY_ROUTES,
+  // l4-github-carried (run L4, L4-github-130): the owner's Close on a cancelled task's row.
+  closePullRequest:
+    "POST /projects/:id/pull-requests/:number/close (PullRequestCloseAnswer: closed once GitHub closed that one pull request with the project's saved token, its branch kept, and the row is gone from GET pull-requests; refused with the sentence why, nothing changed: not a cancelled task's open pull request, no repository or token, GitHub refused or did not answer; the owner's decision of 2026-11-18, ADR 0105 point 4)",
 } as const;
+
+/**
+ * `POST /projects/:id/pull-requests/:number/close` (l4-github-carried, L4-github-130; the
+ * owner's decision of 2026-11-18): Close on the Overview's "Cancelled, still open on GitHub"
+ * row. `closed`: GitHub closed that pull request (it can be reopened there; its branch is
+ * kept), its task's merge record says closed, and the row is gone. `refused`: nothing changed on
+ * GitHub, and `sentence` says why in one sentence (the row stays). Only a cancelled task's row
+ * can be closed; Forerunner never closes a pull request by itself (ADR 0105).
+ */
+export const PullRequestCloseAnswer = z.object({
+  state: z.enum(["closed", "refused"]),
+  sentence: z.string(),
+  number: z.number().int(),
+});
+export type PullRequestCloseAnswer = z.infer<typeof PullRequestCloseAnswer>;

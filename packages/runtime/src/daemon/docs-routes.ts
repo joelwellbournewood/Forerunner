@@ -26,6 +26,7 @@ import type {
   ProjectFileEntryView,
   ProjectFilesView,
   ProjectPullRequestsView,
+  PullRequestCloseAnswer,
   PullRequestMergeAnswer,
   PullRequestPreviewAnswer,
 } from "./api-types.ts";
@@ -67,6 +68,11 @@ export interface DocsRoutesDeps {
   mergePullRequest?: (project: ProjectRow, number: number) => Promise<PullRequestMergeAnswer>;
   /** "Open this version" of a waiting pull request (`ProjectPullRequests.preview`, merged-actions). */
   previewPullRequest?: (project: ProjectRow, number: number) => Promise<PullRequestPreviewAnswer>;
+  /**
+   * L4-github-130 (the owner's decision of 2026-11-18): Close on a cancelled task's pull request
+   * still open on GitHub (`ProjectPullRequests.close`).
+   */
+  closePullRequest?: (project: ProjectRow, number: number) => Promise<PullRequestCloseAnswer>;
   /**
    * What the Files tab says about a repository project's copy (`ProjectDocs.copyView`,
    * merged-copy): when it was last brought to what is merged, and its Local only folder.
@@ -374,6 +380,21 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
     if (!deps.previewPullRequest)
       return c.json({ code: "not_found", message: "previews are not available" }, 404);
     const answer: PullRequestPreviewAnswer = await deps.previewPullRequest(project, number);
+    return c.json(answer);
+  });
+
+  // L4-github-130 (the owner's decision of 2026-11-18, ADR 0105 point 4): Close on the
+  // Overview's "Cancelled, still open on GitHub" row. One press closes that pull request on
+  // GitHub (it can be reopened there); its branch is kept. Answered once GitHub answered.
+  app.post("/projects/:id/pull-requests/:number/close", async (c) => {
+    const project = await owned(c.req.param("id"));
+    if (!project) return c.json({ code: "forbidden", message: "not your project" }, 403);
+    const number = Number(c.req.param("number"));
+    if (!Number.isInteger(number) || number <= 0)
+      return c.json({ code: "validation", message: "not a pull request number" }, 400);
+    if (!deps.closePullRequest)
+      return c.json({ code: "not_found", message: "closing in the app is not available" }, 404);
+    const answer: PullRequestCloseAnswer = await deps.closePullRequest(project, number);
     return c.json(answer);
   });
 

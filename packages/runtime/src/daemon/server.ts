@@ -813,6 +813,8 @@ export function createDaemonApp(
       mergePullRequest: (project, number) => rt.pullRequests.merge(project, number, rt.human.id),
       // merged-actions: "Open this version" of a waiting pull request, beside the copy.
       previewPullRequest: (project, number) => rt.pullRequests.preview(project, number),
+      // L4-github-130: Close on a cancelled task's pull request still open on GitHub.
+      closePullRequest: (project, number) => rt.pullRequests.close(project, number),
       // merged-copy: when the copy was last brought to what is merged; its Local only folder.
       copyView: (project) => rt.docs.copyView(project),
       who: daemonWho,

@@ -100,6 +100,12 @@ import {
   OPEN_ON_A_CLOSED_PROJECT,
   sessionsBeforeJoinSentence,
 } from "@forerunner/runtime/daemon/join-words";
+import {
+  closeFailedSentence,
+  closeNotCancelledSentence,
+  closeNotOpenSentence,
+  pullRequestClosedSentence,
+} from "@forerunner/runtime/daemon/pull-request-close-words";
 import { reviewPartUsdMicro } from "@forerunner/runtime/estimates/model";
 import { openPlanSentence } from "@forerunner/runtime/session/intake-words";
 import {
@@ -774,6 +780,16 @@ export interface FakeDaemonState {
   >;
   /** How many times `GET /projects/:id/pull-requests` was read, by project (the Overview's polling). */
   pullRequestReads: Record<string, number>;
+  /**
+   * l4-github-carried (L4-github-130): the Close presses that closed a cancelled task's pull
+   * request, in order (the daemon makes one PATCH on GitHub for each, never a branch delete).
+   */
+  pullRequestCloses: { projectId: string; number: number }[];
+  /**
+   * l4-github-carried: set by a test, the next Close of `<project id>#<number>` fails as GitHub
+   * refuses or does not answer; the row stays, as the daemon's `ProjectPullRequests.close`.
+   */
+  pullRequestCloseFails: Record<string, "refused_token" | "no_access" | "unreachable">;
   /** How many times `GET /projects` was read (leftovers7-merge: the list follows other changes). */
   projectListReads: number;
   /**
@@ -1499,6 +1515,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     pullRequestMerges: {},
     pullRequestMergeOutcome: null,
     pullRequestPressFinds: {},
+    pullRequestCloses: [],
+    pullRequestCloseFails: {},
     pullRequestReads: {},
     projectListReads: 0,
     holdSessions: false,
@@ -9387,6 +9405,42 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     for (const r of prs.waiting) delete r.preview;
     row.preview = { folder, sentence };
     return c.json({ state: "ready", sentence, folder, number });
+  });
+  // l4-github-carried (L4-github-130, the owner's decision of 2026-11-18), as the daemon's
+  // `ProjectPullRequests.close` answers it: only a cancelled task's open pull request is closed
+  // (one close, its branch kept), its merge record then says closed and the row is gone; a
+  // failure set by a test keeps the row and says why in one sentence.
+  app.post("/projects/:id/pull-requests/:number/close", (c) => {
+    const id = c.req.param("id");
+    const project = state.projects.find((p) => p.id === id);
+    if (!project) return errorBody(c, 403, "forbidden", "not your project");
+    const number = Number(c.req.param("number"));
+    if (!Number.isInteger(number) || number <= 0)
+      return errorBody(c, 400, "validation", "not a pull request number");
+    const refused = (sentence: string) => c.json({ state: "refused", sentence, number });
+    if (!repositoryOf(project.repos)) return refused("This project has no repository.");
+    const prs = state.pullRequests[id];
+    if (prs?.error) return refused(prs.error);
+    const row = prs?.waiting.find((r) => r.number === number);
+    if (!prs || !row) return refused(closeNotOpenSentence(number));
+    if (row.kind !== "cancelled" || !row.taskId) return refused(closeNotCancelledSentence(number));
+    const fails = state.pullRequestCloseFails[`${id}#${number}`];
+    if (fails) {
+      delete state.pullRequestCloseFails[`${id}#${number}`];
+      return refused(closeFailedSentence(number, fails));
+    }
+    prs.waiting = prs.waiting.filter((r) => r.number !== number);
+    state.pullRequestCloses.push({ projectId: id, number });
+    state.taskMeta.merges?.set(row.taskId, {
+      approval: "none",
+      ...state.taskMeta.merges.get(row.taskId),
+      state: "left_to_you",
+      sentence: `#${number} was closed without merging.`,
+      pr_number: number,
+      last_outcome: "closed",
+    });
+    emit("project.changed", { id });
+    return c.json({ state: "closed", sentence: pullRequestClosedSentence(number), number });
   });
   app.get("/projects/:id/files", (c) => {
     const id = c.req.param("id");

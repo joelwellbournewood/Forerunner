@@ -29056,3 +29056,166 @@ describe("l4-selftasks-carried, run L4", () => {
     }
   }, 60_000);
 });
+
+describe("l4-github-carried, run L4", () => {
+  /** A repository project on the fake GitHub, the watcher polled by the test, recomposable. */
+  async function repoWorld(name: string) {
+    const work = mkdtempSync(join(tmpdir(), `fr-ui-real-l4c-${name}-`));
+    const clock = new SystemClock();
+    const host = await FakeGitHost.start({ rootDir: join(work, "host"), clock });
+    host.createUser({ login: "alice", name: "Alice", email: "alice@example.test" });
+    await host.createRepo({
+      owner: "alice",
+      name,
+      private: true,
+      defaultBranch: "main",
+      initialFiles: { "README.md": `# ${name}\n` },
+    });
+    const REPO = { owner: "alice", name };
+    const token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    const github = new GitHubHost({ token, baseUrl: host.baseUrl, clock });
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const homeEnv = { FORERUNNER_HOME: home };
+    const compose = async () => {
+      const vault = new MemoryVault();
+      await vault.set(SECRET_NAMES.github, token);
+      return composeWithRolePlayer(
+        {},
+        {
+          env: homeEnv,
+          dirs: appDirs({ env: homeEnv }),
+          stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+          gitHost: new GitHubHost({ token, baseUrl: host.baseUrl, clock }),
+          vault,
+          tryIt: false,
+          githostWatch: { enabled: true, pollMs: 86_400_000 },
+          config: {
+            version: 1,
+            profile: "default",
+            timezone: "UTC",
+            githubApiBase: host.baseUrl,
+            anthropicApiBase: "http://an.test",
+            repos: [],
+            credentials: { github: true, anthropic: false, anthropicSubscription: false },
+            stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+          },
+        },
+      );
+    };
+    return { host, github, REPO, token, compose, work };
+  }
+  const prOf = (url: string | null | undefined) => Number(/\/pull\/(\d+)/.exec(url ?? "")?.[1]);
+  async function runSession(client: DaemonClient, projectId: string) {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const started = await client.startSession({ agentId, projectId });
+    await eventually(
+      async () => (await client.session(started.session?.id ?? "")).status !== "running",
+      "the session to end (at least 60 s)",
+      async () => (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", "),
+      60_000,
+    );
+  }
+
+  it("L4-github-130 (the owner's decision of 2026-11-18): Close on a cancelled task's pull request still open on GitHub, pressed through the client, closes exactly that pull request on GitHub (one PATCH, no branch deleted); the row is gone once GitHub answered, its record says closed, a second press and a press on a task that is not cancelled are refused in one sentence, and the daemon started again lists it nowhere", async () => {
+    const w = await repoWorld("l4close");
+    let { rt, client } = await w.compose();
+    try {
+      const project = await client.createProject({
+        name: "Kite club",
+        goal: "The club's pages",
+        repos: ["alice/l4close"],
+      });
+      const a = await client.createTask(project.id, {
+        title: "Write kite/about.txt about the club",
+        outcome: "kite/about.txt tells the club's story",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const b = await client.createTask(project.id, {
+        title: "Write kite/rules.txt with the rules",
+        outcome: "kite/rules.txt lists the rules",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await runSession(client, project.id);
+      const agentId = (await client.agents())[0]?.id ?? "";
+      // A is redone and cancelled: its pull request stays open on GitHub.
+      let arow = await rt.store.task.mustGet(a.id);
+      await rt.store.task.reopen(a.id, arow.version, "ready", "Redo asked by you", { agentId });
+      arow = await rt.store.task.mustGet(a.id);
+      await rt.store.task.transition(a.id, arow.version, "cancelled", "you cancelled it", {
+        agentId,
+      });
+      const [prA, prB] = [
+        prOf((await rt.store.task.mustGet(a.id)).pr_url),
+        prOf((await rt.store.task.mustGet(b.id)).pr_url),
+      ];
+      const branchA = (await rt.store.task.mustGet(a.id)).branch ?? "";
+      const cancelledRows = async () =>
+        (await client.projectPullRequests(project.id)).waiting.filter(
+          (r) => r.kind === "cancelled",
+        );
+      expect((await cancelledRows()).map((r) => r.number)).toEqual([prA]);
+      await w.host.settle();
+      const seen = w.host.requests().length;
+      // B is not a cancelled task's pull request: refused, nothing written to GitHub.
+      expect(await client.closePullRequest(project.id, prB)).toEqual({
+        state: "refused",
+        sentence: `#${prB} is not a cancelled task's pull request, so Forerunner does not close it: close it on GitHub if you do not want it.`,
+        number: prB,
+      });
+      expect((await w.github.getPullRequest(w.REPO, prB)).state).toBe("open");
+      // The person presses Close on A's row.
+      expect(await client.closePullRequest(project.id, prA)).toEqual({
+        state: "closed",
+        sentence: `Closed #${prA} on GitHub; you can reopen it there.`,
+        number: prA,
+      });
+      await w.host.settle();
+      // A fetch (git-upload-pack: the merged-through check reads main) is a read; a push
+      // (git-receive-pack) or any other non-GET call is a write.
+      const writes = w.host
+        .requests()
+        .slice(seen)
+        .filter((r) => r.method !== "GET" && !r.path.endsWith("/git-upload-pack"));
+      // Exactly one write, the close of A; no branch delete, no push, nothing on B.
+      expect(writes.map((r) => `${r.method} ${r.path}`)).toEqual([
+        `PATCH /repos/alice/l4close/pulls/${prA}`,
+      ]);
+      expect((await w.github.getPullRequest(w.REPO, prA)).state).toBe("closed");
+      expect((await w.github.getPullRequest(w.REPO, prA)).merged).toBe(false);
+      expect(await w.github.getBranchHead(w.REPO, branchA)).not.toBeNull();
+      expect((await w.github.getPullRequest(w.REPO, prB)).state).toBe("open");
+      // The row is gone at once; its record says closed (chat's facts read it so).
+      expect(await cancelledRows()).toEqual([]);
+      expect(await rt.store.mergeRecord.forTask(a.id)).toMatchObject({
+        state: "left_to_you",
+        last_outcome: "closed",
+        sentence: `#${prA} was closed without merging.`,
+      });
+      // A second press: nothing to close, in one sentence.
+      expect(await client.closePullRequest(project.id, prA)).toEqual({
+        state: "refused",
+        sentence: `#${prA} is not open on GitHub any more, so there is nothing to close.`,
+        number: prA,
+      });
+      // The daemon starts again: the row stays gone, the record stays closed.
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      await rt.githostWatcher?.pollOnce();
+      expect(await cancelledRows()).toEqual([]);
+      expect(await rt.store.mergeRecord.forTask(a.id)).toMatchObject({
+        state: "left_to_you",
+        last_outcome: "closed",
+      });
+      expect((await w.github.getPullRequest(w.REPO, prB)).state).toBe("open");
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+      await w.host.stop();
+      rmSync(w.work, { recursive: true, force: true });
+    }
+  }, 240_000);
+});

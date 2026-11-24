@@ -1,4 +1,5 @@
 import { MAKE_ONE_EXPLAIN } from "@forerunner/runtime/daemon/join-words";
+import { CLOSE_PULL_REQUEST_EXPLAIN } from "@forerunner/runtime/daemon/pull-request-close-words";
 import { researchReadsLine, webAccessOf } from "@forerunner/runtime/wiring/web-access";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
@@ -671,6 +672,32 @@ function RepositoryFiles({
   // The row's preview as the daemon lists it; the answer's until the list is read again.
   const previewOf = (pr: ProjectPullRequestView) =>
     pr.preview ?? (previewed?.number === pr.number ? previewed : null);
+  // L4-github-130 (the owner's decision of 2026-11-18): Close on a cancelled task's pull request
+  // still open on GitHub. The daemon answers once GitHub closed it; the list is read again, so
+  // the row goes. A refusal or a GitHub failure is said on the row, which stays.
+  const [closing, setClosing] = useState<number | null>(null);
+  const [closeAnswer, setCloseAnswer] = useState<{
+    number: number;
+    sentence: string;
+    closed: boolean;
+  } | null>(null);
+  const closePr = async (pr: ProjectPullRequestView) => {
+    setClosing(pr.number);
+    setCloseAnswer(null);
+    try {
+      const answer = await client.closePullRequest(projectId, pr.number);
+      setCloseAnswer({
+        number: pr.number,
+        sentence: answer.sentence,
+        closed: answer.state === "closed",
+      });
+      reload();
+    } catch (e) {
+      setCloseAnswer({ number: pr.number, sentence: describeError(e), closed: false });
+    } finally {
+      setClosing(null);
+    }
+  };
   const mode = prs.data?.mode;
   const kind = prs.data?.errorKind;
   return (
@@ -720,6 +747,11 @@ function RepositoryFiles({
         {mergeError ? (
           <p className="text-red-700 dark:text-red-300" data-testid="merge-error" role="alert">
             {mergeError}
+          </p>
+        ) : null}
+        {closeAnswer?.closed ? (
+          <p data-testid="pr-close-answer" role="status">
+            {closeAnswer.sentence}
           </p>
         ) : null}
         {waiting.length > 0 ? (
@@ -820,9 +852,10 @@ function RepositoryFiles({
         {leftOpen.length > 0 ? (
           <div data-testid="prs-cancelled">
             <h3 className="font-medium">Cancelled, still open on GitHub</h3>
-            <p className="text-xs text-neutral-500">
-              Their tasks were cancelled and Forerunner leaves them as they are: close them on
-              GitHub, or reopen the task in Tasks.
+            <p className="text-xs text-neutral-500" data-testid="prs-cancelled-explain">
+              {leftOpen.length === 1
+                ? "Its task was cancelled: close its pull request, or reopen the task in Tasks."
+                : "Their tasks were cancelled: close each pull request, or reopen its task in Tasks."}
             </p>
             <ul className="space-y-0.5">
               {leftOpen.map((pr) => (
@@ -838,6 +871,25 @@ function RepositoryFiles({
                   <ExternalLink href={pr.url} variant="inline" testId="pr-cancelled-link">
                     Open
                   </ExternalLink>
+                  <Button
+                    variant="secondary"
+                    className="px-2 py-0.5 text-xs"
+                    disabled={closing !== null}
+                    title={CLOSE_PULL_REQUEST_EXPLAIN}
+                    onClick={() => void closePr(pr)}
+                    data-testid="pr-cancelled-close"
+                  >
+                    {closing === pr.number ? "Closing…" : "Close"}
+                  </Button>
+                  {closeAnswer && !closeAnswer.closed && closeAnswer.number === pr.number ? (
+                    <span
+                      className="basis-full text-xs text-red-700 dark:text-red-300"
+                      data-testid="pr-close-error"
+                      role="alert"
+                    >
+                      {closeAnswer.sentence}
+                    </span>
+                  ) : null}
                 </li>
               ))}
             </ul>

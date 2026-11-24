@@ -150,3 +150,34 @@ only done tasks' pull requests, the chat's file facts only done tasks', and the 
    which asks GitHub when called, says whether it is still open there.
 4. **Not added:** a Close button in the app (closing stays the person's on GitHub); left as an
    option for later.
+
+## Amendment (2026-11-24, run L4, area "l4-github-carried": L4-github-130)
+
+The owner's answer of 2026-11-18 replaces point 4 of the 2026-11-15 amendment. Their words:
+"A cancelled task whose pull request is still open on GitHub: add a Close button. One press
+closes that pull request on GitHub (it can be reopened there); the Overview's 'Cancelled, still
+open on GitHub' list offers it beside Open." Decided:
+
+1. **Close beside Open.** Each row under "Cancelled, still open on GitHub" has **Close**, titled
+   "Closes this pull request on GitHub; you can reopen it there." (`CLOSE_PULL_REQUEST_EXPLAIN`,
+   `daemon/pull-request-close-words.ts`). The block's line reads "Its task was cancelled: close
+   its pull request, or reopen the task in Tasks." for one row and "Their tasks were cancelled:
+   close each pull request, or reopen its task in Tasks." for several (L4-github-124 (b)).
+2. **One press, one pull request.** `POST /projects/:id/pull-requests/:number/close`
+   (`ProjectPullRequests.close`) closes only a row the view lists now as a cancelled task's open
+   pull request: one `PATCH .../pulls/:number {state: "closed"}` with the project's saved token
+   (the host the view reads with). Its branch is never deleted and nothing else is written; it
+   can be reopened on GitHub. A press on any other pull request (a done task's, Forerunner's
+   docs, a take-out) is refused: "#N is not a cancelled task's pull request, so Forerunner does
+   not close it: close it on GitHub if you do not want it.".
+3. **The row goes once GitHub answers.** The answer comes after GitHub closed it ("Closed #N on
+   GitHub; you can reopen it there."), the task's merge record says closed at once
+   (`closedAtPress`, as the watcher's report settles a close: "#N was closed without merging.",
+   so chat's facts read "Closed without merging"), and the view no longer lists it; a restart
+   reads the same from GitHub and the store.
+4. **A refusal keeps the row.** No repository, no token, a pull request not open any more, a
+   refused token, a token without write access or GitHub not answering is said in one sentence
+   on the row (`closeFailedSentence`, `closeNotOpenSentence`), and nothing changes.
+5. **Still never by itself.** Forerunner closes a pull request only on this press (and the
+   PR executor's existing close of a pull request a redo emptied, ADR 0111); the watcher, a
+   session and chat never close one.

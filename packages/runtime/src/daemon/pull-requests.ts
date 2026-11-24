@@ -30,10 +30,17 @@ import type {
   ProjectPullRequestsView,
   ProjectPullRequestView,
   ProjectRepositoryView,
+  PullRequestCloseAnswer,
   PullRequestMergeAnswer,
   PullRequestPreviewAnswer,
 } from "./api-types.ts";
 import { joinedFromOf } from "./join-words.ts";
+import {
+  closeFailedSentence,
+  closeNotCancelledSentence,
+  closeNotOpenSentence,
+  pullRequestClosedSentence,
+} from "./pull-request-close-words.ts";
 
 /**
  * L4-github-113 (ADR 0117 point 3, amended 2026-11-23): an open status pull request on
@@ -884,6 +891,86 @@ export class ProjectPullRequests {
           error: redact(errorMessage(e)).slice(0, 300),
         });
       }
+    }
+  }
+
+  /** L4-github-130: the pull requests a Close runs for now, by `<project>#<number>`. */
+  private readonly closing = new Set<string>();
+
+  /**
+   * L4-github-130 (the owner's decision of 2026-11-18, ADR 0105 point 4 amended 2026-11-24):
+   * the person pressed Close on the Overview's "Cancelled, still open on GitHub" row. Only a row
+   * the view lists now as a cancelled task's open pull request is closed: one PATCH with the
+   * project's saved token (the host this view reads with) sets it closed on GitHub, which can
+   * reopen it; its branch is never deleted and nothing else is written. Once GitHub answers,
+   * the task's merge record says closed (`closedAtPress`, as the watcher's report settles a
+   * close), so chat's facts and the Tasks row read it closed, and the row is gone from the view
+   * (GitHub lists it closed). A refusal or a GitHub failure changes nothing and says so in one
+   * sentence; the row stays. Forerunner still never closes a pull request by itself.
+   */
+  async close(project: ProjectRow, number: number): Promise<PullRequestCloseAnswer> {
+    const refused = (sentence: string): PullRequestCloseAnswer => ({
+      state: "refused",
+      sentence,
+      number,
+    });
+    const repository = projectRepository(project, this.deps.apiBase);
+    const ref = repository ? parseRepoRef(repository.fullName) : null;
+    if (!ref) return refused("This project has no repository.");
+    const key = `${project.id}#${number}`;
+    if (this.closing.has(key))
+      return refused(`#${number} is being closed now: the answer comes in a moment.`);
+    this.closing.add(key);
+    try {
+      const view = await this.view(project);
+      if (view.error) return refused(view.error);
+      const row = view.waiting.find((r) => r.number === number);
+      if (!row) return refused(closeNotOpenSentence(number));
+      if (row.kind !== "cancelled" || !row.taskId)
+        return refused(closeNotCancelledSentence(number));
+      const task = await this.deps.store.task.get(row.taskId);
+      if (task?.status !== "cancelled") return refused(closeNotCancelledSentence(number));
+      let info: PullRequestInfo;
+      try {
+        info = await this.deps.host.updatePullRequest(ref, number, { state: "closed" });
+      } catch (e) {
+        this.logger.warn("pull request not closed", {
+          projectId: project.id,
+          pr: number,
+          error: redact(errorMessage(e)).slice(0, 300),
+        });
+        const code = e instanceof ForerunnerError ? e.code : "";
+        return refused(
+          closeFailedSentence(
+            number,
+            code === "provider_auth"
+              ? "refused_token"
+              : code === "tool_not_allowed" || code === "not_found"
+                ? "no_access"
+                : "unreachable",
+          ),
+        );
+      }
+      this.logger.info("pull request closed on the person's press", {
+        projectId: project.id,
+        taskId: task.id,
+        pr: number,
+      });
+      // Its record, row and cards as the watcher's report settles a close (no rebuild: what
+      // built on the cancelled task was rebuilt when it was cancelled). A failure here is
+      // logged: GitHub closed it, and the watcher's next poll records the close again.
+      await this.deps
+        .closedAtPress?.(task, info.state === "closed" ? info : { ...info, state: "closed" })
+        .catch((e: unknown) => {
+          this.logger.warn("closed pull request not recorded", {
+            projectId: project.id,
+            pr: number,
+            error: errorMessage(e),
+          });
+        });
+      return { state: "closed", sentence: pullRequestClosedSentence(number), number };
+    } finally {
+      this.closing.delete(key);
     }
   }
 

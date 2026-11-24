@@ -1,4 +1,5 @@
 import { MemoryGitHost } from "@forerunner/capabilities";
+import { ForerunnerError } from "@forerunner/platform";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ToolExecutionContext } from "../src/agent/tools.ts";
 import { filesBlock, repositoryFacts } from "../src/conversation/project-facts.ts";
@@ -195,5 +196,111 @@ describe("l4-github-merge, run L4", () => {
     expect(balanced(shown)).toBe(true);
     // Callers without slack (a notification's title) cut as before.
     expect(balancedCut(t55, 50, cutWords, 0)).toBe(cutWords(t55, 50));
+  });
+});
+
+describe("l4-github-carried, run L4", () => {
+  /** A cancelled task whose pull request is still open on the in-memory host. */
+  async function cancelledWithOpenPr() {
+    const { w, project } = await world();
+    const host = new MemoryGitHost("alice");
+    const repo = { owner: "o", name: "app" };
+    await host.createRepo({ ...repo, private: true });
+    const pr = await host.createPullRequest(repo, {
+      title: "About page",
+      body: "",
+      head: "fr/about",
+      base: "main",
+    });
+    const task = await w.addTask("Write the About page in about.html");
+    await w.store.task.patch(task.id, { branch: "fr/about", pr_url: pr.htmlUrl });
+    const row = await w.store.task.mustGet(task.id);
+    await w.store.task.transition(task.id, row.version, "cancelled", "you cancelled it", {
+      agentId: w.alice,
+    });
+    const settled: number[] = [];
+    const prs = () =>
+      new ProjectPullRequests({
+        store: w.store,
+        host,
+        closedAtPress: async (_task, info) => {
+          settled.push(info.number);
+        },
+      });
+    return { w, project, host, repo, pr, task, prs, settled };
+  }
+
+  it("L4-github-130: ProjectPullRequests.close closes a cancelled task's open pull request once, settles its record through the press port, and the view lists it no more", async () => {
+    const o = await cancelledWithOpenPr();
+    const answer = await o.prs().close(o.project, o.pr.number);
+    expect(answer).toEqual({
+      state: "closed",
+      sentence: `Closed #${o.pr.number} on GitHub; you can reopen it there.`,
+      number: o.pr.number,
+    });
+    expect((await o.host.getPullRequest(o.repo, o.pr.number)).state).toBe("closed");
+    expect(o.settled).toEqual([o.pr.number]);
+    expect((await o.prs().view(o.project)).waiting).toEqual([]);
+  });
+
+  for (const [code, sentence] of [
+    [
+      "provider_auth",
+      "GitHub refused the saved token, so #1 was not closed: save a new one in Settings.",
+    ],
+    [
+      "tool_not_allowed",
+      "The saved GitHub token cannot close #1: give it write access to the repository, or close #1 on GitHub.",
+    ],
+    ["provider_error", "GitHub did not answer, so #1 was not closed. Try again later."],
+  ] as const)
+    it(`L4-github-130: a close GitHub refuses (${code}) is said in one sentence; nothing is settled and the row stays`, async () => {
+      const o = await cancelledWithOpenPr();
+      o.host.updatePullRequest = async () => {
+        throw new ForerunnerError(code, "the host's own words, never shown");
+      };
+      const prs = o.prs();
+      expect(await prs.close(o.project, o.pr.number)).toEqual({
+        state: "refused",
+        sentence,
+        number: o.pr.number,
+      });
+      expect(sentence.length).toBeLessThanOrEqual(140);
+      expect(o.settled).toEqual([]);
+      expect((await o.host.getPullRequest(o.repo, o.pr.number)).state).toBe("open");
+      expect((await prs.view(o.project)).waiting.map((r) => r.kind)).toEqual(["cancelled"]);
+    });
+
+  it("L4-github-130: only a cancelled task's row is closed: a done task's pull request and one not open are refused, and nothing is written", async () => {
+    const o = await cancelledWithOpenPr();
+    const doneTask = await o.w.addTask("Write the FAQ");
+    const donePr = await o.host.createPullRequest(o.repo, {
+      title: "FAQ",
+      body: "",
+      head: "fr/faq",
+      base: "main",
+    });
+    await o.w.store.task.patch(doneTask.id, {
+      branch: "fr/faq",
+      pr_url: donePr.htmlUrl,
+      status: "done",
+    } as never);
+    let writes = 0;
+    const update = o.host.updatePullRequest.bind(o.host);
+    o.host.updatePullRequest = async (...a) => {
+      writes++;
+      return update(...a);
+    };
+    const prs = o.prs();
+    expect(await prs.close(o.project, donePr.number)).toMatchObject({
+      state: "refused",
+      sentence: `#${donePr.number} is not a cancelled task's pull request, so Forerunner does not close it: close it on GitHub if you do not want it.`,
+    });
+    expect(await prs.close(o.project, 99)).toMatchObject({
+      state: "refused",
+      sentence: "#99 is not open on GitHub any more, so there is nothing to close.",
+    });
+    expect(writes).toBe(0);
+    expect((await o.host.getPullRequest(o.repo, donePr.number)).state).toBe("open");
   });
 });

@@ -1075,8 +1075,11 @@ describe("l3-merge, run L3", () => {
     const files = await screen.findByTestId("your-files");
     const block = await within(files).findByTestId("prs-cancelled");
     expect(block).toHaveTextContent("Cancelled, still open on GitHub");
+    // l4-github-carried (L4-github-124 (b), L4-github-130): one pull request reads in the
+    // singular, and the row's Close closes it (before: "Their tasks were cancelled and
+    // Forerunner leaves them as they are: close them on GitHub, ...").
     expect(block).toHaveTextContent(
-      "Their tasks were cancelled and Forerunner leaves them as they are: close them on GitHub, or reopen the task in Tasks.",
+      "Its task was cancelled: close its pull request, or reopen the task in Tasks.",
     );
     const item = within(block).getByTestId("pr-cancelled");
     expect(item).toHaveTextContent('"Write the About page in about.html" · pull request #43');
@@ -1160,5 +1163,97 @@ describe("l4-github-merge, run L4 (fixup)", () => {
         "Accepted · pull request closed",
       );
     });
+  });
+});
+
+describe("l4-github-carried, run L4", () => {
+  const cancelledRow = (n: number, title: string) => ({
+    kind: "cancelled" as const,
+    taskId: `task_c${n}`,
+    title,
+    number: n,
+    url: `https://example.test/org/atlas/pull/${n}`,
+    branch: `fr/${n}`,
+    review: null,
+    merge: {
+      state: "blocked" as const,
+      canMerge: false,
+      sentence: `Its task was cancelled; #${n} stays open on GitHub: close it there, or reopen the task.`,
+      first: [],
+    },
+  });
+
+  it("L4-github-130 (the owner's decision of 2026-11-18): Close beside Open on the 'Cancelled, still open on GitHub' row says what it does; one press closes that pull request (one close sent), the row goes and the answer says it can be reopened on GitHub", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [cancelledRow(43, "Write the About page in about.html")],
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    const block = await within(files).findByTestId("prs-cancelled");
+    // L4-github-124 (b): one pull request, one sentence in the singular.
+    expect(within(block).getByTestId("prs-cancelled-explain")).toHaveTextContent(
+      "Its task was cancelled: close its pull request, or reopen the task in Tasks.",
+    );
+    const item = within(block).getByTestId("pr-cancelled");
+    const close = within(item).getByTestId("pr-cancelled-close");
+    expect(close).toHaveTextContent("Close");
+    expect(close).toHaveAttribute(
+      "title",
+      "Closes this pull request on GitHub; you can reopen it there.",
+    );
+    // Beside Open, which still links the pull request on GitHub.
+    expect(within(item).getByTestId("pr-cancelled-link")).toHaveAttribute(
+      "href",
+      "https://example.test/org/atlas/pull/43",
+    );
+    await user.click(close);
+    expect(await within(files).findByTestId("pr-close-answer")).toHaveTextContent(
+      "Closed #43 on GitHub; you can reopen it there.",
+    );
+    await waitFor(() => expect(within(files).queryByTestId("prs-cancelled")).toBeNull());
+    expect(postedCalls(harness, "/projects/proj_atlas/pull-requests/43/close")).toHaveLength(1);
+    expect(harness.daemon.state.pullRequestCloses).toEqual([
+      { projectId: "proj_atlas", number: 43 },
+    ]);
+    expect(postedCalls(harness, "/projects/proj_atlas/pull-requests/43/merge")).toHaveLength(0);
+  });
+
+  it("L4-github-130: a Close GitHub does not answer says so in one sentence on the row, and the row stays with its Close", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [cancelledRow(43, "Write the About page in about.html")],
+      error: null,
+    };
+    harness.daemon.state.pullRequestCloseFails["proj_atlas#43"] = "unreachable";
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    const item = await within(files).findByTestId("pr-cancelled");
+    await user.click(within(item).getByTestId("pr-cancelled-close"));
+    expect(await within(files).findByTestId("pr-close-error")).toHaveTextContent(
+      "GitHub did not answer, so #43 was not closed. Try again later.",
+    );
+    expect(within(files).queryByTestId("pr-close-answer")).toBeNull();
+    expect(within(files).getByTestId("pr-cancelled")).toBeInTheDocument();
+    expect(within(files).getByTestId("pr-cancelled-close")).toBeEnabled();
+    expect(harness.daemon.state.pullRequestCloses).toEqual([]);
+  });
+
+  it("L4-github-124 (b): two cancelled pull requests read in the plural, each with its own Close", async () => {
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [cancelledRow(43, "Write the About page"), cancelledRow(44, "Write the FAQ")],
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    const block = await within(files).findByTestId("prs-cancelled");
+    expect(within(block).getByTestId("prs-cancelled-explain")).toHaveTextContent(
+      "Their tasks were cancelled: close each pull request, or reopen its task in Tasks.",
+    );
+    expect(within(block).getAllByTestId("pr-cancelled-close")).toHaveLength(2);
   });
 });
