@@ -476,7 +476,8 @@ describe("daemon client", () => {
       locator: "/tmp/site.zip",
     });
     expect(imported).toMatchObject({ source: "zip", projectId: "proj_atlas", entryCount: 1 });
-    expect((await client.docs("proj_atlas")).length).toBe(8);
+    // W8-guide-1, -2: the guide's two files lead the set, the app's status comes last.
+    expect((await client.docs("proj_atlas")).length).toBe(10);
     expect((await client.doc("proj_atlas", "README.md")).content).toContain("# Atlas");
     expect((await client.performance({ projectId: "proj_atlas" })).projectId).toBe("proj_atlas");
     expect((await client.performance({ days: 30 })).days).toBe(30);

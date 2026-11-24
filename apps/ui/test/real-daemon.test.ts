@@ -6983,8 +6983,9 @@ describe("the UI client against the real daemon: what the bench walks (phase E, 
     });
     expect(decisions.find((d) => d.kind === "record")).toMatchObject({
       question: "A plain static page, no build step",
-      chosen: "docs/decisions/0001-plain-static-page.md",
-      path: "docs/decisions/0001-plain-static-page.md",
+      // W8-guide-3 (ADR 0121): the plan's decision record is named by the day it was made.
+      chosen: "docs/decisions/2026-03-05-plain-static-page.md",
+      path: "docs/decisions/2026-03-05-plain-static-page.md",
       decidedByName: null,
     });
   }, 120_000);
@@ -24756,7 +24757,8 @@ describe("l4-money-pause, run L4", () => {
       const lines = (await a.client.sessionEvents(sessionId)).map((e) => e.text ?? "");
       const review = lines.find((l) => l.startsWith("Session review:")) ?? "";
       expect(review, lines.join(" | ")).toBe(
-        "Session review: planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%, with one task tried twice (grade 85, 1 finding).",
+        // W8-guide-3: the brief's added decision line costs a few input tokens (1426% before).
+        "Session review: planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1427%, with one task tried twice (grade 85, 1 finding).",
       );
       // The project's reviews: the session check is a review with no task, and its verdict is
       // the UI's to word ("noted"); the daemon's own summary never says "sent back".
@@ -24770,7 +24772,7 @@ describe("l4-money-pause, run L4", () => {
       // the fake: the action is the agent's, and the tab shows no "To fix" line for it.
       expect(check?.findings.map((f) => [f.description, f.requiredAction])).toEqual([
         [
-          "Planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1426%, with one task tried twice",
+          "Planned tasks cost CHF 0.37, over their estimate of CHF 0.02 by 1427%, with one task tried twice",
           "Record the overrun against the estimate so the next plan is calibrated; split the work that overran",
         ],
       ]);
@@ -26342,7 +26344,8 @@ describe("l4-github-link, run L4", () => {
       const first = await planCard(client, project.id);
       expect(first.card?.title).toMatch(/^Plan for "Quote page": \d+ tasks?$/);
       expect(first.shown.planOnly).toBe(false);
-      expect(first.shown.docs[0]?.path).toBe("docs/decisions/0001-plain-static-page.md");
+      // W8-guide-3: the reply's numbered record is shown under the day's name.
+      expect(first.shown.docs[0]?.path).toBe("docs/decisions/2026-03-05-plain-static-page.md");
       // What the card shows the person under the tasks (data-testid intake-decision-line).
       expect(intakeDecisionLine(first.shown)).toBe(decided);
 
