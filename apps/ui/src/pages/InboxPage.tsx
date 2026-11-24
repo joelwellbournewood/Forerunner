@@ -792,7 +792,18 @@ export function InboxPage({ runnerKeys, unlockWindows, now = Date.now }: InboxPa
             data-read={m.readAt ? "true" : "false"}
           >
             <MessageBody body={m.body} />
-            {m.type === "warning" ? <Badge tone="warn">warning</Badge> : null}
+            {m.type === "warning" ? (
+              // l4-chat-final (L4h-left-4; design section 5 rule 6): the tone by colour, named in
+              // words for a screen reader, as the session log does (W15B-15); never the stored
+              // type "warning" as a word under the Update.
+              <span
+                role="img"
+                aria-label="Worth a look"
+                title="Worth a look"
+                data-testid="message-tone"
+                className="inline-block h-2 w-2 shrink-0 self-center rounded-full bg-amber-500"
+              />
+            ) : null}
             {m.requiresAck ? <Badge tone="warn">needs acknowledgement</Badge> : null}
             <span className="ml-auto text-xs text-neutral-500">
               {m.fromAgentName} · {relativeTime(m.createdAt)}
