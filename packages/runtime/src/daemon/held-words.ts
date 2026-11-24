@@ -100,7 +100,7 @@ export function heldBlocker(
   if (h.why === "limit")
     return {
       kind: "nothing_runnable",
-      sentence: `Nothing can run: ${subject} ${h.clause}.`,
+      sentence: `Nothing can run: ${subject} ${waiter ? afterName(h.clause) : h.clause}.`,
       action: { kind: "link", label: "Open Settings", to: h.to },
       holds: "limit",
     };
@@ -117,6 +117,15 @@ export function heldBlocker(
     action: { kind: "link", label: "Open it", to: "/inbox" },
     holds: "answer",
   };
+}
+
+/**
+ * The limit's words after a comma that follows the task's name: "paused at ..." as they are,
+ * any other ("is done; its review waits for room in the project's budget", the card of a task
+ * whose review waits) with "which" (fixup-l4-starts-carried's bench walk: '"A", is done; ...').
+ */
+function afterName(limit: string): string {
+  return /^paused\b/.test(limit) ? limit : `which ${limit}`;
 }
 
 /** "which you paused", or "which is paused" for a pause no card asks about and not the person's. */
@@ -138,7 +147,8 @@ export function heldDependency(h: HeldTask): {
   advice: string;
 } {
   const rewire = "or change what it waits for on the Tasks tab.";
-  if (h.why === "limit") return { why: "limit", state: h.limit, advice: `${h.raise}, ${rewire}` };
+  if (h.why === "limit")
+    return { why: "limit", state: afterName(h.limit), advice: `${h.raise}, ${rewire}` };
   if (h.why === "paused")
     return { why: "paused", state: pausedState(h), advice: `Resume "${h.title}", ${rewire}` };
   return {

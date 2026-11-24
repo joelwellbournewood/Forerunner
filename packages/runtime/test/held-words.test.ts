@@ -96,6 +96,26 @@ describe("l4-starts-carried, run L4", () => {
       state: "which needs your answer",
       advice: "Answer it in the Inbox, or change what it waits for on the Tasks tab.",
     });
+    // The bench's walk: a task whose work is done and whose review waits for room in the
+    // project's budget ('"A" is done; its review waits ...') reads after a comma with "which".
+    const review = outerLimitHold(
+      card({
+        source: "project",
+        title: '"Write the club motto" is done; its review waits for room in the project\'s budget',
+      }),
+      resetDay,
+    );
+    if (!review) throw new Error("no hold");
+    const held = { title: "Write the club motto", why: "limit" as const, ...review };
+    expect(heldDependency(held).state).toBe(
+      "which is done; its review waits for room in the project's budget",
+    );
+    expect(heldBlocker(held, "Write the club rules", "/t")?.sentence).toBe(
+      'Nothing can run: "Write the club rules" waits on "Write the club motto", which is done; its review waits for room in the project\'s budget; raise it in Settings.',
+    );
+    expect(heldBlocker(held, null, "/t")?.sentence).toBe(
+      'Nothing can run: "Write the club motto" is done; its review waits for room in the project\'s budget; raise it in Settings.',
+    );
     // The blocker of a task that waits on a pause no card asks about and not the person's.
     expect(
       heldBlocker({ title: "Draw the flag", why: "paused", byYou: false }, "Wave the flag", "/t"),
