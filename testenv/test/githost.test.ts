@@ -1827,4 +1827,20 @@ describe("w8-issue-host, wave 8: issues off, ETags, associations, the permission
     expect(c.json.user).toMatchObject({ login: "status-bot[bot]", type: "Bot" });
     expect(c.json.author_association).toBe("NONE");
   });
+
+  it("fixup-w8-issue-host: a member of an organisation whose base permission is read still creates a repository in it, as GitHub's default member privilege allows; a stranger cannot", async () => {
+    // The base permission is what members may do in the organisation's repositories; creating
+    // one is a separate member privilege, on by default.
+    const made = await api(host.baseUrl, "POST", "/orgs/team/repos", {
+      token: tok.dave,
+      body: { name: "daves-notes", private: true },
+    });
+    expect(made.status).toBe(201);
+    expect(made.json.full_name).toBe("team/daves-notes");
+    const stranger = await api(host.baseUrl, "POST", "/orgs/team/repos", {
+      token: tok.erin,
+      body: { name: "erins-notes", private: true },
+    });
+    expect(stranger.status).toBe(404);
+  });
 });

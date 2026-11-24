@@ -1078,9 +1078,11 @@ The port (`src/githost/types.ts`), on `GitHubHost`, `MemoryGitHost` and the stan
   GitHub, and both stand-ins, let anyone with write access edit any comment; editing only its own
   is the caller's rule.
 - `pinIssue(repo, number)` answers `pinned` (now or already), `limit` (three pinned; nothing is
-  unpinned) or `forbidden`. GitHub pins only through GraphQL: the adapter reads
-  `StatusPinnedIssues` first, then sends `StatusPinIssue` on the issue's node id
-  (`src/githost/github-graphql.ts`), to `graphqlUrlFor(baseUrl)`.
+  unpinned) or `forbidden` (a 401 or 403 on any of its reads or on the pin, the issue's own read
+  included). GitHub pins only through GraphQL: the adapter reads `StatusPinnedIssues` first, then
+  sends `StatusPinIssue` on the issue's node id (`src/githost/github-graphql.ts`), to
+  `graphqlUrlFor(baseUrl)`. A pin refused as UNPROCESSABLE (the three pins taken meanwhile) reads
+  the pins again: `limit` when three are pinned, `pinned` when this one is, else the refusal.
 - `getRepoPermission(repo, login)` answers `admin`, `maintain`, `write`, `triage`, `read` or
   `none` from GitHub's collaborator permission read (`role_name`; a custom role by its base
   `permission`). It is the one source of write access (D-W8-37; `hasWriteAccess(role)`: write,

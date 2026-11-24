@@ -805,6 +805,70 @@ describe("w8-issue-host, wave 8: the adapter's errors, ETag cache and token (W8-
     ]);
   });
 
+  it("fixup-w8-issue-host: pinning answers forbidden when the issue's own read is refused, and reads the pins again when GitHub refuses the pin as unprocessable", async () => {
+    const issueJson = {
+      id: 70,
+      node_id: "I_7",
+      number: 7,
+      title: "Forerunner status",
+      body: "",
+      state: "open",
+      locked: false,
+      user: { login: "ada", type: "User" },
+      author_association: "OWNER",
+      labels: [],
+      html_url: "h",
+      created_at: "t",
+      updated_at: "t",
+    };
+    for (const status of [401, 403]) {
+      const { fetchImpl, seen } = stubFetch(() => json(status, { message: "no" }));
+      expect(await host(fetchImpl).pinIssue(repo, 7)).toBe("forbidden");
+      // Refused at the issue's read: nothing was sent to GraphQL.
+      expect(seen.map((s) => s.method)).toEqual(["GET"]);
+    }
+    // The three pins were taken between the read and the pin (a race with the other Forerunner).
+    const race = (after: number[]) => {
+      let reads = 0;
+      const ops: string[] = [];
+      const { fetchImpl } = stubFetch((method, url, init) => {
+        if (method === "GET" && url === `${base}/repos/o/r/issues/7`)
+          return json(200, issueJson, { etag: 'W/"i7"' });
+        if (method === "POST" && url === graphqlUrlFor(base)) {
+          const op = String(JSON.parse(String(init.body)).operationName);
+          ops.push(op);
+          if (op === "StatusPinnedIssues") {
+            const numbers = reads++ === 0 ? [1, 2] : after;
+            return json(200, {
+              data: {
+                repository: {
+                  pinnedIssues: {
+                    totalCount: numbers.length,
+                    nodes: numbers.map((n) => ({ issue: { number: n } })),
+                  },
+                },
+              },
+            });
+          }
+          return json(200, {
+            data: null,
+            errors: [{ type: "UNPROCESSABLE", message: "Pinned issues limit reached" }],
+          });
+        }
+        return json(404, {});
+      });
+      return { gh: host(fetchImpl), ops };
+    };
+    const full = race([1, 2, 3]);
+    expect(await full.gh.pinIssue(repo, 7)).toBe("limit");
+    expect(full.ops).toEqual(["StatusPinnedIssues", "StatusPinIssue", "StatusPinnedIssues"]);
+    const ours = race([1, 2, 7]);
+    expect(await ours.gh.pinIssue(repo, 7)).toBe("pinned");
+    // Unprocessable for another reason: the refusal is the caller's to say.
+    const other = race([1, 2]);
+    expect((await refusal(other.gh.pinIssue(repo, 7))).code).toBe("validation");
+  });
+
   it("a permission read that GitHub refuses counts as none; one GitHub does not answer throws", async () => {
     for (const status of [401, 403, 404]) {
       const { fetchImpl } = stubFetch(() => json(status, { message: "Must have push access" }));

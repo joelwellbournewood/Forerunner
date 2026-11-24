@@ -193,7 +193,10 @@ export function canCreateRepo(
 ): AccessDecision {
   const t = subject.token;
   if (!t) return "unauthenticated";
-  if (!subject.affiliations.has(owner.toLowerCase())) return "not_found";
+  // Any member may create a repository in the organisation (GitHub's default member privilege),
+  // whatever its base permission for the existing ones (fixup-w8-issue-host).
+  const o = owner.toLowerCase();
+  if (!subject.affiliations.has(o) && !subject.readOrgs?.has(o)) return "not_found";
   if (t.kind === "classic") {
     if (t.scopes.includes("repo")) return "ok";
     if (!isPrivate && t.scopes.includes("public_repo")) return "ok";

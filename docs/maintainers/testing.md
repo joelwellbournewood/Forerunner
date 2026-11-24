@@ -3473,7 +3473,8 @@ The fake git host now answers what the status issue needs, as GitHub does (the p
   (`admin`, `maintain` and `write` push; `triage` and `read` read) and `none`;
   `createOrg({ basePermission })` / `setOrgBasePermission(org, "none" | "read" | "write")` sets
   what members may do (default `write`, as the stand-in did before). A read member sees and reads
-  the private repositories and is refused a push.
+  the private repositories and is refused a push. Any member may still create a repository in the
+  organisation, as GitHub's default member privilege allows, whatever the base permission.
 - **Opening issues and comments** follows GitHub: anyone who may read the repository may (the read
   role, a read member, anyone on a public repository), with a token that may write issues; the
   author edits their own comment, anyone with write access any comment (the tamper tests need

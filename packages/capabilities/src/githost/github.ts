@@ -941,10 +941,10 @@ export class GitHubHost implements GitHost {
   /**
    * W8-host-1 (pin): GitHub pins only through GraphQL, on the issue's node id, at most three
    * per repository. The pinned issues are read first: one already pinned is `pinned` with no
-   * write, three taken is `limit` (nothing is unpinned to make room). A refusal is `forbidden`.
+   * write, three taken is `limit` (nothing is unpinned to make room). A refusal is `forbidden`,
+   * the issue's own read included (fixup-w8-issue-host).
    */
   async pinIssue(repo: RepoRef, number: number): Promise<PinResult> {
-    const issue = await this.getIssue(repo, number);
     const readPinned = async () => {
       const r = await this.graphql<{
         repository: {
@@ -958,6 +958,7 @@ export class GitHubHost implements GitHost {
       };
     };
     try {
+      const issue = await this.getIssue(repo, number);
       const before = await readPinned();
       if (before.numbers.includes(number)) return "pinned";
       if (before.count >= PINNED_ISSUES_MAX) return "limit";
