@@ -6,16 +6,16 @@ import type { CommandContext, CommandDef } from "../types.ts";
 import { quote } from "./shared.ts";
 
 /**
- * request.answer (spec J human requests): answer an open request by id or id prefix. The
- * risk is the request's own risk, so a high-risk approval still needs a paired device.
- */
-/**
  * fixup-l4-selftasks-carried: what the model is told of `note` (model-facing: the exact text is
  * asserted, packages/commands/test/selftasks-carried.test.ts).
  */
 export const ANSWER_NOTE_DESCRIPTION =
   "Only with an option that takes a note (Try again, Send it back): words the person gave for the next attempt, quoted as they said them; leave it out when they gave none.";
 
+/**
+ * request.answer (spec J human requests): answer an open request by id or id prefix. The
+ * risk is the request's own risk, so a high-risk approval still needs a paired device.
+ */
 const params = z.object({
   /** Request id or a prefix of at least four characters. */
   request: z.string().min(4),
