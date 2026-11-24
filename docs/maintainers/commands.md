@@ -1139,3 +1139,14 @@ l4-money-pause, run L4 (2026-11-22, L4-money-109): `SETTING_SPECS.session_reserv
   read back in chat compares the card's `oldValue` at the Yes (`changedSince`), with and
   without a restart (the stored card is `shown`): 'The monthly cap is CHF 120.00 now, not
   CHF 150.00 as I read it back. ...'. Tests: packages/commands/test/selftasks-carried.test.ts.
+
+## l4-starts-carried (run L4i, 2026-11-24)
+
+- `CommandPorts.previewWork` takes `taskIds` (the moved tasks, read with their estimate by the
+  running session's `preview`); `task.transition` to ready reads back the prepared line
+  (`withPreview`), as `task.resume` and `task.reopen` do.
+- `CommandPorts.startKeptWhen`, `keepStart` and `cancelKeptStart` (L4a-left-5): `session.start`
+  reads back 'Start a session on Map notes at 15:40 (up to CHF 5.00)?' while the work's Claude
+  credential rests and nothing is kept; its run keeps the start for the reset (the outcome's
+  `after.kept_start`, `after.project_id`, the sentence "A session of Map notes starts at
+  15:40."), and its undo drops it. A phone's or the cloud runner's start is unchanged.

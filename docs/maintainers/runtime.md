@@ -10089,3 +10089,48 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 - **A task check's left-out words (L4b-left-3).** `changeWhat` (task-check.ts) says
   'adding "X"', 'splitting "X"', 'dropping "X"', 'the change to "X"', 'the order of "X"', and
   "a change" for a kind it does not know, in Details' "Left out: ..." and chat's `fixLeftOut`.
+
+## l4-starts-carried (run L4i, 2026-11-24): starts that say what is true now
+
+- **What holds a paused task, at the Start check (L4g-left-1).** `daemon/held-words.ts` (a leaf
+  the UI's fake daemon imports) words a `needs_human` task: `HeldTask` is `answer` (an open card
+  asks: '"X" needs your answer.' [Open it]), `limit` (a budget card at this month's cap, the
+  project's budget or the subscription's share with no Continue and no question:
+  `outerLimitHold(card, resetDay)` takes the card title's limit words and adds what changes it,
+  '"X" paused at the project's budget of CHF 0.06; raise it in Settings.' [Open Settings],
+  '...; raise it in Settings, or it resets on 1 December', '...; it resets on 1 December, or
+  raise the share in Settings') or `paused` (the person's own pause: '"B" waits on "A", which you
+  paused.' [Open Tasks]). `heldBlocker` builds the sentence; `start-blocked.ts` `heldFacts(store,
+  projectId)` reads it once for GET /projects/:id/start-check, POST /sessions and chat's
+  `session.start` (compose's `startBlocked` port had no such fact and said "no task is ready").
+  `StartBlockedFacts.needsYou` takes a `HeldTask` (a bare title still means an answer) and
+  `held` (by task id) for a task that waits on one. `request-words.ts` exports `resetDay`.
+- **Chat's read-back of a move to ready (L4g-left-2).** `AdmitHandle.preview(taskIds)`
+  (runner.ts): what `admit` would answer, read-only (`stopping`, `joined` for its own,
+  `too_large` above the whole work budget, else `no_room`). `previewWork` takes `taskIds` and
+  says that outcome's line; `task.transition`'s ask to ready now reads it back as Resume and
+  Reopen do (before: no line at all).
+- **Money words in the status note and the budget-stop notification (L4g-left-3).** runner.ts
+  `endedNote` and `producers.budgetStop` use `moneyWords` ("Spent less than CHF 0.01."); the
+  notification's strip of the result's money line also takes "Less than CHF 0.01.".
+- **The project's own start waits (L4g-left-4).** `ProjectCard.startWait` is `goes_on` (a
+  continuation: the run indicator carries it with Cancel) or `kept` (a Start kept for the reset:
+  the project's line carries it with Cancel), from `startsWaitOf`; the header then offers no
+  Start session (POST /sessions would answer 409).
+- **A refused credential refuses a person's start (L4d-left-2).** `RuntimeApp.refusedStart
+  (projectId)`: the Start dialog's sentence while the work's credential wait is a refusal (not
+  startable, its link the setup assistant), else null. POST /sessions asks it first (before:
+  only while a session was kept), and the remote watcher's `start` (the phone) fails its row with
+  it. ONE_OFF_UNDER_WAIT is unchanged. Hands-off starts and the reset's own continuation are not
+  person starts and are not refused here.
+- **Chat's start during a rest is kept for the reset (L4a-left-5).** compose's `startKeptWhen
+  (projectId)` ("at 15:40", "on 1 Dec", from the wait's `startLabel`, null while a session runs,
+  something is kept, Stop all is on or nothing would run) feeds the commands' `startKeptWhen`,
+  `keepStart` (`continuations.keepStart`) and `cancelKeptStart` ports. The project chat's hold
+  reply ends "...; a Start now runs at 15:40." (`chatHoldReply`'s `startsWhen`,
+  `ChatCredentialHold.startsWhen`, `credentialHold({ projectId })`); `HOLD_REPLY_RE` matches it.
+  loop/commands.ts lets a kept start's Undo through (`after.kept_start`).
+- Tests: `apps/ui/test/real-daemon.test.ts` "l4-starts-carried, run L4" (L4g-left-1, -2,
+  L4d-left-2, L4a-left-5), the S-10 case's `startWait` lines; `packages/runtime/test/
+  held-words.test.ts`; loop-docs, notifications-channels and conversation-memory
+  "l4-starts-carried, run L4".

@@ -1225,8 +1225,10 @@ Every time on the screens is in your time zone (the one in Settings), the same a
 sentences ("Waits until 11:40"), whatever zone this computer is set to.
 
 If Anthropic refused your key or sign-in, the Start dialog says "Nothing can run until you save a
-new API key in Settings." and offers no Start; while a session of yours waits to go on, Continue
-and the phone say the same, and the waiting session says it goes on once you save a new one.
+new API key in Settings." and offers no Start; every Start says the same and starts nothing:
+Continue, the phone, chat's "start a session" and a Start sent to Forerunner's service, whether
+or not a session of yours waits to go on (a waiting session says it goes on once you save a new
+one).
 
 Under "Subscription first, then ask me", while your subscription is out and your API key could
 run, the project's line says "Ready: 2 tasks; your subscription is at its limit until 02:51;
@@ -1318,6 +1320,14 @@ runs at your next Start), and the plan is drafted and waits in the Inbox for you
 drafted at that time. Home and the project page say what a project waits for ("Waiting for a
 new API key: 2 tasks"), and so does the Start dialog ("Nothing can run until you save a new API
 key in Settings.", with **Save a new key**) instead of what a session would run.
+When a task is paused at the project's budget, this month's cap or your subscription's share
+and nothing else can run, the Start dialog says that limit and what changes it ("Nothing can run:
+"Write the motto" paused at the project's budget of CHF 0.06; raise it in Settings." with **Open
+Settings**), never "needs your answer"; a task that waits on one you paused says "... which you
+paused." with **Open Tasks**. While a session runs, chat's read-back of making a task ready says
+what that session does with it ("It is larger than this session's budget, so it runs at your
+next Start." for one above its whole budget). The status note in the project's folder says the
+money as the result does ("Spent less than CHF 0.01.").
 Opening the Start dialog changes nothing: when your credential rests until a reset and no
 session has met that yet, the dialog says "Nothing can run until 15:40 (your API key's limit).
 Press Start and the work starts then." and the button reads **Start at 15:40**; press it (or
@@ -1327,8 +1337,12 @@ limit): 1 task", and at 15:40 the session starts once, as yours (your quiet hour
 it: you chose that time), also after Forerunner was closed and opened again. Then the dialog
 says "Nothing can run until 15:40 (your API key's limit); then your session goes on." with
 **Cancel the wait**, and a second Start says "A session of Quote page starts at 15:40.". A start
-you ask for in chat during such a wait runs a session that meets the wait instead, and your
-session then goes on at the reset. Only looking starts nothing. The
+you ask for in chat during such a wait is kept the same way: chat asks "Start a session on Quote
+page at 15:40 (up to CHF 5.00)?", your yes keeps it ("A session of Quote page starts at
+15:40.", no session now) and Undo drops it; a question you ask chat meanwhile ends "...; a Start
+now runs at 15:40.". While your own session waits to go on, or a Start is kept, the project's
+header offers no Start session (Cancel on the wait drops it, and Start comes back). Only
+looking starts nothing. The
 project's line says it too: "Ready: 1 task; nothing runs until 15:40 (your API key's limit)"
 with **Continue**, and where New task, the plan card or Settings say where a specialist runs,
 they say "Waits until 15:40 (your API key's limit). Press Start and the work starts then."

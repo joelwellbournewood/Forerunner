@@ -3185,3 +3185,15 @@ L4 (fixup)").
   `heardChat(reply, projectId, closed)` emits for a closed card; `/requests/:id/answer` closes a
   chat read-back and emits; change rows carry `byYouAndAgent`; `GET /settings/models` names the
   file.
+
+## l4-starts-carried (run L4i, 2026-11-24)
+
+- The project header offers no Start session while `ProjectCard.startWait` is set (the project's
+  own session waits to go on, or a Start is kept for the reset), as it offers none while
+  `startsAfter` is set (L4g-left-4). The run indicator's bar, or the project's line for a kept
+  Start, carries the wait's Cancel.
+- Fake daemon (`apps/ui/test/fake-daemon.ts`), in step with the daemon: `fakeHeld` and
+  `heldBlocker` (the Start check's limit and own-pause words, L4g-left-1), `startWait` on the
+  card and the 409 for a start while the project's own wait stands (L4g-left-4), the 400 for a
+  start under a refused credential (L4d-left-2), and chat's "run it now" kept for the reset
+  (`pendingConfirmation.keptAt`, L4a-left-5).
