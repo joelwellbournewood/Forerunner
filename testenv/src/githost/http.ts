@@ -25,6 +25,8 @@ export type HostEnv = {
   Variables: {
     auth: AuthContext;
     rate: RateLimitState | null;
+    /** Set by POST /graphql for the request log (w8-issue-host). */
+    graphql: { operation: string; kind: "query" | "mutation" } | null;
   };
 };
 

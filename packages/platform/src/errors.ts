@@ -32,6 +32,11 @@ export type ErrorCode =
    * until its reset (ADR 0100). Distinct from `provider_rate_limit`, a short-lived throttle.
    */
   | "provider_usage_limit"
+  /**
+   * The repository has issues turned off (GitHub answers 410 "Issues are disabled for this
+   * repo"; w8-issue-host): the status issue cannot be written there, so it stays in the app.
+   */
+  | "issues_disabled"
   | "not_supported"
   | "unavailable"
   | "injection_suspected"

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   type Clock,
   describeNetworkError,
@@ -16,12 +17,16 @@ import {
   GQL_FIELDS,
   GQL_ITEMS,
   GQL_OWNER_PROJECTS,
+  GQL_PIN_ISSUE,
+  GQL_PINNED_ISSUES,
   GQL_UNARCHIVE_ITEM,
   GQL_UPDATE_DRAFT,
   GQL_UPDATE_FIELD_OPTIONS,
   graphqlUrlFor,
 } from "./github-graphql.ts";
 import {
+  accountTypeOf,
+  associationOf,
   type BranchRules,
   type CheckRunInfo,
   type CommentInfo,
@@ -29,9 +34,13 @@ import {
   type FileContent,
   FORERUNNER_TASK_ID_FIELD,
   type GitHost,
+  type IssueCommentInfo,
+  type IssueCommentsRead,
   type IssueInfo,
   type MergeMethod,
   markAgentText,
+  PINNED_ISSUES_MAX,
+  type PinResult,
   type ProjectFieldInfo,
   type ProjectFieldSpec,
   type ProjectInfo,
@@ -42,10 +51,25 @@ import {
   type ReleaseInfo,
   type RepoInfo,
   type RepoRef,
+  type RepoRole,
   type ReviewCommentInfo,
   type ReviewInfo,
+  roleOf,
   type UpsertItemResult,
 } from "./types.ts";
+
+/**
+ * How many conditional reads the adapter remembers (w8-issue-host, W8-host-2): one entry per
+ * URL and token, the least recently used dropped first. In memory only: a restart starts empty.
+ */
+export const ETAG_CACHE_MAX = 500;
+
+/** One remembered answer: its ETag, its body and its `Link` header (a 304 carries neither). */
+interface EtagEntry {
+  etag: string;
+  body: unknown;
+  link: string | null;
+}
 
 /**
  * GitHub REST adapter. Works against api.github.com, GitHub Enterprise and the fake git host in
@@ -96,6 +120,39 @@ export function nextPageUrl(link: string | null | undefined): string | null {
   return null;
 }
 
+/**
+ * Whether a list page holds as many items as its URL asked for (`per_page`, GitHub's default
+ * 30): a full page may have items behind it (fixup-w8-issue-host).
+ */
+function fullPage(url: string, body: unknown): boolean {
+  if (!Array.isArray(body)) return false;
+  let perPage = 30;
+  try {
+    perPage = Number(new URL(url).searchParams.get("per_page") ?? 30) || 30;
+  } catch {
+    return false;
+  }
+  return body.length >= perPage;
+}
+
+/**
+ * The URL of the page after `url` on a numbered list (`page`, 1 when absent), or null under a
+ * cursor link (`after`, `before`, `cursor`), which has no number to count on from.
+ */
+function numberedPageAfter(url: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (["after", "before", "cursor"].some((p) => u.searchParams.has(p))) return null;
+  const page = Number(u.searchParams.get("page") ?? 1);
+  if (!Number.isInteger(page) || page < 1) return null;
+  u.searchParams.set("page", String(page + 1));
+  return u.toString();
+}
+
 /** `scheme://host[:port]` of a URL, or null when the text is not one. */
 export function originOf(url: string): string | null {
   try {
@@ -143,6 +200,12 @@ export class GitHubHost implements GitHost {
   private readonly itemIndex = new Map<string, Map<string, ItemRef>>();
   /** projectId -> items without a Forerunner task id (issues humans added); never written to. */
   private readonly unindexed = new Map<string, ItemRef[]>();
+  /**
+   * The conditional reads' copies (w8-issue-host, W8-host-2), keyed by a hash of the token and
+   * the URL: a 304 is answered from here (GitHub does not count it against the rate limit), and
+   * a replaced token never reads another token's copy. Never on disk.
+   */
+  private readonly etags = new Map<string, EtagEntry>();
 
   constructor(opts: GitHubOptions) {
     if (!opts.token) throw new ForerunnerError("provider_auth", "GitHub adapter needs a token");
@@ -186,6 +249,11 @@ export class GitHubHost implements GitHost {
        * would follow whatever the host answers (ADR 0056, amendment of 2026-10-25).
        */
       otherOrigin?: boolean;
+      /**
+       * A conditional read (w8-issue-host): sent as `If-None-Match`; GitHub's 304 then returns
+       * undefined after `onResponse` saw it, and the caller answers from its copy.
+       */
+      ifNoneMatch?: string;
     } = {},
   ): Promise<T> {
     const absolute = path.startsWith("http");
@@ -196,6 +264,7 @@ export class GitHubHost implements GitHost {
         method,
         headers: {
           ...(await this.currentHeaders()),
+          ...(opts.ifNoneMatch ? { "If-None-Match": opts.ifNoneMatch } : {}),
           ...(opts.raw
             ? { "Content-Type": opts.contentType ?? "application/octet-stream" }
             : body !== undefined
@@ -209,6 +278,10 @@ export class GitHubHost implements GitHost {
             : undefined,
       });
       if (res.status === 404 && opts.allow404) return null as T;
+      if (res.status === 304 && opts.ifNoneMatch) {
+        opts.onResponse?.(res);
+        return undefined as T;
+      }
       if (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0") {
         const reset = Number(res.headers.get("x-ratelimit-reset") ?? 0) * 1000;
         const waitMs = Math.max(0, reset - this.clock.now());
@@ -227,9 +300,13 @@ export class GitHubHost implements GitHost {
       }
       if (!res.ok) {
         let message = `${method} ${path} -> ${res.status}`;
+        let said = "";
         try {
           const j = (await this.json(res)) as { message?: string };
-          if (j.message) message += `: ${j.message}`;
+          if (j.message) {
+            said = String(j.message);
+            message += `: ${said}`;
+          }
         } catch {
           // no body
         }
@@ -240,9 +317,15 @@ export class GitHubHost implements GitHost {
               ? "tool_not_allowed"
               : res.status === 404
                 ? "not_found"
-                : res.status === 405 || res.status === 409 || res.status === 422
-                  ? "validation"
-                  : "provider_error";
+                : res.status === 410
+                  ? // w8-issue-host (W8-host-6): "Issues are disabled for this repo" is issues
+                    // off; GitHub's other 410 ("This issue was deleted") is a missing issue.
+                    /disabled/i.test(said)
+                    ? "issues_disabled"
+                    : "not_found"
+                  : res.status === 405 || res.status === 409 || res.status === 422
+                    ? "validation"
+                    : "provider_error";
         throw new ForerunnerError(code, message, { details: { status: res.status, path } });
       }
       opts.onResponse?.(res);
@@ -360,6 +443,105 @@ export class GitHubHost implements GitHost {
       next = nextPageUrl(link);
     }
     return out;
+  }
+
+  /**
+   * A GET read with the ETag (w8-issue-host, W8-host-2): the copy of an earlier answer to this
+   * URL under this token is offered as `If-None-Match`; GitHub's 304 (which does not count
+   * against its rate limit) is answered from that copy. `notModified` says the answer came
+   * from the copy. A 404 with `allow404` is null and forgets the copy. `fresh` sends no
+   * If-None-Match (a full read whose answer replaces the copy).
+   */
+  private async conditionalGet<T>(
+    path: string,
+    opts: { allow404?: boolean; fresh?: boolean } = {},
+  ): Promise<{ body: T; etag: string | null; notModified: boolean; link: string | null }> {
+    const url = path.startsWith("http") ? path : `${this.baseUrl}${path}`;
+    const auth = (await this.currentHeaders()).Authorization ?? "";
+    // The token is hashed into the key: a replaced token never reads another token's copy, and
+    // the copy holds no token.
+    const key = `${createHash("sha256").update(auth).digest("hex").slice(0, 24)} ${url}`;
+    const cached = opts.fresh ? undefined : this.etags.get(key);
+    let status = 0;
+    let etag: string | null = null;
+    let link: string | null = null;
+    const body = await this.request<T>("GET", path, undefined, {
+      ...(opts.allow404 ? { allow404: true } : {}),
+      ...(cached ? { ifNoneMatch: cached.etag } : {}),
+      onResponse: (res) => {
+        status = res.status;
+        etag = res.headers.get("etag");
+        link = res.headers.get("link");
+      },
+    });
+    if (status === 304 && cached) {
+      // Used again: the least recently used copy is the one dropped.
+      this.etags.delete(key);
+      this.etags.set(key, cached);
+      return {
+        body: structuredClone(cached.body) as T,
+        etag: cached.etag,
+        notModified: true,
+        link: cached.link,
+      };
+    }
+    this.etags.delete(key);
+    if (status !== 0 && etag) {
+      this.etags.set(key, { etag, body: structuredClone(body), link });
+      while (this.etags.size > ETAG_CACHE_MAX) {
+        const oldest = this.etags.keys().next().value;
+        if (oldest === undefined) break;
+        this.etags.delete(oldest);
+      }
+    }
+    return { body, etag, notModified: false, link };
+  }
+
+  /**
+   * Every page of a list read with the ETag: each page is a conditional read, and the answer's
+   * ETag joins the pages' (null when a page had none), so it changes when any page read changes.
+   *
+   * fixup-w8-issue-host: GitHub's ETag covers a page's body, so a full last page answers 304
+   * after an item is added behind it, and its copy's `Link` names no next page. A full page
+   * answered from the copy with no next page is therefore never taken as the end: the page after
+   * it is read too, a conditional read of its own (free once it is a 304), and joins the answer
+   * only when it holds items. Under a cursor link (`after`, `before`), which has no page number,
+   * the full page is read again without If-None-Match, and its fresh `Link` decides.
+   */
+  private async pagedConditional<T>(
+    firstPath: string,
+  ): Promise<{ items: T[]; etag: string | null }> {
+    const out: T[] = [];
+    const etags: (string | null)[] = [];
+    let next: string | null = firstPath;
+    // The page being read is the one after a full last page from the copy.
+    let past = false;
+    for (let page = 0; next && page < MAX_LIST_PAGES; page++) {
+      let r: { body: T[]; etag: string | null; notModified: boolean; link: string | null } =
+        await this.conditionalGet<T[]>(next);
+      // Nothing behind the full last page: the list ends there, and this page is not part of it.
+      if (past && Array.isArray(r.body) && r.body.length === 0) break;
+      past = false;
+      const url = next.startsWith("http") ? next : `${this.baseUrl}${next}`;
+      if (r.notModified && nextPageUrl(r.link) === null && fullPage(url, r.body)) {
+        const after = numberedPageAfter(url);
+        if (after) {
+          out.push(...r.body);
+          etags.push(r.etag);
+          next = after;
+          past = true;
+          continue;
+        }
+        r = await this.conditionalGet<T[]>(next, { fresh: true });
+      }
+      out.push(...r.body);
+      etags.push(r.etag);
+      next = nextPageUrl(r.link);
+    }
+    return {
+      items: out,
+      etag: etags.length > 0 && etags.every((e) => e !== null) ? etags.join(", ") : null,
+    };
   }
 
   async listRepos(opts: { org?: string; user?: string } = {}): Promise<RepoInfo[]> {
@@ -643,13 +825,34 @@ export class GitHubHost implements GitHost {
     repo: RepoRef,
     opts: { title: string; body: string; labels?: string[] },
   ): Promise<IssueInfo> {
-    return toIssue(
-      await this.request<Json>("POST", `${this.repoPath(repo)}/issues`, {
-        title: opts.title,
-        body: opts.body,
-        labels: opts.labels ?? [],
-      }),
-    );
+    try {
+      return toIssue(
+        await this.request<Json>("POST", `${this.repoPath(repo)}/issues`, {
+          title: opts.title,
+          body: opts.body,
+          labels: opts.labels ?? [],
+        }),
+      );
+    } catch (e) {
+      throw await this.refusalOnSeenRepo(repo, e);
+    }
+  }
+
+  /**
+   * W8-host-6: a 404 on opening an issue in a repository the token sees is no permission (the
+   * repository is there; GitHub hides what the token may not do), never a missing issue. One
+   * GET of the repository says whether the token sees it; the error keeps its code and status.
+   */
+  private async refusalOnSeenRepo(repo: RepoRef, e: unknown): Promise<unknown> {
+    if (!(e instanceof ForerunnerError) || e.code !== "not_found" || e.details.status !== 404)
+      return e;
+    const seen = await this.request<Json | null>("GET", this.repoPath(repo), undefined, {
+      allow404: true,
+    }).catch(() => null);
+    if (!seen) return e;
+    return new ForerunnerError("not_found", e.message, {
+      details: { ...e.details, reason: "no_permission", repoVisible: true },
+    });
   }
 
   async updateIssue(
@@ -662,18 +865,144 @@ export class GitHubHost implements GitHost {
     );
   }
 
-  async listIssues(
-    repo: RepoRef,
-    opts: { state?: "open" | "closed" | "all"; labels?: string[] } = {},
-  ): Promise<IssueInfo[]> {
-    const params = new URLSearchParams({ state: opts.state ?? "open", per_page: "100" });
-    if (opts.labels?.length) params.set("labels", opts.labels.join(","));
-    const rows = await this.request<Json[]>("GET", `${this.repoPath(repo)}/issues?${params}`);
-    return rows.filter((r) => !r.pull_request).map(toIssue);
+  async getIssue(repo: RepoRef, number: number): Promise<IssueInfo> {
+    return toIssue(
+      (await this.conditionalGet<Json>(`${this.repoPath(repo)}/issues/${number}`)).body,
+    );
   }
 
-  async commentOnIssue(repo: RepoRef, number: number, body: string): Promise<CommentInfo> {
-    return this.commentOnPullRequest(repo, number, body);
+  async listIssues(
+    repo: RepoRef,
+    opts: {
+      state?: "open" | "closed" | "all";
+      labels?: string[];
+      creator?: string;
+      sort?: "created" | "updated" | "comments";
+      direction?: "asc" | "desc";
+    } = {},
+  ): Promise<IssueInfo[]> {
+    // Every page (W8-host-2): one page of 100 hid the 101st issue.
+    const params = new URLSearchParams({
+      state: opts.state ?? "open",
+      per_page: String(this.pageSize),
+    });
+    if (opts.labels?.length) params.set("labels", opts.labels.join(","));
+    if (opts.creator) params.set("creator", opts.creator);
+    if (opts.sort) params.set("sort", opts.sort);
+    if (opts.direction) params.set("direction", opts.direction);
+    const { items } = await this.pagedConditional<Json>(`${this.repoPath(repo)}/issues?${params}`);
+    return items.filter((r) => !r.pull_request).map(toIssue);
+  }
+
+  async commentOnIssue(repo: RepoRef, number: number, body: string): Promise<IssueCommentInfo> {
+    // Marked as the agent's, as every comment the port writes (ADR 0075).
+    return toIssueComment(
+      await this.request<Json>("POST", `${this.repoPath(repo)}/issues/${number}/comments`, {
+        body: markAgentText(body),
+      }),
+      number,
+    );
+  }
+
+  async listIssueComments(
+    repo: RepoRef,
+    number: number,
+    opts: { etag?: string; since?: string } = {},
+  ): Promise<IssueCommentsRead> {
+    const params = new URLSearchParams({ per_page: String(this.pageSize) });
+    if (opts.since) params.set("since", opts.since);
+    const { items, etag } = await this.pagedConditional<Json>(
+      `${this.repoPath(repo)}/issues/${number}/comments?${params}`,
+    );
+    return {
+      // The same ETag as the caller's: nothing changed since its read.
+      notModified: opts.etag !== undefined && etag !== null && opts.etag === etag,
+      etag,
+      comments: items.map((c) => toIssueComment(c, number)),
+    };
+  }
+
+  async getIssueComment(repo: RepoRef, id: number): Promise<IssueCommentInfo | null> {
+    const r = await this.conditionalGet<Json | null>(
+      `${this.repoPath(repo)}/issues/comments/${id}`,
+      { allow404: true },
+    );
+    return r.body ? toIssueComment(r.body) : null;
+  }
+
+  async updateIssueComment(repo: RepoRef, id: number, body: string): Promise<IssueCommentInfo> {
+    return toIssueComment(
+      await this.request<Json>("PATCH", `${this.repoPath(repo)}/issues/comments/${id}`, {
+        body: markAgentText(body),
+      }),
+    );
+  }
+
+  /**
+   * W8-host-1 (pin): GitHub pins only through GraphQL, on the issue's node id, at most three
+   * per repository. The pinned issues are read first: one already pinned is `pinned` with no
+   * write, three taken is `limit` (nothing is unpinned to make room). A refusal is `forbidden`,
+   * the issue's own read included (fixup-w8-issue-host).
+   */
+  async pinIssue(repo: RepoRef, number: number): Promise<PinResult> {
+    const readPinned = async () => {
+      const r = await this.graphql<{
+        repository: {
+          pinnedIssues?: { totalCount?: number; nodes?: { issue?: { number?: number } }[] };
+        } | null;
+      }>(GQL_PINNED_ISSUES, { owner: repo.owner, name: repo.name });
+      const nodes = r.repository?.pinnedIssues?.nodes ?? [];
+      return {
+        numbers: nodes.map((n) => Number(n.issue?.number)),
+        count: Number(r.repository?.pinnedIssues?.totalCount ?? nodes.length),
+      };
+    };
+    try {
+      const issue = await this.getIssue(repo, number);
+      const before = await readPinned();
+      if (before.numbers.includes(number)) return "pinned";
+      if (before.count >= PINNED_ISSUES_MAX) return "limit";
+      try {
+        await this.graphql(GQL_PIN_ISSUE, { issueId: issue.nodeId });
+        return "pinned";
+      } catch (e) {
+        // Refused as unprocessable: the three pins were taken meanwhile, or the answer says why.
+        if (e instanceof ForerunnerError && e.code === "validation") {
+          const after = await readPinned();
+          if (after.numbers.includes(number)) return "pinned";
+          if (after.count >= PINNED_ISSUES_MAX) return "limit";
+        }
+        throw e;
+      }
+    } catch (e) {
+      if (
+        e instanceof ForerunnerError &&
+        (e.code === "tool_not_allowed" || e.code === "provider_auth")
+      )
+        return "forbidden";
+      throw e;
+    }
+  }
+
+  /**
+   * W8-host-8: the login's role, from GitHub's collaborator permission read (read with the ETag:
+   * a repeated read is a 304). GitHub refuses it without push access: a refused read is none
+   * (fails closed); GitHub not answering throws.
+   */
+  async getRepoPermission(repo: RepoRef, login: string): Promise<RepoRole> {
+    try {
+      const r = await this.conditionalGet<Json>(
+        `${this.repoPath(repo)}/collaborators/${encodeURIComponent(login)}/permission`,
+      );
+      return roleOf(r.body.role_name, r.body.permission);
+    } catch (e) {
+      if (
+        e instanceof ForerunnerError &&
+        (e.code === "not_found" || e.code === "tool_not_allowed" || e.code === "provider_auth")
+      )
+        return "none";
+      throw e;
+    }
   }
 
   async listCheckRuns(repo: RepoRef, ref: string): Promise<CheckRunInfo[]> {
@@ -1182,6 +1511,7 @@ function toRepo(r: Json): RepoInfo {
       ? { allowMergeCommit: r.allow_merge_commit }
       : {}),
     ...(typeof r.id === "number" ? { id: r.id } : {}),
+    ...(typeof r.has_issues === "boolean" ? { hasIssues: r.has_issues } : {}),
   };
 }
 
@@ -1296,6 +1626,8 @@ function readProtection(out: BranchRules, p: Json, branch: string): void {
 }
 
 function toIssue(r: Json): IssueInfo {
+  const user = (r.user as Json | undefined) ?? {};
+  const author = String(user.login ?? "");
   return {
     number: Number(r.number),
     title: String(r.title ?? ""),
@@ -1305,6 +1637,16 @@ function toIssue(r: Json): IssueInfo {
       typeof l === "string" ? l : String(l.name),
     ),
     htmlUrl: String(r.html_url ?? ""),
+    id: Number(r.id ?? 0),
+    nodeId: String(r.node_id ?? ""),
+    stateReason: typeof r.state_reason === "string" ? r.state_reason : null,
+    locked: r.locked === true,
+    author,
+    authorAssociation: associationOf(r.author_association),
+    authorType: accountTypeOf(author, user.type),
+    createdAt: String(r.created_at ?? ""),
+    updatedAt: String(r.updated_at ?? ""),
+    isPullRequest: Boolean(r.pull_request),
   };
 }
 
@@ -1314,6 +1656,26 @@ function toComment(r: Json): CommentInfo {
     body: String(r.body ?? ""),
     author: String((r.user as Json)?.login ?? ""),
     createdAt: String(r.created_at ?? ""),
+    htmlUrl: String(r.html_url ?? ""),
+    ...(typeof r.updated_at === "string" ? { updatedAt: r.updated_at } : {}),
+  };
+}
+
+/** An issue comment, exactly the port's fields; the issue number from the URL when not given. */
+function toIssueComment(r: Json, issueNumber?: number): IssueCommentInfo {
+  const user = (r.user as Json | undefined) ?? {};
+  const author = String(user.login ?? "");
+  const createdAt = String(r.created_at ?? "");
+  const fromUrl = /\/issues\/(\d+)$/.exec(String(r.issue_url ?? ""))?.[1];
+  return {
+    id: Number(r.id),
+    issueNumber: issueNumber ?? Number(fromUrl ?? 0),
+    body: String(r.body ?? ""),
+    author,
+    authorAssociation: associationOf(r.author_association),
+    authorType: accountTypeOf(author, user.type),
+    createdAt,
+    updatedAt: typeof r.updated_at === "string" ? r.updated_at : createdAt,
     htmlUrl: String(r.html_url ?? ""),
   };
 }

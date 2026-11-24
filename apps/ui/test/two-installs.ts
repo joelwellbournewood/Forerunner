@@ -20,7 +20,8 @@
  *   both daemons, stops the host and removes every folder it made.
  * - `home.client`, `home.rt`: the UI's client and the runtime (read-only use for assertions).
  * - `home.restart()`: compose that home again on the same home and vault (the daemon started
- *   again); `client` and `rt` are replaced.
+ *   again); `client` and `rt` are replaced, and so is the GitHub client (w8-issue-host: its
+ *   in-memory ETag and permission copies end with the daemon, as `fr daemon` builds its own).
  * - `home.githubOff()` / `home.githubOn()`: GitHub unreachable for that home only: every call of
  *   its GitHub client fails as a refused connection does (`provider_error`, "GitHub API
  *   unreachable at ..."); the other home is unaffected. Git over HTTP (`http`) and the bare
@@ -96,6 +97,7 @@ export type HostWriteAction =
   | "comment.update"
   | "issue.create"
   | "issue.update"
+  | "issue.pin"
   | "other";
 
 /** One write a login made on the host. */
@@ -275,10 +277,26 @@ const MEMORY_ACTIONS: Record<string, HostWriteAction> = {
   commentOnIssue: "comment",
   createIssue: "issue.create",
   updateIssue: "issue.update",
+  // w8-issue-host: a comment edited in place and an issue pinned.
+  updateIssueComment: "comment.update",
+  pinIssue: "issue.pin",
 };
 
 /** A stand-in request as a write: the repository, the number and what it did. */
-function writeOfRequest(login: string, method: string, path: string): HostWrite {
+function writeOfRequest(
+  login: string,
+  method: string,
+  path: string,
+  graphql?: { operation: string },
+): HostWrite {
+  // w8-issue-host: GitHub pins only through GraphQL; the pin names no repository in its path.
+  if (path === "/graphql")
+    return {
+      login,
+      action: graphql?.operation === "StatusPinIssue" ? "issue.pin" : "other",
+      op: `graphql ${graphql?.operation ?? "anonymous"}`,
+      repo: "",
+    };
   const repo = /^\/repos\/([^/]+)\/([^/]+)/.exec(path);
   const git = /^\/([^/]+)\/([^/]+?)\.git\/git-receive-pack$/.exec(path);
   const num = /^\/repos\/[^/]+\/[^/]+\/(?:pulls|issues)\/(\d+)/.exec(path);
@@ -358,10 +376,15 @@ export async function composeTwo(opts: ComposeTwoOptions): Promise<TwoHomes> {
     const vault = new MemoryVault();
     const model = standIn(home, opts.bench?.[key] ?? {});
     let off = false;
-    let inner: GitHost;
     let config: ComposeOptions["config"] = null;
-    if (memory) inner = memory.asLogin(person.login);
-    else {
+    // The home's GitHub client, made anew at each compose as `fr daemon` makes it
+    // (w8-issue-host): its in-memory copies (the ETag reads, the permission reads) end with the
+    // daemon, so a restart's first read is a full read.
+    let githubClient: () => GitHost;
+    if (memory) {
+      const view = memory.asLogin(person.login);
+      githubClient = () => view;
+    } else {
       const host = http as FakeGitHost;
       const token = tokens[key] as string;
       await vault.set(SECRET_NAMES.github, token);
@@ -369,7 +392,7 @@ export async function composeTwo(opts: ComposeTwoOptions): Promise<TwoHomes> {
       // connection does, so the GitHub client says it in its own words.
       const fetchImpl: typeof fetch = (input, init) =>
         off ? Promise.reject(new TypeError("fetch failed")) : fetch(input, init);
-      inner = new GitHubHost({ token, baseUrl: host.baseUrl, clock, fetchImpl });
+      githubClient = () => new GitHubHost({ token, baseUrl: host.baseUrl, clock, fetchImpl });
       config = {
         version: 1,
         profile: "default",
@@ -381,8 +404,8 @@ export async function composeTwo(opts: ComposeTwoOptions): Promise<TwoHomes> {
         stateUrl: `sqlite:${join(home, "state.sqlite")}`,
       };
     }
-    const gitHost = switchable(inner, () => off);
     const compose = async () => {
+      const gitHost = switchable(githubClient(), () => off);
       const rt = await composeRuntime({
         env,
         dirs: appDirs({ env }),
@@ -480,9 +503,11 @@ export async function composeTwo(opts: ComposeTwoOptions): Promise<TwoHomes> {
               r.method !== "GET" &&
               r.method !== "HEAD" &&
               r.auth?.login.toLowerCase() === login.toLowerCase() &&
-              !/\/git-upload-pack$/.test(r.path),
+              !/\/git-upload-pack$/.test(r.path) &&
+              // A GraphQL query reads (w8-issue-host): only a mutation is a write.
+              r.graphql?.kind !== "query",
           )
-          .map((r) => writeOfRequest(r.auth?.login ?? login, r.method, r.path));
+          .map((r) => writeOfRequest(r.auth?.login ?? login, r.method, r.path, r.graphql));
       },
       async pullRequests(repo = TEAM_SHARED) {
         if (memory) return memory.listPullRequests(repo, { state: "all" });

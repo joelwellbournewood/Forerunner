@@ -1,9 +1,16 @@
 /**
- * Issues, issue/PR comments and labels (the message mirror surface).
+ * Issues, issue/PR comments and labels (the message mirror surface, and the status issue's,
+ * w8-issue-host). As GitHub: issues off (`has_issues` false) answers 410 on every issue route
+ * (a pull request's conversation stays on); anyone who may read the repository may open an issue
+ * and comment (the read role, an organisation member with read access), with a token that may
+ * write issues; the author edits their own comment, anyone with write access any comment;
+ * `sort` is created, updated or comments.
  */
 
 import type { HostApp, HostContext } from "./http.ts";
 import {
+  forbiddenMessage,
+  guardRepo,
   HttpError,
   intParam,
   paginate,
@@ -42,9 +49,32 @@ export function registerIssueRoutes(app: HostApp, ctx: RouteContext): void {
 
   const labelJson = (repo: RepoRecord, l: LabelRecord) => store.labelJson(repo, l);
 
+  /** Issues off: 410 for the repository's issues; a pull request's number stays on. */
+  const issuesOn = (repo: RepoRecord, issue?: IssueRecord | null) => {
+    if (repo.hasIssues || issue?.pull) return;
+    throw new HttpError(410, "Issues are disabled for this repo");
+  };
+
+  /**
+   * Opening an issue or commenting on one (w8-issue-host): GitHub lets anyone who may read the
+   * repository do it, with a token that may write issues (a classic token's `repo`, or
+   * `public_repo` on a public repository; a fine-grained token's issues: write).
+   */
+  const requireParticipation = (c: HostContext, repo: RepoRecord) => {
+    guardRepo(c, repo, "issues", "read");
+    const token = c.get("auth").token;
+    if (!token) throw new HttpError(401, "Requires authentication");
+    const writes =
+      token.kind === "classic"
+        ? token.scopes.includes("repo") || (!repo.private && token.scopes.includes("public_repo"))
+        : token.permissions.issues === "write";
+    if (!writes) throw new HttpError(403, forbiddenMessage(token));
+  };
+
   // ---- issues ------------------------------------------------------------------------------
   app.get("/repos/:owner/:repo/issues", (c) => {
     const repo = requireRepo(c, store, "issues", "read");
+    issuesOn(repo);
     const state = c.req.query("state") ?? "open";
     const labels = (c.req.query("labels") ?? "")
       .split(",")
@@ -52,11 +82,22 @@ export function registerIssueRoutes(app: HostApp, ctx: RouteContext): void {
       .filter(Boolean);
     const creator = c.req.query("creator");
     const direction = c.req.query("direction") ?? "desc";
+    // GitHub's `sort`: created (the default), updated or comments; ties by number.
+    const sort = c.req.query("sort") ?? "created";
+    const commentsOf = (n: number) =>
+      [...repo.comments.values()].filter((cm) => cm.issueNumber === n).length;
+    const keyOf = (i: IssueRecord): string | number =>
+      sort === "updated" ? i.updatedAt : sort === "comments" ? commentsOf(i.number) : i.createdAt;
     const issues = [...repo.issues.values()]
       .filter((i) => state === "all" || i.state === state)
       .filter((i) => labels.every((l) => i.labels.some((have) => have.toLowerCase() === l)))
       .filter((i) => !creator || i.user.toLowerCase() === creator.toLowerCase())
-      .sort((a, b) => (direction === "asc" ? a.number - b.number : b.number - a.number));
+      .sort((a, b) => {
+        const ka = keyOf(a);
+        const kb = keyOf(b);
+        const by = ka < kb ? -1 : ka > kb ? 1 : a.number - b.number;
+        return direction === "asc" ? by : -by;
+      });
     return c.json(
       paginate(
         c,
@@ -66,7 +107,9 @@ export function registerIssueRoutes(app: HostApp, ctx: RouteContext): void {
   });
 
   app.post("/repos/:owner/:repo/issues", async (c) => {
-    const repo = requireRepo(c, store, "issues", "write");
+    const repo = requireRepo(c, store, "issues", "read");
+    requireParticipation(c, repo);
+    issuesOn(repo);
     const login = requireLogin(c);
     const body = await readJson(c);
     const title = requireStr(body, "title", "Issue");
@@ -83,11 +126,13 @@ export function registerIssueRoutes(app: HostApp, ctx: RouteContext): void {
 
   app.get("/repos/:owner/:repo/issues/:number", (c) => {
     const { repo, issue } = issueRepo(c, "read");
+    issuesOn(repo, issue);
     return c.json(store.issueJson(repo, issue));
   });
 
   app.patch("/repos/:owner/:repo/issues/:number", async (c) => {
     const { repo, issue } = issueRepo(c, "write");
+    issuesOn(repo, issue);
     const login = requireLogin(c);
     const body = await readJson(c);
     const now = store.clock.nowIso();
@@ -145,6 +190,7 @@ export function registerIssueRoutes(app: HostApp, ctx: RouteContext): void {
   // ---- comments ------------------------------------------------------------------------------
   app.get("/repos/:owner/:repo/issues/:number/comments", (c) => {
     const { repo, issue } = issueRepo(c, "read");
+    issuesOn(repo, issue);
     // `since` as GitHub reads it: comments updated at or after the ISO-8601 instant.
     const sinceRaw = c.req.query("since");
     const since = sinceRaw ? Date.parse(sinceRaw) : Number.NaN;
@@ -163,7 +209,11 @@ export function registerIssueRoutes(app: HostApp, ctx: RouteContext): void {
   });
 
   app.post("/repos/:owner/:repo/issues/:number/comments", async (c) => {
-    const { repo, issue } = issueRepo(c, "write");
+    // A pull request's conversation keeps its own rule; on an issue, anyone who reads comments.
+    const { repo, issue } = issueRepo(c, "read");
+    if (issue.pull) issueRepo(c, "write");
+    else requireParticipation(c, repo);
+    issuesOn(repo, issue);
     const login = requireLogin(c);
     const body = await readJson(c);
     const text = requireStr(body, "body", "IssueComment");
@@ -190,6 +240,7 @@ export function registerIssueRoutes(app: HostApp, ctx: RouteContext): void {
 
   app.get("/repos/:owner/:repo/issues/comments", (c) => {
     const repo = requireRepo(c, store, "issues", "read");
+    issuesOn(repo);
     const comments = [...repo.comments.values()].sort((a, b) => a.id - b.id);
     return c.json(
       paginate(
@@ -203,14 +254,20 @@ export function registerIssueRoutes(app: HostApp, ctx: RouteContext): void {
     const repo = requireRepo(c, store, "issues", "read");
     const comment = repo.comments.get(intParam(c, "id"));
     if (!comment) throw new HttpError(404, "Not Found");
+    issuesOn(repo, repo.issues.get(comment.issueNumber));
     return c.json(store.commentJson(repo, comment));
   });
 
   app.patch("/repos/:owner/:repo/issues/comments/:id", async (c) => {
-    const repo = requireRepo(c, store, "issues", "write");
+    const repo = requireRepo(c, store, "issues", "read");
     const login = requireLogin(c);
     const comment = repo.comments.get(intParam(c, "id"));
     if (!comment) throw new HttpError(404, "Not Found");
+    issuesOn(repo, repo.issues.get(comment.issueNumber));
+    // The author edits their own comment; anyone with write access edits any comment (GitHub's
+    // rule, which w8-status-write's tamper tests need).
+    if (comment.user.toLowerCase() === login.toLowerCase()) requireParticipation(c, repo);
+    else requireRepo(c, store, "issues", "write");
     const body = await readJson(c);
     comment.body = requireStr(body, "body", "IssueComment");
     comment.updatedAt = store.clock.nowIso();
@@ -232,6 +289,7 @@ export function registerIssueRoutes(app: HostApp, ctx: RouteContext): void {
     const login = requireLogin(c);
     const comment = repo.comments.get(intParam(c, "id"));
     if (!comment) throw new HttpError(404, "Not Found");
+    issuesOn(repo, repo.issues.get(comment.issueNumber));
     repo.comments.delete(comment.id);
     const issue = repo.issues.get(comment.issueNumber);
     if (issue) {
@@ -322,11 +380,13 @@ export function registerIssueRoutes(app: HostApp, ctx: RouteContext): void {
 
   app.get("/repos/:owner/:repo/issues/:number/labels", (c) => {
     const { repo, issue } = issueRepo(c, "read");
+    issuesOn(repo, issue);
     return c.json(store.issueLabels(repo, issue));
   });
 
   const setLabels = async (c: HostContext, mode: "add" | "set") => {
     const { repo, issue } = issueRepo(c, "write");
+    issuesOn(repo, issue);
     const login = requireLogin(c);
     const text = await c.req.text();
     let names: string[] = [];
@@ -358,7 +418,8 @@ export function registerIssueRoutes(app: HostApp, ctx: RouteContext): void {
   app.put("/repos/:owner/:repo/issues/:number/labels", (c) => setLabels(c, "set"));
 
   app.delete("/repos/:owner/:repo/issues/:number/labels", (c) => {
-    const { issue } = issueRepo(c, "write");
+    const { repo, issue } = issueRepo(c, "write");
+    issuesOn(repo, issue);
     issue.labels = [];
     issue.updatedAt = store.clock.nowIso();
     return c.json([]);
@@ -366,6 +427,7 @@ export function registerIssueRoutes(app: HostApp, ctx: RouteContext): void {
 
   app.delete("/repos/:owner/:repo/issues/:number/labels/*", (c) => {
     const { repo, issue } = issueRepo(c, "write");
+    issuesOn(repo, issue);
     const login = requireLogin(c);
     const name = decodeURIComponent(c.req.path.split("/labels/")[1] ?? "");
     if (!issue.labels.some((l) => l.toLowerCase() === name.toLowerCase())) {

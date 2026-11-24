@@ -3277,10 +3277,29 @@ L4 (fixup)").
   with one commit, team/empty): `composeTwo({ host: "memory" })` (one `MemoryGitHost`, a
   per-login view for each home, bare repositories as clone URLs) or `{ host: "http" }` (the
   testenv stand-in GitHub, one classic token each). Each home is driven only through the UI's
-  client (`home.client`); `home.restart()` composes it again on the same home and vault;
+  client (`home.client`); `home.restart()` composes it again on the same home and vault, with a
+  new GitHub client (w8-issue-host: its in-memory ETag and permission copies end with the daemon);
   `home.githubOff()` / `githubOn()` make that home's GitHub calls fail as a refused connection
   does; `home.holdModelCalls(when)` holds its model calls; `two.writesBy(login)` lists that
   login's writes on the host with a normalised `action` (`pull_request.create`, `comment`,
   `push`, ...); `two.close()` settles, closes, stops and removes everything. Tests:
   `test/two-installs.test.ts` (describe "w8-two-homes, wave 8: harness"; later wave 8 areas
   append their own describe blocks and helpers, never change these).
+
+## w8-issue-host (wave 8, 2026-11-24): the two-home harness and the status issue's host calls
+
+- **A restart drops the GitHub client's in-memory copies** (`test/two-installs.ts`): an http home's
+  `GitHubHost` was built once, outside compose, so `home.restart()` kept it, and with this area's
+  ETag copy a read after the restart was answered from the copy (a 304) while `fr daemon` starts
+  with an empty one (compose builds its own client from the vault token). The harness now builds
+  the client at each compose (a memory home keeps its per-login view, which holds no copy). Before
+  the change the two-home restart case read `[200, 200, 304, 304]`; after it `[200, 200, 304,
+  200]`.
+- **`writesBy`**: a GraphQL query is a read, not a write; the pin (`StatusPinIssue`) is
+  `issue.pin`; the memory host's `updateIssueComment` and `pinIssue` are `comment.update` and
+  `issue.pin`.
+- Tests: `test/two-installs.test.ts`, describe "w8-issue-host, wave 8: issue host" (memory and
+  http): Ada's comment on the status issue is listed to Bob's Forerunner with author ada and
+  MEMBER, and the reverse with bob; each reads the other's role as write; a repeated read is not
+  modified (a 304 on the stand-in); Bob's first read after his restart is a full read; neither
+  home holds the ETag on disk. No screen changes: this area builds the host calls only.

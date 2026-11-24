@@ -37,8 +37,16 @@ export interface RepoAccessView {
 
 export interface AccessSubject {
   token: TokenRecord | null;
-  /** Logins (lowercase) of orgs the token owner belongs to, plus the owner itself. */
+  /**
+   * Logins (lowercase) of orgs the token owner belongs to whose members may write (the base
+   * permission `write`, the default), plus the owner itself.
+   */
   affiliations: Set<string>;
+  /**
+   * Logins (lowercase) of orgs the token owner belongs to whose members may only read (the base
+   * permission `read`, w8-issue-host): their repositories read as for a read collaborator.
+   */
+  readOrgs?: Set<string>;
 }
 
 export function newTokenValue(kind: TokenKind): string {
@@ -72,9 +80,14 @@ export function isAffiliated(subject: AccessSubject, repo: RepoAccessView): bool
   return subject.affiliations.has(repo.owner.toLowerCase()) || repo.collaborators.has(login);
 }
 
-/** True when the subject is a read-only collaborator of the repo (w8-two-homes). */
+/**
+ * True when the subject may read the repo but not write it: a read-only collaborator
+ * (w8-two-homes), or a member of an owning organisation whose base permission is read
+ * (w8-issue-host).
+ */
 export function isReader(subject: AccessSubject, repo: RepoAccessView): boolean {
   if (!subject.token) return false;
+  if (subject.readOrgs?.has(repo.owner.toLowerCase())) return true;
   return repo.readers?.has(subject.token.owner.toLowerCase()) ?? false;
 }
 
@@ -180,7 +193,10 @@ export function canCreateRepo(
 ): AccessDecision {
   const t = subject.token;
   if (!t) return "unauthenticated";
-  if (!subject.affiliations.has(owner.toLowerCase())) return "not_found";
+  // Any member may create a repository in the organisation (GitHub's default member privilege),
+  // whatever its base permission for the existing ones (fixup-w8-issue-host).
+  const o = owner.toLowerCase();
+  if (!subject.affiliations.has(o) && !subject.readOrgs?.has(o)) return "not_found";
   if (t.kind === "classic") {
     if (t.scopes.includes("repo")) return "ok";
     if (!isPrivate && t.scopes.includes("public_repo")) return "ok";
@@ -228,6 +244,16 @@ export class RateLimiter {
 
   peek(key: string): RateLimitState {
     return this.describe(this.window(key));
+  }
+
+  /**
+   * Give back one request (w8-issue-host): GitHub does not count a conditional request answered
+   * 304 against the primary rate limit.
+   */
+  refund(key: string): RateLimitState {
+    const w = this.window(key);
+    if (w.used > 0) w.used -= 1;
+    return this.describe(w);
   }
 
   private describe(w: { start: number; used: number }): RateLimitState {
