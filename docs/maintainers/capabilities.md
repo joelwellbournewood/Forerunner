@@ -1095,9 +1095,15 @@ token (the token hashed into the key, so a replaced token never reads another's 
 ETag as `If-None-Match`, and answers GitHub's 304 from the copy (a 304 does not count against
 GitHub's rate limit). The copy is in memory only (at most `ETAG_CACHE_MAX`, 500, least recently
 used dropped first): nothing goes on disk, nothing to migrate, and a daemon start begins empty.
-A list's ETag joins its pages' ETags, so it changes when any page changes; `notModified` is true
-when the caller's `etag` equals it. A next page on another origin is refused before the token goes
-there, as for every list.
+A list's ETag joins the ETags of the pages read; `notModified` is true when the caller's `etag`
+equals it. GitHub's ETag covers a page's body only, so a full last page still answers 304 after an
+item is added behind it, and its copy's `Link` names no next page (fixup-w8-issue-host). A full
+page answered from the copy with no next page is never taken as the end: the adapter also reads
+the page after it (`page` + 1, a conditional read of its own, free once it is a 304), which joins
+the answer only when it holds items; under a cursor link (`after`, `before`), which has no page
+number, it reads the full page again without `If-None-Match` and follows the fresh `Link`. So an
+item added past a full last page, or taken away from the page after it, makes `notModified`
+false. A next page on another origin is refused before the token goes there, as for every list.
 
 Errors (W8-host-6), read with `issueRefusalOf(e)` for the one sentence a caller says:
 `issues_off` (the new code `issues_disabled`: GitHub's 410 "Issues are disabled for this repo";

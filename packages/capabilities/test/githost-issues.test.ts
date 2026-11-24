@@ -753,6 +753,58 @@ describe("w8-issue-host, wave 8: the adapter's errors, ETag cache and token (W8-
     expect(sent.every((s) => s.url.startsWith(base))).toBe(true);
   });
 
+  it("fixup-w8-issue-host: a full last page answered from the copy under a cursor next link is read again in full, so a page added after it is read and the list is modified", async () => {
+    const comment = (id: number) => ({
+      id,
+      body: `c${id}`,
+      user: { login: "bob", type: "User" },
+      created_at: "t",
+      updated_at: "t",
+      author_association: "MEMBER",
+      html_url: "h",
+    });
+    const first = `${base}/repos/o/r/issues/1/comments?per_page=2`;
+    const second = `${base}/repos/o/r/issues/1/comments?per_page=2&after=c2`;
+    const third = `${base}/repos/o/r/issues/1/comments?per_page=2&after=c4`;
+    let more = false;
+    const { fetchImpl, seen } = stubFetch((_m, url, init) => {
+      const inm = new Headers(init.headers).get("if-none-match");
+      if (url === first)
+        return inm === 'W/"p1"'
+          ? json(304, null, { etag: 'W/"p1"' })
+          : json(200, [comment(1), comment(2)], {
+              etag: 'W/"p1"',
+              link: `<${second}>; rel="next"`,
+            });
+      if (url === second)
+        return inm === 'W/"p2"'
+          ? json(304, null, { etag: 'W/"p2"' })
+          : json(200, [comment(3), comment(4)], {
+              etag: 'W/"p2"',
+              ...(more ? { link: `<${third}>; rel="next"` } : {}),
+            });
+      if (url === third) return json(200, [comment(5)], { etag: 'W/"p3"' });
+      return json(404, {});
+    });
+    const gh = host(fetchImpl, { pageSize: 2 });
+    const read = await gh.listIssueComments(repo, 1);
+    expect(read.comments.map((c) => c.id)).toEqual([1, 2, 3, 4]);
+    const same = await gh.listIssueComments(repo, 1, { etag: read.etag ?? "" });
+    expect([same.notModified, same.comments.length]).toEqual([true, 4]);
+    more = true;
+    seen.length = 0;
+    const after = await gh.listIssueComments(repo, 1, { etag: read.etag ?? "" });
+    expect(after.notModified).toBe(false);
+    expect(after.comments.map((c) => c.id)).toEqual([1, 2, 3, 4, 5]);
+    // The cursor page is read again without If-None-Match: its fresh Link names the next page.
+    expect(seen.map((s) => [s.url, s.ifNoneMatch])).toEqual([
+      [first, 'W/"p1"'],
+      [second, 'W/"p2"'],
+      [second, null],
+      [third, null],
+    ]);
+  });
+
   it("a permission read that GitHub refuses counts as none; one GitHub does not answer throws", async () => {
     for (const status of [401, 403, 404]) {
       const { fetchImpl } = stubFetch(() => json(status, { message: "Must have push access" }));
@@ -767,5 +819,143 @@ describe("w8-issue-host, wave 8: the adapter's errors, ETag cache and token (W8-
     expect(await host(odd).getRepoPermission(repo, "bob")).toBe("none");
     const { fetchImpl: down } = stubFetch(() => json(502, { message: "Bad Gateway" }));
     expect((await refusal(host(down).getRepoPermission(repo, "bob"))).code).toBe("provider_error");
+  });
+});
+
+/**
+ * fixup-w8-issue-host (review blocking 1): a paged read with the ETag at an exactly full last
+ * page. GitHub's ETag covers a page's body, so when one more comment lands after a full last
+ * page, that page still answers 304: the copy's `Link` (no next page) must not end the read
+ * there, or the new comment stays unseen and the list says nothing changed. Over HTTP on the
+ * stand-in, with a page of 3 (and once with the default 100), as the poller of the status issue
+ * reads it.
+ */
+describe("w8-issue-host, wave 8: a paged read with the ETag past an exactly full last page (W8-host-2, http)", () => {
+  const EDGE: RepoRef = { owner: "ada", name: "edge" };
+  let root: string;
+  let host: FakeGitHost;
+  const tokens = new Map<"ada" | "bob", string>();
+  const client = (login: "ada" | "bob", pageSize?: number) =>
+    new GitHubHost({
+      token: tokens.get(login) ?? "",
+      baseUrl: host.baseUrl,
+      ...(pageSize ? { pageSize } : {}),
+    });
+  /** The stand-in's GETs of `path` since `from`, as [page, status, conditional]. */
+  const pagesRead = (path: string, from: number) =>
+    host
+      .requests()
+      .slice(from)
+      .filter((r) => r.method === "GET" && r.path === path)
+      .map((r) => [
+        Number(new URLSearchParams(r.query).get("page") ?? 1),
+        r.status,
+        r.ifNoneMatch !== null,
+      ]);
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "fr-issue-edge-"));
+    host = await FakeGitHost.start({ rootDir: root });
+    for (const login of ["ada", "bob"] as const) {
+      host.createUser({ login, name: login.toUpperCase() });
+      tokens.set(
+        login,
+        host.createToken({ owner: login, kind: "classic", scopes: ["repo"] }).token,
+      );
+    }
+    await host.createRepo({ ...EDGE, private: true, initialFiles: { "README.md": "# edge\n" } });
+    host.setCollaboratorRole("ada/edge", "bob", "write");
+  });
+  afterAll(async () => {
+    await host?.stop();
+    if (root) rmSync(root, { recursive: true, force: true });
+  });
+
+  it("one more comment after exactly a full last page is a change and is read; with nothing new the list stays not modified and, once the page after it is a 304 too, costs no rate-limit point", async () => {
+    const ada = client("ada", 3);
+    const bob = client("bob", 3);
+    const issue = await ada.createIssue(EDGE, { title: "Status", body: "" });
+    const path = `/repos/ada/edge/issues/${issue.number}/comments`;
+    for (const n of [1, 2, 3]) await ada.commentOnIssue(EDGE, issue.number, `ada ${n}`);
+    const full = await ada.listIssueComments(EDGE, issue.number);
+    expect(full.comments.length).toBe(3);
+    // Nothing new: not modified, the same three comments.
+    const same = await ada.listIssueComments(EDGE, issue.number, { etag: full.etag ?? "" });
+    expect([same.notModified, same.etag, same.comments.length]).toEqual([true, full.etag, 3]);
+    const mark = host.requests().length;
+    const rateBefore = await ada.rateLimit();
+    const quiet = await ada.listIssueComments(EDGE, issue.number, { etag: full.etag ?? "" });
+    expect(quiet.notModified).toBe(true);
+    // Page 1 and the empty page after it are both 304s: the poll costs nothing.
+    expect(pagesRead(path, mark)).toEqual([
+      [1, 304, true],
+      [2, 304, true],
+    ]);
+    expect((await ada.rateLimit()).remaining).toBe(rateBefore.remaining);
+    // Bob announces after exactly a full page: Ada's poller sees it.
+    await bob.commentOnIssue(EDGE, issue.number, "I now work on the menu too");
+    const after = await ada.listIssueComments(EDGE, issue.number, { etag: full.etag ?? "" });
+    expect(after.notModified).toBe(false);
+    expect(after.comments.map((c) => c.author)).toEqual(["ada", "ada", "ada", "bob"]);
+    expect(after.comments.at(-1)?.body).toBe(`I now work on the menu too\n\n${AGENT_TEXT_MARKER}`);
+    const settled = await ada.listIssueComments(EDGE, issue.number, { etag: after.etag ?? "" });
+    expect([settled.notModified, settled.comments.length]).toEqual([true, 4]);
+    // Two full pages, then a seventh comment: read from the page after the second.
+    for (const n of [5, 6]) await ada.commentOnIssue(EDGE, issue.number, `ada ${n}`);
+    const six = await ada.listIssueComments(EDGE, issue.number, { etag: settled.etag ?? "" });
+    expect([six.notModified, six.comments.length]).toEqual([false, 6]);
+    const sixAgain = await ada.listIssueComments(EDGE, issue.number, { etag: six.etag ?? "" });
+    expect([sixAgain.notModified, sixAgain.comments.length]).toEqual([true, 6]);
+    await bob.commentOnIssue(EDGE, issue.number, "the menu is done");
+    const seven = await ada.listIssueComments(EDGE, issue.number, { etag: six.etag ?? "" });
+    expect(seven.notModified).toBe(false);
+    expect(seven.comments.length).toBe(7);
+    expect(seven.comments.at(-1)?.author).toBe("bob");
+    // A comment taken away from the page after a full one is a change too.
+    const gone = seven.comments.at(-1)?.id ?? 0;
+    const res = await fetch(`${host.baseUrl}/repos/ada/edge/issues/comments/${gone}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${tokens.get("bob")}` },
+    });
+    expect(res.status).toBe(204);
+    const back = await ada.listIssueComments(EDGE, issue.number, { etag: seven.etag ?? "" });
+    expect([back.notModified, back.comments.length]).toEqual([false, 6]);
+  });
+
+  it("at the default page of 100: the 101st comment is read, and the list is modified", async () => {
+    const ada = client("ada");
+    const bob = client("bob");
+    const issue = await ada.createIssue(EDGE, { title: "Busy status", body: "" });
+    for (let n = 0; n < 100; n++)
+      await (n % 2 ? bob : ada).commentOnIssue(EDGE, issue.number, `note ${n}`);
+    const hundred = await ada.listIssueComments(EDGE, issue.number);
+    expect(hundred.comments.length).toBe(100);
+    const again = await ada.listIssueComments(EDGE, issue.number, { etag: hundred.etag ?? "" });
+    expect([again.notModified, again.comments.length]).toEqual([true, 100]);
+    await bob.commentOnIssue(EDGE, issue.number, "I now work on the menu too");
+    const read = await ada.listIssueComments(EDGE, issue.number, { etag: hundred.etag ?? "" });
+    expect(read.notModified).toBe(false);
+    expect(read.comments.length).toBe(101);
+    expect(read.comments.at(-1)?.body).toBe(`I now work on the menu too\n\n${AGENT_TEXT_MARKER}`);
+  });
+
+  it("issues listed oldest first: one more issue after exactly a full last page is listed", async () => {
+    const repo: RepoRef = { owner: "ada", name: "edge-issues" };
+    await host.createRepo({ ...repo, private: true, initialFiles: { "README.md": "# e\n" } });
+    const ada = client("ada", 3);
+    for (const n of [1, 2, 3]) await ada.createIssue(repo, { title: `Issue ${n}`, body: "" });
+    const opts = { state: "all", sort: "created", direction: "asc" } as const;
+    expect((await ada.listIssues(repo, opts)).map((i) => i.title)).toEqual([
+      "Issue 1",
+      "Issue 2",
+      "Issue 3",
+    ]);
+    expect((await ada.listIssues(repo, opts)).length).toBe(3);
+    await ada.createIssue(repo, { title: "Issue 4", body: "" });
+    expect((await ada.listIssues(repo, opts)).map((i) => i.title)).toEqual([
+      "Issue 1",
+      "Issue 2",
+      "Issue 3",
+      "Issue 4",
+    ]);
   });
 });

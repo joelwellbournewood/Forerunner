@@ -120,6 +120,39 @@ export function nextPageUrl(link: string | null | undefined): string | null {
   return null;
 }
 
+/**
+ * Whether a list page holds as many items as its URL asked for (`per_page`, GitHub's default
+ * 30): a full page may have items behind it (fixup-w8-issue-host).
+ */
+function fullPage(url: string, body: unknown): boolean {
+  if (!Array.isArray(body)) return false;
+  let perPage = 30;
+  try {
+    perPage = Number(new URL(url).searchParams.get("per_page") ?? 30) || 30;
+  } catch {
+    return false;
+  }
+  return body.length >= perPage;
+}
+
+/**
+ * The URL of the page after `url` on a numbered list (`page`, 1 when absent), or null under a
+ * cursor link (`after`, `before`, `cursor`), which has no number to count on from.
+ */
+function numberedPageAfter(url: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (["after", "before", "cursor"].some((p) => u.searchParams.has(p))) return null;
+  const page = Number(u.searchParams.get("page") ?? 1);
+  if (!Number.isInteger(page) || page < 1) return null;
+  u.searchParams.set("page", String(page + 1));
+  return u.toString();
+}
+
 /** `scheme://host[:port]` of a URL, or null when the text is not one. */
 export function originOf(url: string): string | null {
   try {
@@ -416,18 +449,19 @@ export class GitHubHost implements GitHost {
    * A GET read with the ETag (w8-issue-host, W8-host-2): the copy of an earlier answer to this
    * URL under this token is offered as `If-None-Match`; GitHub's 304 (which does not count
    * against its rate limit) is answered from that copy. `notModified` says the answer came
-   * from the copy. A 404 with `allow404` is null and forgets the copy.
+   * from the copy. A 404 with `allow404` is null and forgets the copy. `fresh` sends no
+   * If-None-Match (a full read whose answer replaces the copy).
    */
   private async conditionalGet<T>(
     path: string,
-    opts: { allow404?: boolean } = {},
+    opts: { allow404?: boolean; fresh?: boolean } = {},
   ): Promise<{ body: T; etag: string | null; notModified: boolean; link: string | null }> {
     const url = path.startsWith("http") ? path : `${this.baseUrl}${path}`;
     const auth = (await this.currentHeaders()).Authorization ?? "";
     // The token is hashed into the key: a replaced token never reads another token's copy, and
     // the copy holds no token.
     const key = `${createHash("sha256").update(auth).digest("hex").slice(0, 24)} ${url}`;
-    const cached = this.etags.get(key);
+    const cached = opts.fresh ? undefined : this.etags.get(key);
     let status = 0;
     let etag: string | null = null;
     let link: string | null = null;
@@ -465,7 +499,14 @@ export class GitHubHost implements GitHost {
 
   /**
    * Every page of a list read with the ETag: each page is a conditional read, and the answer's
-   * ETag joins the pages' (null when a page had none), so it changes when any page changes.
+   * ETag joins the pages' (null when a page had none), so it changes when any page read changes.
+   *
+   * fixup-w8-issue-host: GitHub's ETag covers a page's body, so a full last page answers 304
+   * after an item is added behind it, and its copy's `Link` names no next page. A full page
+   * answered from the copy with no next page is therefore never taken as the end: the page after
+   * it is read too, a conditional read of its own (free once it is a 304), and joins the answer
+   * only when it holds items. Under a cursor link (`after`, `before`), which has no page number,
+   * the full page is read again without If-None-Match, and its fresh `Link` decides.
    */
   private async pagedConditional<T>(
     firstPath: string,
@@ -473,9 +514,26 @@ export class GitHubHost implements GitHost {
     const out: T[] = [];
     const etags: (string | null)[] = [];
     let next: string | null = firstPath;
+    // The page being read is the one after a full last page from the copy.
+    let past = false;
     for (let page = 0; next && page < MAX_LIST_PAGES; page++) {
-      const r: { body: T[]; etag: string | null; link: string | null } =
+      let r: { body: T[]; etag: string | null; notModified: boolean; link: string | null } =
         await this.conditionalGet<T[]>(next);
+      // Nothing behind the full last page: the list ends there, and this page is not part of it.
+      if (past && Array.isArray(r.body) && r.body.length === 0) break;
+      past = false;
+      const url = next.startsWith("http") ? next : `${this.baseUrl}${next}`;
+      if (r.notModified && nextPageUrl(r.link) === null && fullPage(url, r.body)) {
+        const after = numberedPageAfter(url);
+        if (after) {
+          out.push(...r.body);
+          etags.push(r.etag);
+          next = after;
+          past = true;
+          continue;
+        }
+        r = await this.conditionalGet<T[]>(next, { fresh: true });
+      }
       out.push(...r.body);
       etags.push(r.etag);
       next = nextPageUrl(r.link);
