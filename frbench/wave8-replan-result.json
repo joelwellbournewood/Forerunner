@@ -1,0 +1,862 @@
+{
+ "reads": [
+  {
+   "file": "/tmp/frbench/wave8-codemap.md",
+   "summary": "I wrote the code map of what exists today for working together through GitHub, with file:line at c15d75e. It has six mapped sections, a table of 14 root causes (R1 to R14) and a list of where the re-plan brief no longer matches the code. I edited nothing in the repository and ran no tests.\n\n- **Built in run C:** the Work together path (the repository-use module, the creation check, the settings, the activity rule over pull requests in any state). A together project writes nothing to GitHub. Each Forerunner lists only its own pull requests, through its task rows.\n- **Not built, though the brief describes them:** OJ-11 (cut in C4 and sent to wave 8), the chat `project.create` together flag, and the information-only listing of a joined project's docs pull requests.\n- **The status issue has no code at all.** No issue method is ever called. Editing a comment, pin, ETag/304 reads, issues-off detection and issue authors are missing from the GitHost interface, the GitHub adapter and the in-memory host. The fake HTTP host already has comment edit and delete, the creator filter, several users, an organisation and per-user tokens. The bench stand-in has one user, and each bench starts its own stand-in, so two homes cannot share one.\n- **W15-01 root cause:** when an open pull request is on `fr/docs-scaffold`, the scaffold decides ownership from the pull request body alone. Its fallback is \"this project is the only one linked here\". It never reads the branch's own marker file while a pull request is open. The same fallback serves the status pull request, the Docs tab list and the Pull requests list with Merge.\n- **Phone start root cause:** the phone's plain start asks only about a refused credential, then goes straight to the scheduler.\n- **Other gaps and risks:** the plan-only block, the task brief and the pre-claim overlap check have no announced or merged work to read. Decision files are always numbered 0001. Every agent defaults to \"Alice\". \"Spent CHF x\" reaches GitHub through docs/status.md when the status pull request is on. `/health` can name the wrong store. The together test's second person is a view whose writes carry the first person's login.",
+   "key_facts": [
+    "W15-01 root cause: when a pull request is open on fr/docs-scaffold, the scaffold returns that branch at once (loop/docs.ts:971) and reads the branch's marker file only when none is open (:974-978). isProjectDocsPr then falls back to soleLinked (:247), and ownsUnmarkedDocs counts taken-over ids as the project's own (:287-291). So the scaffold and Try again push onto another project's unmarked pull request and comment on it (:1052-1063). The same fallback is used for status (:267, :1155), docsInPullRequests (:1323) and the Pull requests list with Merge (daemon/pull-requests.ts:413-415, :512-515).",
+    "Phone start root cause: refusedStart (daemon/compose.ts:4082-4106) answers only for a refused-credential wait. RemoteCommandWatcher.runStart calls kill.resume() and then scheduler.requestStart (remote/watcher.ts:779-800), skipping POST /sessions' other refusals: refuseOverMonth (server.ts:1647-1666), nothing runnable, the one-wait rule, a removed project.",
+    "Work together exists: RepositoryUse.check (sources/repository-use.ts:862-969); readRepository reads the marker, then listPullRequests with state all and sort updated (first 100), then whoAmI (:509-543); elsewhereOf applies the 14-day rule by authorLogin, and an unknown author counts as another account (:594-616). createProjectRecord adopts the repository's id and writes settings.together {name, at, activeOn, login} (daemon/create-project.ts:89, :114-134).",
+    "A together project writes nothing to GitHub: isProjectDocsPr, isProjectStatusPr and ownsUnmarkedDocs return false for it (loop/docs.ts:223, :264, :286); its scaffold only refreshes the copy (:846-864); its status stays in the app (:1144); its first plan is plan-only (session/intake.ts:2150). The status pull request is off by default for every project (C-57, docs.ts:120-125), so today no Forerunner tells the other anything on GitHub except through pull requests.",
+    "OJ-11 (Work together for a project already here, closing its status pull request) was cut in C4 and sent to wave 8 (/tmp/frbench/leftovers-C4.json). Only the pair rule exists (daemon/join-preview.ts:203-205). The Overview line offers only Take it over (repository-use.ts:1052-1058). The chat together flag is not built either: createParams (commands/src/commands/project.ts:230-236) has no together field, and chat answers with CHAT_TOGETHER_HINT.",
+    "GitHost (capabilities/githost/types.ts:259-398) has createIssue, updateIssue, listIssues and commentOnIssue. IssueInfo has no author, ids or updatedAt; CommentInfo has no updatedAt; RepoInfo has no hasIssues. Missing: comment edit, pin, lock, ETag/304, issues off. listIssues in github.ts:665-673 reads one page with no paging. No runtime code calls any issue method.",
+    "Fake HTTP host (testenv/src/githost/routes-issues.ts) has issue CRUD, comment create/list/get/PATCH/DELETE (:141-246, any writer may edit), the creator and direction filters, and per-user tokens, orgs and collaborators (fake-git-host.ts:161-216). It has no ETag/304, no pin (GraphQL), no lock, and has_issues is always true (store.ts:452).",
+    "Bench --githost (scripts/bench/start.mjs:79-103, githost-server.ts:30-38) starts one stand-in per bench with one user 'bench', one token and two repositories; a second bench cannot attach to it. MemoryGitHost stamps authorLogin = this.login (memory.ts:248), so Bob's Object.create view in onerepo-together.test.ts:39-40 would write as Alice.",
+    "Task branch is fr/<last 8 hex of the task id>-<title> (pr-executor.ts:529-537), so the same work never shares a branch across Forerunners. The task pull request's hidden mark carries project=<shared id> (pr-executor.ts:3127), which is how the maker counts the together Forerunner's activity.",
+    "Marker .forerunner/project.json is {schema, project, name} (sources/marker.ts:14-24), written by the scaffold (docs.ts mark) and by intake.ts:2716, never by a together project. Nothing writes AGENTS.md or CLAUDE.md. STANDARD_DOCS still includes docs/status.md (packages/memory/src/docs.ts:10-19), against the owner's 'No docs/status.md in repositories'.",
+    "The intake's docs branch is fr/intake-<8 hex of the project id>-<name>-docs (intake.ts:173-183), keyed by the project id that a together project shares. Decision files are fixed at docs/decisions/0001-<slug>.md (intake.ts:203); nothing allocates a later number.",
+    "Where announced and merged work could enter as data: PlanOnly {tasks} and alreadyInProjectBlock (intake.ts:2145-2151, :2187-2192, :2746-2788); taskContextBlock (session/task-context.ts:331-443); the pre-claim overlap check (session/runner.ts:2609-2646 with peers.ts detectOverlap/pathsOverlap); the default-head poll every 60 s (githost-watcher.ts:587-620). Chat RECALL_KINDS has no status kind (conversation/recall-steps.ts:15-25).",
+    "Install identity: the desktop device row id (remote/presence.ts:54-91), registered on every store whenever the services run. Agent name defaults to 'Alice' (compose.ts:1752); commit author is '<agent> (Forerunner)' with the person's email (compose.ts:2710-2715). permissions.push is mapped (github.ts:1169-1178) but read nowhere in runtime.",
+    "Shared-store leftovers: ownsProject reads members/shared_with/author_human (commands/src/ownership.ts:21-33); shared_with is a setting (commands/src/commands/settings.ts:506-515); there is no project.share command; every project gets members:[own agent] (create-project.ts:100). /health reports rt.config.stateUrl (server.ts:657), not compose's env-first stateUrl (compose.ts:1638-1643).",
+    "Costs reach GitHub: the session's endedNote 'Spent CHF x' (runner.ts:4167-4170) is written into docs/status.md (memory/src/docs.ts:303) and pushed on fr/status when the status pull request is on (loop/docs.ts:1166-1174). The Projects mirror also has a cost field (projects-mirror.ts:92, :324-327); it is opt-in, behind an approval card.",
+    "Two-home tests: onerepo-together.test.ts (two composed homes on one MemoryGitHost with a restart; B never runs a task; both agents are named 'Alice'; not driven through the UI client). Not written: apps/ui/test/two-installs.ts, a two-user fake-HTTP case, a two-home bench."
+   ]
+  },
+  {
+   "file": "/tmp/frbench/wave8-oldplan-mapped.json",
+   "summary": "I mapped all 16 areas from the 2026-11-02 wave 8 plan to D9 (two Forerunners, each with its own SQLite store, meeting on GitHub). The verdicts follow brief section 4: 4 stay (status-issue-host, repo-guide, status-issue-write, status-issue-read), 6 change (collab-bench, collab-claims, collab-shared-repo, collab-feed, collab-live, collab-journey), 1 shrinks to a guard (collab-identity) and 5 go (collab-members, collab-privacy, collab-privacy-service, collab-claims-2, collab-offline). The verdict counts, the area keys and the amendment count were checked against the source files when the file was built.\n\nFor each area that stays, changes or shrinks, the file lists:\n- its problems, re-checked read-only at c15d75e with line numbers;\n- its acceptance lines and its collab-tests.md tests, rewritten for two homes on one stand-in GitHub;\n- a dropped list giving a one-line reason for each piece that assumed a shared store.\n\nFor the five areas that go, the file lists only what is dropped and where the few leftovers that need no shared store are sent.\n\nThe owner's 2026-11-02 status design and the guide decision are carried over word for word in carried_decisions. The file also flags the three sentences the owner was told that D9 makes untrue.\n\nThere are 10 new_work items:\n- NW-1 to NW-7 are brief section 5.\n- NW-8 and NW-9 are run C work I found was never built (see key_facts).\n- NW-10 is the early L4i leftover (the UpdatesPage race). The never-cut L4i scaffold leftover is in repo-guide.\n\nAll 17 wave8_amendments items are placed by their text, numbered from 0 for the premise. collab-journey's kept_tests hold the two-person bench journey (16 steps) and the phase F live journey, both rewritten for D9. Nothing in the repository was edited; the only file I wrote under /tmp/frbench is the result.",
+   "key_facts": [
+    "Output: /tmp/frbench/wave8-oldplan-mapped.json. Top-level keys are about, base, names_used, totals, proposed_groups, carried_decisions, areas[16], new_work[10], amendments[17] and notes. Each area has the requested fields plus brief_verdict, group and old_order.",
+    "Verdicts as in the brief: 4 stays, 6 changes (collab-claims marked 'shrinks and changes', collab-live 'changes, smaller'), 1 shrinks (collab-identity), 5 goes. The build checked these counts and that the 16 keys match collab-areas.json.",
+    "The brief's section 3 overstates what run C built. OJ-11 (Work together for a project already here) was cut in run C (C4 not_done[0], leftovers-C4 C4L-1) and run L4 sent it to wave 8 (L4-creds-33, D-L4-16). Chat's 'together' flag was also not built (L4-chat-308); chat still answers 'Open New project to work on it together.' (repository-words.ts:359). These are NW-8 and NW-9, a small area of their own after status-issue-write.",
+    "The intake's docs branch changed in L4-github-111: it is now fr/intake-<8 characters of the id>-<name>-docs. It is still keyed by the id a together project shares, so the collision in brief 5.3 stands. NW-3 proposes that only the marker's writer writes the doc set, marker and guide, with date-based decision file names; this needs a decision before any together project writes docs.",
+    "status-issue-write: acceptance (g) becomes 'one repository, one issue' shared by a together project. The status pull request, fr/status, the status_pull_request setting, isProjectStatusPr and the together project's 'Kept in the app' row all go. After a join, the closing project's issue gets a last comment and is closed; after a take-over, the new project makes its own issue. Dropped: claim-holder line writing, the same-branch premise and the FORERUNNER_TEST_PG bench.",
+    "status-issue-read: announced work matches by files before the claim, with the title passed to the planner as data and never matched by branch (taskBranchName, pr-executor.ts:529-537). New acceptance cases: two Forerunners announcing at once (the earlier comment keeps the work), the other's paused work never taken, the next plan and brief reading what was merged since, recall kind 'status', and the 14-day take-over rule also counting issue comments. Acceptance (b), 'a peer on the same store appears once', is dropped as moot.",
+    "collab-claims keeps only one person's own devices: the lost-claim stop, TaskRepo.transition with expectedHolder, the 403 on another agent's id, and a cut-line device check on Stop. The Stop route at server.ts:2494-2510 still ends any session not running in that process, with no device check. Stopping another person's session and the shared chip counts are dropped.",
+    "collab-bench: two homes against one stand-in GitHub with users ada and bob and org team, a 'GitHub unreachable for one home' switch, and composeTwo seeded from onerepo-together.test.ts. Dropped: --pg, --db-cut, --as/--person, --state-api and the 'Postgres every time' rule. FORERUNNER_TEST_PG stays only for areas that change packages/state.",
+    "Amendment numbering: index 0 is the premise. The brief cites 'amendment 7' for the guide's unfinished-work rules, which are item 6, and 'amendments 4, 8, 9' under status-issue-read, where the paused-work clause is in items 4 and 10. Amendment 15 (recall spending split by person) is moot because collab-privacy goes. Amendment 12 (D5 to D7 per person) holds because each store is one person's, and collab-journey checks it.",
+    "Code facts checked at c15d75e: STANDARD_DOCS still includes docs/status.md; GitHost has only createIssue, updateIssue and commentOnIssue (types.ts:351-364); the bench git host has one user; principals default to 'Alice' (compose.ts:1752); commits are authored '<name> (Forerunner)' (compose.ts:2712); the renewClaim error is swallowed (runner.ts:2786); peers.ts counts in_review only; time.ts clamps to the past; collectDocFiles reads README.md and docs/ only; /health uses config.stateUrl ?? 'sqlite'."
+   ]
+  },
+  {
+   "file": "/tmp/frbench/wave8-leftovers-classified.json",
+   "summary": "I classified run L4's leftovers into 92 distinct items, ids L4i-left-1 to L4i-left-92: (a) wave 8: 11, (b) phase H: 2, (c) w8-l4-leftovers: 53, (d) drop: 26. Every item was checked at c15d75e with git grep, git log and file reads.\n\nSources:\n- All 67 raw items of leftovers-L4i.json. Repeats across fix, review and fix-up are merged and some bundles are split, giving 66 items.\n- All 23 items of leftovers-L4a.json to leftovers-L4e.json. No later L4 area had taken any of them.\n- The L4g and L4h merge not_done lines, as 3 items: the L4c-left-6 decision and two drops that list what L4i closed.\n\n72 items are still open at c15d75e. 66 of them need fixing. The other 6 are drops: harmless or by design.\n\nThe two never-cut items are confirmed open:\n- The phone's plain 'start' bypass (L4i-left-1, class b) is phase H. No area planned on 2026-11-02 changes the remote watcher (watcher.ts); the re-planned collab-claims would take it if it changes that file.\n- The W15-01 sole-linked write into another project's pull request (L4i-left-2, class a) goes to repo-guide in the first group. Its fr/status half goes with status-issue-write.\n\nThe UpdatesPage `me?.id` race (L4i-left-3) is marked early, for the first group.\n\nThe Assisted task_create read-back (L4i-left-4) is still open and set to be built by the L4h-left-1 rule. Today task_create acts at once at every level, even when the model wrote the description.\n\nOf the 53 class c items, most are one sentence or one test. The medium ones are L4i-left-16, -22, -23, -32, -48 (Add to in the background), -49 and -59, and the cut-able ones say so in their reason.\n\nThe 26 drops break down as: 15 already fixed or now harmless (eight of them checked in the L4i fix-ups at 84f9e7e, and L4d-left-3 fixed by the L4d fix-up), 7 decided, accepted or by design (the 'Done' badge default, the L4c-left-6 injection case, run C decision 14), 2 not reachable or not code problems (L4-money-207's per-project half, report wording), and 2 process notes about bench walks.",
+   "key_facts": [
+    "Output: /tmp/frbench/wave8-leftovers-classified.json, top-level {base, written, sources, legend, counts, notes, items}; each item has exactly {id, text, still_open, evidence, class, never_cut, reason}; class is 'a'|'b'|'c'|'d'.",
+    "Counts: 92 items; a=11, b=2, c=53, d=26; still_open=72 (66 to fix, 6 dropped as harmless or by design); never_cut=2.",
+    "Never-cut 1 (L4i-left-1, class b): packages/runtime/src/remote/watcher.ts:779-801 runStart only asks startRefused (refused credential) before kill.resume() and deps.start = scheduler.requestStart (compose.ts:6058). It skips POST /sessions' refuseOverMonth, nothing_runnable and one-wait checks (server.ts:1979ff). None of the 16 planned wave 8 areas lists watcher.ts, so it is phase H unless the re-planned collab-claims takes the watcher.",
+    "Never-cut 2 (L4i-left-2, class a): loop/docs.ts:236-247 isProjectDocsPr and :259-267 isProjectStatusPr return opts.soleLinked for an unmarked PR, and ownsUnmarkedDocs (:280-299) uses only this install's index. Another Forerunner's project is never in that index, so the rule fails open. Fix: an unmarked PR counts only if this install recorded or opened it. Area: repo-guide (scaffold), with the fr/status half in status-issue-write.",
+    "Early: L4i-left-3, apps/ui/src/pages/UpdatesPage.tsx:136 `me?.id ?? \"human\"`, unchanged. L4-money-211 (a test race, L4i-left-18) is another flaky-test source to take early with it.",
+    "Decided: L4i-left-4. executor.ts:557-559 and the ADR 0119 amendment of 2026-11-24 (:311-318) show chat task_create acts at once at every level. The L4h-left-1 rule needs a build: read back only a description in the model's own words (notesPersons), and replace the ADR's 'Not changed' paragraph.",
+    "Class a beyond W15-01: L4i-left-5/6/7 (take-over-retry.ts locator from project.repos[0], the failure guess, TAKE_OVER_NOTHING_TO_RETRY), -8 (L4e-left-5, the intake docs pull request failing silently), -9 (mergedSinceLine skips closed records), -10 (Close's line only in a tooltip), -11 (no ownership check on the retry route; the fake answers 403 where the daemon answers 404), -12 (finishTakeOuts duplicate take-out window), -13 (L4e-left-9 real-daemon cases, mergedOnHost untested), -14 (L4e-rest-3: rebuildForTakeOver overwrites main's newer files, more likely once another Forerunner merges into main).",
+    "Class b: L4i-left-1, and L4i-left-15 (phone InboxScreen.tsx:240 raw message.type badge; sibling :117 raw request.kind).",
+    "Fixed since the leftovers were written (class d): the waiting list's 'needs your answer', kill.resume ordering, evenStopped and the stale R-startcred comment (84f9e7e); the answer_on_card note wording and option label, appliedChanges prefix match and claims.ts doc blocks (chat-final fix-up); L4d-left-3 (L4d fix-up, StartSessionDialog.tsx:394 includes blocked.kept); and the L4g and L4h merge lines L4i closed.",
+    "Still open, found while checking: the 'on'/'of' wording differs between commands/session.ts:105,107 ('A session on X starts ...') and the run's lines (L4i-left-35); start-blocked.ts:104 keeps paused tasks out of the blocker (L4i-left-34); the bench recorder writes console lines raw (msg.location URL with ?token=) although requestfailed and response URLs are stripped (L4i-left-54).",
+    "Medium class c items: L4i-left-48 (L4-github-106, Add to answering at once; status-issue-read adds a GitHub read on the same route, so the planner may give it to that area), -49 (one rule for Costs' tries and runs, the session lead decides it), -59 (critic review at the plan share, owner's D5).",
+    "Not an item: CI and the Desktop app workflow on c15d75e were still to run at the L4i merge (merge_problems_left[3])."
+   ]
+  }
+ ],
+ "plan": {
+  "file": "/tmp/frbench/wave8-plan.json",
+  "areas": [
+   "w8-two-homes",
+   "w8-issue-host",
+   "w8-repo-guide",
+   "w8-status-write",
+   "w8-together",
+   "w8-l4-leftovers",
+   "w8-status-read",
+   "w8-l4-leftovers-chat",
+   "w8-github-feed",
+   "w8-shared-repo",
+   "w8-own-devices",
+   "w8-journey"
+  ],
+  "sub_runs": [
+   "W8a (wave 34, base c15d75e): w8-two-homes, w8-issue-host, w8-repo-guide",
+   "W8b (wave 35, after W8a): w8-status-write, w8-together, w8-l4-leftovers",
+   "W8c (wave 36, after W8b): w8-status-read, w8-l4-leftovers-chat",
+   "W8d (wave 37, after W8c): w8-github-feed, w8-shared-repo",
+   "W8e (wave 38, after W8d): w8-own-devices, w8-journey"
+  ],
+  "owner_questions": [
+   "OQ-W8-1 (brief question 12, asked through the session lead): should requirements F.1 to F.7 be re-based on GitHub? Claims would become announcements in the status issue, seeing the other's work would be its comment and pull requests, the handoff its comment's last session, realtime a read within about a minute, and inbox and receipts would cover one person's devices only. Default built meanwhile: one dated note per F row, with scenario 10 and the bench journey as evidence. The session lead changes the rows only after the answer, so it changes one place.",
+   "OQ-W8-2 (brief question 13): can the owner give a second GitHub account, with a fine-grained token for Contents, Pull requests and Issues (read and write) on forerunner-sandbox, for the live two-person check? Model cap USD 3. Default: both profiles use the owner's account (two installs, one login). That still tests one comment per install, the guide and the never-write rule, but not cross-account access or the 14-day activity rule. The report says which one ran."
+  ],
+  "summary": "The wave 8 plan is in /tmp/frbench/wave8-plan.json, built against c15d75e: 12 areas, 5 sub-runs, 134 items. A build script checked the file's shape. I changed nothing in the repository and ran no tests. HEAD moved to 8262c31 while I worked, but that commit only touches NEXT-SESSION.md, so every code line number still holds.\n\n**Areas.** Ten are wave 8's own and follow the brief's six groups in order:\n- collab-bench became w8-two-homes.\n- status-issue-host became w8-issue-host.\n- repo-guide became w8-repo-guide.\n- status-issue-write became w8-status-write.\n- w8-together is new: OJ-11 and chat's Work together, which run C never built.\n- status-issue-read became w8-status-read.\n- collab-feed and collab-live became one area, w8-github-feed.\n- collab-shared-repo became w8-shared-repo; it also builds the agent names, which share a root cause with commit authors.\n- collab-identity's guard and the slimmed collab-claims became one area, w8-own-devices.\n- collab-journey became w8-journey.\n\nThe other two areas, w8-l4-leftovers and w8-l4-leftovers-chat, hold 19 run L4 leftovers each.\n\n**Things that differ from what the step asked:**\n- **12 areas, not about 10, and two leftovers areas, not one.** Run L4 left 53 class (c) items. I folded 15 into the wave 8 areas whose files they touch. The other 38 would not fit one fixer session (run L4's largest area held 19).\n- **The phone's plain start (L4i-left-1, never cut, money) is in w8-own-devices, not phase H.** That area builds one start check shared by POST /sessions, chat and the remote watcher, and the routing allowed this.\n- **L4i-left-48 and L4i-left-65 are in w8-status-read**, because the GitHub read before planning sits on the same route.\n\n**Sub-runs.** All five are listed above. W8a builds the base every later one needs: the two-home harness and bench, the issue calls on all three hosts, and the guide.\n\n**Placements the step required.** W15-01 (L4i-left-2) is never cut in w8-repo-guide, and its fr/status half goes with w8-status-write. The UpdatesPage me?.id race (L4i-left-3) is in W8a's first area.\n\n**Never-cut items.** There are 37. Each area's first acceptance lines name them with their failing test. The build script checks that, along with the exact area fields, item ids appearing once, and the sub-run and merge order.\n\n**Owner questions and decisions.**\n- Only brief questions 12 and 13 go to the owner (see owner_questions).\n- 34 decisions (D-W8-1 to D-W8-34). The brief's other open section 8 questions are D-W8-6 to D-W8-16, each marked \"session lead, 2026-11-24, from the brief's proposal; the owner can overrule\"; question 1 is recorded as decided by the owner (D-W8-1).\n- The owner's 2026-11-02 status design and guide decision are carried word for word.\n- D-W8-5 lists the three sentences the owner was told that D9 makes untrue.\n\n**Final check additions.**\n- F-W8-1 is the zero-cost two-home check in run C's LC-C1 style, against forerunner-sandbox or the stand-in.\n- F-W8-2 is the live two-person journey: estimate USD 2.40, cap USD 3.00, stop and report at 2.50.\n- runL4-plan.json owner_checklist[0] is reused and extended.\n\n**leftovers_routing.** All 92 classified ids are routed: 65 to areas, 1 to phase H (L4i-left-15), and 26 dropped with their reasons.\n\n**plan_check.** It maps every brief section 4 area, section 5 item, section 8 question and wave8_amendments entry (0 to 16) to an area and item id. It also says where each section 9 rule sits in the acceptance lines, what is left out on purpose and why, and lists the deviations above. Planned new ADRs: 0121 (repo-guide), 0122 (status-write), 0123 (own-devices)."
+ },
+ "checks": [
+  {
+   "lens": "code-truth",
+   "verdict": "fix-needed",
+   "n": 14,
+   "blocking": 1
+  },
+  {
+   "lens": "owner-fidelity",
+   "verdict": "fix-needed",
+   "n": 12,
+   "blocking": 1
+  },
+  {
+   "lens": "rules-tests",
+   "verdict": "fix-needed",
+   "n": 16,
+   "blocking": 0
+  },
+  {
+   "lens": "completeness-size",
+   "verdict": "fix-needed",
+   "n": 9,
+   "blocking": 0
+  }
+ ],
+ "findings": [
+  {
+   "lens": "code-truth",
+   "severity": "blocking",
+   "where": "w8-own-devices, W8-own-4 (never cut), decision 'A lost claim stops the run', files 'TaskRepo.transition expectedHolder'",
+   "problem": "The planned lost-claim fix cannot catch the case it now targets. Claims are held by agent id only, and one person's desktop and cloud runner run as the same agent, so a holder check by agent id never sees the loss. The never-cut acceptance ('distinct device ids ... A's run released: it stops within one watch tick') cannot pass without a claim holder that names the runtime (device or session). That needs a task-table change and migration, which the area does not name; it plans only a suite.ts case for expectedHolder.",
+   "evidence": "packages/state/src/schema.ts:223 claimed_by is 'Agent holding the claim'. packages/state/src/repos/task.ts:139-147 claim() sets claimed_by = agentId and allows a reclaim where claimed_by = the same agent; :182-185 renewClaim matches on claimed_by = agentId. services/cloud-runner/src/config.ts:59 'the human's first principal agent when absent'; services/cloud-runner/src/runner.ts:255-258 resolveAgent returns the first principal, the same one compose.ts:1733-1747 picks on the desktop. wave8-oldplan-mapped.json:316 (the source of this item): 'the watch also stops the run when claimed_by is not agent.id'.",
+   "fix": "Restate W8-own-4. The claim records which runtime holds it (device id or session id: a new column with a migration on SQLite and Postgres, so FORERUNNER_TEST_PG). renewClaim, the watch and transition check that runtime holder, not the agent id. Name the migration and packages/state/src/schema.ts in files, and add an acceptance case where both runtimes use the same principal agent."
+  },
+  {
+   "lens": "code-truth",
+   "severity": "should",
+   "where": "w8-status-write, W8-write-3 (never cut) and decisions (writer = install id + login)",
+   "problem": "The plan says the install id is 'registered on every store'. It is not: the desktop device row is registered only when services run, remote control is on, or it is asked for. The two-home harness composes like onerepo-together.test.ts and real-daemon.test.ts, with startServices: false. There it gets no device row, so the writer key the comment marker and the 'two installs, one login keep two comments' case depend on does not exist.",
+   "evidence": "packages/runtime/src/daemon/compose.ts:6016 `const registerDevice = services || remoteEnabled || opts.remote?.enabled === true;`, :5999 `const services = opts.startServices !== false;`, :6007 `let remoteDevice: DeviceRow | null = null;`. packages/runtime/test/onerepo-together.test.ts composes with `startServices: false`; apps/ui/test/real-daemon.test.ts has 32 `startServices: false` composes. wave8-codemap.md 5.4 says 'registered whenever services run'.",
+   "fix": "Have w8-status-write (or w8-two-homes' composeTwo) register the install id in every compose that writes status, or pass opts.remote.enabled in the harness. Then correct the root-cause line, and add a harness assertion that each home has a distinct install id."
+  },
+  {
+   "lens": "code-truth",
+   "severity": "should",
+   "where": "w8-repo-guide, decision D-W8-9 (date-named decisions 'the intake's first decision included'), files list",
+   "problem": "Date-named decision files break the code that finds the decision record by the 0001 number, and that code is not in the area's files. The person's Inbox answers would go into a new numbered file, docs/decisions/0001-project-decisions.md. That brings back the cross-Forerunner number collision the decision is meant to remove, and the person-facing sentence still promises 0001.",
+   "evidence": "packages/runtime/src/session/person-questions.ts:72 `DEFAULT_DECISION_DOC = \"0001-project-decisions.md\"`; :849-857 decisionDocPath takes the first `/^0001-.+\\.md$/` file, else the default; :517 'Your answers are written to the project's decision record (docs/decisions/0001-…).'. intake.ts also names 0001 at :239, :828, :832 and :838-841 (hasDecisionRecord). The plan has no mention of person-questions.ts.",
+   "fix": "Add packages/runtime/src/session/person-questions.ts (decisionDocPath, DEFAULT_DECISION_DOC, the :517 sentence) and intake.ts' refusal and retry texts (:239, :828, :832) to w8-repo-guide's files. Add an acceptance case: person answers after a date-named intake decision land in that record, and no 0001 file is created."
+  },
+  {
+   "lens": "code-truth",
+   "severity": "should",
+   "where": "w8-issue-host, W8-host-3 root cause and fix_scope ('a /graphql pinIssue ... (routes-projects.ts or a new routes-graphql.ts)')",
+   "problem": "The stand-in GitHub has no GraphQL endpoint at all, and routes-projects.ts is not Projects v2. It serves classic REST projects, columns and cards. Pinning therefore needs a new /graphql route in testenv from scratch. The existing GraphQL fake the fixer could copy is a capabilities test helper the plan does not name. The HTTP two-home harness also needs the stand-in to answer GitHubHost's derived graphqlUrl.",
+   "evidence": "testenv/src/githost/routes-projects.ts:1-3 'Classic repository projects: projects, columns and cards'. `grep -rn graphql testenv/src` finds only a rate-limit resource name (routes-app.ts:166). packages/capabilities/test/helpers/fake-projects-graphql.ts is the Projects v2 fake (github-graphql.ts:1-7 'Every operation is named so a fake endpoint in tests can dispatch on operationName'). github.ts:150 graphqlUrlFor(baseUrl).",
+   "fix": "Correct W8-host-3. Scope a new testenv routes-graphql.ts that dispatches on operationName (pinIssue, repository.pinnedIssues, the issue's node id) and name fake-projects-graphql.ts as the pattern. Check that the stand-in's baseUrl yields a graphqlUrl it serves."
+  },
+  {
+   "lens": "code-truth",
+   "severity": "should",
+   "where": "final_check_additions F-W8-1 'proves' (and F-W8-2 without the second account)",
+   "problem": "F-W8-1 runs both homes with one GitHub login and expects 'no Take it over while A is active'. The code never lets the person's own login block Take it over, and the plan's own W8-read-9 acceptance says so. With one login, Take it over is offered second. The zero-cost check would report a false failure, or someone would bend it.",
+   "evidence": "packages/runtime/src/sources/repository-use.ts:595-607 elsewhereOf: `mine(login)` compares with read.login, `other = dated.find((p) => !mine(p.authorLogin) && ...)`, `canTakeOver: !other`. Plan W8-read-9 acceptance: 'only the person's own login commented: Take it over stays offered second with its warning line'. Brief section 3: 'The person's own login does not block it'.",
+   "fix": "In F-W8-1 (and F-W8-2 without OQ-W8-2's account), expect 'Work together first, Take it over second with its warning line'. Keep 'no Take it over for Bob' only for the two-account run."
+  },
+  {
+   "lens": "code-truth",
+   "severity": "should",
+   "where": "shared_files (loop/docs.ts rule) versus w8-status-write decisions and fix_scope",
+   "problem": "shared_files says w8-status-write 'owns the status path and removes it (writeSessionStatus, statusInApp, STATUS_BRANCH, ...)'. That contradicts the area's own decisions: the status stays in the app with one sentence, and the Docs row reads 'In the app; also on GitHub'. statusInApp is also where the session end refreshes this computer's copy of the repository. Removing it brings back the bug fixed as blocking in fixup-decisions, and no line of the plan names that dependency.",
+   "evidence": "packages/runtime/src/loop/docs.ts:1219-1256 statusInApp, with :1240-1253 'The status write was also what kept this computer's copy of the repository current; without it a project made from a brief had no copy at all ... The copy is refreshed here'; :1145-1146 every non-PR repository status goes through it. `grep refreshCopy wave8-plan.json` finds nothing.",
+   "fix": "Reword shared_files: w8-status-write removes only the fr/status pull request path (STATUS_BRANCH, STATUS_PR_SETTING, STATUS_HELD_MARK, isProjectStatusPr and its held branch) and keeps statusInApp with its refreshCopy. Add an acceptance line that the session end still refreshes the copy."
+  },
+  {
+   "lens": "code-truth",
+   "severity": "should",
+   "where": "w8-l4-leftovers, L4i-left-59 (never cut, money) versus shared_files runner.ts rule",
+   "problem": "L4i-left-59 asks that a critic review meeting the plan share become the credential stop 'share' instead of a budget pause. That is a flow change in runner.ts. shared_files says 'the run L4 leftovers areas change words only through stop-words.ts and result.ts, never runner.ts' flow', and the area's files list does not name runner.ts. The fixer is blocked between a never-cut item and a forbidden file.",
+   "evidence": "packages/runtime/src/session/runner.ts:1071-1088 reviewStopSource maps level 'plan' to budget source 'plan'; :3295-3340 builds a BudgetStop with stoppedBy 'budget' and files the budget card (reviewWaits). Area files: 'the critic review's pause path (L4i-left-59)' with no path.",
+   "fix": "Name runner.ts :1071-1088 and :3295-3340 in w8-l4-leftovers' files, and add an exception for L4i-left-59 to the shared_files runner.ts rule. Or move the item to w8-own-devices, which already owns runner.ts regions in W8e."
+  },
+  {
+   "lens": "code-truth",
+   "severity": "should",
+   "where": "w8-own-devices acceptance 'Bench: one person's two runtimes, the SIGSTOP replay ... the phone row's refusal on a bench with --state-api'",
+   "problem": "The bench has no --state-api (or --pg) option, and no way to run two runtimes on one store. No area builds either: w8-two-homes' decision explicitly says 'no --state-api'. This bench step cannot be done as written.",
+   "evidence": "scripts/bench/start.mjs reads only env, fresh, githost, home, name, provider, subscription, api-key, daemon-port, ui-port and githost-in-setup. `grep state-api scripts/bench` finds nothing. Plan w8-two-homes decisions: 'no --as/--person identity flags, no --state-api for a two-person journey'. collab-tests.md proposed --state-api on 2026-11-02 and it was never built.",
+   "fix": "Either add the bench pieces to w8-own-devices' files (scripts/bench/start.mjs --state-api, a second runtime on the same store) with their own acceptance, or replace the bench step with the composed two-runtime case and say the bench part is not built."
+  },
+  {
+   "lens": "code-truth",
+   "severity": "nit",
+   "where": "w8-repo-guide files and root causes; w8-status-write W8-write-5",
+   "problem": "Some file pointers are wrong. checkDocDrift is not in packages/critic. STATUS_DOC_RE is defined in recall.ts, not agent.ts. statusDocRoot is not at :1227-1239.",
+   "evidence": "checkDocDrift is at packages/memory/src/docs.ts:444, and packages/critic has no reference to it. STATUS_DOC_RE is defined at packages/runtime/src/conversation/recall.ts:1016 and used at :1044 and :1076; agent.ts:141 only imports it. statusDocRoot is at loop/docs.ts:525 and statusHeld at :582; :1227-1239 is statusInApp writing the held mark.",
+   "fix": "Point 'packages/critic (checkDocDrift)' at packages/memory/src/docs.ts:444. Name recall.ts:1016/:1044/:1076 for STATUS_DOC_RE. Use docs.ts:525 and :582 for statusDocRoot and statusHeld."
+  },
+  {
+   "lens": "code-truth",
+   "severity": "nit",
+   "where": "w8-shared-repo, W8-repo-3 and root cause 'repo-create.ts (owner = the whoAmI login, private)'",
+   "problem": "The plan says repo.create always uses the presser's account. Creating the repository in an organisation already exists: preview and create take an owner and use it as an organisation, and the dialog has an owner field. Only the default (the login) and the 'how a second person gets in' line are new.",
+   "evidence": "packages/runtime/src/loop/repo-create.ts:170-180 `const owner = req.owner?.trim() || login;` with `accountKind ... 'organization'`, and createRepo passes the owner for an organisation. apps/ui/src/pages/project/CreateRepoDialog.tsx:44, :76, :138 (data-testid create-repo-owner).",
+   "fix": "Restate W8-repo-3 as a change of default plus the access line, building on the existing owner field and accountKind rather than adding organisation support again."
+  },
+  {
+   "lens": "code-truth",
+   "severity": "nit",
+   "where": "w8-issue-host, W8-host-6",
+   "problem": "The plan says GitHub errors 'all reach callers as one thrown error'. The adapter already maps them to distinct codes; only 410 (issues off) and a 5xx after retries share provider_error.",
+   "evidence": "packages/capabilities/src/githost/github.ts:228-246: 401 gives provider_auth, 403 tool_not_allowed, 404 not_found, 405/409/422 validation, anything else provider_error, each with details.status. The rate-limited 403 is mapped separately to provider_rate_limit at :211-221.",
+   "fix": "Restate W8-host-6: add issues_disabled for 410 and a 'no permission' reason over the existing codes. Callers can read details.status."
+  },
+  {
+   "lens": "code-truth",
+   "severity": "nit",
+   "where": "w8-own-devices, L4i-left-1 acceptance and files",
+   "problem": "The phone's start now fails with POST /sessions' refusals, but the fake state service's simulated PC always completes a start. No mobile UI test can show the refusal, and fake-state-service.ts is not in the files.",
+   "evidence": "apps/ui/test/fake-state-service.ts:601-617 simulatePc completes every command through executeOnPc, and fails it only with a FakePcError (e.g. voice unavailable :678). Its start path has no refusal.",
+   "fix": "Add apps/ui/test/fake-state-service.ts (a refused start the simulated PC reports with the daemon's sentence) to w8-own-devices' files, or say the phone screen's case waits for phase H."
+  },
+  {
+   "lens": "code-truth",
+   "severity": "nit",
+   "where": "w8-two-homes W8-homes-1 and w8-journey W8-journey-3 ('patches settings.members, a state the app never writes')",
+   "problem": "The app does write settings.members. What it never writes is two agents from two installs in one list.",
+   "evidence": "packages/runtime/src/daemon/create-project.ts:99-100 `settings: { members: [deps.agent.id], ... }`; tests/e2e/src/scenario-world.ts:891-896 patches `members: [alice.agent.id, bob.agent.id]`.",
+   "fix": "Say 'a two-person members list the app never writes'."
+  },
+  {
+   "lens": "code-truth",
+   "severity": "nit",
+   "where": "w8-own-devices L4i-left-1 and L4i-left-35 evidence ('fixed in 84f9e7e')",
+   "problem": "The wrong commit is cited for the phone-row and start-sentence fix.",
+   "evidence": "`git log -S startRefused -- packages/runtime/src/remote/watcher.ts` and `git log -S 'A session of ${name}${where} starts'` both give 3b6f374 ('a refused phone Start lifts no Stop all'). 84f9e7e only changes held-words.ts ('which is done; its review waits').",
+   "fix": "Cite 3b6f374."
+  },
+  {
+   "lens": "owner-fidelity",
+   "severity": "blocking",
+   "where": "wave8-plan.json areas[w8-shared-repo] decisions[1] (:1120), acceptance W8-repo-3 (:1143), D-W8-11 (:1510)",
+   "problem": "The plan says the owner's old question 5 default stays 'unchanged', but it changes where every repository Forerunner creates goes. Under D9 nothing is shared when a repository is created, so the rule 'a repository made for two' becomes 'any repo.create'. The area tells the fixer to create in 'an organisation the presser belongs to when the token sees one'. That is not the owner's default ('an organisation you both belong to'), and it reverses ADR 0097 (the person's own account unless an organisation is named). D-W8-11 and the area also disagree: 'both are in' versus 'the presser belongs to'.",
+   "evidence": "Area decision: 'a repository Forerunner creates (repo.create, ADR 0097) goes into an organisation the presser belongs to when the token sees one, else the presser's account'. D-W8-11: 'unchanged: an organisation both are in when the presser's token sees one'. owner-summary.md Q5: 'A shared repository goes into an organisation you both belong to, otherwise into your account with the other person added (default)'. ADR 0097:36-37: 'under the token's own account unless an organization is named; private unless public is asked for'. repo-create.ts:171 today: owner = req.owner || login. With a classic token, a person working alone who is in their employer's organisation would get their private project created in that organisation, and the card offers only 'Create the repository' / 'Not now'.",
+   "fix": "Keep today's default (the presser's own account; an organisation only when the person picks one on the card). Make W8-repo-3 only the line after creation that says how a second person gets in, plus, at most, a choice of account or organisation on the card. If wave 8 really wants organisation-first placement, make it an owner question with today's behaviour as the default. Fix D-W8-11 to match."
+  },
+  {
+   "lens": "owner-fidelity",
+   "severity": "should",
+   "where": "areas[w8-shared-repo] W8-repo-2 (:1121, files :1135 'the commit author :2710-2715 only'); areas[w8-journey] W8-journey-6 (:1333); final_check F-W8-1/F-W8-2 'proves'",
+   "problem": "Every commit Forerunner pushes to GitHub carries the person's email address. W8-repo-2 owns exactly those lines but changes only the author name. The 'nothing private crosses' search covers only issue bodies, comments and pull request bodies, so it never sees commits. In a two-person repository, the other person (and anyone, on a public repository) reads the setup email in every commit. That breaks 'no costs, emails or chat on GitHub' (brief section 2 and section 9).",
+   "evidence": "packages/runtime/src/daemon/compose.ts:2711-2715: gitIdentity { name: `${principal.name} (Forerunner)`, email: human.email || \"forerunner@localhost\" }. human.email comes from `fr setup --email` (setup/wizard.ts:200-210). W8-journey-6 problem: 'no search of everything the journey wrote to GitHub for ... an email address'. Its acceptance narrows that to 'every issue body, comment and pull request body'. The owner summary says the issue never shows 'costs, email addresses, chat'.",
+   "fix": "In W8-repo-2, also make the commit email non-personal, e.g. the person's GitHub noreply address (<id>+<login>@users.noreply.github.com from whoAmI) or forerunner@localhost, with a restart case. Extend W8-journey-6 and both final-check searches to the commit authors and committers of every commit the journey pushed."
+  },
+  {
+   "lens": "owner-fidelity",
+   "severity": "should",
+   "where": "areas[w8-status-write] decisions[4] (:513); every area's words acceptance line ('never an install id ... on a screen or on GitHub')",
+   "problem": "The writer marker puts the install id, and the project id K, on GitHub. In the same decision the plan says ids never go there, and every area's words rule says 'never an install id ... on GitHub'. A fixer writing the 'no ids' property test (W8-write-2) will either fail on the marker or drop the writer key that one comment per install depends on. The install id is the device row id that remote commands are addressed to (remote/presence.ts header comment), and a public repository shows it to everyone in the raw comment.",
+   "evidence": "Decision [4]: \"'<!-- forerunner:status-writer v1 key=K install=<install id> -->' ... Never in a comment or the body: costs, chat words, Inbox answers, email addresses, secrets, @mentions or ids other than pull request numbers.\" Words acceptance (for example w8-status-write [13]): 'never an install id, task id, comment id or UUID on a screen or on GitHub'.",
+   "fix": "Say once that the hidden markers are the one allowed exception (the owner's design names a 'hidden marker'). Put a non-reversible writer key in the comment marker (for example a hash of the install id and the project id) instead of the raw device id. Write the property test to skip only the marker comment line."
+  },
+  {
+   "lens": "owner-fidelity",
+   "severity": "should",
+   "where": "areas[w8-together] decisions[1] (:614), W8-join-2; areas[w8-status-write] decisions[2] (:511), [9] (:518), acceptance W8-write-9 (:551)",
+   "problem": "The OJ-11 join closes the closing project's status issue when 'this install wrote' it. But the plan never says which issue a project like Site writes before the join: a project on this computer, not together, whose repository's marker names the other Forerunner's project. Key K is defined as the marker's project id. If Site created issue K (it started a task first), the join's 'its last comment and close' closes the issue the other Forerunner announces in. That lets one Forerunner close the other's noticeboard, and the acceptance line 'nothing on A's ... issue' cannot hold.",
+   "evidence": "W8-write decision [2]: 'key K = the project id in .forerunner/project.json on the default branch, shared by a together project'. [9] covers 'a together project', 'a pair made before the rule' (two projects on one computer) and 'after a take-over', but not a project here that the marker does not name. W8-together decision [1]: 'if this install wrote Site's status issue, its last comment ... and its close'.",
+   "fix": "Add the missing rule to W8-write-9. A project here whose repository's marker names another project, and which is not together, writes no issue (its status stays in the app with one sentence, as run C did for together projects), or writes only its own comment on issue K. At the join, close an issue only when its key is the closing project's own id and no other writer has commented on it. Add a two-home case where B created issue K before the join."
+  },
+  {
+   "lens": "owner-fidelity",
+   "severity": "should",
+   "where": "areas[w8-status-read] acceptance W8-read-6 (:843) versus decisions[1] (:809); D-W8-26",
+   "problem": "The other Forerunner's paused work is 'never' taken and has no expiry. Working-on-now lines lapse after their 'until' ('not seen since', blocks nothing), but Paused lines have no 'until', and a reinstall's old comment is never edited by Forerunner. A Paused line from a Forerunner that is gone (uninstalled, or its person left the project) therefore blocks that work for the other person's Forerunner for good. That turns an announcement into a lock without saying so, against the owner's 'Announcements, not locks: an announcement does not lock a task the way a claim does'.",
+   "evidence": "W8-read-6: \"Bob's planner and runner never take it\". Decisions [1]: \"after its 'until' a line reads 'not seen since' and blocks nothing\" (this applies to Working on now only). D-W8-26: 'its old comment stays and reads \"not seen since\"; Forerunner never edits or deletes it'. owner-summary.md: 'Announcements, not locks.'",
+   "fix": "Give Paused lines the same lapse. Once the writer has not been seen within the 14-day activity window (the rule W8-read-9 already reads), the line reads 'not seen since <date>' and blocks nothing; the planner may then see it as data. Add a case where the writer has gone quiet. If a lasting hold is really wanted, call it a lock in D-W8-6 and name it as the alternative."
+  },
+  {
+   "lens": "owner-fidelity",
+   "severity": "should",
+   "where": "D-W8-13 (:1512); areas[w8-issue-host] decisions[4] (:321); areas[w8-status-read] decisions[2] (:810)",
+   "problem": "The owner's default is 'only people with write access count', but the plan counts GitHub's author_association OWNER, MEMBER or COLLABORATOR. MEMBER means a member of the organisation, whatever their access to this repository. COLLABORATOR includes collaborators invited with read access only. So a read-only member or collaborator can announce work and make the other Forerunner skip it. The plan claims to keep the owner's rule while building something else.",
+   "evidence": "D-W8-13: 'only authors with write access count (OWNER, MEMBER, COLLABORATOR)'. w8-status-read decisions[2]: 'Only authors with write access (association OWNER, MEMBER or COLLABORATOR) announce'. owner-summary.md Q7: 'Default: not locked, and only people with write access count.'",
+   "fix": "Read each writer's repository permission (GET /repos/{o}/{r}/collaborators/{login}/permission, cached per login with an ETag) in w8-issue-host, and count only write, maintain or admin. Keep association only as a cheap first filter. Add a stand-in case: an organisation member with read access and a collaborator with read access are notes, not announcements."
+  },
+  {
+   "lens": "owner-fidelity",
+   "severity": "should",
+   "where": "areas[w8-status-write] decisions[4] (:513), acceptance W8-write-4 (:547)",
+   "problem": "The GitHub line for a credential wait promises more than is built. Run C's amendment 5 limits the 'then it goes on' wording to a session that 'goes on by itself'. The plan drops that limit. Under D5 the person's policy can be 'ask first' (one card) or 'go on with the next credential', and then the session does not resume at the reset by itself. The other person would read 'waits until 15:40, then it goes on', which design section 5 rule 9 forbids.",
+   "evidence": "runC-plan.json wave8_amendments[5]: \"a session that waits for its Claude credential and goes on by itself is listed as 'waits until 15:40, then it goes on'\". Plan acceptance W8-write-4: \"a session waiting for its Claude credential reads 'waits until 15:40, then it goes on'\" (no condition). Owner D5 (owner-decisions-2026-11-09.md): 'ask first (one card ...), or wait'.",
+   "fix": "Restore the condition. Write 'waits until 15:40, then it goes on' only when the policy is to wait and the session resumes by itself. Under ask-first, write a line such as 'waits for its person's answer', with no time. Test each policy as exact text."
+  },
+  {
+   "lens": "owner-fidelity",
+   "severity": "should",
+   "where": "areas[w8-repo-guide] decisions[2] (:404), [5] (:407), acceptance W8-guide-1",
+   "problem": "AGENTS.md always says 'Each Forerunner announces its work in the pinned status issue' and tells every person and agent to read that issue and keep a comment there. The plan also builds a per-project off switch (D-W8-13) and a stays-in-the-app path for issues off or no permission (W8-write-7). Neither is a guide fact, so the guide keeps promising announcements that are not made and sends other people's agents to an issue that may not exist (design section 5 rule 9).",
+   "evidence": "Decision [5]: 're-rendered ... when a fact changes (name, goal, default branch, who merges, checks, the status issue's number)'. W8-guide-1 acceptance covers 'the status issue line with and without a number' only. D-W8-13: 'on by default with a per-project switch'. W8-write-7: 'Status stays in the app: issues are turned off on owner/repo.'",
+   "fix": "Make the status issue's state (on, switched off, unavailable) a guide fact. When it is not on, the guide's status and 'Before you start' lines say that Forerunner keeps its status in the app and announces nothing on GitHub. Add a docs.test case for each state and one docs pull request when the switch changes."
+  },
+  {
+   "lens": "owner-fidelity",
+   "severity": "should",
+   "where": "areas[w8-repo-guide] acceptance W8-guide-3 (:435) versus decisions[1] and D-W8-9",
+   "problem": "A never-cut acceptance line contradicts itself and the decision it tests. D-W8-9 says a together project writes no doc set, marker or guide, but 'both write decision files under date-based names'. The acceptance requires Bob's together project to write no decision file, and in the same sentence requires a task pull request from each home that adds a dated decision file. A fixer cannot pass both.",
+   "evidence": "W8-guide-3: \"Bob's together project ... writes no doc set, marker, guide or decision file and never pushes to a docs branch of the shared id ... one task pull request from each home, each adding a decision file under a date name, merge on the stand-in without a name conflict\". D-W8-9: 'a together project writes none of them; both write decision files under date-based names'.",
+   "fix": "Reword the line: Bob's together project writes no doc set, marker or guide and never pushes to the shared id's docs branch; a decision file reaches GitHub only through its own task pull requests, under a date name."
+  },
+  {
+   "lens": "owner-fidelity",
+   "severity": "nit",
+   "where": "areas[w8-status-write] acceptance [9] (:552), w8-repo-guide decisions[5] (:407)",
+   "problem": "Making the issue number a guide fact gives the first person a docs pull request to merge. When the second person's first task is what creates the issue (Ada has run no session since the upgrade), the second person's arrival is what makes the first person act. The title form ('the pinned issue \"Forerunner status: <name>\"') already works without a number.",
+   "evidence": "\"The guide's fact: once the issue exists, the maker's Forerunner opens one docs pull request with the number in AGENTS.md\"; fix_scope: \"The guide's status line reads 'the pinned issue \\\"Forerunner status: <name>\\\"' until w8-status-write records the number\".",
+   "fix": "Keep the title form as the guide's status line and drop the number as a fact. Otherwise, add the number only to the next docs pull request the guide opens for another reason."
+  },
+  {
+   "lens": "owner-fidelity",
+   "severity": "nit",
+   "where": "areas[w8-shared-repo] decisions[2] (:1121); areas[w8-status-write] decisions[4] header (:513)",
+   "problem": "The default agent name is built from the person's first name. It is then published in every commit and in the status comment header, on public repositories too, and the person is not told. Meanwhile the guide tells everyone to put 'no costs, secrets or personal details' in the issue. The GitHub login, which is already public, would tell people apart just as well.",
+   "evidence": "\"Each agent's default name is '<the person's first name>'s agent' (from the setup assistant's name)\"; header \"'**<the person's name>'s agent (Forerunner)** · <login>'\"; guide decision: 'no costs, secrets or personal details there'.",
+   "fix": "Default the agent name from the GitHub login ('ada's agent'), or have the setup step's line say that the agent's name appears on GitHub and can be changed in Settings. Test the exact text."
+  },
+  {
+   "lens": "owner-fidelity",
+   "severity": "nit",
+   "where": "areas[w8-status-write] acceptance W8-write-6 (:546)",
+   "problem": "The new Details line uses 'you' for both people ('each of you merges your own'), against the plan's own words rule that 'you' is only for the person looking.",
+   "evidence": "'What the other Forerunner does shows in its comment on the status issue and its pull requests on GitHub; each of you merges your own.'",
+   "fix": "For example: '... and its pull requests on GitHub. You merge yours; its person merges theirs.' Test as exact text."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "should",
+   "where": "wave8-plan.json areas[9] w8-shared-repo: W8-repo-2 and decisions[2]; areas[11] w8-journey: W8-journey-6; final_check_additions F-W8-1 and F-W8-2 'proves'",
+   "problem": "Every commit Forerunner pushes to GitHub carries the person's email address. W8-repo-2 rewrites exactly that commit identity but only changes the name. The plan's 'nothing private crosses' searches only look at issue bodies, comments and pull request bodies, so they cannot catch it. This breaks D-W8-4 ('no costs, emails or chat on GitHub'). It can also break pushes: GitHub's 'Block command line pushes that expose my email' setting rejects a push whose commits use a private address (GH007), so Bob's first task push would fail.",
+   "evidence": "packages/runtime/src/daemon/compose.ts:2711-2716: `const gitIdentity = { get name() { return `${principal.name} (Forerunner)`; }, email: human.email || \"forerunner@localhost\" }`, used by the PR executor, docs and intake. W8-repo-2's decision only sets the default name and \"commit author '<agent name> (Forerunner)'\". W8-journey-6: 'a search of every issue body, comment and pull request body ... finds no CHF, USD, cost, email address'.",
+   "fix": "Have W8-repo-2 decide the commit email. Options: the login's GitHub noreply address built from whoAmI's id and login, or a fixed Forerunner address. Add commit author and committer emails to the W8-journey-6, F-W8-1 and F-W8-2 searches. Add a stand-in case that refuses a push carrying a private email."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "should",
+   "where": "wave8-plan.json final_check_additions.rules[1] and steps[1] (F-W8-2)",
+   "problem": "The USD 3.00 cap is enforced by one ledger, but F-W8-2 runs two homes. Each home has its own store and ledger, both use the one Anthropic key, both press Start within a minute, and each runs a second session 'if the ledger is under USD 2.50'. There is no single ledger to read, so the cap rests only on the checking agent adding two figures while two sessions run in parallel. AGENTS.md says to enforce limits in code, never only in prompts. In run L4 phase F there was one shared ledger.",
+   "evidence": "F-W8-2 rule: 'Model money cap for wave 8's live step: USD 3.00 ... stop and report at USD 2.50; no step starts whose estimate would pass the cap; this is wave 8's own ledger'. Step: 'two fresh profiles (two FORERUNNER_HOMEs, each its own store, no Postgres) ... both press Start within a minute ... a second session each if the ledger is under USD 2.50'. Estimate: 2.4.",
+   "fix": "Before either Start, set each home's monthly cap (human.monthly_cap) and the project budget in code so the two together cannot pass USD 2.50 (for example USD 1.25 each). Make the stop rule sum both homes' cost ledgers, and report both figures."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "should",
+   "where": "wave8-plan.json areas[10] w8-own-devices: W8-own-9 '[minor, security]' on the cut line (size: 'may end in not_done ... W8-own-9')",
+   "problem": "PUT /projects/:id/settings is a money hole, not only an API hygiene item. It merges any key except the web-access key, with no command, change row or approval. project.settings holds the session cap, the highest model, 'Start a session by itself' (which settings.set asks a yes for), the monthly handover job with its run budget, and fast mode. After w8-status-write it will also hold the status issue's off switch and its stored issue number. Any API caller can raise a session cap or the model ceiling past budget.set and settings.set. The plan lets this end in not_done, against its own rule 'no budget, cap or wrap-up line is passed or changed'.",
+   "evidence": "server.ts:2806-2830 merges body.settings into current.settings and refuses only WEB_ACCESS_SETTING. packages/commands/src/commands/budget.ts:32 `SESSION_CAP_KEY = \"session_cap_usd_micro\"`. settings-view.ts:239-245 reads p.settings.session_cap_usd_micro; :252 critic_ceiling; :287 start_by_itself ('a yes to turn on'); :278 handover with budget_usd.",
+   "fix": "Make W8-own-9 never cut, with a money tag. Refuse on this route every key that settings.set or budget.set owns (or send them through those commands). Add a real-daemon case per money key and keep the fake daemon in step."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "should",
+   "where": "wave8-plan.json areas[7] w8-l4-leftovers-chat: L4i-left-52 (files[0] 'packages/runtime/src/agent/sdk.ts (scrubEnv only)', decisions[2], acceptance[0])",
+   "problem": "The allow-list is planned 'for the Claude Code subprocess' inside scrubEnv, but scrubEnv has three callers. One is the process sandbox's base environment, which runs the project's checks. An allow-list inside scrubEnv would strip the toolchain variables those checks need. An allow-list beside it that covers only sdk.ts would miss the subscription driver, which is the default credential. The acceptance tests one unit case, so neither failure would show.",
+   "evidence": "scrubEnv callers: packages/runtime/src/agent/sdk.ts:552, packages/runtime/src/provider/claude-code.ts:260, packages/runtime/src/sandbox/process.ts:68. Its doc comment at sdk.ts:1426: 'The environment handed to the Claude Code subprocess (and the process sandbox's base)'.",
+   "fix": "Name all three callers. Build the allow-list as a new function called only by the two Claude Code drivers, keep the deny-list for the sandbox, and add a unit case per driver. Add a sandbox case showing a project check still sees a toolchain variable such as JAVA_HOME."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "should",
+   "where": "wave8-plan.json areas[3] w8-status-write decisions[5] ('The body is a view rebuilt from all writers' comments') and decisions[7] ('a comment by another login carrying this marker is that login's'); areas[8] w8-github-feed decisions[1] ('once per writer (install id)'); D-W8-13 (not locked)",
+   "problem": "The write-access rule is tested only where the reader judges announcements. The issue is not locked, so on a public repository anyone can post a comment carrying '<!-- forerunner:status-writer v1 key=K install=X -->'. Nothing says the body rebuild, the 'On GitHub' block or the Updates lines leave such a writer out. So Ada's Forerunner would republish an outsider's lines in the pinned body. The first-writer Updates line fires once per install id, a value the commenter chooses, so every new marker adds a line to Ada's Inbox. No acceptance case covers an author without write access outside the reader.",
+   "evidence": "Only w8-status-read's acceptance has 'a line from an author without write access is a note'. W8-write-8 tests only bob, who has write access. Feed: \"one Updates line the first time another writer's comment appears ... once per writer (install id), kept across restarts\".",
+   "fix": "Use one writer filter everywhere: an author with write access, plus the marker, plus the login. Apply it in the body rebuild, the 'On GitHub' block and both Updates lines. Key the first-writer line by login, at most one per login. Add an acceptance case: a comment by an author with association NONE carrying a valid marker, on a public stand-in repository, changes nothing in the body, the block or the Inbox."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "should",
+   "where": "wave8-plan.json areas[1] w8-issue-host decisions[4]; areas[6] w8-status-read decisions[2]; D-W8-13",
+   "problem": "The plan treats author_association as write access. On GitHub, MEMBER means a member of the organisation whatever their permission on this repository, and COLLABORATOR also covers collaborators with the read role. w8-two-homes builds read, write and none collaborator roles, and the stand-in derives association from membership. A read-only collaborator therefore shows COLLABORATOR on both sides, can announce files that make Bob's runner skip work, and no test can fail. The owner-design default is 'only write-access authors count'.",
+   "evidence": "w8-status-read: 'Only authors with write access (association OWNER, MEMBER or COLLABORATOR) announce'. w8-issue-host: 'Association from the repository owner, the organisation's members and the collaborators, else NONE, on both stand-ins'. w8-two-homes fix_scope: 'a collaborator role read, write or none settable through the admin API'.",
+   "fix": "Decide write access from the login's permission on the repository, for example the collaborator permission read cached per login. Or record that association is a deliberate proxy. Either way add a read-only collaborator case whose announcement blocks nothing."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "should",
+   "where": "wave8-plan.json areas[8] w8-github-feed decisions[2] and W8-feed-5/-6 acceptance; areas[6] W8-read-8",
+   "problem": "The new Updates lines put text from another writer's GitHub comment into the Inbox, for example 'ada's Forerunner on \"Team site\": did 2 tasks (\"A\", \"B\"). Next: \"C\".' Inbox cards are humanRequest rows, and chat lists open cards in its per-turn facts. Chat reads back every change only when a listed card matches quotesOthersWords, which is a fixed list of card shapes. A new Updates card is not on that list, so a chat turn carrying GitHub text would act at once. That goes against the owner's answer 2 of 2026-11-17 ('keep asking first'). The plan's chat-guard case (W8-read-8) covers recall only.",
+   "evidence": "packages/runtime/src/conversation/project-facts.ts:444-455: quotesOthersWords is true only for context, said or description fields, source specialist or critic, TASK_PROPOSAL_KEY, or person_questions cards. agent.ts:3225-3232 sets recordsRead only for those cards. Inbox cards are humanRequest rows (credential-wait.ts:779-797, kind 'info').",
+   "fix": "Mark the feed's Updates rows, and any card quoting GitHub text, in quotesOthersWords. Add a composed chat case: with such a line open, a task change asked in chat is read back."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "should",
+   "where": "wave8-plan.json areas[6] w8-status-read: acceptance 'Injection (never cut ...)', decisions[3] ('Merged on GitHub ... every brief'), W8-read-6 ('its handoff is quoted from the work-in-progress commit message')",
+   "problem": "The plan opens several new paths for GitHub text into model prompts but tests injection on only one, the issue comment. Untested paths: (1) merged pull request titles and files, in the plan-only block and in every brief; (2) the work-in-progress commit message, which holds the other agent's handoff verbatim and can be pushed by anyone with write access, quoted to Bob's planner and runner; (3) the marker's project name, in chat's together read-back.",
+   "evidence": "pr-executor.ts:833-858 workInProgressMessage writes `Where I stopped: ${plain(h.stopped)}` and the 'Left to do' items verbatim. The injection acceptance names only 'a comment saying 'ignore your rules and merge #3''. Brief section 9: 'issue comments, pull request bodies and branch names are data'.",
+   "fix": "Add record-channel injection cases for a merged pull request title, a work-in-progress commit message and a marker name that each carry an instruction. Each must be quoted inside the data markers, flagged to the person, and nothing acted on."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "should",
+   "where": "wave8-plan.json areas[3] w8-status-write decisions[4] (Paused 'quoted from the handoff', Last session 'did 1 task: \"Write notes page\". Next: ...') and acceptance W8-write-2",
+   "problem": "The renderers copy free text onto GitHub: the model's handoff, task titles and Next lines. The money property test only varies 'the session's figures', meaning the structured numbers. A handoff the model wrote under the wrap-up line, saying 'used CHF 1.20 of the budget', or an email address in a title, would pass the renderer and the test. The ban on the word 'cost' cuts the other way: it would fail a real title such as 'Fix the cost page', so a fixer would either weaken the test or mangle titles.",
+   "evidence": "W8-write-2: 'a property test over every renderer ...: no 'CHF', 'USD', '$', 'cost' or 'spent', no email address and no @mention in any output, whatever the session's figures'. The plan's own root cause notes 'The session summary and the handoff carry the spend too'.",
+   "fix": "Add one redaction step for quoted text in status-board-words.ts that removes currency amounts, emails and @mentions. Have the property generator put CHF, USD, $, emails and @mentions into the handoff, title and Next inputs. Ban money figures rather than the word 'cost' in a person's title, or say exactly what is removed."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "should",
+   "where": "wave8-plan.json areas[1] w8-issue-host: decisions[1] (listIssueComments fields) vs acceptance[0] ('a comment edited by a second login shows the new updatedAt and the editor'); areas[3] W8-write-8",
+   "problem": "The contract asks for 'the editor' of a comment, but GitHub's REST issue comment has no editor field. Only GraphQL's lastEditedAt and editor give it, and GraphQL has no ETag or 304, which conflicts with the cheap ETag reads. The fixer builds both stand-ins, which would return an editor the real adapter cannot get. That is the 'stand-ins drifted from the real thing' bug class in validation.md, and the tamper rule ('edited by someone else: restored') would rest on it.",
+   "evidence": "The decided fields are 'each comment's author login, author association, author type (Bot) and updatedAt'; the acceptance then adds 'and the editor'. A REST comment has user, created_at, updated_at, author_association and no editor.",
+   "fix": "Detect tampering by comparing the comment body with this writer's last sent text, stored in its own store. Drop 'the editor' from the contract, or get it through a separate GraphQL read outside the ETag path. Make the stand-ins return only fields GitHub returns."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "should",
+   "where": "wave8-plan.json areas[6] w8-status-read decisions[1] ('after its 'until' a line reads 'not seen since' and blocks nothing'); areas[3] decisions[6] ('until = now + 90 min')",
+   "problem": "How long an announcement blocks work comes from the comment's own text, written with the writer's PC clock. A writer whose clock is hours ahead, or a write-access author who types a far 'until', keeps Bob's runner skipping those files ('left to …') for as long as the text says. GitHub's own updated_at is never used to bound it. The plan treats writer-stamped time as a bug class elsewhere (W8-own-7).",
+   "evidence": "The freshness rule rests only on 'until'. Every file of a task in 'another writer's fresh announcement' is skipped.",
+   "fix": "Treat a line as fresh only while both hold: the comment's GitHub updated_at is within the refresh window (for example two times the 30-minute refresh) and its 'until' has not passed. Add a case with a far-future 'until' on a stale comment."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "should",
+   "where": "wave8-plan.json areas[10] w8-own-devices: title ('every way a session starts (Start, the phone, chat) passes the same start check'), decisions[2] / D-W8-21",
+   "problem": "Only three start paths are named, but more call the scheduler directly and skip POST /sessions' refusals: intake's Approve and start, prepared work's hands-off start, the 'Start a session by itself' loop, a kept start firing, Continue on a budget card, the resume after a credential comes back, and the plan-approval sync. Rule 8 asks for the siblings. Spending stays safe because the month's-cap hook stops it, but the refusal words do not match the promise in the title.",
+   "evidence": "scheduler.requestStart is called directly at compose.ts:3201, :4072, :4195, :4828, :5432, :5500 and :5591, besides :6057 (the phone), server.ts:2060 and :2184, and loop/commands.ts:971. The month's cap is enforced at model calls in compose.ts:1894-1902.",
+   "fix": "List every start path. Either route each through the start check or state why it is exempt, with one case per exemption."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "should",
+   "where": "wave8-plan.json areas[5] w8-l4-leftovers: acceptance[0] (L4i-left-59) and the acceptance list as a whole",
+   "problem": "L4i-left-59 (never cut, money) turns a critic review stopped at the subscription's plan share into a credential stop under the person's policy. Under 'go on automatically' the review then continues on the API key and spends money. Only one composed case is asked for. There is no case per policy (go on, ask first, wait), no case showing the task's budget still stops it (reviews and fixes count, owner's answer of 2026-11-16), and no restart case, although the task's held state is persisted. This area is the only one whose acceptance has no restart line, yet L4i-left-24 (startedBy written on the row) and L4i-left-17 (the stopped check's stored outcome) also change stored state.",
+   "evidence": "Acceptance: 'a critic review that meets the subscription's plan share is the credential stop 'share' under the person's policy, not a budget pause (composed case)'. The area's acceptance lacks the line 'a restart case (compose twice on each home) for anything persisted' that every other area carries.",
+   "fix": "For L4i-left-59, add one case per policy showing what moves and what it costs, a case where the task's budget stops the review, and a compose-twice case. Add the restart rule for L4i-left-17 and L4i-left-24."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "nit",
+   "where": "wave8-plan.json areas[6] w8-status-read decisions[3] (merged-since section in every brief and the plan-only block)",
+   "problem": "No size limit is set for the 'Merged on GitHub since your last session' section or the announced lines. On a busy repository every brief and plan prompt grows with the other Forerunner's merges, which costs tokens on every call and pushes actual spend away from the estimates the person was shown.",
+   "evidence": "'every brief gets a 'Merged on GitHub since your last session' section in taskContextBlock'. No limit is named.",
+   "fix": "Cap the section's lines or tokens, write the rest as a count (exact text), and count the section in the estimate."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "nit",
+   "where": "wave8-plan.json areas[6] w8-status-read decisions[1] and D-W8-8 vs areas[3] decisions[4] (comment 'created once and then only edited in place')",
+   "problem": "The 'two at once' rule picks the comment with the earlier GitHub created time. Each writer keeps one comment for life, so the rule always favours the older writer, not the earlier announcement, yet the sentence says 'announced \"X\" first'. W8-read-7's test with two fresh comments cannot catch this.",
+   "evidence": "'the earlier comment by GitHub's created time keeps the work ... ('bob's Forerunner announced \"X\" first; nothing was done here.')'",
+   "fix": "Say in the decision that this is a fixed tie-break and reword the sentence. Or order by the edit time of the announcement, with a W8-read-7 case where the comments already existed from earlier sessions."
+  },
+  {
+   "lens": "rules-tests",
+   "severity": "nit",
+   "where": "wave8-plan.json areas[3] w8-status-write decisions[4] (marker 'install=<install id>') vs the words acceptance ('never an install id ... on GitHub') and 'Never in a comment or the body: ... ids other than pull request numbers'",
+   "problem": "The comment's hidden marker carries the install id and the project id, while the area's own words rule says no install id goes on GitHub. A fixer writing the 'no ids' check has to guess whether hidden markers are exempt.",
+   "evidence": "'<!-- forerunner:status-writer v1 key=K install=<install id> -->' sits beside 'never an install id, task id, comment id or UUID on a screen or on GitHub'.",
+   "fix": "State that the hidden markers are the one exception. Or put a writer key derived from the install id in the marker, such as a short hash with K, and test that check against everything except the markers."
+  },
+  {
+   "lens": "completeness-size",
+   "severity": "should",
+   "where": "/tmp/frbench/wave8-plan.json areas[w8-status-read].size (line 876) against areas[w8-journey].acceptance[2] and fix_scope (lines 1322, 1332)",
+   "problem": "w8-journey's never-cut W8-journey-5 needs two items that w8-status-read is allowed to cut. W8-journey-5 says every bench check must pass. Step 6 rests on W8-read-7, step 14 rests on W8-read-8, and step 5 ('no task done twice' when both press Start within a second) also rests on W8-read-7 in the race. Both W8-read-7 and W8-read-8 are on w8-status-read's cut line. The journey area may not fix them either, because it 'fixes only what the journey finds that no earlier area owns'. W8-read-7 is also brief section 8 question 4's proposed default, which the task says stands. As written, the plan allows that default to go unbuilt.",
+   "evidence": "w8-status-read size: 'Cut line, may end in not_done with the evidence: W8-read-7's announced-first stop (then a same-files collision is caught by the heads-up only), W8-read-8's recall kind ...'. w8-journey acceptance[2]: 'W8-journey-5 (never cut): the bench journey's every check passes ... 6 Same work announced at once: the earlier comment keeps it; the later home stops before its first commit ... 14 Chat: 'what did ada's Forerunner do yesterday?' in Bob's chat is answered from the issue'. w8-journey fix_scope: 'it fixes only what the journey finds that no earlier area owns (each such fix with its failing test, else a finding for the session lead)'. Brief section 8 question 4 and runC wave8_amendments[11] both name these behaviours.",
+   "fix": "Make W8-read-7 (brief question 4's default) and W8-read-8's chat answer never-cut in w8-status-read, and make room as in the size finding below. Otherwise, write in W8-journey-5 that steps 5, 6 and 14 may stay 'known' only when w8-status-read's report lists the matching item as not_done with evidence."
+  },
+  {
+   "lens": "completeness-size",
+   "severity": "should",
+   "where": "/tmp/frbench/wave8-plan.json final_check_additions.steps[0] F-W8-1 'proves' (line 1544) and steps[1] F-W8-2 (line 1550)",
+   "problem": "F-W8-1 runs both homes on one GitHub login, yet it expects 'no Take it over while A is active'. That contradicts run C's rule, which the plan keeps: the person's own login never blocks Take it over. F-W8-2 also lists 'no Take it over' without a condition, while OQ-W8-2's default runs both profiles on one login. The final check would report a correct behaviour as a failure, and that could push the next triage to 'fix' run C's own-login rule.",
+   "evidence": "F-W8-1: 'FORERUNNER_TEST_GITHUB_TOKEN in both (two installs, one login ...)' and then proves 'Work together offered first, no Take it over while A is active'. The plan's own W8-read-9 acceptance (line 846): 'only the person's own login commented: Take it over stays offered second with its warning line'. owner_checklist (line 1558): 'With your own account on both PCs, Take it over is offered second (as before).' Code: packages/runtime/src/sources/repository-use.ts:606-614, where `other` excludes the install's own login (mine()) and `canTakeOver: !other`.",
+   "fix": "F-W8-1 should prove 'Work together first, Take it over offered second with its warning line (one login)'. In F-W8-2, keep 'no Take it over for Bob' only under 'With the second account also'."
+  },
+  {
+   "lens": "completeness-size",
+   "severity": "should",
+   "where": "/tmp/frbench/wave8-plan.json areas[w8-status-write].decisions[1] and [8] (line 510); plan_check.brief_section_8 q9",
+   "problem": "No item or acceptance line covers the status issue's per-project off switch, which brief question 9 and owner question 7 of 2026-11-02 say stays and 'matters more'. The same is true of the public-repository line. plan_check maps question 9 to 'D-W8-13; w8-status-write', but no W8-write-* problem names the switch, and no test shows that switching it off stops this install's issue writes or that the setting survives a restart. That is a persisted Settings route with no acceptance under validation rules 3 and 4.",
+   "evidence": "Only in decisions: 'on by default with a per-project off switch (Settings)' and 'Settings: 'Status on GitHub: issue #12 (pinned)' with the off switch, and on a public repository 'Everyone who can see this repository can read it.''. The only acceptance lines that say 'switch' are about the harness's GitHub-off switch (w8-two-homes ACC[2], w8-status-write ACC[0], w8-status-read ACC[3]).",
+   "fix": "Add W8-write-10, or extend W8-write-6 or W8-write-7, with acceptance: when the switch is off this install writes no issue or comment (writesBy is empty) and the app's status stays with its sentence. The setting survives a compose twice. Add a real-daemon case and the fake daemon in the same commit, and the public-repository line as exact text."
+  },
+  {
+   "lens": "completeness-size",
+   "severity": "should",
+   "where": "/tmp/frbench/wave8-plan.json areas[w8-status-read] (items, size, line 847) and areas[w8-status-write].size; compared with /tmp/frbench/collab/collab-areas.json:525 and :561",
+   "problem": "w8-status-read is more than one fixer session's work. It has 11 items: 6 majors, 3 of them never-cut, plus the injection case. On top of that it carries L4i-left-48, which the classifier calls 'medium, not small'; it is a route change with 42 callers and not about GitHub. It also carries L4i-left-65. The 2026-11-02 status-issue-read with 3 problems was already 'medium to large', and its slack (the digest at repository connect, now part of W8-read-5) is no longer on any cut line. Fixing the journey finding above makes the area heavier still. w8-status-write has grown in the same way: the old area was 'large' with the comment restore (tamper) and the 30-minute renewal on its cut line. The new one adds the together rows (W8-write-6), the one-repository rules (W8-write-9) and the join helper, and moves the tamper rules (W8-write-8, listed as 'Larger') off the cut line.",
+   "evidence": "w8-status-read size: 'Large: 11 items ... L4i-left-48 (Add to in the background without breaking the route's callers)'; acceptance[8]: 'the 42 existing callers keep their contract'. Classifier on L4i-left-48: 'A general UX fix, not about GitHub. It is medium, not small'. Old collab-areas.json:561: 'medium to large. Cut line: the digest at repository connect (part of 4) may follow'. Old :525: 'large. Cut line: restoring a comment someone else edited and the 30-minute renewal of 'until' ... may follow in a small area'. New w8-status-write cut line: only 'W8-write-4's 'Waiting for Claude' line, the 30-minute refresh while a task runs, W8-write-9's pair-made-before-the-rule case'.",
+   "fix": "Move L4i-left-48 and L4i-left-65 to an area with room. w8-shared-repo has 5 items and runs after status-read, so status-read's read moves into the background path there; w8-together has 6. Put W8-write-8's comment restore back on w8-status-write's cut line, as the 2026-11-02 plan had it."
+  },
+  {
+   "lens": "completeness-size",
+   "severity": "should",
+   "where": "/tmp/frbench/wave8-plan.json areas[w8-two-homes] (lines 222, 281) and areas[w8-own-devices] (lines 1195, 1222)",
+   "problem": "Two items tagged as security sit on cut lines, while the same areas say 'Never in not_done: ... every security and money rule'. A fixer cannot tell whether they may be cut. W8-own-9 is a real API hole: PUT /projects/:id/settings merges any keys with no command and no change row.",
+   "evidence": "'[minor, security] L4i-left-54' appears in the w8-two-homes cut line 'W8-homes-5's checks beyond the three named, L4i-left-54, L4i-left-62', followed by 'Never in not_done: ... every security and money rule'. '[minor, security] W8-own-9' appears in the w8-own-devices cut line 'W8-own-6, -7, -8, -9, ...', followed by '... and every security and money rule'. packages/runtime/src/daemon/server.ts:2806 merges body.settings into project settings, refusing only the web access key.",
+   "fix": "Take L4i-left-54 and W8-own-9 off the cut lines. If cutting them is meant to be allowed, drop the security tag and say in each size text why cutting is safe."
+  },
+  {
+   "lens": "completeness-size",
+   "severity": "nit",
+   "where": "/tmp/frbench/wave8-plan.json shared_files (rule [3] covers only githost types.ts and github.ts); areas w8-repo-guide files (line 428), w8-shared-repo files (line 1134), w8-own-devices files",
+   "problem": "shared_files misses two files that two or three areas change. (1) packages/capabilities/src/githost/pr-executor.ts: w8-repo-guide adds W8-guide-6's flag, and W8-guide-5 makes 'one source' of the unfinished-work rules that today live in workInProgressMessage :834. w8-shared-repo changes the push-refused path to a wait. w8-status-read's W8-read-6 parses that work-in-progress commit message. (2) packages/runtime/src/setup/routes.ts: w8-shared-repo's W8-repo-2 changes the setup profile step's default name, and w8-own-devices' W8-own-1 makes POST /setup/profile never rename a human this install did not create.",
+   "evidence": "w8-repo-guide files: 'packages/capabilities/src/githost/pr-executor.ts (only the flag when a task pull request changes AGENTS.md or CLAUDE.md ...)'. w8-shared-repo files: 'pr-executor.ts and the clone path (the wait instead of a failure when push is refused)'. W8-read-6 cites 'pr-executor.ts workInProgressMessage :834'. The setup profile route is in packages/runtime/src/setup/routes.ts.",
+   "fix": "Add shared_files entries. For pr-executor.ts: w8-repo-guide owns the body flag and the unfinished-work wording source, w8-shared-repo owns the push-refused wait, and the work-in-progress message format is fixed for W8-read-6's parser or changed only with notes_for_other_areas. For setup/routes.ts: w8-shared-repo owns the default name and w8-own-devices owns the rename guard."
+  },
+  {
+   "lens": "completeness-size",
+   "severity": "nit",
+   "where": "/tmp/frbench/wave8-plan.json areas[w8-issue-host].acceptance[0] (line 344) against size (line 364)",
+   "problem": "The acceptance line marked never-cut includes the creator filter, which the size text puts on the cut line.",
+   "evidence": "ACC[0], 'W8-host-1, W8-host-2 and W8-host-3 (never cut)': '... listIssues pages past 100 and filters by creator and label'. Size: 'Cut line ...: W8-host-5's creator filter and sort'.",
+   "fix": "Move 'filters by creator and label' into a W8-host-5 acceptance line, and keep 'pages past 100' under W8-host-2."
+  },
+  {
+   "lens": "completeness-size",
+   "severity": "nit",
+   "where": "/tmp/frbench/wave8-plan.json plan_check (brief_section_4, _5, _8, _9 keys; 'checked' line 3193)",
+   "problem": "plan_check has no entry for brief section 6, and its 'checked' list leaves section 6 out. The content is placed elsewhere: the ADRs 0024, 0082, 0009, 0117, 0106 and 0058 in D-W8-24, the F rows in OQ-W8-1 and W8-journey-2, the setup guide in W8-journey-4. The check simply does not show it.",
+   "evidence": "'checked': 'Every brief section 4 area, section 5 item, section 8 question and wave8_amendments entry (0 to 16) is covered'. There is no brief_section_6 key.",
+   "fix": "Add plan_check.brief_section_6, mapping each ADR, the F rows, the user guide and the setup guide to the area or item that writes them."
+  },
+  {
+   "lens": "completeness-size",
+   "severity": "nit",
+   "where": "/tmp/frbench/wave8-plan.json areas[w8-github-feed] decision (line 1029) against acceptance[2] W8-feed-4 (line 1053)",
+   "problem": "Brief section 4 (collab-live) and the area's own decision name three surfaces for the one-minute refresh: the Overview, Pull requests and Talk. The acceptance asserts only the Overview.",
+   "evidence": "Decision: 'within about a minute while a screen shows it (the Overview's 'On GitHub' block, Pull requests, Talk)'. W8-feed-4 acceptance: 'Bob's /events emits the change within about a minute and his Overview shows it without a reload'.",
+   "fix": "Add one UI case for Talk's line (and the pull request rows) updating from the frame without a reload, or narrow the decision to the Overview and say why."
+  }
+ ],
+ "revised": {
+  "file": "/tmp/frbench/wave8-plan.json",
+  "areas": [
+   "w8-two-homes",
+   "w8-issue-host",
+   "w8-repo-guide",
+   "w8-status-write",
+   "w8-together",
+   "w8-l4-leftovers",
+   "w8-status-read",
+   "w8-l4-leftovers-chat",
+   "w8-github-feed",
+   "w8-shared-repo",
+   "w8-own-devices",
+   "w8-journey"
+  ],
+  "sub_runs": [
+   "W8a (wave 34): w8-two-homes, w8-issue-host, w8-repo-guide; no dependency; base c15d75e",
+   "W8b (wave 35): w8-status-write, w8-together, w8-l4-leftovers; after W8a",
+   "W8c (wave 36): w8-status-read, w8-l4-leftovers-chat; after W8b",
+   "W8d (wave 37): w8-github-feed, w8-shared-repo; after W8c",
+   "W8e (wave 38): w8-own-devices, w8-journey; after W8d, then final check F-W8-1 (zero cost) and F-W8-2 (live, USD 3 cap)"
+  ],
+  "owner_questions": [
+   "OQ-W8-1 (w8-journey; brief section 8 question 12): should requirements F.1 to F.7 be re-based on GitHub (claims as announcements in the status issue, seeing the other's work as its comment and pull requests, the handoff as its comment's last session, realtime as GitHub read within about a minute, inbox and receipts for one person's own devices)? Built meanwhile: each F row gets one dated note with scenario 10 and the bench journey as evidence; the session lead changes the rows only after the answer, so it changes one place.",
+   "OQ-W8-2 (final check F-W8-2; brief section 8 question 13): can the owner give a second GitHub account (a fine-grained token with Contents, Pull requests and Issues: read and write on forerunner-sandbox) for the live two-person check, model cost capped at USD 3? Built meanwhile: both live profiles use the owner's account (two installs, one login), so Take it over stays offered second with its warning line and the cross-account activity rule and access words are not tested; the answer changes one place, the token the second profile stores."
+  ],
+  "answers": [
+   {
+    "lens": "code-truth",
+    "where": "w8-own-devices W8-own-4 (lost claim; TaskRepo.transition expectedHolder)",
+    "decision": "accepted",
+    "how": "Verified: schema.ts:223 claimed_by names an agent, task.ts:139-147 lets the same agent reclaim, :182-185 renews by agent id, and the cloud runner picks the human's first principal (config.ts:59, runner.ts:255-258) as the desktop does (compose.ts:1733-1747). W8-own-4 restated: a new column task.claimed_device (migration 0011, SQLite and Postgres) names the holding runtime; claim, renewClaim, transition's expectedHolder (agent and runtime) and the watch check it. schema.ts, the migration, migrations/index.ts and repos/task.ts are in files; the acceptance case uses distinct device ids with the same principal agent; decision 3 and D-W8-42 record it; shared_files' packages/state rule names it."
+   },
+   {
+    "lens": "code-truth",
+    "where": "w8-status-write W8-write-3 and its writer decision ('registered on every store')",
+    "decision": "accepted",
+    "how": "Verified compose.ts:5999 and :6016 (registerDevice = services || remoteEnabled || opts.remote?.enabled). W8-write-3's text and root cause corrected; the status-write decision makes compose register the device row whenever the status board is wired; w8-two-homes' composeTwo passes remote: { enabled: true } (no watcher without services, compose.ts:773) and asserts distinct install ids that survive a compose twice; W8-write-1/-3's acceptance asserts the device row under startServices: false."
+   },
+   {
+    "lens": "code-truth",
+    "where": "w8-repo-guide D-W8-9 date-named decisions vs person-questions.ts",
+    "decision": "accepted",
+    "how": "Verified person-questions.ts:72, :517, :849-857 and intake.ts :239, :828, :832, :838-841, :2061, :2068. Added person-questions.ts (decisionDocPath, DEFAULT_DECISION_DOC, the :517 sentence) and those intake.ts lines to files, root causes and fix_scope step 4; the decision says answers go to an existing 0001 file, else the intake's date-named record, else a new date-named one, never a new 0001; W8-guide-3's acceptance has the case (no 0001 file created, the card names the real file, after a compose twice); D-W8-9 amended."
+   },
+   {
+    "lens": "code-truth",
+    "where": "w8-issue-host W8-host-3 root cause and fix_scope (GraphQL pin)",
+    "decision": "accepted",
+    "how": "Verified routes-projects.ts:1-3 is classic projects, grep finds graphql only at routes-app.ts:166, github.ts:150 uses graphqlUrlFor. W8-host-3 rewritten; fix_scope and files scope a new testenv/src/githost/routes-graphql.ts serving POST /graphql at the stand-in's base, dispatching on operationName with fake-projects-graphql.ts named as the pattern; acceptance asserts the adapter's graphqlUrlFor(baseUrl) reaches the stand-in."
+   },
+   {
+    "lens": "code-truth",
+    "where": "final_check_additions F-W8-1 'proves' (and F-W8-2 with one login)",
+    "decision": "accepted",
+    "how": "Verified repository-use.ts:595-614 (mine(login), canTakeOver: !other). F-W8-1 now expects Work together first and Take it over second with its warning line; F-W8-2 expects the same with one login and 'absent for Bob' only with the second account; OQ-W8-2's default says so."
+   },
+   {
+    "lens": "code-truth",
+    "where": "shared_files loop/docs.ts rule vs w8-status-write (statusInApp)",
+    "decision": "accepted",
+    "how": "Verified docs.ts:1240-1253 (refreshCopy inside statusInApp). shared_files now says w8-status-write removes only the fr/status pull request path (STATUS_BRANCH, STATUS_PR_SETTING, STATUS_HELD_MARK, isProjectStatusPr and the held parts) and keeps statusInApp with its refreshCopy; W8-write-5's problem, fix_scope step 6 and files say the same, and its acceptance adds that the session end still refreshes the copy."
+   },
+   {
+    "lens": "code-truth",
+    "where": "w8-l4-leftovers L4i-left-59 vs the shared_files runner.ts rule",
+    "decision": "accepted",
+    "how": "Verified runner.ts:1071-1088 and :3295-3340. w8-l4-leftovers' files, root cause, problem line and fix_scope name exactly those two regions; shared_files' runner.ts rule gives them to w8-l4-leftovers as the one exception."
+   },
+   {
+    "lens": "code-truth",
+    "where": "w8-own-devices bench acceptance (--state-api)",
+    "decision": "accepted",
+    "how": "Verified scripts/bench/start.mjs has no --state-api. The bench step now covers the desktop Start dialog's refusals and the identity words on two bench homes; two runtimes on one store and the phone row are composed cases, and the acceptance says the bench part is not built (phase H); left_out_on_purpose records it."
+   },
+   {
+    "lens": "code-truth",
+    "where": "w8-repo-guide files and root causes; w8-status-write W8-write-5 pointers",
+    "decision": "accepted",
+    "how": "Verified checkDocDrift at packages/memory/src/docs.ts:444, STATUS_DOC_RE at recall.ts:1016 (used :1044, :1076; agent.ts:141 imports), statusDocRoot :525, statusHeld :582. All three pointers corrected in W8-guide-2, w8-repo-guide's files and root causes, and W8-write-5."
+   },
+   {
+    "lens": "code-truth",
+    "where": "w8-shared-repo W8-repo-3 and its root cause (repo-create owner)",
+    "decision": "accepted",
+    "how": "Verified repo-create.ts:170-180 and CreateRepoDialog.tsx's owner field. W8-repo-3 restated as the missing line after creation only; where it creates is unchanged and builds on the existing owner field and accountKind; root cause and files corrected (together with the owner-fidelity finding on the default)."
+   },
+   {
+    "lens": "code-truth",
+    "where": "w8-issue-host W8-host-6 (errors as one thrown error)",
+    "decision": "accepted",
+    "how": "Verified github.ts:211-246. W8-host-6 restated: the existing codes stay; one new code issues_disabled for 410 and a 'no permission' reason read from tool_not_allowed and not_found with details.status; decision and acceptance match."
+   },
+   {
+    "lens": "code-truth",
+    "where": "w8-own-devices L4i-left-1 acceptance and files (fake-state-service)",
+    "decision": "accepted",
+    "how": "Verified fake-state-service.ts:601-617. apps/ui/test/fake-state-service.ts added to files (the simulated PC reports a refused start with the daemon's sentence through a FakePcError), the acceptance adds a mobile UI test of the phone row's refusal, and shared_files gives the file to w8-own-devices."
+   },
+   {
+    "lens": "code-truth",
+    "where": "w8-two-homes W8-homes-1 and w8-journey W8-journey-3 ('a state the app never writes')",
+    "decision": "accepted",
+    "how": "Verified create-project.ts:99-100 writes [the creating agent] and scenario-world.ts:891-896 writes [alice, bob]. Both problems and root causes now say 'a two-person members list the app never writes'."
+   },
+   {
+    "lens": "code-truth",
+    "where": "w8-own-devices L4i-left-1 and L4i-left-35 evidence (84f9e7e)",
+    "decision": "accepted",
+    "how": "Verified with git log -S: startRefused and the 'A session of ...' sentence come from 3b6f374. All four citations (two in L4i-left-1, one in L4i-left-35, one in fix_scope) now cite 3b6f374."
+   },
+   {
+    "lens": "owner-fidelity",
+    "where": "w8-shared-repo decisions[1], W8-repo-3, D-W8-11 (organisation-first placement)",
+    "decision": "accepted",
+    "how": "Verified ADR 0097:36-37 and owner-summary.md:134. Today's default is kept (the presser's account; an organisation only when named on the card), Forerunner never picks one itself; W8-repo-3 is only the line after creation; D-W8-11 and the area decision agree; no owner question added because nothing changes the owner's default."
+   },
+   {
+    "lens": "owner-fidelity",
+    "where": "w8-shared-repo W8-repo-2; w8-journey W8-journey-6; F-W8-1/F-W8-2 searches (commit email)",
+    "decision": "accepted",
+    "how": "Verified compose.ts:2711-2715. W8-repo-2 now decides the commit email: the login's noreply address '<id>+<login>@users.noreply.github.com' (whoAmI gains the id), else forerunner@localhost, never the setup email, with a restart case; W8-journey-6, the bench journey's step 4 and both final-check searches cover commit authors and committers; D-W8-36 records it."
+   },
+   {
+    "lens": "owner-fidelity",
+    "where": "w8-status-write comment marker (install id on GitHub) vs the words rule",
+    "decision": "accepted",
+    "how": "The marker now carries a non-reversible writer key (the first 16 hex characters of SHA-256 over the device row id and K), never the raw id; D-W8-35 states that the hidden markers are the one exception and that every 'no ids' check skips exactly those lines; the words line in every area says so; W8-write-2's property test excludes only the marker lines."
+   },
+   {
+    "lens": "owner-fidelity",
+    "where": "w8-together decisions[1], W8-join-2; w8-status-write key K, W8-write-9 (issue K at a join)",
+    "decision": "accepted",
+    "how": "Added the missing rule: a project writes only the issue keyed by its own id, and only when the default branch's marker names that id or none; a project whose marker names another project and is not together writes no issue or comment (its status stays in the app with one sentence); a take-over writes its own issue once its marker is merged. The join therefore closes no issue and writes no comment; its only write is Site's own old status pull request. W8-write-9 (never cut, its pair case on the cut line) and W8-join-2 have the two-home case where B's Site wrote nothing before the join; D-W8-45 records it."
+   },
+   {
+    "lens": "owner-fidelity",
+    "where": "w8-status-read W8-read-6 vs decisions[1]; D-W8-26 (Paused lines never lapse)",
+    "decision": "accepted",
+    "how": "Paused lines now lapse: a Paused line holds its task only while its writer was seen (GitHub's updated_at) within the 14-day activity window, else it reads 'not seen since <date>' and blocks nothing; W8-read-6 has the gone-quiet case; D-W8-6, D-W8-26 and D-W8-38 say announcements stay announcements."
+   },
+   {
+    "lens": "owner-fidelity",
+    "where": "D-W8-13; w8-issue-host decisions[4]; w8-status-read decisions[2] (association as write access)",
+    "decision": "accepted",
+    "how": "New item W8-host-8 (never cut, security): getRepoPermission (the collaborator permission read, cached per login with its ETag, a refused read fails closed) on the port, the adapter and both stand-ins; association is only a first filter; D-W8-13 and D-W8-37 restated; acceptance cases for an organisation member with read access and a read-only collaborator in w8-issue-host, w8-status-write, w8-status-read and w8-github-feed."
+   },
+   {
+    "lens": "owner-fidelity",
+    "where": "w8-status-write decisions[4], W8-write-4 (credential wait line)",
+    "decision": "accepted",
+    "how": "Restored run C amendment 5's condition per the person's D5 policy: 'waits until 15:40, then it goes on' only under wait when the session resumes by itself; ask first: 'waits for its person's answer', no time; go on with the next credential: no wait line; each tested as exact text; D-W8-40."
+   },
+   {
+    "lens": "owner-fidelity",
+    "where": "w8-repo-guide decisions[2], [5], W8-guide-1 (guide always says announces)",
+    "decision": "accepted",
+    "how": "The status issue's state (on, switched off, issues off on the repository) is a guide fact; when not on, the status line and 'Before you start' say the maker's Forerunner keeps its status in the app and announces nothing on GitHub and point to the open pull requests; W8-guide-1's acceptance has a docs.test case per state and one docs pull request per state change; D-W8-44."
+   },
+   {
+    "lens": "owner-fidelity",
+    "where": "w8-repo-guide W8-guide-3 acceptance vs D-W8-9 (decision file contradiction)",
+    "decision": "accepted",
+    "how": "Reworded as proposed: Bob's together project writes no doc set, marker or guide and never pushes to the shared id's docs branch; a decision file reaches GitHub from either home only through its own task pull requests, under a date name."
+   },
+   {
+    "lens": "owner-fidelity",
+    "where": "w8-status-write acceptance [9], w8-repo-guide decisions[5] (issue number as a guide fact)",
+    "decision": "accepted",
+    "how": "The number is no longer a fact: the guide always names the issue by its title, so the issue's creation opens no docs pull request; only a change of the status issue's state does (D-W8-44); w8-repo-guide's handoff and fix_scope and w8-status-write's guide-fact acceptance say so."
+   },
+   {
+    "lens": "owner-fidelity",
+    "where": "w8-shared-repo decisions[2]; w8-status-write comment header (first name on GitHub)",
+    "decision": "accepted",
+    "how": "Took the finding's second fix: the default stays '<first name>'s agent' and the setup profile step says, as exact text, that the name appears on GitHub in commits and the status comment and can be changed there or in Settings; setup/routes.ts is in w8-shared-repo's files; D-W8-41. The login names the other Forerunner on screens."
+   },
+   {
+    "lens": "owner-fidelity",
+    "where": "w8-status-write W8-write-6 Details line ('each of you')",
+    "decision": "accepted",
+    "how": "New exact text: 'What the other Forerunner does shows in its comment on the status issue and its pull requests on GitHub. You merge yours; its person merges theirs.'"
+   },
+   {
+    "lens": "rules-tests",
+    "where": "w8-shared-repo W8-repo-2; W8-journey-6; F-W8-1/F-W8-2 (commit email, GH007)",
+    "decision": "accepted",
+    "how": "Same change as the owner-fidelity commit-email finding, plus a stand-in case: the stand-in refuses, in GH007's words, a push whose commits carry an address the account keeps private (w8-shared-repo's testenv files); W8-repo-2's failing test is that push with the setup email, and it passes with the noreply address; the GH007 case is never cut."
+   },
+   {
+    "lens": "rules-tests",
+    "where": "final_check_additions rules[1] and F-W8-2 (USD 3 cap across two ledgers)",
+    "decision": "accepted",
+    "how": "Each home's month's cap is set to USD 1.25 through budget.set before either Start (read back through GET /settings), so the two cannot pass USD 2.50 in code; the stop rule sums both homes' GET /costs and the report gives both figures and the sum; a second session only if the sum is under USD 2.50 and each home's cap leaves room."
+   },
+   {
+    "lens": "rules-tests",
+    "where": "w8-own-devices W8-own-9 on the cut line (PUT settings money hole)",
+    "decision": "accepted",
+    "how": "Verified server.ts:2806-2830 and that no screen calls the route. W8-own-9 is now [minor, money, security, never cut]: the route refuses every key settings.set's registry or budget.set owns, in words naming the command; a real-daemon case per money key and the fake daemon in the same commit; off the cut line; D-W8-43."
+   },
+   {
+    "lens": "rules-tests",
+    "where": "w8-l4-leftovers-chat L4i-left-52 (scrubEnv's three callers)",
+    "decision": "accepted",
+    "how": "Verified callers sdk.ts:552, provider/claude-code.ts:260, sandbox/process.ts:68. The allow-list is a new function called by the two Claude Code drivers only, scrubEnv's deny-list kept as a second check and alone for the sandbox; files name both drivers; acceptance has a unit case per driver and a sandbox case where a project check still sees JAVA_HOME and PATH; shared_files gives sdk.ts and claude-code.ts to this area."
+   },
+   {
+    "lens": "rules-tests",
+    "where": "w8-status-write body rebuild and tamper rule; w8-github-feed first-writer line (writer filter)",
+    "decision": "accepted",
+    "how": "One writer filter (D-W8-37: write access by getRepoPermission, a valid marker, the comment's author is the login) is used by the body rebuild, the reader, the 'On GitHub' block and both Updates lines; the first-writer Updates line is keyed by login, at most one per login; acceptance in w8-status-write (W8-write-8) and w8-github-feed: a valid-marker comment by an association-NONE author on a public stand-in repository changes nothing in the body, the block or the Inbox."
+   },
+   {
+    "lens": "rules-tests",
+    "where": "w8-issue-host decisions[4]; w8-status-read decisions[2]; D-W8-13 (association as write access)",
+    "decision": "accepted",
+    "how": "Same change as the owner-fidelity association finding: W8-host-8's permission read decides write access; the read-only collaborator's and the read-access organisation member's announcements block nothing (w8-status-read's injection acceptance and W8-host-8's role cases)."
+   },
+   {
+    "lens": "rules-tests",
+    "where": "w8-github-feed decisions[2], W8-feed-5/-6; W8-read-8 (Updates lines as records for chat)",
+    "decision": "accepted",
+    "how": "Verified project-facts.ts:444-455 and agent.ts:3225-3232. The feed's Updates rows are marked (change_card.source 'github') and quotesOthersWords is true for them; project-facts.ts is in w8-github-feed's files and shared_files; a composed chat case: with such a line open, a task change asked in chat is read back; D-W8-39 and the GitHub-data rule line in every area say so."
+   },
+   {
+    "lens": "rules-tests",
+    "where": "w8-status-read injection acceptance and decisions[3]; W8-read-6 (more GitHub text paths)",
+    "decision": "accepted",
+    "how": "Verified pr-executor.ts:833-858. w8-status-read's injection acceptance and the injection suite gain a merged pull request title case and a work-in-progress commit message case beside the status comment; the marker-name path in chat's together read-back is w8-together's W8-join-4 case (markerNameOf, as record-008); D-W8-39."
+   },
+   {
+    "lens": "rules-tests",
+    "where": "w8-status-write decisions[4] and W8-write-2 (free text copied onto GitHub)",
+    "decision": "accepted",
+    "how": "One redaction step, redactQuoted in status-board-words.ts, removes money figures, email addresses and @mentions from the handoff, titles and Next lines and nothing else; W8-write-2's property generator puts CHF, USD, EUR, $, € figures, emails and @mentions into those inputs; the test bans money figures, not the word 'cost', and a title 'Fix the cost page' stays intact."
+   },
+   {
+    "lens": "rules-tests",
+    "where": "w8-issue-host decisions[1] vs acceptance[0] ('the editor'); W8-write-8",
+    "decision": "accepted",
+    "how": "Dropped 'the editor' from the contract and the acceptance; the stand-ins return only fields GitHub's REST comment has; tampering is found by comparing the comment's body with the text this writer last sent, kept in its own store (w8-status-write's tamper decision and W8-write-8)."
+   },
+   {
+    "lens": "rules-tests",
+    "where": "w8-status-read decisions[1] ('until' from the writer's clock); w8-status-write 'until = now + 90 min'",
+    "decision": "accepted",
+    "how": "A Working on now line is fresh only while its comment's GitHub updated_at is within 60 minutes (twice the 30-minute refresh) and its 'until' has not passed (D-W8-38); w8-status-read has a case with a day-ahead 'until' on a two-hour-old comment that blocks nothing."
+   },
+   {
+    "lens": "rules-tests",
+    "where": "w8-own-devices title and decisions[2] / D-W8-21 (other start paths)",
+    "decision": "accepted",
+    "how": "Verified every scheduler.requestStart caller. The decision lists them all: the person-pressed starts (POST /sessions :2060 and :2184, chat loop/commands.ts:971, the phone :6057, intake's Approve and start :3201, Continue on a budget card :5432) run the start check with its sentence; prepared work and hands-off (:4072, :4195), a kept start firing (:4828), the credential-back resume (:5500) and the plan-approval sync (:5591) run its money refusals silently, with exemptions named per caller; one composed case per caller; title, root causes, fix_scope and D-W8-21 updated."
+   },
+   {
+    "lens": "rules-tests",
+    "where": "w8-l4-leftovers acceptance[0] (L4i-left-59) and no restart line",
+    "decision": "accepted",
+    "how": "L4i-left-59's acceptance now has one composed case per policy (go on, ask first, wait) with what moves and what it costs, a case where the task's own budget stops the review first, and a compose twice while the review is held; a restart line covers L4i-left-17, -24, -26 and -59."
+   },
+   {
+    "lens": "rules-tests",
+    "where": "w8-status-read decisions[3] (no size limit on merged-since)",
+    "decision": "accepted",
+    "how": "Capped at 10 announced and 10 merged lines, newest first, the rest as one count line (exact text), and the section is counted in the estimate the person is shown; acceptance asserts it."
+   },
+   {
+    "lens": "rules-tests",
+    "where": "w8-status-read decisions[1], D-W8-8 vs comment created once (tie-break)",
+    "decision": "accepted",
+    "how": "Ordered by the edit time instead: the announcement whose edit GitHub stamped earlier (the updated_at each writer's own edit returned, compared right after that edit) keeps the work, never the comment's created time; W8-read-7 gains a case where both comments existed from earlier sessions and the older comment's writer announces second and stops; D-W8-8 restated."
+   },
+   {
+    "lens": "rules-tests",
+    "where": "w8-status-write marker 'install=<install id>' vs the words rule",
+    "decision": "accepted",
+    "how": "Same change as the owner-fidelity marker finding: a hashed writer key in the marker and D-W8-35's stated exception, with every 'no ids' check skipping exactly the marker lines."
+   },
+   {
+    "lens": "completeness-size",
+    "where": "w8-status-read size (cut line) vs w8-journey W8-journey-5 steps 5, 6, 14",
+    "decision": "accepted",
+    "how": "W8-read-7 (brief question 4's default) and W8-read-8 are now never cut; w8-status-read's cut line holds only W8-read-5's reads at repository connect and W8-read-9's offer wording; W8-journey-5 notes that steps 5, 6 and 14 rest on never-cut items."
+   },
+   {
+    "lens": "completeness-size",
+    "where": "final_check_additions F-W8-1 and F-W8-2 'proves' (Take it over with one login)",
+    "decision": "accepted",
+    "how": "Same change as the code-truth finding: Take it over offered second with its warning line under one login; 'no Take it over for Bob' only with the second account."
+   },
+   {
+    "lens": "completeness-size",
+    "where": "w8-status-write decisions on the off switch; plan_check q9",
+    "decision": "accepted",
+    "how": "New item W8-write-10 with acceptance: switch off, this install writes no issue or comment (writesBy empty), the app's status keeps its sentence, the setting survives a compose twice, a real-daemon case with the fake daemon in the same commit, and the public-repository line as exact text (cut line); plan_check q9 points to it."
+   },
+   {
+    "lens": "completeness-size",
+    "where": "w8-status-read items and size; w8-status-write size (too large)",
+    "decision": "accepted",
+    "how": "L4i-left-48 and -65 moved to w8-together (W8b, 6 to 8 items), which builds Add to in the background before w8-status-read puts its read there; shared_files gives pendingFor and the route's background option to w8-together; D-W8-22 and leftovers_routing updated. W8-write-8's restore of an edited comment is back on w8-status-write's cut line, as in the 2026-11-02 plan."
+   },
+   {
+    "lens": "completeness-size",
+    "where": "w8-two-homes and w8-own-devices (security items on cut lines)",
+    "decision": "accepted",
+    "how": "L4i-left-54 and W8-own-9 are tagged never cut and taken off both cut lines; each size text lists them under 'Never in not_done'."
+   },
+   {
+    "lens": "completeness-size",
+    "where": "shared_files missing pr-executor.ts and setup/routes.ts",
+    "decision": "accepted",
+    "how": "Added both entries as proposed (pr-executor.ts: w8-repo-guide's body flag and unfinished-work source, the work-in-progress line format fixed for W8-read-6's parser, w8-shared-repo's push-refused wait; setup/routes.ts: w8-shared-repo's default name and line, w8-own-devices' rename guard), plus entries for person-questions.ts, project-facts.ts, sdk.ts and claude-code.ts, and fake-state-service.ts."
+   },
+   {
+    "lens": "completeness-size",
+    "where": "w8-issue-host acceptance[0] includes the cut-line creator filter",
+    "decision": "accepted",
+    "how": "'filters by creator and label' moved to its own W8-host-5 acceptance line marked cut line; 'pages past 100' stays under the never-cut W8-host-2 line."
+   },
+   {
+    "lens": "completeness-size",
+    "where": "plan_check has no brief_section_6",
+    "decision": "accepted",
+    "how": "Added plan_check.brief_section_6 mapping the F rows, ADRs 0024, 0082, 0009, 0117, 0106, 0058, the user guide and the setup guide to the areas and items that write them; 'checked' names it."
+   },
+   {
+    "lens": "completeness-size",
+    "where": "w8-github-feed decision vs W8-feed-4 acceptance (Talk and Pull requests)",
+    "decision": "accepted",
+    "how": "W8-feed-4's acceptance adds a UI case each for Talk's line and the Pull requests rows updating from the same frame without a reload."
+   }
+  ],
+  "summary": "I revised /tmp/frbench/wave8-plan.json in place. All 51 checker findings held up when I checked them read-only against the code at c15d75e (the working tree is c15d75e plus one docs commit), so I accepted all of them. Each one has an entry in the new top-level check_answers array (lens, where, decision, how). The schema and key order are unchanged. The script also checks that every area has exactly the run L4 fields. Nothing under /home/user/Forerunner was changed and git status is clean. I ran no tests. The scripts and a backup of the earlier plan are in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/w8/rev/.\n\n**Shape:** still 12 areas in 5 sub-runs, in the same merge order. There are now 136 items (71 wave 8 items and 65 run L4 leftovers) and 47 never-cut items.\n\n**Changes that alter what gets built:**\n- **Lost claim (blocking finding):** the claim now records which runtime holds it, in a new `task.claimed_device` column with migration 0011 on SQLite and Postgres. `claim`, `renewClaim`, `transition` and the watch all check it. A person's desktop and cloud runner run as the same agent, so checking the agent id alone could never catch the case.\n- **Repository placement (blocking finding):** today's default stays: the person's own account, or an organisation only when they name one on the card (ADR 0097). The only new thing in W8-repo-3 is a line after creation saying how a second person gets in.\n- **Install id in the status comment:** the comment's hidden marker now carries a non-reversible writer key (a SHA-256 hash of the device row id and the project key), never the raw id. Compose registers the device row whenever the status board is wired, and the test harness asserts each home has its own install id.\n- **Commit email:** commits use the login's GitHub noreply address, never the setup email. The bench journey, scenario 10 and both final-check searches now also look at commit authors and committers.\n- **Write access:** new never-cut item W8-host-8 reads each login's permission on the repository. One shared writer filter then decides which comments count in the issue body, the reader, the 'On GitHub' block and both Updates lines.\n- **Which issue a project writes:** a project writes only the issue keyed by its own id. A non-together project on a repository whose marker names another project writes nothing there, so a join no longer closes or comments on any issue.\n- **How long an announcement holds:** freshness comes from GitHub's own timestamps, not the writer's clock, and Paused lines lapse after 14 days unseen. When two announce at once, the edit GitHub stamped first wins, not the older comment.\n- **Other additions:** the status issue's off switch is its own item (W8-write-10), and the guide records the issue's state but never its number. Other GitHub text is now guarded too: free text gets redacted, the credential-wait line follows the person's policy, Updates lines that quote GitHub count as records for chat, and there are injection cases for pull request titles and work-in-progress commit messages. Every start path is listed, with one check for the starts the person presses. W8-own-9 (PUT /projects/:id/settings changing caps) is now never cut. The L4i-left-59 fix is confined to two named regions of runner.ts and gets one case per policy.\n- **Size:** L4i-left-48 and -65 moved to w8-together. W8-read-7 and W8-read-8 are now never cut, and W8-write-8's comment restore is back on its area's cut line.\n- **Final check:** F-W8-1 (and F-W8-2 with one login) now expects Take it over to be offered second, since your own login never blocks it. For the live step, each home's monthly cap is set to USD 1.25 before either presses Start, and the stop rule adds up both homes' ledgers.\n\nThe smaller pointer fixes (wrong file paths, the 3b6f374 commit citation, the stand-in's missing GraphQL endpoint), the fake state service's refused start, the replaced bench step (the bench has no --state-api option), plan_check.brief_section_6 and the new shared_files entries are all listed in check_answers. Owner questions are unchanged: OQ-W8-1 (the F rows) and OQ-W8-2 (a second GitHub account), each with the default built in the meantime."
+ }
+}

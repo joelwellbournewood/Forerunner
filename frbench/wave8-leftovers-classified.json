@@ -1,0 +1,853 @@
+{
+  "base": "c15d75e",
+  "written": "2026-11-24",
+  "sources": [
+    "/tmp/frbench/leftovers-L4i.json (67 raw items, routing, merge_problems_left)",
+    "/tmp/frbench/runL4-L4g-merge.json and runL4-L4h-merge.json (problems_left, the not_done lines)",
+    "/tmp/frbench/leftovers-L4a.json .. leftovers-L4e.json (23 items; L4f, L4g, L4h have none). No later run L4 area took any of them (grep of runL4-plan.json and runL4-L4[e-i]-*.json).",
+    "Area definitions: runL4-plan.json areas l4-starts-carried, l4-chat-final, l4-github-carried; the L4i fix, fixup and review reports"
+  ],
+  "legend": {
+    "a": "wave 8: about two Forerunners, GitHub, the scaffold, the status, pull requests or the guide (goes into the wave 8 area named in reason)",
+    "b": "phase H (the phone)",
+    "c": "a small general fix for the wave 8 'w8-l4-leftovers' area (words, attribution, races, fake/daemon drift, tests)",
+    "d": "drop: already fixed, not a problem, or an owner-visible choice already decided"
+  },
+  "counts": {"total": 92, "a": 11, "b": 2, "c": 53, "d": 26, "still_open": 72, "still_open_to_fix": 66, "still_open_dropped_by_design_or_harmless": 6, "fixed_or_decided": 20, "never_cut": 2},
+  "notes": [
+    "still_open says whether the behaviour still exists at c15d75e. Six (d) items are still_open but dropped as not a problem or by design: L4i-left-74, -81, -87, -88, -89, -90.",
+    "Dedup: the 67 L4i raw items (each cited as 'L4i #n' in evidence, 0-based as in the file) become 66 entries: repeats across fix, review and fixup are merged, and some bundles are split (L4-money-207 into two halves, 210-216 into five, L4h-left-8 into four). Another 23 entries are all 23 items of leftovers-L4a..L4e. The last 3 come from the L4g and L4h merge lines: the L4c-left-6 decision and two drops summarising what L4i closed.",
+    "c is 53 entries but most are one sentence or one test; the medium ones are L4i-left-16, -22, -23, -32, -48 (Add to in the background), -49, -59. Cut-able ones say so in reason.",
+    "Not an item: CI and the Desktop app workflow on c15d75e were still to run at the L4i merge (merge_problems_left[3]); the session lead checks them before wave 8 starts."
+  ],
+  "items": [
+    {
+      "id": "L4i-left-1",
+      "text": "The phone's plain 'start' (remote watcher, kind start) goes straight to scheduler.requestStart and skips POST /sessions' other refusals: nothing runnable, a budget above the month's cap, the one-wait rule. Only the refused-credential check runs first (added in L4i).",
+      "still_open": true,
+      "evidence": "Sources: L4i #7, #10 (first half), routing never_cut[0]. At c15d75e packages/runtime/src/remote/watcher.ts:779-801 runStart parses StartParams, asks deps.startRefused (refused credential only, fixup 84f9e7e), calls kill.resume(), then deps.start; compose.ts:6058 wires start: (req) => scheduler.requestStart(req). POST /sessions (server.ts:1979ff) runs wakeLimitWaits, the Continue rest, removedProjectRefusal, refuseOverMonth, startBlocked 'nothing_runnable' and the kept-start/one-wait checks before it asks the scheduler. None of the 16 wave 8 areas planned on 2026-11-02 names remote/watcher.ts in its files.",
+      "class": "b",
+      "never_cut": true,
+      "reason": "Money rule: a start the Start dialog and POST /sessions refuse (above the month's cap, nothing to run, a second wait) still runs from the phone. Phase H (the phone), never cut. If the re-planned collab-claims (one person's own devices: desktop, phone, cloud runner through the state service) changes remote/watcher.ts, it takes this instead. Fix shape: one start check shared by POST /sessions and the remote start; a phone-row case that fails with the refusal's sentence, plus a real-daemon case. The other half of #10 (kill.resume before the refusal) and the missing phone-row test were fixed in 84f9e7e."
+    },
+    {
+      "id": "L4i-left-2",
+      "text": "W15-01's sole-linked rule: an unmarked open fr/docs-scaffold (or fr/status) pull request of another project counts as this project's own when this project is the only one on this install linked to the repository, so the scaffold, Try again and the status writer write onto it.",
+      "still_open": true,
+      "evidence": "Sources: L4i #55, #65, routing never_cut[1]. packages/runtime/src/loop/docs.ts:236-247 isProjectDocsPr: a scaffold PR with no recorded pr_url, no hidden mark and no 'Forerunner project X.' line returns opts.soleLinked; :259-267 isProjectStatusPr does the same for fr/status; ownsUnmarkedDocs (:280-299) is true when this install's RepositoryIndex lists only this project for the repository. Callers: the scaffold write (:925-931), the status write (:1155-1160), the Overview listing (daemon/pull-requests.ts:411-416, :514). A together project is safe (isTogether returns false first). The L4i real-daemon Try again case wrote onto fr/docs-scaffold until Sandbox's PR body was marked.",
+      "class": "a",
+      "never_cut": true,
+      "reason": "Breaks wave 8's 'Never' rule (no write to another Forerunner's pull request). Another Forerunner's project is never in this install's index, so any non-together project here is always 'sole linked': an unmarked scaffold or status PR that the other Forerunner, a person or an older version opened is written onto. It fails open today. Fix: an unmarked PR is this project's only when this install recorded or opened it; otherwise it is nobody's (fails closed). Test with two composed homes against one stand-in GitHub (brief section 9). Area: repo-guide (the scaffold writer) in wave 8's first group; the fr/status half goes with status-issue-write, which replaces the status pull request."
+    },
+    {
+      "id": "L4i-left-3",
+      "text": "UpdatesPage sends `me?.id ?? \"human\"` as the answer's author: a press on the model-watch report before /me has loaded answers as 'human'. e2e/updates.spec.ts failed once on this race (expected 'human_alice'), then passed 3 of 3.",
+      "still_open": true,
+      "evidence": "Sources: L4i #32, #44, routing early[0], merge problems_left. apps/ui/src/pages/UpdatesPage.tsx:136 `const by = me?.id ?? \"human\";` is unchanged at c15d75e; apps/ui/e2e/updates.spec.ts:31-40 expects by 'human_alice'.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Early: wave 8's first group. It is a flaky Playwright source that would slow every wave 8 merge, and the answer goes to the wrong person (attribution). Fix: keep the press off until /me has loaded (or let the daemon fill in its own person), with a UI test that holds /me back. Small."
+    },
+    {
+      "id": "L4i-left-4",
+      "text": "Chat's task_create acts at once at every level, also at Assisted when the task's description is in the model's own words, not the person's (L4h-left-6 rest).",
+      "still_open": true,
+      "evidence": "Sources: L4i #29, #33, #38, #49, routing decided[0]. packages/commands/src/executor.ts:557-559 ('task.create acts at once when the person says it'); the docs/decisions/0119 amendment of 2026-11-24 (:311-318) leaves it 'Not changed, for the session lead'. No read-back depends on whose words the description is. The test of whose words a note is, notesPersons/saidInLine (packages/commands/src/commands/shared.ts), exists since d7bcaed.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Decided by the L4h-left-1 rule (session lead, 2026-11-24): a description whose words are in the person's own message is the person's and acts at once; one the model wrote is read back first. To build: task.create in a chat or voice turn uses notesPersons on the description (and the title) to choose between acting and reading back. Add commands and real-daemon cases for both, and replace the ADR 0119 'Not changed' paragraph with the decision. Small, attribution."
+    },
+    {
+      "id": "L4i-left-5",
+      "text": "Try again's refusal names the repository as the person typed it (for example https://github.com/bench/empty), not as the owner/name the take-over line above it shows ('Took over bench/empty ...').",
+      "still_open": true,
+      "evidence": "Sources: L4i #57, #66, merge problems_left. packages/runtime/src/daemon/take-over-retry.ts:45 `const locator = project.repos[0]?.trim() ?? \"\"` feeds takeOverRetryFailedSentence (:60, :63-69); apps/ui/test/fake-daemon.ts:9615-9618 mirrors it. The line above uses RepositoryUse.repositoryOf(project).locator.",
+      "class": "a",
+      "never_cut": false,
+      "reason": "Scaffold and take-over words on GitHub. Use the same locator as the line, in the daemon and the fake, with an exact-text case. Area: repo-guide (it owns the scaffold and its Try again). Small."
+    },
+    {
+      "id": "L4i-left-6",
+      "text": "take-over-retry sorts its failure by a guess that can say something untrue: 'blocked' ('another project's docs pull request is open ... close it on GitHub') whenever no PR URL came back and the branch is fr/docs-scaffold or absent, even when no pull request is open; any thrown error, GitHub not answering included, reads 'check that the saved GitHub token can push'.",
+      "still_open": true,
+      "evidence": "Source: L4i #58. packages/runtime/src/daemon/take-over-retry.ts:54-69: the catch maps every error to 'refused'; `!out.prUrl && (out.branch === DOCS_SCAFFOLD_BRANCH || !out.branch) ? \"blocked\" : \"refused\"`.",
+      "class": "a",
+      "never_cut": false,
+      "reason": "Design section 5 rule 8 (say what actually went wrong) on the scaffold's GitHub path. The scaffold outcome should carry why it stopped (another project's open PR, no access, GitHub unreachable), so the sentence comes from that. Area: repo-guide, with L4i-left-5. Small to medium."
+    },
+    {
+      "id": "L4i-left-7",
+      "text": "TAKE_OVER_NOTHING_TO_RETRY ('a docs pull request already names this project') is the answer for any project whose line is not the no-pull-request outcome, including a project with no repository. Only a direct route call reaches it.",
+      "still_open": true,
+      "evidence": "Source: L4i #59. packages/runtime/src/daemon/take-over-retry.ts:51 `if (line?.outcome !== \"took_over_no_pull_request\") return refused(TAKE_OVER_NOTHING_TO_RETRY);`",
+      "class": "a",
+      "never_cut": false,
+      "reason": "An untrue sentence on the take-over route. Answer by the real state (no repository, no take-over, or a PR already names it). Area: repo-guide, with L4i-left-5. Small."
+    },
+    {
+      "id": "L4i-left-8",
+      "text": "L4e-left-5: a take-over made with a brief (intake: true) leaves its docs to the intake. If the intake's docs pull request then fails, the Overview says nothing, because scaffoldLeftNoMarker needs a scaffold record.",
+      "still_open": true,
+      "evidence": "Sources: L4i #51; runL4-plan l4-github-carried. packages/runtime/src/sources/repository-words.ts:89-100 scaffoldLeftNoMarker is false without summary_cache.docs.scaffolded_at; repository-use.ts:1019-1031 sets outcome 'took_over_no_pull_request' only from it; no commit after L4i names L4e-left-5.",
+      "class": "a",
+      "never_cut": false,
+      "reason": "Scaffold and intake docs pull request on GitHub. Record the intake's push outcome on the project, reuse the no-pull-request line with Try again (outcome field and TakeOverTryAgain are ready), add a composed case with a host refusal. It touches the intake docs branch that brief section 5.3 re-decides for two Forerunners, so it goes with repo-guide. Medium."
+    },
+    {
+      "id": "L4i-left-9",
+      "text": "After Close or Cancel (any pull request closed without merging), the Overview's Last result still says 'Left 2 reviewed pull requests for you to merge.' with no 'Since then' line for the closed one.",
+      "still_open": true,
+      "evidence": "Sources: L4i #56, #63, merge problems_left. packages/runtime/src/daemon/views.ts:415-442 mergedSinceLine counts only records with state 'merged' (and, since L4i, merged_through); a closed-without-merge record adds nothing. Bench evidence: /tmp/frbench/fix-l4-github-carried-evidence/run1/03-after-3-overview-closed.txt.",
+      "class": "a",
+      "never_cut": false,
+      "reason": "Pull request words on the Overview (design section 5 rule 4, true now). Same function and screen collab-feed changes to show the other Forerunner's pull requests and the merged history, so it goes there. Small."
+    },
+    {
+      "id": "L4i-left-10",
+      "text": "Close's consequence line ('Closes this pull request on GitHub; you can reopen it there.') shows only as the button's title (tooltip). The visible row does not say the pull request can be reopened.",
+      "still_open": true,
+      "evidence": "Source: L4i #60. apps/ui/src/pages/project/SummaryTab.tsx:905-913 `title={CLOSE_PULL_REQUEST_EXPLAIN}` on pr-cancelled-close; no visible text line.",
+      "class": "a",
+      "never_cut": false,
+      "reason": "A GitHub write the person presses: show its consequence as text, as Try again's line is. Same Overview pull request rows as collab-feed. Small."
+    },
+    {
+      "id": "L4i-left-11",
+      "text": "POST /projects/:id/take-over/retry has no ownership check (unlike the close route in docs-routes.ts), and the fake daemon's close route answers 403 'not your project' for an unknown project where the daemon answers 404 not_found.",
+      "still_open": true,
+      "evidence": "Sources: L4i #62, merge problems_left. packages/runtime/src/daemon/server.ts:1264-1272 uses rt.store.project.mustGet with no owned() (like POST /projects/:id/intake); apps/ui/test/fake-daemon.ts:9506, :9584, :9646 `errorBody(c, 403, \"forbidden\", \"not your project\")`.",
+      "class": "a",
+      "never_cut": false,
+      "reason": "Ownership on GitHub-writing routes. Under D9 a store belongs to one person, and collab-identity's guard decides that, so the ownership check (defence in depth) and the fake's 404 go with collab-identity. Small."
+    },
+    {
+      "id": "L4i-left-12",
+      "text": "finishTakeOuts pages through every answered decision card of the person on every syncPrAnswers, and a crash after the take-out pull request was opened but before the merge record was written opens a second take-out pull request.",
+      "still_open": true,
+      "evidence": "Sources: L4i #43, #46. packages/runtime/src/session/pr-answers.ts finishTakeOuts: a paged list of every answered decision row per sync; the take_out_result patch comes only after takeOutSentence returns; the session lead's live check ('exactly one take-out pull request') depends on that order.",
+      "class": "a",
+      "never_cut": false,
+      "reason": "A duplicate pull request on GitHub, which the other Forerunner would also see and must not touch. Record the opened PR before the merge record (or find it by its mark on the next try), and keep the scan to rows marked taken_out. Area: collab-feed (pull request rows and the take-out). Small to medium."
+    },
+    {
+      "id": "L4i-left-13",
+      "text": "L4e-left-9 and L4e-left-3's restart: real-daemon cases the L4e areas left (Take this work out pressed through the Inbox for a merged-through task, L4-github-122's acceptance case, the Redo-after-join count, a watcher test for a cancelled task's pull request merged on GitHub: mergedOnHost). The L4e-left-3 'restart' builds a new PrTaskExecutor on the same in-process store, not two composes on one home.",
+      "still_open": true,
+      "evidence": "Sources: L4i #53, #61. No test calls mergedOnHost (packages/runtime/src/session/dependent-branches.ts:220-224 is reached only from production); packages/runtime/test/dependent-branches-merge.test.ts:3575 takeOutAfterRestart reuses the store; no commit after L4i names L4e-left-9.",
+      "class": "a",
+      "never_cut": false,
+      "reason": "Tests of the GitHub merge and take-out path (validation rules 3 and 4). collab-bench's two-home harness and collab-feed's watcher changes are where these cases belong; the mergedOnHost watcher test matters more once the watcher must skip the other Forerunner's pull requests. Medium (tests only)."
+    },
+    {
+      "id": "L4i-left-14",
+      "text": "L4e-rest-3: rebuildForTakeOver writes the branch's version of every file the branch changed since its merge-base; if main changed the same file later, main's newer version is replaced.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4e.json L4e-rest-3 (rated 'rare'). packages/runtime/src/loop/docs.ts:1030 and :1092 rebuildForTakeOver unchanged since 7081d6f; no later commit names it.",
+      "class": "a",
+      "never_cut": false,
+      "reason": "Scaffold on GitHub. It was rare with one Forerunner. Under D9 another Forerunner merges into main all the time (brief section 5.2, 'Main moves under you'), so a take-over rebuild can undo the other person's merged docs. Area: repo-guide (the scaffold writer). Small to medium, with a case where main changed the file after the merge-base."
+    },
+    {
+      "id": "L4i-left-15",
+      "text": "The phone Inbox renders <Badge>{message.type}</Badge>, so the raw type 'warning' shows on the phone (the desktop was fixed in 0a16759). Sibling: the phone's request row renders the raw <Badge>{request.kind}</Badge>.",
+      "still_open": true,
+      "evidence": "Sources: L4i #31, #36, #45, routing phase_h[0], merge problems_left. apps/ui/src/mobile/screens/InboxScreen.tsx:240 `<Badge>{message.type}</Badge>` and :117 `<Badge>{request.kind}</Badge>`; the desktop InboxPage.tsx:803 uses the named dot (message-tone).",
+      "class": "b",
+      "never_cut": false,
+      "reason": "Phase H (the phone round). Design section 5 rule 6 (no raw states or type names). Phone tests assert the badge, so it belongs with the phone's own test changes. Small."
+    },
+    {
+      "id": "L4i-left-16",
+      "text": "L4-money-207 (time half): the 'Interrupted' end line and ended_at carry the restart's time, not the last moment the session worked.",
+      "still_open": true,
+      "evidence": "Sources: L4i #0, #20; L4g merge problems_left. packages/runtime/src/session/recovery.ts:169 keeps handoff.last_worked_at from the last event, but :180-184 setStatus uses `now: clock.nowIso()` and :185 store.event.append stamps session.ended with the store's clock.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "A general words/time fix (design section 5 rule 4). Stamp ended_at and the session.ended event at last_worked_at (event.append needs a time argument), with a compose-twice restart case. Medium-small; cut-line in L4i."
+    },
+    {
+      "id": "L4i-left-17",
+      "text": "L4-money-210: stopping the critic's monthly check records it as failed.",
+      "still_open": true,
+      "evidence": "Sources: L4i #1, #20; L4g merge problems_left. No commit between 4cf11fd and c15d75e names L4-money-210 (git log --grep); the L4i fixer lists it as not reached.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "General words/state fix: a stop the person pressed is not a failure. Small; cut-able."
+    },
+    {
+      "id": "L4i-left-18",
+      "text": "L4-money-211: continuation and hands-off tests count sessions right after the task is done (a race in the tests).",
+      "still_open": true,
+      "evidence": "Sources: L4i #1, #20. No commit names L4-money-211; the L4i fixer lists it as not reached.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Tests (a race). It is a flaky-test source like L4i-left-3, so take it early with it. Small."
+    },
+    {
+      "id": "L4i-left-19",
+      "text": "L4-money-212: the Desktop window check passes without seeing the session run.",
+      "still_open": true,
+      "evidence": "Sources: L4i #1, #20. No commit names L4-money-212; the L4i fixer lists it as not reached.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Tests: the window check should assert the running session it claims to check. Small; cut-able."
+    },
+    {
+      "id": "L4i-left-20",
+      "text": "L4-money-215: move read-backs name same-titled tasks by title only, so two tasks with one title cannot be told apart.",
+      "still_open": true,
+      "evidence": "Sources: L4i #1, #20. No commit names L4-money-215; the L4i fixer lists it as not reached.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words (design section 5 rule 3: names that tell things apart). Small; cut-able."
+    },
+    {
+      "id": "L4i-left-21",
+      "text": "L4-money-216: turning on 'Start a session by itself' does not say that tasks that were already ready run too. Check the behaviour first: prepareWork runs only on an action, so already-ready tasks may not start.",
+      "still_open": true,
+      "evidence": "Sources: L4i #1, #20. apps/ui/src/pages/SettingsFields.tsx:126-133 START_BY_ITSELF has only the two labels ('Wait for my Start', 'Start a session by itself'); no confirm line names already-ready work. No commit names L4-money-216.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words, with a behaviour check (design section 5 rule 9, no promises the code does not keep). Small."
+    },
+    {
+      "id": "L4i-left-22",
+      "text": "L4g-left-5: fixed words that ignore the prepared context: the Tasks-row tooltips for Go ahead without, Redo and Try again, chat's option line, and Make ready's confirm ('Ready to run: the running session takes it if it fits, else your next Start.', shown after the session had ended).",
+      "still_open": true,
+      "evidence": "Sources: L4i #2, #18, #20; L4g merge problems_left (202's and 208's cut parts). apps/ui/src/lib/task-actions.ts:24-28 (make_ready), :38-41 (resume), :46-57 (try_again, go_ahead, redo) are fixed strings at c15d75e.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words (design section 5 rule 4, true now): take the line from the daemon's prepared context, as previewWork now does for chat. Small to medium; cut-able."
+    },
+    {
+      "id": "L4i-left-23",
+      "text": "L4g-left-6: on a waiting Overview the wait is said four times (the bar, the header line, Working now, Last result/Next). A continuation's page reads 'Goes on with your session of 16:41.' then 'It goes on with a budget of CHF 5.00.'. The queued start's Cancel explanation is only a tooltip. Bird notes' Last result reads 'No session yet.' while its start waits in line.",
+      "still_open": true,
+      "evidence": "Sources: L4i #2, #9, #18; L4g merge problems_left. packages/runtime/src/daemon/event-lines.ts:687 and started-by-words.ts:55 ('goes on' twice); apps/ui/src/pages/project/SummaryTab.tsx:213-227 shows 'No session yet.' whenever nothing works, with no branch for a queued start. Bench: /tmp/frbench/fix-l4-starts-carried-kept-steps/02 (375 px).",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words (design section 5 rule 10, one place per fact). Design work on which surface keeps the wait, then one-line changes. Medium; cut-able."
+    },
+    {
+      "id": "L4i-left-24",
+      "text": "A running continuation's Sessions row shows startedBy null and 'plans the session' (part of L4g-left-6).",
+      "still_open": true,
+      "evidence": "Sources: L4i #2; L4g merge new_problems. packages/runtime/src/daemon/run-words.ts:92-93 'plans the session' for state 'planning'; no commit after L4g names the startedBy of a continuation.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Daemon data and attribution: write the continuation's startedBy ('continuation') on its row and word it. Small."
+    },
+    {
+      "id": "L4i-left-25",
+      "text": "The Start dialog says the blocker for one waiter in the box's first sentence, then again in the waiting list below (the list line adds what to do). The failed and cancelled dependencies already did this.",
+      "still_open": true,
+      "evidence": "Source: L4i #25 (fixup new_problem). Bench: /tmp/frbench/fixup-l4-starts-carried-steps/bench-a/05-after-2-start-dialog-with-waiters.png. apps/ui/src/pages/project/StartSessionDialog.tsx renders both the blocked sentence and waitsOn[].held for the same task.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words (design section 5 rule 10). The fixer called folding the two a design question; the planner decides one form and tests it. Small; do it with L4i-left-23."
+    },
+    {
+      "id": "L4i-left-26",
+      "text": "L4g-left-8: the fake daemon does not model the limit wake (budget.set's woken line, the start-check wake). The session list's listedWhere does not list a session with stop_reason 'plan_awaiting_approval' or one another session continues.",
+      "still_open": true,
+      "evidence": "Sources: L4i #4, #20. apps/ui/test/fake-daemon.ts has no limit-wake path (no 'woken'/wakeLimit); packages/state/src/repos/session.ts:165-183 listedWhere's clauses: status, run, cost_ledger, intake, startedBy person|continuation, stop_reason credential_wait only.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Fake/daemon drift (validation rule 3) and a list rule. Small; cut-able."
+    },
+    {
+      "id": "L4i-left-27",
+      "text": "L4b-left-6: the 'Assisted mode: approve this session plan before work starts.' card offers 'approve' / 'reject' in lower case with no explanation lines.",
+      "still_open": true,
+      "evidence": "Sources: L4i #5; L4g merge problems_left. packages/runtime/src/session/plan-approval.ts:39 `PLAN_APPROVAL_OPTIONS = [\"approve\", \"reject\"]`; runner.ts:1945-1961 files the card with those options; no label map in the UI.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words (design section 3.4): keep the stored answer values (the plan-approval sync, the cloud runner's trigger and the fake read them) and change only the labels and add one-line explanations. Small."
+    },
+    {
+      "id": "L4i-left-28",
+      "text": "L4c-left-1: under an outer limit (the project's budget or the month's cap) the status and result read 'Stopped at the project's budget' / '... Stopped at the project's budget of CHF 0.06. CHF 0.04.' while part of the budget is unspent, and the Sessions row reads '1 paused · Stopped at the ...'. Say what happened (the run paused before the limit).",
+      "still_open": true,
+      "evidence": "Sources: L4i #5, #17; L4g merge problems_left. packages/runtime/src/session/stop-words.ts:142 `return \\`Stopped at ${stopLimitWords(stopReason)}\\``; bench (L4i review): 'Stopped at the project's budget of CHF 0.06. CHF 0.04.'.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Money words (design section 5 rules 4 and 7). Small."
+    },
+    {
+      "id": "L4i-left-29",
+      "text": "The header says 'Waiting for you: \"X\"' with Answer for a task paused at an outer limit whose card's only option is Cancel task. The card's title says 'paused before the project's budget ran out' while its room (35809) is larger than the estimate left (6756).",
+      "still_open": true,
+      "evidence": "Source: L4i #17 (review, pre-existing). packages/runtime/src/daemon/project-status.ts:333-349: any card that holds a task gives 'Waiting for you' and the Answer link, whatever its options.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words, a sibling of L4g-left-1 (fixed for the Start dialog by held-words.ts): use heldBlocker's limit words and Open Settings on the header, and check why a task with room left was paused. Small to medium."
+    },
+    {
+      "id": "L4i-left-30",
+      "text": "L4c-left-2: result.ts' 'Left for next time: ...; this session's CHF X was used.' can still fire for after_others items when a larger task's pause ends the session with room left (the 'budget used' sibling of L4-money-102).",
+      "still_open": true,
+      "evidence": "Sources: L4i #5; L4g merge problems_left. packages/runtime/src/session/result.ts:537 unchanged; no commit names L4c-left-2.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Money words (no untrue 'budget used' sentence). Small."
+    },
+    {
+      "id": "L4i-left-31",
+      "text": "L4c-left-3: the session status reads 'Ended: 1 paused' and the log 'paused before its review' while the row says 'Done; its review waits'. One state, one wording.",
+      "still_open": true,
+      "evidence": "Sources: L4i #5; L4g merge problems_left. packages/runtime/src/daemon/session-list.ts:775 'Done; its review waits for room in ...' beside the end words; no commit names L4c-left-3.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words (one state, one wording). Small."
+    },
+    {
+      "id": "L4i-left-32",
+      "text": "L4d-left-1: under 'API key first, then subscription' with the key resting and mixed work, the Start dialog says the work runs on the subscription and its figure covers work only the key can do; the plan card's foot line says the same for tasks only the key can do. Name what waits for the key.",
+      "still_open": true,
+      "evidence": "Sources: L4i #5; L4g merge problems_left. No commit after the L4d fixup names L4d-left-1; the L4d fixup's nextServes rule covers only all-hard work.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Money words (a figure for work that will not run). Small to medium."
+    },
+    {
+      "id": "L4i-left-33",
+      "text": "L4d-left-4: an open Settings read-back stays in the Inbox as an approval card after the person leaves Settings (L4-creds-21 part 1); there are no Playwright cases for the credential section and the Start dialog at phone and desktop widths (L4-creds-24).",
+      "still_open": true,
+      "evidence": "Sources: L4i #5; L4g merge problems_left. apps/ui/e2e has no spec for the credential section or the Start dialog widths (settings-links.spec.ts only checks that credential-policy is visible at 1280 px).",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words and tests. Small; the Playwright half is cut-able."
+    },
+    {
+      "id": "L4i-left-34",
+      "text": "A project whose only task the person paused, with nothing else to run, still says 'Nothing can run: no task is ready.' and 'Give your agent work first'.",
+      "still_open": true,
+      "evidence": "Source: L4i #26 (fixup new_problem). packages/runtime/src/daemon/start-blocked.ts:104 `if (!needsYou && one.why !== \"paused\") needsYou = one;`, so a paused task never becomes the blocker.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words: a no-waiter blocker for paused tasks ('\"X\", which you paused [Open Tasks]'), then the dialog hides 'Give your agent work first' through blocked.holds. Small."
+    },
+    {
+      "id": "L4i-left-35",
+      "text": "'on' and 'of' still disagree among start sentences: the kept start now says 'A session of X starts at 15:40', but the queued and quiet-hours change-card sentences say 'A session on X starts after the one running now' / '... when your quiet hours end', and the run's own lines say 'A session of X'.",
+      "still_open": true,
+      "evidence": "Source: L4i #14. The named pair was fixed in 84f9e7e (packages/commands/src/commands/session.ts:101). The siblings at session.ts:105, :107 still read 'A session on ...'; compose.ts:4455 and server.ts:2166-2167 read 'A session of ...'.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words (one wording). Small; cut-able."
+    },
+    {
+      "id": "L4i-left-36",
+      "text": "The L4-money-201 case and the refused-key case start their sessions through rt.scheduler.requestStart, an internal path, instead of through POST /sessions before the refusal is known.",
+      "still_open": true,
+      "evidence": "Sources: L4i #12, #21. The fixup left them as built; the assertions are unchanged.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Tests at the person's boundary (validation rule 1). Low priority: nothing is weakened, and the bench and the new phone-row test cover the boundary. Cut-able."
+    },
+    {
+      "id": "L4i-left-37",
+      "text": "The fake daemon's 409 text ('<head>; then your session goes on.') differs from the daemon's ('Your session of 09:00 goes on by itself at 11:40.').",
+      "still_open": true,
+      "evidence": "Sources: L4i #15, #22. Left as it is by the fixup ('the fake does not model session start times; no UI test reads the 409's text').",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Fake/daemon drift (validation rule 3). Small; cut-able."
+    },
+    {
+      "id": "L4i-left-38",
+      "text": "L4-selftasks-127 rest: no Connect offer (the right kind of link or button) beside 'Fixing the tasks needs Claude: connect it in Settings, Basics.'.",
+      "still_open": true,
+      "evidence": "Sources: L4i #27 (L4h-left-8); L4h merge problems_left. packages/runtime/src/conversation/sentences.ts:73 FIX_NEEDS_CLAUDE is a bare sentence; the L4i fixer changed nothing in intake, plan-card or fence code.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words (a step the person can take, design section 5 rule 8). Small; cut-able."
+    },
+    {
+      "id": "L4i-left-39",
+      "text": "L4b-left-2: the task-check fence silently drops a wait whose order names a pending add of the same set; refuse it in words and run the loop check again.",
+      "still_open": true,
+      "evidence": "Sources: L4i #27 (L4h-left-8); L4h merge problems_left. packages/runtime/src/session/task-check.ts fence (:715ff) unchanged by L4i; no commit names L4b-left-2.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "A silent drop of the model's proposal (the person never learns a change was left out). Small to medium."
+    },
+    {
+      "id": "L4i-left-40",
+      "text": "L4b-left-3 second half: the plan card's warning repeats the task's title under that task's own row.",
+      "still_open": true,
+      "evidence": "Sources: L4i #27 (L4h-left-8); L4h merge problems_left. Only the first half was done (657473a).",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words (design section 5 rule 10). Small; cut-able."
+    },
+    {
+      "id": "L4i-left-41",
+      "text": "L4b-left-5 coverage: L4-selftasks-109's restart composed twice on one home, -111's critic-notes body at the real daemon, a CostsTab render test for -114, -112 (a) quoting two sentences.",
+      "still_open": true,
+      "evidence": "Sources: L4i #27 (L4h-left-8); L4h merge problems_left. No commit names L4b-left-5.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Tests (validation rules 3 and 4). Small; cut-able."
+    },
+    {
+      "id": "L4i-left-42",
+      "text": "L4h-left-7 rest (fake): the fake daemon's split Undo lacks the daemon's 'what X waits for changed again since' refusal, and the fake's switchedHere says 'there'.",
+      "still_open": true,
+      "evidence": "Sources: L4i #28; L4h merge problems_left. packages/commands/src/commands/task.ts:2306 has the refusal; apps/ui/test/fake-daemon.ts:8069-8085 refuses a split Undo only for 'is running now' / 'has run since'.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Fake/daemon drift (validation rule 3). Small; cut-able."
+    },
+    {
+      "id": "L4i-left-43",
+      "text": "conversationOfCard reads up to 400 chat.reply rows of the session to find a card's conversation.",
+      "still_open": true,
+      "evidence": "Source: L4i #28. packages/runtime/src/conversation/transcript.ts:170 `const CARD_REPLY_SCAN = 400;`, :178 conversationOfCard.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Performance polish (store the conversation id on the card). Small; cut-able."
+    },
+    {
+      "id": "L4i-left-44",
+      "text": "Talk on a project that is not in the store yet briefly shows the message box (a flash).",
+      "still_open": true,
+      "evidence": "Sources: L4i #28; L4h fixup not_done. Left as found ('would mean hiding the box for open projects too while the store loads').",
+      "class": "c",
+      "never_cut": false,
+      "reason": "UI polish. Small; cut-able."
+    },
+    {
+      "id": "L4i-left-45",
+      "text": "The person's note given with Try again on the Inbox card is queued with author_agent (the agent), not as the person's. Nothing visible changes, because the brief files it under 'by the human'.",
+      "still_open": true,
+      "evidence": "Sources: L4i #38, #48. packages/runtime/src/session/findings.ts:656-665 `author_agent: deps.agentId ?? null` on the queued note of the Inbox's Try again (pre-existing).",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Attribution (the session lead's 2026-11-23 reading: a press the person made is theirs). Small."
+    },
+    {
+      "id": "L4i-left-46",
+      "text": "The new Answered lines of the suggestion card (L4h-left-4's Done line with waits_for_you and appliedChanges; L4h-left-5's recovery) have no GET /inbox or UI case and no compose-twice case; the bench check_in_the_app steps for the suggestion card were not walked.",
+      "still_open": true,
+      "evidence": "Sources: L4i #39, #46. Tested at the sync and words level with seeded crash state only (packages/runtime/test/task-proposal-sync.test.ts).",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Tests at the person's boundary (validation rules 1 and 4). Small."
+    },
+    {
+      "id": "L4i-left-47",
+      "text": "settleProposal's compare-and-set returns 'skipped' on any version bump between list and update, unrelated writes included; the card then waits for the next sync (an answer, the poll when remote is on, or a restart).",
+      "still_open": true,
+      "evidence": "Sources: L4i #42, #46. packages/runtime/src/session/task-proposal.ts settleProposal (L4i, version_conflict -> 'skipped').",
+      "class": "c",
+      "never_cut": false,
+      "reason": "A race: on 'skipped', re-read the row and settle again if it is still 'applying' and nobody else marked it. Small."
+    },
+    {
+      "id": "L4i-left-48",
+      "text": "L4-github-106: Add to waits about 2-10 s on 'Adding...' with no 'Drafting the plan...' state, because POST /projects/:id/intake answers only after the planning call.",
+      "still_open": true,
+      "evidence": "Sources: L4i #50, #54. packages/runtime/src/daemon/server.ts POST /projects/:id/intake awaits rt.intake.propose(...); IntakeBanner.tsx:17 has the drafting line but the page never reaches it on Add to. 42 call sites in 5 test files read requestId from the synchronous answer; a second brief while a plan is open must stay a 409.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "A general UX fix, not about GitHub. It is medium, not small: an additive route or option (answer at once in 'drafting', plan in the background as POST /projects with intake: true does), the project page's drafting state, a real-daemon case and the fake. status-issue-read adds a GitHub read before planning on this same path, which makes the wait longer, so the planner may hand it to that area instead."
+    },
+    {
+      "id": "L4i-left-49",
+      "text": "L4e-left-7: no single rule for Costs' tries and runs. A paused run that no run has continued reads as one try ('0 / 1 (0%)') while its Continue card waits; with a period, runs are taken by created_at while costs are taken by occurred_at, so a run started before the period and billed inside it reads runs 0 beside its cost.",
+      "still_open": true,
+      "evidence": "Sources: L4i #52. packages/runtime/src/daemon/views.ts:1569-1612 taskRunFacts (runs sorted and filtered by created_at; paused counted as continued only when a later run exists) and :1613 costFacts (ledger by occurred_at); the L4-money-301 cases pin the current rule.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Money words. The session lead decides the rule first (not an owner question); then GET /costs cases with and without a period. Small to medium."
+    },
+    {
+      "id": "L4i-left-50",
+      "text": "The project page for an unknown id shows the daemon's 'project 01a20000-... not found' in its error banner, an id on screen.",
+      "still_open": true,
+      "evidence": "Source: L4i #64 (pre-existing). apps/ui/src/pages/ProjectPage.tsx:103 and :226-227 render project.error raw; packages/state/src/repos/base.ts:233 builds `${this.table} ${id} not found`.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words (design section 5 rule 3, names not ids). Small."
+    },
+    {
+      "id": "L4i-left-51",
+      "text": "L4a-left-8 (cut line): the C3-left-5 cases (the handover test's continuation, Stop now during a continuation, project removal dropping its continuation, a readmit where B is not already promised), L4-creds-12 (background jobs marked 'not done for the period' after a held call, with a log line), the L4-creds-13 bench half (a Claude Code stand-in that does work and reports the limit) and L4-creds-14 (BA-7's composed restart cases and BA-3's effort-max case).",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4a.json L4a-left-8. No later run L4 area took it (grep of runL4-plan.json and the L4e-L4i reports); no commit names it.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Tests and one log line. Cut-able; take the restart cases first (validation rule 4)."
+    },
+    {
+      "id": "L4i-left-52",
+      "text": "L4a-left-9: scrubEnv passes the host's CLAUDE* and CCR_* variables (other than the listed auth names) to the Claude Code subprocess; pass only what the run needs.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4a.json L4a-left-9. packages/runtime/src/agent/sdk.ts scrubEnv is a deny-list: DENIED_ENV_PREFIX (:1413), DENIED_ENV_NAME (:1420), CLAUDE_CODE_AUTH_ENV (:1519); other CLAUDE_* and CCR_* names pass.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Minor security: an allow-list for the subprocess environment, with a unit case. Small."
+    },
+    {
+      "id": "L4i-left-53",
+      "text": "L4a-left-10: validZone still falls back to UTC for other callers, and scheduled jobs read the person's zone at start, not at each use.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4a.json L4a-left-10. packages/runtime/src/session/credential-wait.ts:289-297 validZone returns 'UTC' without a zone.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Times in the person's zone (U-entries on clocks). Small."
+    },
+    {
+      "id": "L4i-left-54",
+      "text": "L4a-left-11: the bench recorder can write the bench daemon's token into steps/problems.jsonl when a daemon restarts.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4a.json L4a-left-11. scripts/bench/recorder.cjs strips ?token= from requestfailed and response URLs (stripToken, :61-63, :126, :142), but the console lines (:103-110) write msg.text() and msg.location() raw, and a 'Failed to load resource' after a restart carries the URL with ?token= (the client puts the token in the query, apps/ui/src/api/client.ts:1018).",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Bench test-infra hygiene (a short-lived token, but the recorder should redact it itself): pass console text and location.url through stripToken. Small."
+    },
+    {
+      "id": "L4i-left-55",
+      "text": "L4b-left-13 (cut line): L4-chat-208's 'at least three lookups before the wrap-up on a 10,000-token context' case; L4-chat-202's eval file and words-only offer check; L4-chat-201's optional floor-without-the-ask-line.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4b.json L4b-left-13. No later area took it; no commit names it.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Tests and evals. Cut-able."
+    },
+    {
+      "id": "L4i-left-56",
+      "text": "L4b-left-14: restart cases for the stepped history window and Go ahead use w.restart() on one in-memory store, not composeRuntime twice on one home; packages/runtime/test/chat-steering.test.ts leaves its mkdtemp home behind (no removeHomes).",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4b.json L4b-left-14. grep: chat-steering.test.ts has 0 removeHomes.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Tests (validation rule 4) and test hygiene (the disk on a 16 GB machine). Small."
+    },
+    {
+      "id": "L4i-left-57",
+      "text": "L4b-left-15: the Inbox shows 'Done: You answered \"Yes\".' and then the Update 'was not applied' for a refused card.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4b.json L4b-left-15 (pre-existing). No later area took it; no commit names it.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words (one place per fact; the Done line should say it was not applied). Small."
+    },
+    {
+      "id": "L4i-left-58",
+      "text": "L4c-left-11 (cut line, l4-money-pause): L4-money-105 (a review-only pass priced at the whole remaining estimate), -107 (a node --test helper that never exits blocks the review), -108 (settleSessions/removeHomes in older cases), -110 (a run again's spend missing from person lines), -113 (Left-to-do cut at 200 characters inside a word; the emptyChangeSummary quote split), L4-money-106's card clause and the stand-in's max_tokens mode, L4-selftasks-107's composed case with a learned EstimatePort.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4c.json L4c-left-11. No later area took it; no commit names it.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Money words, a hung-review guard and tests. -105 and -110 are money words, so do them first; the rest are cut-able."
+    },
+    {
+      "id": "L4i-left-59",
+      "text": "L4c-left-12 (L4a-left-7, carried twice): a critic review that meets the subscription's plan share is still a budget pause, not the credential stop 'share'.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4c.json L4c-left-12. No commit names L4a-left-7 or L4c-left-12 after 4cf11fd.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "The owner's D5 (the share is a run-out under the person's policy) applies to the critic's review too. The routing does not mark it never-cut, but it has been carried twice, so do not cut it lightly. Small to medium."
+    },
+    {
+      "id": "L4i-left-60",
+      "text": "L4c-left-13 (cut line, l4-chat-answers): L4-chat-105 (a closed project's lessons reach the kept project), -109 (recall ranking golden set), the L4-chat-113 reply check (scrub or flag tool names), the L4-chat-101 code-run recall fallback, the L4-chat-104 'switch' Open link; L4a-left-6 (L4-creds-6 composed test), L4b-left-9 (dependenciesNextLine with the hands-off setting).",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4c.json L4c-left-13. No later area took it; no commit names it.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Chat words and tests. Cut-able; -105 (lessons after a join) matters most."
+    },
+    {
+      "id": "L4i-left-61",
+      "text": "L4d-left-6: GET /inbox calls rt.startCheck once for each open plan card only to read workBudgetUsdMicro.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4d.json L4d-left-6. packages/runtime/src/daemon/server.ts GET /inbox: `(await rt.startCheck(planProject.id)).workBudgetUsdMicro` twice per plan card.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Performance (the route R-inboxperf optimised). Small."
+    },
+    {
+      "id": "L4i-left-62",
+      "text": "L4d-left-7: setPersonZone runs inside the store reducer (a side effect). A screen rendered before /me answers is not re-rendered when the zone arrives, and a zone saved in Settings is read again only after a restart or a project switch.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4d.json L4d-left-7. apps/ui/src/store/store.ts:219-222 calls setPersonZone(action.me?.timezone) in the 'me' case; apps/ui/src/mobile/store.tsx:863 does the same.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "A UI race of the same kind as L4i-left-3 (state from /me). Small."
+    },
+    {
+      "id": "L4i-left-63",
+      "text": "L4d-left-8: L4a-left-4's queued-continuation status line has no real-daemon case; other '(s)' literals remain outside intake.ts and calibration.ts; the plan card foot line is about 104-117 characters under ask.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4d.json L4d-left-8. No later area took it; no commit names it.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Tests and words (design section 5 rules 1 and 6). Small."
+    },
+    {
+      "id": "L4i-left-64",
+      "text": "L4d-left-9: task rows show 'CHF 0.00' for tasks that have spent nothing.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4d.json L4d-left-9 (pre-existing). apps/ui/src/pages/project/TasksTab.tsx:566 always renders <Money value={t.spent ?? t.actual} />.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Words (design section 5 rule 5, no zero counts). Small."
+    },
+    {
+      "id": "L4i-left-65",
+      "text": "L4e-rest-4: two first-plan POSTs at the same time are not refused atomically (pendingFor is checked before the model call).",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4e.json L4e-rest-4 (rated 'unlikely'). packages/runtime/src/session/intake.ts:1092 pendingFor and :1451 its check before the planning call.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "A race (two model calls, two plan cards). Small; do it with L4i-left-48 if that changes the route."
+    },
+    {
+      "id": "L4i-left-66",
+      "text": "L4e-rest-5: the writing-rules possessive sweep only catches the `\"${x}\"'s` and `quoted(...)}'s` forms.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4e.json L4e-rest-5. No commit names it.",
+      "class": "c",
+      "never_cut": false,
+      "reason": "Tests (the words sweep). Small; cut-able."
+    },
+    {
+      "id": "L4i-left-67",
+      "text": "L4-money-207 (project half): one crash that released tasks in several projects posts one Update with project_id null.",
+      "still_open": false,
+      "evidence": "Sources: L4i #0, #20. packages/runtime/src/session/recovery.ts:309-322 posts project_id null only when projectIds.length > 1, but one agent holds one active session and the critic's has no project (filtered out at :309), so the case is not reachable on one install.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Not a problem on one install, and under D9 every person keeps their own install and store, so wave 8 does not make it reachable either. Drop; reopen only if a cloud runner shares the PC's store."
+    },
+    {
+      "id": "L4i-left-68",
+      "text": "L4g-left-7: a session whose only task the person paused (or cancelled) shows the badge 'Done' beside 'You paused \"X\"; nothing else ran.'.",
+      "still_open": false,
+      "evidence": "Sources: L4i #3; L4g merge new_problems. The area's decision kept the default and noted it for the owner (runL4-L4i-fix-l4-starts-carried.json notes_for_other_areas: one place changes it, endedStatusText / listEndWords).",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Owner-visible choice already decided (default 'Done', a queue end; the alternative 'Ended: paused by you' is one change if the owner asks). Drop."
+    },
+    {
+      "id": "L4i-left-69",
+      "text": "Bench walks not done: no bench BEFORE screenshots in l4-starts-carried and l4-github-carried (L4e-left-11's before walk), no walk of a 'failed 4 times' card after the executor wording change.",
+      "still_open": false,
+      "evidence": "Sources: L4i #6, #19, #24, #47, #54. The failing-first tests are the before evidence, and the reviewer confirmed they fail on base. The reviewer's bench shots are the before state of each blocking item. The high-risk card lines are pinned by commands tests with a live_check step. The 'Drafting the plan' walk goes with L4i-left-48.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Not a defect: a process note, already covered by failing-first tests and the AFTER walks kept outside --fresh. Drop."
+    },
+    {
+      "id": "L4i-left-70",
+      "text": "The Start dialog's waiting list said 'which needs your answer' for every needs_human dependency, including one the person paused or one paused at an outer limit.",
+      "still_open": false,
+      "evidence": "Source: L4i #8. Fixed in the L4i fixup (84f9e7e, B2): server.ts:1826 sends waitsOn[].held from heldDependency (held-words.ts:144); apps/ui/src/pages/project/StartSessionDialog.tsx:79 uses d.held.state.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Already fixed. Drop."
+    },
+    {
+      "id": "L4i-left-71",
+      "text": "The phone's Start under a refused key lifted Stop all (kill.resume before the refusal), and no test showed the phone row failing with the sentence.",
+      "still_open": false,
+      "evidence": "Source: L4i #10 (second half). Fixed in 84f9e7e: packages/runtime/src/remote/watcher.ts:787-792 asks startRefused before kill.resume(); the fixup added the phone-row test.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Already fixed. The rest of #10 (the other refusals) is L4i-left-1."
+    },
+    {
+      "id": "L4i-left-72",
+      "text": "RuntimeApp.refusedStart passed stopped:false, so with Stop all on and a refused key POST /sessions answered with the key's sentence instead of Stop all's.",
+      "still_open": false,
+      "evidence": "Source: L4i #11. Fixed in 84f9e7e: packages/runtime/src/daemon/compose.ts:4084-4099 `stopped: !opts.evenStopped && kill.isFrozen(...)`; the phone passes evenStopped (compose.ts:6062).",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Already fixed. Drop."
+    },
+    {
+      "id": "L4i-left-73",
+      "text": "The R-startcred comment on server.ts startBlocked ('POST /sessions does not refuse on it') was stale.",
+      "still_open": false,
+      "evidence": "Source: L4i #13. git grep 'does not refuse on it' in packages/runtime/src finds nothing at c15d75e (fixup 84f9e7e).",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Already fixed. Drop."
+    },
+    {
+      "id": "L4i-left-74",
+      "text": "The 400's details.cause 'credential_refused' is overwritten to 'validation' by the server's error handler (server.ts:559), so the client never sees it.",
+      "still_open": true,
+      "evidence": "Sources: L4i #16, #23. Left as it is; no client reads details.cause for this refusal.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Not a problem (harmless, as the reviewer and the fixup said; nothing reads it). Drop. Reopen only if a client needs the cause."
+    },
+    {
+      "id": "L4i-left-75",
+      "text": "Parts of L4h-left-4 and L4h-left-7: the measured line, polling openCards, the lapse's single emit, the fake heardChat 'no', ADR 0109's labels, agent.ts's doc blocks, L4h-left-3's namesWords half.",
+      "still_open": false,
+      "evidence": "Source: L4i #30. Already fixed at the L4i base: packages/runtime/src/daemon/views.ts:926-930, b731511, c8184e3, 440b6bc; the namesWords half is now pinned by a test.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Already fixed. Drop."
+    },
+    {
+      "id": "L4i-left-76",
+      "text": "answer_on_card for a note the model made up said 'Nothing else was filed; type the note there with Try again.', asking for a note the person never gave.",
+      "still_open": false,
+      "evidence": "Source: L4i #34. Fixed in the L4i chat-final fixup: packages/commands/src/executor.ts:655-658 mentions the note only when it is the person's own (notesPersons); the model's note gets 'Nothing else was filed.'.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Already fixed. Drop."
+    },
+    {
+      "id": "L4i-left-77",
+      "text": "The answer_on_card reply used the model's raw answer string ('with try_again', 'with it'), not the matched option's label.",
+      "still_open": false,
+      "evidence": "Source: L4i #35. Fixed in the chat-final fixup: executor.ts:657 uses `${on.label}` from cardTitleOf {title, takesNote, label}.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Already fixed. Drop."
+    },
+    {
+      "id": "L4i-left-78",
+      "text": "claims.ts: the new HISTORY_NOUN/SAYS_NOW doc block sat right under NOW_STATE's, leaving stacked doc blocks.",
+      "still_open": false,
+      "evidence": "Source: L4i #37. At c15d75e packages/runtime/src/conversation/claims.ts has NOW_STATE's own doc block directly above it and a separate doc block above HISTORY_NOUN; nothing is stacked.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Already fixed. Drop."
+    },
+    {
+      "id": "L4i-left-79",
+      "text": "Report accuracy in l4-chat-final: failing_test_before listed a commands-level L4h-left-6 case that passes on base, and not_done said chat task_create 'still reads back the description' while executor.ts:559 says it acts at once.",
+      "still_open": false,
+      "evidence": "Sources: L4i #38, #49. The composed chat-fix-tasks case is the real fail-first; the task_create fact is folded into L4i-left-4's evidence.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Not a code problem (report wording); the fact that matters is carried by L4i-left-4. Drop."
+    },
+    {
+      "id": "L4i-left-80",
+      "text": "appliedChanges matched left_out lines by prefix, so a change whose line starts another's was counted as left out.",
+      "still_open": false,
+      "evidence": "Source: L4i #40. Fixed in the chat-final fixup: packages/runtime/src/daemon/task-proposal-words.ts:32 matches `${head}: ` (the whole line then ': ').",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Already fixed. Drop."
+    },
+    {
+      "id": "L4i-left-81",
+      "text": "waits_for_you is computed at apply time, so once the person does that task the Answered line still says the changed task waits for it.",
+      "still_open": true,
+      "evidence": "Sources: L4i #41, #46. Left as built; the review called it acceptable.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Not a problem: an Answered line records the state at the answer, and design section 5 rule 4 allows a line computed when written (the existing 'your next Start runs it' line works the same way). Drop."
+    },
+    {
+      "id": "L4i-left-82",
+      "text": "The l4-chat-final reviewer did not run Playwright, test:integration, test:e2e or test:injection.",
+      "still_open": false,
+      "evidence": "Source: L4i #44. The fixer ran them green (one flaky updates.spec.ts case, L4i-left-3), and the L4i merge ran every suite green on the merged tree (merge_problems_left[0]).",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Not a problem: the suites ran at the merge. The flaky case is L4i-left-3. Drop."
+    },
+    {
+      "id": "L4i-left-83",
+      "text": "L4d-left-3: the Start dialog in the kept state offered Use API key with its CHF figure while the plan sentence was gone, so the figure named no task.",
+      "still_open": false,
+      "evidence": "Sources: L4i #5 ('may already be closed'); L4g merge problems_left. Fixed in the L4d fixup: apps/ui/src/pages/project/StartSessionDialog.tsx:394 `runOutOffered = (!!blocked?.startable || !!blocked?.kept) && ...` keeps the plan sentence; test apps/ui/test/credential-start.test.tsx 'with a Start kept and Use API key offered, the plan sentence names the tasks beside the figure'.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Already fixed (by the L4d fixup, before L4i; L4i did not re-verify it). Drop."
+    },
+    {
+      "id": "L4i-left-84",
+      "text": "L4c-left-6: an injection-suite case for a forged lower-case 'the app did:' line.",
+      "still_open": false,
+      "evidence": "Source: L4h merge problems_left. runL4-plan.json l4-chat-final decisions: 'Session lead decision 2026-11-24 (L4c-left-6): the fixer's reason is accepted ... 32db6f1 strips the app's markers in any letter case with its own tests. No injection-suite case is added.'",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Decided by the session lead (model output, not a new input channel). Drop."
+    },
+    {
+      "id": "L4i-left-85",
+      "text": "L4a-decision-1: the share ask card's title stays 'Use your API key until Tue 1 Dec?'.",
+      "still_open": false,
+      "evidence": "Source: leftovers-L4a.json L4a-decision-1 (session lead, L4a merge, 2026-11-22).",
+      "class": "d",
+      "never_cut": false,
+      "reason": "A choice already decided. Drop."
+    },
+    {
+      "id": "L4i-left-86",
+      "text": "L4b-left-12: L4-selftasks-101's budget raise at the plan's apply and an intake prompt line about review room were not built; the acceptance allows the warning instead.",
+      "still_open": false,
+      "evidence": "Source: leftovers-L4b.json L4b-left-12 (severity 'accepted'). The warning is built and tested at the person's boundary.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Accepted as built (the acceptance's alternative). Drop."
+    },
+    {
+      "id": "L4i-left-87",
+      "text": "L4c-ws-1: the Left-to-do reason allowlist keeps a free subject slot (up to 5 words), so an unlisted hedge inside a subject that ends in a done word could still read as nothing left.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4c.json L4c-ws-1 (residual after 82a8470). The clause shapes are closed; runL4-plan final_check F-9 runs the real researcher's phrasings.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Accepted residual, routed to the live check F-9 of the final check, not a code fix for wave 8. Drop here."
+    },
+    {
+      "id": "L4i-left-88",
+      "text": "L4e-rest-1: a dependency merged on GitHub shortly before the Merge press reads 'waiting for you to merge' until the watcher's next poll.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4e.json L4e-rest-1 (by design): settling it at the press would start the merge's listeners without the person's press.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "By design (no GitHub-driven work without the person's press). Drop."
+    },
+    {
+      "id": "L4i-left-89",
+      "text": "L4e-rest-2: after Undo of a take-over, the removed project's docs pull request stays open on GitHub, and the next Take it over opens a second one.",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4e.json L4e-rest-2 (by design, run C decision 14).",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Decided in run C (decision 14). Drop; repo-guide may list the older pull request as information if it touches the take-over docs."
+    },
+    {
+      "id": "L4i-left-90",
+      "text": "L4e-rest-6: By specialist and By model of the kept project are empty for moved tasks after a join (the project's own ledger).",
+      "still_open": true,
+      "evidence": "Source: leftovers-L4e.json L4e-rest-6 ('follows BA-9/OJ-07').",
+      "class": "d",
+      "never_cut": false,
+      "reason": "By design (each project's ledger is its own, BA-9/OJ-07). Drop."
+    },
+    {
+      "id": "L4i-left-91",
+      "text": "L4g merge not_done lines that L4i closed: L4g-left-1 (start-blocked 'needs your answer' for an outer-limit card), L4g-left-2 (previewWork's no_room line), L4g-left-3 (endedNote 'Spent CHF 0.00.'), L4g-left-4 (Start session offered while the project's own start waits), L4a-left-5 (chat's run it now during a rest kept for the reset), L4d-left-2 (a start under a refused credential refused in words).",
+      "still_open": false,
+      "evidence": "Source: runL4-L4g-merge.json problems_left. Fixed in L4i a8eaa8a and fixup 84f9e7e: held-words.ts:40 outerLimitHold, :91 heldBlocker; AdmitHandle.preview; runner.ts endedNote with moneyWords; ProjectPage.tsx:213 hides Start while view.startWait; commands/session.ts:274-275 keepStart; compose.ts refusedStart used by POST /sessions and the phone.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Already fixed (the never-cut items of l4-starts-carried). The rest of that merge's lines are carried as L4i-left-16..33."
+    },
+    {
+      "id": "L4i-left-92",
+      "text": "L4h merge not_done lines that L4i closed: the pr-answers take-out mark's start-time recovery, parser options with commas, the C4-left-7 sync race and recovered-path admit, onlyDrops reading proposed changes, NOW_STATE breadth, task.ts reason lines from a model-written note, the high-risk card answered from chat without the note, the desktop Inbox's raw 'warning'.",
+      "still_open": false,
+      "evidence": "Source: runL4-L4h-merge.json problems_left. Fixed in L4i chat-final (8288019) and its fixup: pr-answers.ts finishTakeOuts; sentences.ts:125 parserQuestionReply joins with '; '; task-proposal.ts settleProposal compare-and-set; task-proposal-words.ts appliedChanges; claims.ts aboutNow; task.ts givenReason; executor.ts:655-658; InboxPage.tsx:803 message-tone.",
+      "class": "d",
+      "never_cut": false,
+      "reason": "Already fixed. What remains of those lines is carried as L4i-left-12, -15, -38..47."
+    }
+  ]
+}
