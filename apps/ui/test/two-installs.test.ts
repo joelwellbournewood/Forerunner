@@ -1,5 +1,7 @@
 // @vitest-environment node
 
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PullRequestInfo } from "../../../packages/capabilities/src/githost/types.ts";
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
@@ -241,4 +243,95 @@ describe("w8-two-homes, wave 8: harness", () => {
       await two.close();
     }
   }, 120_000);
+});
+
+describe("w8-issue-host, wave 8: issue host", () => {
+  /** Every file under `dir` that holds `text` (nothing of a GitHub read is kept on disk). */
+  const filesHolding = (dir: string, text: string): string[] => {
+    const out: string[] = [];
+    const walk = (d: string) => {
+      for (const entry of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, entry.name);
+        if (entry.isDirectory()) walk(p);
+        else if (entry.isFile() && readFileSync(p).includes(text)) out.push(p);
+      }
+    };
+    walk(dir);
+    return out;
+  };
+
+  for (const kind of ["memory", "http"] as const) {
+    it(`${kind}: a comment Ada's Forerunner writes on the status issue is listed to Bob's with author ada and MEMBER, and the reverse with bob; each reads the other's write access; a repeated read is not modified; Bob's restart starts with no copy and nothing of it is on disk (W8-host-7)`, async () => {
+      const two = await composeTwo({ host: kind });
+      try {
+        const { ada, bob } = two;
+        const repo = two.repo;
+        // The memory host follows roles only once they are declared: team, as on the stand-in.
+        two.memory?.setOrg("team", { members: ["ada", "bob"], basePermission: "write" });
+        const issue = await ada.rt.gitHost.createIssue(repo, {
+          title: "Forerunner status: Team site",
+          body: "",
+        });
+        const adas = await ada.rt.gitHost.commentOnIssue(repo, issue.number, "Ada's agent");
+        const seenByBob = await bob.rt.gitHost.listIssueComments(repo, issue.number);
+        expect(
+          seenByBob.comments.map((c) => [c.id, c.author, c.authorAssociation, c.authorType]),
+        ).toEqual([[adas.id, "ada", "MEMBER", "User"]]);
+        const bobs = await bob.rt.gitHost.commentOnIssue(repo, issue.number, "Bob's agent");
+        const seenByAda = await ada.rt.gitHost.listIssueComments(repo, issue.number);
+        expect(seenByAda.comments.map((c) => [c.id, c.author, c.authorAssociation])).toEqual([
+          [adas.id, "ada", "MEMBER"],
+          [bobs.id, "bob", "MEMBER"],
+        ]);
+        // Each writes only its own comment; neither touched the other's.
+        const comments = (login: string) =>
+          two.writesBy(login).filter((w) => w.action === "comment" && w.number === issue.number);
+        expect(comments("ada")).toHaveLength(1);
+        expect(comments("bob")).toHaveLength(1);
+        for (const login of ["ada", "bob"])
+          expect(two.writesBy(login).filter((w) => w.action === "comment.update")).toEqual([]);
+        // Write access is read from the repository (association is only a first filter).
+        expect(await bob.rt.gitHost.getRepoPermission(repo, "ada")).toBe("write");
+        expect(await ada.rt.gitHost.getRepoPermission(repo, "bob")).toBe("write");
+        // Bob reads with what Ada saw: not modified for him either (his own copy was older, so
+        // the stand-in answered in full); read again, the stand-in answers 304.
+        const again = await bob.rt.gitHost.listIssueComments(repo, issue.number, {
+          etag: seenByAda.etag ?? "",
+        });
+        expect(again.notModified).toBe(true);
+        expect(again.comments.map((c) => c.id)).toEqual([adas.id, bobs.id]);
+        const third = await bob.rt.gitHost.listIssueComments(repo, issue.number, {
+          etag: again.etag ?? "",
+        });
+        expect(third.notModified).toBe(true);
+        const path = `/repos/team/shared/issues/${issue.number}/comments`;
+        const bobsReads = () =>
+          (two.http?.requests() ?? []).filter(
+            (r) => r.method === "GET" && r.path === path && r.auth?.login === "bob",
+          );
+        if (two.http) expect(bobsReads().map((r) => r.status)).toEqual([200, 200, 304]);
+        // Bob's daemon starts again: his first read is a full read, and his home holds nothing
+        // of what he read (the copy was in memory only).
+        await bob.restart();
+        const after = await bob.rt.gitHost.listIssueComments(repo, issue.number);
+        expect(after.comments.map((c) => [c.author, c.authorAssociation])).toEqual([
+          ["ada", "MEMBER"],
+          ["bob", "MEMBER"],
+        ]);
+        if (two.http) {
+          const reads = bobsReads();
+          expect(reads.map((r) => r.status)).toEqual([200, 200, 304, 200]);
+          // Before the restart he offered his copy's ETag; after it, none.
+          expect(reads[2]?.ifNoneMatch).toBeTruthy();
+          expect(reads[3]?.ifNoneMatch).toBeNull();
+        }
+        const etag = after.etag ?? "";
+        expect(etag).toBeTruthy();
+        expect(filesHolding(bob.home, etag)).toEqual([]);
+        expect(filesHolding(ada.home, etag)).toEqual([]);
+      } finally {
+        await two.close();
+      }
+    }, 120_000);
+  }
 });

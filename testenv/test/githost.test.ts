@@ -1488,3 +1488,343 @@ describe("FakeGitHost git over HTTP", () => {
     },
   );
 });
+
+describe("w8-issue-host, wave 8: issues off, ETags, associations, the permission read and GraphQL pins", () => {
+  // The stand-in's own answers, as GitHub gives them, without the adapter (the adapter's side
+  // is packages/capabilities/test/githost-issues.test.ts).
+  let host: FakeGitHost;
+  let root: string;
+  const clock = new SimulatedClock("2026-11-24T09:00:00.000Z");
+  const tok: Record<string, string> = {};
+  const gql = (token: string | undefined, operationName: string, query: string, variables: Json) =>
+    api(host.baseUrl, "POST", "/graphql", {
+      ...(token ? { token } : {}),
+      body: { operationName, query, variables },
+    });
+  const PIN =
+    "mutation StatusPinIssue($issueId: ID!) { pinIssue(input: { issueId: $issueId }) { issue { id number isPinned } } }";
+  const PINNED =
+    "query StatusPinnedIssues($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { pinnedIssues(first: 3) { totalCount nodes { issue { id number } } } } }";
+
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), "fr-githost-issues-"));
+    host = await FakeGitHost.start({ rootDir: root, clock });
+    for (const login of ["ada", "bob", "carol", "dave", "erin"]) host.createUser({ login });
+    host.createOrg({ login: "team", members: ["ada", "bob", "dave"], basePermission: "read" });
+    await host.createRepo({
+      owner: "team",
+      name: "board",
+      private: true,
+      initialFiles: { "README.md": "# board\n" },
+    });
+    host.setCollaboratorRole("team/board", "ada", "admin");
+    host.setCollaboratorRole("team/board", "bob", "write");
+    host.setCollaboratorRole("team/board", "carol", "read");
+    for (const login of ["ada", "bob", "carol", "dave", "erin"])
+      tok[login] = host.createToken({ owner: login, kind: "classic", scopes: ["repo"] }).token;
+  });
+  afterAll(async () => {
+    await host?.stop();
+    if (root) await rm(root, { recursive: true, force: true });
+  });
+
+  it("each author's association is worked out from the repository: MEMBER for members of any access, COLLABORATOR for a read role; the org's read members read but do not push", async () => {
+    const issue = await api(host.baseUrl, "POST", "/repos/team/board/issues", {
+      token: tok.bob,
+      body: { title: "Forerunner status: Board" },
+    });
+    expect(issue.status).toBe(201);
+    expect(issue.json.author_association).toBe("MEMBER");
+    for (const login of ["ada", "bob", "carol", "dave"]) {
+      const c = await api(
+        host.baseUrl,
+        "POST",
+        `/repos/team/board/issues/${issue.json.number}/comments`,
+        { token: tok[login], body: { body: `${login} here` } },
+      );
+      expect(c.status, login).toBe(201);
+    }
+    const list = await api(
+      host.baseUrl,
+      "GET",
+      `/repos/team/board/issues/${issue.json.number}/comments`,
+      { token: tok.ada },
+    );
+    expect(list.list.map((c) => [(c.user as Json).login, c.author_association])).toEqual([
+      ["ada", "MEMBER"],
+      ["bob", "MEMBER"],
+      ["carol", "COLLABORATOR"],
+      ["dave", "MEMBER"],
+    ]);
+    // dave reads the private repository through the organisation's read access; he may not push.
+    const dave = await api(host.baseUrl, "GET", "/repos/team/board", { token: tok.dave });
+    expect(dave.json.permissions).toMatchObject({ pull: true, push: false });
+    const daves = await api(host.baseUrl, "GET", "/user/repos", { token: tok.dave });
+    expect(daves.list.map((r) => r.full_name)).toEqual(["team/board"]);
+    // erin is a stranger: the repository is not there.
+    const erin = await api(host.baseUrl, "GET", "/repos/team/board", { token: tok.erin });
+    expect(erin.status).toBe(404);
+    // An author edits their own comment with the read role; another's needs write access.
+    const carols = list.list.find((c) => (c.user as Json).login === "carol") as Json;
+    const adas = list.list.find((c) => (c.user as Json).login === "ada") as Json;
+    const edit = (token: string | undefined, id: unknown, body: string) =>
+      api(host.baseUrl, "PATCH", `/repos/team/board/issues/comments/${id}`, {
+        token,
+        body: { body },
+      });
+    expect((await edit(tok.carol, carols.id, "carol, edited")).status).toBe(200);
+    expect((await edit(tok.carol, adas.id, "mine")).status).toBe(403);
+    await clock.advance(60_000);
+    const byBob = await edit(tok.bob, adas.id, "tampered");
+    expect(byBob.status).toBe(200);
+    expect((byBob.json.user as Json).login).toBe("ada");
+    expect(byBob.json.updated_at).toBe(clock.nowIso());
+    expect(byBob.json).not.toHaveProperty("editor");
+  });
+
+  it("GET answers carry an ETag; If-None-Match with it is a 304 with no body that costs no rate-limit point, and the request log records it", async () => {
+    const issue = await api(host.baseUrl, "POST", "/repos/team/board/issues", {
+      token: tok.ada,
+      body: { title: "Polled" },
+    });
+    const path = `/repos/team/board/issues/${issue.json.number}/comments`;
+    const first = await api(host.baseUrl, "GET", path, { token: tok.bob });
+    const etag = first.headers.get("etag") ?? "";
+    expect(etag).toMatch(/^W\/"[0-9a-f]{40}"$/);
+    const remaining = Number(first.headers.get("x-ratelimit-remaining"));
+    const again = await api(host.baseUrl, "GET", path, {
+      token: tok.bob,
+      headers: { "If-None-Match": etag },
+    });
+    expect(again.status).toBe(304);
+    expect(again.text).toBe("");
+    expect(again.headers.get("etag")).toBe(etag);
+    expect(Number(again.headers.get("x-ratelimit-remaining"))).toBe(remaining);
+    const logged = host.requests().filter((r) => r.path === path && r.method === "GET");
+    expect(logged.map((r) => [r.status, r.ifNoneMatch, r.auth?.login])).toEqual([
+      [200, null, "bob"],
+      [304, etag, "bob"],
+    ]);
+    // A new comment changes the answer: a full read with a new ETag.
+    await api(host.baseUrl, "POST", path, { token: tok.ada, body: { body: "new" } });
+    const changed = await api(host.baseUrl, "GET", path, {
+      token: tok.bob,
+      headers: { "If-None-Match": etag },
+    });
+    expect(changed.status).toBe(200);
+    expect(changed.headers.get("etag")).not.toBe(etag);
+  });
+
+  it("GET /issues sorts by created, updated or comments, either direction", async () => {
+    const made: number[] = [];
+    for (const title of ["S1", "S2", "S3"]) {
+      await clock.advance(60_000);
+      const i = await api(host.baseUrl, "POST", "/repos/team/board/issues", {
+        token: tok.ada,
+        body: { title, labels: ["sorted"] },
+      });
+      made.push(Number(i.json.number));
+    }
+    await clock.advance(60_000);
+    await api(host.baseUrl, "PATCH", `/repos/team/board/issues/${made[0]}`, {
+      token: tok.ada,
+      body: { title: "S1 again" },
+    });
+    await clock.advance(60_000);
+    await api(host.baseUrl, "POST", `/repos/team/board/issues/${made[1]}/comments`, {
+      token: tok.ada,
+      body: { body: "one" },
+    });
+    const order = async (q: string) =>
+      (
+        await api(host.baseUrl, "GET", `/repos/team/board/issues?labels=sorted&${q}`, {
+          token: tok.bob,
+        })
+      ).list.map((i) => i.number);
+    expect(await order("sort=created")).toEqual([made[2], made[1], made[0]]);
+    expect(await order("sort=created&direction=asc")).toEqual([made[0], made[1], made[2]]);
+    expect(await order("sort=updated")).toEqual([made[1], made[0], made[2]]);
+    expect(await order("sort=comments")).toEqual([made[1], made[2], made[0]]);
+  });
+
+  it("issues off: the repository says has_issues false and the issue routes are 410; a pull request's conversation stays on", async () => {
+    await host.createRepo({
+      owner: "team",
+      name: "quiet",
+      private: true,
+      initialFiles: { "README.md": "# quiet\n" },
+    });
+    host.setCollaboratorRole("team/quiet", "ada", "admin");
+    const issue = await api(host.baseUrl, "POST", "/repos/team/quiet/issues", {
+      token: tok.ada,
+      body: { title: "Before" },
+    });
+    await host.seedCommit("team/quiet", { "x.md": "x\n" }, "x", "fr/x");
+    const pr = await api(host.baseUrl, "POST", "/repos/team/quiet/pulls", {
+      token: tok.ada,
+      body: { title: "X", head: "fr/x", base: "main" },
+    });
+    expect(pr.status).toBe(201);
+    // The admin turns issues off as Settings does (PATCH has_issues).
+    const off = await api(host.baseUrl, "PATCH", "/repos/team/quiet", {
+      token: tok.ada,
+      body: { has_issues: false },
+    });
+    expect(off.json.has_issues).toBe(false);
+    const n = issue.json.number;
+    const calls: [string, string, Json | undefined][] = [
+      ["GET", "/repos/team/quiet/issues", undefined],
+      ["POST", "/repos/team/quiet/issues", { title: "Status" }],
+      ["GET", `/repos/team/quiet/issues/${n}`, undefined],
+      ["GET", `/repos/team/quiet/issues/${n}/comments`, undefined],
+      ["POST", `/repos/team/quiet/issues/${n}/comments`, { body: "x" }],
+    ];
+    for (const [method, path, body] of calls) {
+      const res = await api(host.baseUrl, method, path, { token: tok.ada, body });
+      expect([method, path, res.status, res.json.message]).toEqual([
+        method,
+        path,
+        410,
+        "Issues are disabled for this repo",
+      ]);
+    }
+    const prComment = await api(
+      host.baseUrl,
+      "POST",
+      `/repos/team/quiet/issues/${pr.json.number}/comments`,
+      { token: tok.ada, body: { body: "looks good" } },
+    );
+    expect(prComment.status).toBe(201);
+    host.setIssuesEnabled("team/quiet", true);
+    const on = await api(host.baseUrl, "GET", "/repos/team/quiet/issues", { token: tok.ada });
+    expect(on.status).toBe(200);
+  });
+
+  it("the permission read answers each role and its legacy permission, and 404 for a caller without push access or a login that is not a user", async () => {
+    host.setCollaboratorRole("team/board", "erin", "triage");
+    const read = (caller: string, login: string, headers: Record<string, string> = {}) =>
+      api(host.baseUrl, "GET", `/repos/team/board/collaborators/${login}/permission`, {
+        token: tok[caller],
+        headers,
+      });
+    const seen: [string, unknown, unknown][] = [];
+    for (const login of ["ada", "bob", "carol", "dave", "erin"]) {
+      const r = await read("bob", login);
+      expect(r.status).toBe(200);
+      seen.push([login, r.json.role_name, r.json.permission]);
+    }
+    expect(seen).toEqual([
+      ["ada", "admin", "admin"],
+      ["bob", "write", "write"],
+      ["carol", "read", "read"],
+      // A member by association, read by access.
+      ["dave", "read", "read"],
+      ["erin", "triage", "read"],
+    ]);
+    host.setCollaboratorRole("team/board", "erin", "maintain");
+    expect((await read("bob", "erin")).json).toMatchObject({
+      role_name: "maintain",
+      permission: "write",
+    });
+    host.setCollaboratorRole("team/board", "erin", "none");
+    expect((await read("bob", "erin")).json).toMatchObject({
+      role_name: "none",
+      permission: "none",
+    });
+    // Only a caller who may push reads anyone's permission.
+    expect((await read("carol", "bob")).status).toBe(404);
+    expect((await read("dave", "bob")).status).toBe(404);
+    expect((await read("bob", "nobody")).status).toBe(404);
+    // Read twice with the ETag: a 304.
+    const first = await read("ada", "dave");
+    const again = await read("ada", "dave", { "If-None-Match": first.headers.get("etag") ?? "" });
+    expect(again.status).toBe(304);
+  });
+
+  it("POST /graphql pins an issue on its node id, three at most; a reader is forbidden; the request log names the operation; without a token it is 401", async () => {
+    await host.createRepo({
+      owner: "team",
+      name: "pins",
+      private: true,
+      initialFiles: { "README.md": "# pins\n" },
+    });
+    host.setCollaboratorRole("team/pins", "ada", "admin");
+    host.setCollaboratorRole("team/pins", "carol", "read");
+    const issues: Json[] = [];
+    for (const n of [1, 2, 3, 4]) {
+      const made = await api(host.baseUrl, "POST", "/repos/team/pins/issues", {
+        token: tok.ada,
+        body: { title: `Pin ${n}` },
+      });
+      issues.push(made.json);
+    }
+    const anonymous = await gql(undefined, "StatusPinnedIssues", PINNED, {
+      owner: "team",
+      name: "pins",
+    });
+    expect(anonymous.status).toBe(401);
+    const forbidden = await gql(tok.carol, "StatusPinIssue", PIN, { issueId: issues[0]?.node_id });
+    expect(forbidden.status).toBe(200);
+    expect((forbidden.json.errors as Json[])[0]?.type).toBe("FORBIDDEN");
+    for (const i of issues.slice(0, 3)) {
+      const pinned = await gql(tok.ada, "StatusPinIssue", PIN, { issueId: i.node_id });
+      expect(pinned.json.data).toEqual({
+        pinIssue: { issue: { id: i.node_id, number: i.number, isPinned: true } },
+      });
+    }
+    const fourth = await gql(tok.ada, "StatusPinIssue", PIN, { issueId: issues[3]?.node_id });
+    expect((fourth.json.errors as Json[])[0]?.type).toBe("UNPROCESSABLE");
+    const list = await gql(tok.carol, "StatusPinnedIssues", PINNED, {
+      owner: "team",
+      name: "pins",
+    });
+    expect(list.json.data).toEqual({
+      repository: {
+        pinnedIssues: {
+          totalCount: 3,
+          nodes: issues.slice(0, 3).map((i) => ({ issue: { id: i.node_id, number: i.number } })),
+        },
+      },
+    });
+    expect(host.pinnedIssues("team/pins")).toEqual(issues.slice(0, 3).map((i) => i.number));
+    const missing = await gql(tok.ada, "StatusPinIssue", PIN, {
+      issueId: Buffer.from("Issue:999999").toString("base64"),
+    });
+    expect((missing.json.errors as Json[])[0]?.type).toBe("NOT_FOUND");
+    const logged = host.requests().filter((r) => r.path === "/graphql" && r.status === 200);
+    expect(new Set(logged.map((r) => `${r.graphql?.kind} ${r.graphql?.operation}`))).toEqual(
+      new Set(["query StatusPinnedIssues", "mutation StatusPinIssue"]),
+    );
+    // GitHub's issues webhook says pinned.
+    const pinEvents = host.events().filter((e) => e.event === "issues" && e.action === "pinned");
+    expect(pinEvents).toHaveLength(3);
+  });
+
+  it("a GitHub App's comment is by a Bot, with no association", async () => {
+    const app = host.createApp({ slug: "status-bot", owner: "ada" });
+    const inst = host.createInstallation({
+      appId: app.id,
+      account: "team",
+      repos: ["board"],
+      permissions: { issues: "write", metadata: "read" },
+    });
+    const botToken = host.createToken({
+      owner: "ada",
+      kind: "app_installation",
+      installationId: inst.id,
+    }).token;
+    const issue = await api(host.baseUrl, "POST", "/repos/team/board/issues", {
+      token: tok.ada,
+      body: { title: "Bots" },
+    });
+    const c = await api(
+      host.baseUrl,
+      "POST",
+      `/repos/team/board/issues/${issue.json.number}/comments`,
+      { token: botToken, body: { body: "beep" } },
+    );
+    expect(c.status).toBe(201);
+    expect(c.json.user).toMatchObject({ login: "status-bot[bot]", type: "Bot" });
+    expect(c.json.author_association).toBe("NONE");
+  });
+});

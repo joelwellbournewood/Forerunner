@@ -128,7 +128,8 @@ const flush = () => {
   for (const r of all.slice(logged))
     appendFileSync(
       requestLog,
-      `${JSON.stringify({ at: r.at, method: r.method, path: r.path, query: r.query, status: r.status, login: r.auth?.login ?? null })}\n`,
+      // w8-issue-host: a conditional read's If-None-Match (a 304 is free), and GraphQL's operation.
+      `${JSON.stringify({ at: r.at, method: r.method, path: r.path, query: r.query, status: r.status, login: r.auth?.login ?? null, ifNoneMatch: r.ifNoneMatch, ...(r.graphql ? { graphql: r.graphql } : {}) })}\n`,
     );
   logged = all.length;
 };
