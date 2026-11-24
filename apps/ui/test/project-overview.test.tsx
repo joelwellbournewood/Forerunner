@@ -1328,4 +1328,29 @@ describe("l4-github-carried, run L4", () => {
     expect(within(docs).queryByTestId("docs-repository-line")).toBeNull();
     expect(within(docs).queryByTestId("docs-try-again-button")).toBeNull();
   });
+
+  it("L4c-left-4: after Add to on a project with tasks, 'Waiting for you: approve the plan' shows once on its page (the plan's banner), not again as the status line", async () => {
+    // What Add to it leaves (onerepo-link.test.tsx "Add to it sends the brief to Atlas's plan"):
+    // Atlas, which has tasks, with a plan from the brief waiting in the Inbox.
+    const harness = createHarness();
+    harness.daemon.state.intake.proj_atlas = {
+      projectId: "proj_atlas",
+      state: "pending",
+      requestId: "req_intake",
+      outcome: null,
+      appliedAt: null,
+      docs: null,
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const header = await screen.findByTestId("project-header");
+    expect(header).toHaveTextContent("Atlas");
+    const banner = await screen.findByTestId("intake-banner");
+    expect(banner).toHaveAttribute("data-state", "pending");
+    await waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text.split("Waiting for you: approve the plan").length - 1).toBe(1);
+    });
+    expect(within(header).queryByTestId("project-status")).toBeNull();
+  });
 });
