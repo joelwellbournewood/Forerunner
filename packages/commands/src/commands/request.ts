@@ -3,7 +3,7 @@ import type { HumanRequestRow } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
 import type { CommandContext, CommandDef } from "../types.ts";
-import { quote } from "./shared.ts";
+import { notesPersons, quote } from "./shared.ts";
 
 /**
  * fixup-l4-selftasks-carried: what the model is told of `note` (model-facing: the exact text is
@@ -90,7 +90,9 @@ async function askOf(
   const option = words.choices.find((c) => word(c.label) === word(answer));
   if (!option) return `Answer ${quote(words.title, 80)} with ${quote(answer)}?`;
   const ask = `${option.label} (${words.title})?${option.explain ? ` ${option.explain}` : ""}`;
-  return note ? `${ask} ${noteForBrief(note)}` : ask;
+  // l4-chat-final (L4h-left-1): the person's own words are theirs and not read back to them; a
+  // note the model made up is, so the yes covers it.
+  return note && !notesPersons(ctx, note) ? `${ask} ${noteForBrief(note)}` : ask;
 }
 
 /** 'Note for its next brief: "…"', as a move's read-back shows a note the model passed. */

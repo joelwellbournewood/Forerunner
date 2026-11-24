@@ -41,7 +41,7 @@ import { z } from "zod";
 import { buildCard, type CardSubject, formatChfShort } from "../change-card.ts";
 import { taskSubject } from "../readback-check.ts";
 import type { CommandContext, CommandDef, CommandOutcome } from "../types.ts";
-import { asObject, authorOf, quote, resolveProject } from "./shared.ts";
+import { asObject, authorOf, notesPersons, quote, resolveProject } from "./shared.ts";
 
 /*
  * The person's task commands (design §3.5, core-experience.md; ADR 0102): create, the moves of
@@ -121,38 +121,48 @@ export const NOTE_PARAM_DESCRIPTION =
 const noteParam = z.string().trim().max(2000).optional().describe(NOTE_PARAM_DESCRIPTION);
 
 /**
- * L4-selftasks-120: a note is the person's only when the person wrote it: their own command (the
- * Tasks tab, the drawer, chat's patterns), never one the chat's model passed, also after their
- * yes (the executor runs that yes as them and marks it `onPersonsWords`).
+ * L4-selftasks-120: a note is the person's only when the person gave it: their own command (the
+ * Tasks tab, the drawer, chat's patterns) or, l4-chat-final (L4h-left-1; session lead decision
+ * 2026-11-24), a note the chat's model passed whose words are in the person's own line
+ * (`notesPersons`, commands/shared.ts). One the model wrote without them stays the agent's, also
+ * after the person's yes (the executor runs that yes as them and marks it `onPersonsWords`).
+ * Before, every note in chat was the model's, so the words of "try the digest page again and tell
+ * it to use the old layout" were read back and kept as the agent's. The redirect guards of
+ * task.transition and task.resume judge a note by it too (`moveAsCardAnswer`).
  */
-function personsNote(ctx: CommandContext): boolean {
-  return ctx.actor.kind === "human" && ctx.onPersonsWords !== true;
-}
+const ownNote = (ctx: CommandContext, note: string | undefined): boolean => notesPersons(ctx, note);
 
-/**
- * l4-selftasks-carried (L4-selftasks-120): a note the person wrote themselves (`personsNote`), as
- * the redirect guards of task.transition and task.resume judge it: before, any note kept a move
- * off the card whose answer it is, the chat model's own included.
- */
-function ownNote(ctx: CommandContext, note: string | undefined): boolean {
-  return !!note?.trim() && personsNote(ctx);
-}
-
-/** The note a read-back shows when the model passed it ('Note for its next brief: "…"'). */
+/** The note a read-back shows when the model made it up ('Note for its next brief: "…"'). */
 function noteClause(ctx: CommandContext, note: string | undefined): string {
   const text = note?.trim();
   // fixup-l4-selftasks-chat: a note that ends its own sentence gets no second period after
   // the quote (before: 'Note for its next brief: "Put on hold by the person.".').
   const end = text && /[.!?]$/.test(text) ? "" : ".";
-  return text && !personsNote(ctx) ? ` Note for its next brief: ${quote(text)}${end}` : "";
+  return text && !ownNote(ctx, text) ? ` Note for its next brief: ${quote(text)}${end}` : "";
 }
 
 /** The note's end of a sentence: the person's own, or one the agent passed. */
-function noteGoes(ctx: CommandContext, cancelled = false): string {
-  const whose = personsNote(ctx) ? "Your note" : "The note";
+function noteGoes(ctx: CommandContext, note: string | undefined, cancelled = false): string {
+  const whose = ownNote(ctx, note) ? "Your note" : "The note";
   return cancelled
     ? ` ${whose} goes into its brief if you reopen it.`
     : ` ${whose} goes into its next brief.`;
+}
+
+/**
+ * l4-chat-final (L4h-left-6): the words a change keeps as its reason on the task (the drawer's
+ * line, the task's history): a reason or a note the caller gave, unless the chat's model wrote it.
+ * In a chat or voice turn only the person's own words stand (`ownNote`); the session and the app's
+ * own code give theirs as before. Null: the command's own sentence ("Paused by you"). Before, a
+ * note the model made up stood as the reason of a change made as the person.
+ */
+function givenReason(ctx: CommandContext, ...texts: (string | undefined)[]): string | null {
+  const conversation = ctx.source === "chat" || ctx.source === "voice";
+  for (const t of texts) {
+    const text = t?.trim();
+    if (text && (!conversation || ownNote(ctx, text))) return text;
+  }
+  return null;
 }
 
 /** A title as two tasks are compared by it: trimmed, lower case, one space between words. */
@@ -378,9 +388,10 @@ async function queueNote(
     text: taskNoteText(task, text),
     priority: 0,
     status: "queued",
-    // L4-selftasks-120: the person's note is theirs; one the chat's model passed is the agent's.
-    ...(personsNote(ctx)
-      ? { author_human: ctx.actor.id }
+    // L4-selftasks-120: the person's note is theirs; one the chat's model made up is the agent's.
+    // l4-chat-final (L4h-left-1): the person's own words the model passed are the person's too.
+    ...(ownNote(ctx, text)
+      ? { author_human: ctx.actor.kind === "human" ? ctx.actor.id : ctx.humanId }
       : { author_agent: ctx.actor.kind === "agent" ? ctx.actor.id : (ctx.agentId ?? null) }),
   });
   return row.id;
@@ -489,6 +500,11 @@ export async function moveAsCardAnswer(
     // reaches the task's next brief as the Inbox's Try again with a note does. Before, the
     // redirect dropped it unsaid.
     const note = choice?.input === "note" ? params.note?.trim() : undefined;
+    // l4-chat-final (L4h-left-1): the person's own note on an option that takes none (Cancel task)
+    // keeps the move, which carries it to the task's brief; a card that needs this computer's OK
+    // stays the one way to its answer (the move would not ask for that OK).
+    if (choice && choice.input !== "note" && r.risk !== "high" && ownNote(ctx, params.note))
+      return null;
     if (choice)
       return {
         name: "request.answer",
@@ -778,7 +794,7 @@ async function personMove(
     sentence: moveSentence(task, from, moved.status, {
       withdrawn: withdrawn.length,
       noted: noteId !== null,
-      notedByAgent: !personsNote(ctx),
+      notedByAgent: !ownNote(ctx, opts.note),
       stuck,
       redo: from === "done",
       fromMain: redone.ids.length > 0,
@@ -1374,10 +1390,11 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
     // A duplicate dropped is no card's answer: it names the task it is the same as.
     if (params.duplicate_of) return null;
     const option = cardOptionFor(params.to);
-    // A person's note goes with the move; a card's answer has no room for it: as said.
-    // l4-selftasks-carried (L4-selftasks-120): only the person's own note does; one the chat's
-    // model wrote no longer keeps the move off the card.
-    return option && !ownNote(ctx, params.note) ? moveAsCardAnswer(ctx, params, option) : null;
+    // l4-selftasks-carried (L4-selftasks-120): a note the chat's model wrote no longer keeps the
+    // move off the card. l4-chat-final (L4h-left-1): the person's own note goes with the card's
+    // answer when its option takes one (Try again), else it keeps the move, so their words are
+    // kept either way (`moveAsCardAnswer`).
+    return option ? moveAsCardAnswer(ctx, params, option) : null;
   },
   async plan(params, ctx) {
     const task = await findTask(params, ctx);
@@ -1430,9 +1447,9 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
     assertMove(task, params.to);
     if (params.duplicate_of) return dropDuplicate(ctx, task, params);
     const moved = await personMove(ctx, task, params.to, {
+      // l4-chat-final (L4h-left-6): the chat model's own reason or note never stands as the reason.
       reason:
-        params.reason ||
-        params.note?.trim() ||
+        givenReason(ctx, params.reason, params.note) ??
         (ctx.actor.kind === "human"
           ? movedByYou(task.status, params.to)
           : movedByAgent(task.status, params.to)),
@@ -1576,9 +1593,9 @@ export const taskResume: CommandDef<TaskResumeParams> = {
   reversible: true,
   undoStrategy: "pause the task again",
   async redirect(params, ctx) {
-    // l4-selftasks-carried (L4-selftasks-120): the person's own note keeps the resume (a card's
-    // answer has no room for it); one the chat's model wrote does not.
-    if (ownNote(ctx, params.note)) return null;
+    // l4-selftasks-carried (L4-selftasks-120): a note the chat's model wrote does not keep the
+    // resume off the card. l4-chat-final (L4h-left-1): the person's own note goes with an option
+    // that takes one, else it keeps the resume (`moveAsCardAnswer`).
     return moveAsCardAnswer(ctx, params, params.without_answers ? "Go ahead without" : "Try again");
   },
   async plan(params, ctx) {
@@ -1656,9 +1673,10 @@ export const taskReopen: CommandDef<TaskReopenParams> = {
     // card closed and the redo is from main, and its Undo opens the card again (fix-up).
     const moved = await ctx.store.transaction((tx) =>
       personMove({ ...ctx, store: tx }, task, "ready", {
+        // l4-chat-final (L4h-left-6): a note the chat model made up is no part of the reason.
         reason:
           task.status === "done"
-            ? `Redo asked by you${params.note?.trim() ? `: ${params.note.trim()}` : ""}`
+            ? `Redo asked by you${givenReason(ctx, params.note) ? `: ${givenReason(ctx, params.note)}` : ""}`
             : "Reopened by you",
         note: params.note,
         reopen: true,
@@ -1769,13 +1787,13 @@ async function moveCard(
     risk: "low",
     sentence: moveSentence(task, task.status, to, {
       noted: !!params.note?.trim(),
-      notedByAgent: !personsNote(ctx),
+      notedByAgent: !ownNote(ctx, params.note),
     }),
     reversible: true,
     projectId: project.id,
     projectName: project.name,
     usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
-    // L4-selftasks-120: a note the model passed is read back, so the yes covers it.
+    // L4-selftasks-120: a note the model made up is read back, so the yes covers it.
     ask: await withPreview(
       ctx,
       `${moveAsk(task, task.status, to)}${noteClause(ctx, params.note)}`,
@@ -1978,7 +1996,8 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
           task.id,
           task.version,
           patch,
-          params.note?.trim() ||
+          // l4-chat-final (L4h-left-6): a note the chat model made up is never the reason.
+          givenReason(ctx, params.note) ??
             (ctx.actor.kind === "agent"
               ? `Changed by the agent: ${words}`
               : `Changed by you: ${words}`),
@@ -1995,7 +2014,7 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
         ...(noteId ? { note_id: noteId } : {}),
       },
       sentence: `${fields.length ? `Changed ${quote(task.title)}: ${words}.${editNoFile(ctx, patch, task)}` : `Noted for ${quote(task.title)}.`}${
-        noteId ? noteGoes(ctx) : ""
+        noteId ? noteGoes(ctx, params.note) : ""
       }`,
       projectId: task.project_id,
       reversible: true,
@@ -2211,8 +2230,8 @@ export const taskDependencies: CommandDef<TaskDependenciesParams> = {
       task.id,
       task.version,
       ids,
-      params.reason ||
-        params.note?.trim() ||
+      // l4-chat-final (L4h-left-6): the chat model's own reason or note never stands as the reason.
+      givenReason(ctx, params.reason, params.note) ??
         (ctx.actor.kind === "agent"
           ? "What it waits for changed by the agent"
           : "What it waits for changed by you"),
@@ -2240,7 +2259,7 @@ export const taskDependencies: CommandDef<TaskDependenciesParams> = {
     );
     return {
       ...said,
-      sentence: `${said.sentence}${noteId ? noteGoes(ctx) : ""}`,
+      sentence: `${said.sentence}${noteId ? noteGoes(ctx, params.note) : ""}`,
     };
   },
   async undoBlocked(_params, _before, after, ctx) {

@@ -183,6 +183,14 @@ export interface BenchOptions {
    * strong hit's line itself, without recall_open, so the From line of a hit not opened is walked.
    */
   chatNoLook?: boolean;
+  /**
+   * l4-chat-final (L4h-left-1): the chat model makes up a note (FORERUNNER_BENCH_CHAT_NOTE=<text>):
+   * a command tool call whose input takes a `note` and has none gets this text, as live check 4's
+   * real model wrote "Put on hold by the person." on a pause the person gave no note for
+   * (L4-chat-20). On the bench a "tool:" line is the person's own line, so a note written in it is
+   * in the person's words; this knob is the note the model wrote without them.
+   */
+  chatNote?: string;
   clock?: Clock;
 }
 
@@ -275,6 +283,9 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
     chatNoLook: ["1", "true", "yes", "on"].includes(
       (env.FORERUNNER_BENCH_CHAT_NOLOOK ?? "").trim().toLowerCase(),
     ),
+    ...(env.FORERUNNER_BENCH_CHAT_NOTE?.trim()
+      ? { chatNote: env.FORERUNNER_BENCH_CHAT_NOTE.trim() }
+      : {}),
   };
 }
 
@@ -405,7 +416,11 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
           titles,
         );
       case "chat":
-        return chatAnswer(req, opts.chatAlone === true, opts.chatNoLook === true);
+        return withMadeUpNote(
+          chatAnswer(req, opts.chatAlone === true, opts.chatNoLook === true),
+          req,
+          opts.chatNote,
+        );
       case "task_check":
         // d1109-selftasks-run (ST-14): no change unless the evidence names one.
         return text(taskCheckReply(req));
@@ -1740,6 +1755,9 @@ function recallPlay(
  * failing (failure), a comparison, a plan, a review, or what several sessions did (many records).
  */
 function thoroughWhy(line: string): string | null {
+  // l4-chat-final (L4h-left-7): a "tool:" line is the stand-in's own call, never a question to
+  // think through: before, a tool line whose input named review.md went to answer_thoroughly.
+  if (/^tool:/i.test(line.trim())) return null;
   if (/keep(?:s)? failing|keeps? going wrong/i.test(line)) return "failure";
   if (/\bcompare\b/i.test(line)) return "comparison";
   if (/\bplan (?:for|the next)\b/i.test(line)) return "plan";
@@ -1771,6 +1789,26 @@ function thoroughAnswer(req: ModelRequest, calls: ReturnType<typeof pastToolCall
   return text(
     `${STAND_IN} Thought it through after ${calls.length} ${calls.length === 1 ? "lookup" : "lookups"}${wrapped ? ", wrapping up" : ""}.${told ? ` ${told}` : ""} I could not check what no record holds.`,
   );
+}
+
+/**
+ * l4-chat-final (FORERUNNER_BENCH_CHAT_NOTE): the note the stand-in's chat model makes up, put on
+ * each command call it makes whose tool takes a `note` and was given none.
+ */
+function withMadeUpNote(answer: Answer, req: ModelRequest, note: string | undefined): Answer {
+  if (!note || !answer.toolCalls?.length) return answer;
+  const takesNote = (name: string) => {
+    const tool = (req.tools ?? []).find((t) => t.name === name);
+    const props = (tool?.input_schema as { properties?: Record<string, unknown> } | undefined)
+      ?.properties;
+    return !!props && "note" in props;
+  };
+  return {
+    ...answer,
+    toolCalls: answer.toolCalls.map((c) =>
+      takesNote(c.name) && c.input.note === undefined ? { ...c, input: { ...c.input, note } } : c,
+    ),
+  };
 }
 
 function chatAnswer(req: ModelRequest, alone = false, noLook = false): Answer {
