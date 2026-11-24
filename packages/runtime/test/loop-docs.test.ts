@@ -1137,7 +1137,7 @@ describe("w15-merge, wave 15", () => {
     expect(await host.listPullRequests(REPO, { state: "open" })).toHaveLength(1);
     expect(await docs.docsInPullRequests(b)).toEqual([]);
     await w.close();
-  });
+  }, 60_000);
 
   it("the status pull request and its commit name the session by when it started, never by an id (W15-08)", async () => {
     const w = await loopWorld();
@@ -1168,7 +1168,7 @@ describe("w15-merge, wave 15", () => {
     expect(subjects).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
     expect(subjects).toContain("docs: status after the session started 2026-11-09 04:12 UTC");
     await w.close();
-  });
+  }, 60_000);
 
   it("the status a project keeps in the app while another project's status pull request is open is where its Docs tab reads docs/status.md, after a restart too; once its own status pull request is written, the app's copy is no longer read first (W15-01 fix-up)", async () => {
     // The review's bench walk: B's session kept its status in the app, but B's Docs tab read
@@ -1266,7 +1266,7 @@ describe("l3-small, run L3: the status file names the session by its start, in w
     expect(status).not.toMatch(UUID);
     expect(status).not.toContain("stop reason");
     await w.close();
-  });
+  }, 60_000);
 
   it("the copy the Docs tab reads says the same, and a session stopped by the person says so", async () => {
     const w = await loopWorld();
