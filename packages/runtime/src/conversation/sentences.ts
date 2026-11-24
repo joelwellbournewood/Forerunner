@@ -124,7 +124,10 @@ export function fixUnreadableReply(project: string): string {
  */
 export function parserQuestionReply(q: { text: string; options: readonly string[] }): string {
   const named = q.options.every((o) => namesWords(q.text, o));
-  return `${q.text}${q.options.length && !named ? ` Options: ${q.options.join(", ")}.` : ""}`;
+  // l4-chat-final (L4h-left-3): an option that holds a comma ("The session budget, until then")
+  // is set apart by semicolons, so voice and the phone can tell where one option ends.
+  const apart = q.options.some((o) => o.includes(",")) ? "; " : ", ";
+  return `${q.text}${q.options.length && !named ? ` Options: ${q.options.join(apart)}.` : ""}`;
 }
 
 /** Whether `text` holds `words` with no letter or digit right before or after them. */
