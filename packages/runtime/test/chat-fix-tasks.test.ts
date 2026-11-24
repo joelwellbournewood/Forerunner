@@ -1150,3 +1150,69 @@ describe("l4-selftasks-carried, run L4: a merged card's row names both who asked
     expect(ownRows.map((r) => [r.author_human, r.author_agent])).toEqual([[own.human, null]]);
   });
 });
+
+/**
+ * l4-chat-final, run L4 (L4h-left-1; session lead decision 2026-11-24: "a note is the person's
+ * when its words are in the person's own message; a note the model wrote without them is read
+ * back"). Composed as above: the real conversation agent, hooks and command loop, a scripted
+ * model. Before, every note in chat was the model's, so the person's own instruction was read back
+ * to them as the model's note and queued as the agent's.
+ */
+describe("l4-chat-final, run L4: the person's own words in a chat note stay the person's (L4h-left-1)", () => {
+  const publishOf = (w: World) => w.store.task.mustGet(w.tasks.publish?.id ?? "");
+
+  it("the person's words passed as the note: the read-back names none, the yes after a restart says 'Your note', and the note is queued as theirs", async () => {
+    const w = await setup({
+      level: 2,
+      replies: [
+        toolReply("task_pause", { task: "Publish the page", note: "Wait for the logo." }),
+        textReply(""),
+      ],
+    });
+    const r = await w.chat("the logo is late: pause publishing and tell it to wait for the logo");
+    expect(r.pendingConfirmation?.readback).toBe(
+      'Pause "Publish the page"? No session runs it until you press Resume.',
+    );
+    // Composed twice on one store: the read-back waits across the restart, as it was shown.
+    await w.restart();
+    const yes = await w.chat("yes");
+    expect(yes.reply).toBe(
+      'Paused "Publish the page": no session runs it until you press Resume. Your note goes into its next brief.',
+    );
+    const notes = await w.store.queue.list({ project_id: w.quote } as never, { limit: 10 });
+    expect(notes.map((n) => [n.author_human, n.author_agent])).toEqual([[w.human, null]]);
+    expect(notes[0]?.text).toContain("Wait for the logo.");
+    expect((await publishOf(w)).status).toBe("needs_human");
+  });
+
+  it("L4h-left-6: a note the model made up is never the reason an edit keeps; the person's own words are", async () => {
+    const w = await setup({
+      level: 2,
+      replies: [
+        toolReply("task_update", {
+          task: "Publish the page",
+          priority: "low",
+          note: "Lowered because the person changed their mind.",
+        }),
+        textReply(""),
+      ],
+    });
+    await w.chat("make Publish the page less important");
+    await w.chat("yes");
+    expect((await publishOf(w)).reason).toBe("Changed by you: priority to Low");
+    const own = await setup({
+      level: 2,
+      replies: [
+        toolReply("task_update", {
+          task: "Publish the page",
+          priority: "low",
+          note: "it can go out next week",
+        }),
+        textReply(""),
+      ],
+    });
+    await own.chat("make Publish the page less important, it can go out next week");
+    await own.chat("yes");
+    expect((await publishOf(own)).reason).toBe("it can go out next week");
+  });
+});

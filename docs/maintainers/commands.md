@@ -1160,3 +1160,49 @@ l4-money-pause, run L4 (2026-11-22, L4-money-109): `SETTING_SPECS.session_reserv
   `CommandLoop` refuses such an Undo before the executor runs. The kept start's change sentence
   says "A session of Map notes starts at 15:40 (up to CHF 5.00).", as the run's own sentence does
   (before, "A session on ...").
+
+## l4-chat-final (run L4, 2026-11-24): whose words a note is
+
+- **`notesPersons(ctx, note)`** (commands/shared.ts, ADR 0119 amended 2026-11-24): true for the
+  person's own command (actor human, not `onPersonsWords`), or when the source is chat or voice
+  and `saidInLine(ctx.wordsUsed, note)`: the note's words, together and in order, are in the
+  person's line, not within four words after a turning word of the same clause (`TURNING_WORDS`:
+  not, no, never, nor, without, don't, won't, nicht, kein, nie, ohne, ...). Clauses end at
+  `. ; ! ? : ,` and line breaks. task.ts `ownNote` is it; `noteClause`, `noteGoes(ctx, note)`,
+  `queueNote`'s author (`author_human` = the person) and `moveSentence`'s `notedByAgent` use it;
+  request.ts `askOf` leaves the person's own note out of the read-back.
+- **The redirect** (`moveAsCardAnswer`): every move said in chat on a task whose card offers it
+  is the card's answer, the person's own note included (it goes with an option whose card words
+  say `input: "note"`); a person's note on an option that takes none keeps the move (`null`),
+  unless the card's risk is high (its note travels in `request.answer`'s params so the executor
+  can say it was not kept; `noteOf` still reads a note only for an option that takes one).
+- **Reasons** (`givenReason(ctx, ...texts)`): task.transition, task.update (edit), Redo and
+  task.dependencies keep a given reason or note as the task's reason only when it is not the
+  chat model's own (`source` chat or voice and not `ownNote`); else their own sentence ("Paused by
+  you", "Changed by you: priority to Low").
+- **The executor's answer_on_card refusal** ('Answer it on its card in the Inbox: <title>.')
+  ends "Nothing else was filed." with no note, "Nothing else was filed; type your note there with
+  <option>." when the option takes a note on the card, and "Nothing else was filed, and your note
+  was not kept." when it takes none. fixup-l4-chat-final: only the person's own note
+  (`notesPersons`) is spoken of; a note the model made up gets the plain "Nothing else was
+  filed." (before: "type the note there", a note the person never gave). `cardTitleOf` returns
+  `{ title, takesNote, label }`: the option as its button says it, matched as request.answer
+  matches (case, spaces, `_` and `-` do not matter), so the reply never repeats the model's own
+  "try_again".
+- Tests: packages/commands/test/chat-final.test.ts (the words rule, the move, the card with a
+  restart, the no-note option, the high-risk card), packages/commands/test/selftasks-carried.test.ts
+  (the parser's own note now answers the card's Try again with it).
+- **fixup-l4-chat-final (2026-11-24, the review of L4h-left-1)**: `moveAsCardAnswer(ctx, params,
+  option, movable)` keeps the move for a person's note on an option that takes none only when
+  `movable(task)` says the move itself can run: task.transition passes `canTransition(TASK_TRANSITIONS,
+  status, to)`, task.resume its own checks (`needs_human`, and someone else does a task that goes
+  ahead without its answers). A failed or waiting task cannot move to done (only its card's Mark
+  done anyway closes it), so "mark the digest page done anyway, the client accepted it as it is"
+  answers the card; before, the kept move was refused ('... is failed now, so it cannot be done;
+  nothing changed.'). The person's note then travels in `request.answer`'s params, and `askOf`
+  (request.ts) ends the read-back "Your note is not kept." when the option cannot carry it and the
+  note is the person's own (chat or voice); a note the model made up is left out, as before. Tests:
+  packages/commands/test/chat-final.test.ts ('fixup-l4-chat-final, run L4': chat and voice, failed
+  and waiting, a restart, the model's note and none, Cancel task still kept) and
+  apps/ui/test/real-daemon.test.ts ('l4-chat-final, run L4' > 'fixup-l4-chat-final: POST /chat: ...
+  Mark done anyway').

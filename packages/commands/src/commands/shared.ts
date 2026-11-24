@@ -209,3 +209,86 @@ export function quote(text: string, max = 80): string {
   const t = text.replace(/\s+/g, " ").trim();
   return `"${t.length > max ? `${t.slice(0, max - 1)}…` : t}"`;
 }
+
+// --- Whose words a note is (l4-chat-final, L4h-left-1) ------------------------------------------
+
+/**
+ * The words that turn what follows them around ("don't tell it to skip the intro"): a note
+ * found right after one of them, in the same clause, is not the person's instruction as said.
+ */
+const TURNING_WORDS = new Set([
+  "not",
+  "no",
+  "never",
+  "nor",
+  "without",
+  "don't",
+  "dont",
+  "doesn't",
+  "won't",
+  "shouldn't",
+  "nicht",
+  "kein",
+  "keine",
+  "keinen",
+  "nie",
+  "niemals",
+  "ohne",
+]);
+
+/** How far back in its clause a turning word still turns a note around. */
+const TURNING_REACH = 4;
+
+/** Words as compared: NFKC, lower case, letters and digits (an apostrophe inside a word kept). */
+function wordsOf(text: string): { words: string[]; clause: number[] } {
+  const words: string[] = [];
+  const clause: number[] = [];
+  let at = 0;
+  // A clause ends at . ; ! ? : , or a line break, so a turning word of another clause counts not.
+  for (const part of text
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[‘’ʼ]/g, "'")
+    .split(/[.;!?:,\n]+/)) {
+    const found = part.match(/[\p{L}\p{N}]+(?:'[\p{L}\p{N}]+)*/gu) ?? [];
+    for (const w of found) {
+      words.push(w);
+      clause.push(at);
+    }
+    at = words.length;
+  }
+  return { words, clause };
+}
+
+/**
+ * Whether every word of `note`, in order and together, is in `line`, and not right after a
+ * turning word of its clause ("not", "don't", "without", "nicht", ...): the words of the
+ * person's own line. Case, punctuation and quotes do not matter.
+ */
+export function saidInLine(line: string, note: string): boolean {
+  const n = wordsOf(note).words;
+  if (!n.length) return false;
+  const { words, clause } = wordsOf(line);
+  for (let i = 0; i + n.length <= words.length; i++) {
+    if (!n.every((w, k) => words[i + k] === w)) continue;
+    const from = Math.max(clause[i] ?? 0, i - TURNING_REACH);
+    if (words.slice(from, i).some((w) => TURNING_WORDS.has(w))) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * l4-chat-final (L4h-left-1; session lead decision 2026-11-24, L4f's rule refined): whether a note
+ * is the person's. It is when the person gave it by their own command (the Tasks tab, the drawer,
+ * chat's patterns: a human actor, not a yes to the model's call), or when the chat's model passed
+ * it and its words are in the person's own line of a chat or voice turn (`wordsUsed`, set in code
+ * from what they typed or said, kept with a read-back across a restart). A note the model wrote
+ * without them is the agent's: it is read back for the person's yes and stays the agent's.
+ */
+export function notesPersons(ctx: CommandContext, note: string | null | undefined): boolean {
+  const text = note?.trim();
+  if (!text) return false;
+  if (ctx.actor.kind === "human" && ctx.onPersonsWords !== true) return true;
+  return (ctx.source === "chat" || ctx.source === "voice") && saidInLine(ctx.wordsUsed, text);
+}

@@ -11,9 +11,31 @@ export const TASK_PROPOSAL_OPTIONS = ["Make these changes", "Keep the tasks"] as
 
 type Card = Record<string, unknown>;
 
-/** Whether every call of the card's changes drops a task as a duplicate (nothing left to run). */
-function onlyDrops(card: Card): boolean {
+/**
+ * The changes the apply made: the card's changes but those it left out (`left_out` lines start
+ * with the change's own line). l4-chat-final (L4h-left-4): before, the Done line read every
+ * proposed change, so a set whose split was left out and whose drop applied promised a Start.
+ */
+function appliedChanges(card: Card): unknown[] {
   const changes = Array.isArray(card.changes) ? card.changes : [];
+  const left = Array.isArray(card.left_out)
+    ? card.left_out.filter((x): x is string => typeof x === "string")
+    : [];
+  if (!left.length) return changes;
+  return changes.filter((c) => {
+    const line = (c as { line?: unknown } | null)?.line;
+    if (typeof line !== "string") return true;
+    // A left-out entry is the change's line without its period, then ": " and why (task-proposal.ts
+    // `settleProposal`). fixup-l4-chat-final: the whole line then the colon, so a change whose
+    // line only starts another, left-out change's line is not taken for it.
+    const head = line.trim().replace(/[.;:]+$/, "");
+    return !left.some((l) => l.trim().startsWith(`${head}: `));
+  });
+}
+
+/** Whether every call of the applied changes drops a task as a duplicate (nothing to run). */
+function onlyDrops(card: Card): boolean {
+  const changes = appliedChanges(card);
   const calls = changes.flatMap((c) =>
     Array.isArray((c as { calls?: unknown } | null)?.calls)
       ? (c as { calls: unknown[] }).calls
@@ -53,6 +75,10 @@ export function proposalOutcome(card: Card): string | null {
       // 1 task; your next Start runs them.'), and a set that only dropped duplicates leaves nothing
       // for a Start to run, so it promises none (design section 5 rules 4 and 9).
       if (onlyDrops(card)) return `Changed ${n} ${plural(n, "task", "tasks")}.${leftWords}`;
+      // l4-chat-final (L4h-left-4): what changed waits for a task only the person can do (the
+      // apply's `waits_for_you`), which no Start runs: the line names it instead.
+      if (typeof card.waits_for_you === "string" && card.waits_for_you.trim())
+        return `Changed ${n} ${plural(n, "task", "tasks")}; ${plural(n, "it waits", "they wait")} for "${card.waits_for_you.trim()}", which is yours to do.${leftWords}`;
       const next =
         card.running === true
           ? plural(n, "the session takes it if it fits", "the session takes them if they fit")

@@ -3392,3 +3392,13 @@ fixup-l4-selftasks-chat (L4-selftasks-121; C2-left-14, C4-left-4, C3-left-10) ad
   (every close tells the screens; the header beside a question; a lapsed Settings card; a fix
   set's Yes after a session finished a task it does not name, and one it names, with a
   restart; GET /changes byYouAndAgent; GET /settings/models names the file).
+
+## l4-chat-final (run L4, 2026-11-24): the stand-in makes up a note
+
+- `FORERUNNER_BENCH_CHAT_NOTE=<text>` (testenv/src/bench/role-player.ts `withMadeUpNote`): the
+  stand-in's chat model adds that note to each command call it makes whose tool takes a `note`
+  and was given none, as live check 4's model wrote "Put on hold by the person." (L4-chat-20). On
+  the bench a "tool:" line is the person's own line, so a note written in it counts as the
+  person's words (ADR 0119 amended 2026-11-24); use the knob for a note the model wrote.
+- The stand-in's `thoroughWhy` never reads a "tool:" line (before, a tool line whose input named
+  review.md went to answer_thoroughly). Test: packages/runtime/test/chat-final.test.ts.

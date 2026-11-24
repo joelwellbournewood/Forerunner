@@ -1054,10 +1054,14 @@ describe("d1109-chat-depth fixup: the claim guard's step resets the live text", 
     // Nothing of the held nudge call had streamed: the reply is empty, the footer says why
     // (review of 2026-11-23: asserted exactly, as the case did before with TRUE_LINE).
     expect(r.reply).toBe("");
-    expect(r.footer).toMatch(/^You stopped this answer: (?:under )?CHF \d+\.\d{2} spent\.$/);
+    // l4-chat-final (L4h-left-2): the stopped line exactly, its amount as the turn booked it.
+    expect(r.footer).toBe("You stopped this answer: under CHF 0.01 spent.");
     const row = await w.lastRow();
     expect(row.outcome).toBe("stopped");
     expect(row.stopped).toBe(true);
+    // The two calls were booked: the claim's and the nudge's input up to the Stop.
+    expect(row.costUsdMicro).toBe(r.costUsdMicro);
+    expect(r.costUsdMicro).toBeGreaterThan(0);
   });
 });
 

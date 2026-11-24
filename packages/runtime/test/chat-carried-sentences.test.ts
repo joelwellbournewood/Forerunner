@@ -160,14 +160,38 @@ describe("l4-chat-carried, run L4: a parser question names its options as whole 
         options: ["Site", "Works"],
       }),
     ).toBe('No project named "siteworks". Which one? Options: Site, Works.');
+    // l4-chat-final (L4h-left-3): an option that holds a comma is set apart by semicolons, so the
+    // text (and voice, and the phone) can tell where one ends; before: "Options: The session
+    // budget, until then, Nothing." read as three options.
     expect(
       parserQuestionReply({
         text: "Which budget did you mean?",
         options: ["The session budget, until then", "Nothing"],
       }),
-    ).toBe("Which budget did you mean? Options: The session budget, until then, Nothing.");
+    ).toBe("Which budget did you mean? Options: The session budget, until then; Nothing.");
     expect(parserQuestionReply({ text: "Which value did you mean?", options: [] })).toBe(
       "Which value did you mean?",
+    );
+  });
+
+  it("l4-chat-final (L4h-left-3): 'No' is not named by 'Notes'; the parser's own budget question lists its three options apart", () => {
+    expect(parserQuestionReply({ text: "Add it to Notes?", options: ["Notes", "No"] })).toBe(
+      "Add it to Notes? Options: Notes, No.",
+    );
+    expect(
+      parserQuestionReply({ text: "Add it to Notes?", options: ["Yes, to Notes", "No"] }),
+    ).toBe("Add it to Notes? Options: Yes, to Notes; No.");
+    expect(
+      parserQuestionReply({
+        text: "Which budget did you mean?",
+        options: ["The session budget, until then", "The project budget, permanently", "Nothing"],
+      }),
+    ).toBe(
+      "Which budget did you mean? Options: The session budget, until then; The project budget, permanently; Nothing.",
+    );
+    // Options without a comma keep the plain list.
+    expect(parserQuestionReply({ text: "Which one?", options: ["Site", "Works", "Notes"] })).toBe(
+      "Which one? Options: Site, Works, Notes.",
     );
   });
 });

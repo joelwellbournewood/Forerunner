@@ -163,13 +163,19 @@ describe("l4-selftasks-carried, run L4: the redirect guards judge a note by who 
         await w.executor.cancel((asked as { pendingId: string }).pendingId, w.ctx().actor);
       }
     }
-    // The person's own note (their command: the parser's, the drawer's) keeps the move.
+    // The person's own note (their command: the parser's) goes with the card's Try again, which
+    // takes one, and is not read back to them (l4-chat-final, L4h-left-1: "kept and answered";
+    // before, it kept the move beside the card when the card's answer had no room for a note).
+    // Its no-note sibling (Cancel task keeps the move) is in chat-final.test.ts.
     const own = await w.executor.execute({
       name: "task.transition",
       params: { task: "digest", to: "ready", note: "Use the old layout." },
       ctx: w.ctx({ source: "chat" }),
     });
-    expect(own.card?.command).toBe("task.transition");
+    expect(own.card?.command).toBe("request.answer");
+    expect((own as { readback: string }).readback).toBe(
+      'Try again ("Write the digest page" failed)? Starts a session that tries again.',
+    );
     if (own.status === "pending") await w.executor.cancel(own.pendingId, w.ctx().actor);
     expect((await w.store.humanRequest.mustGet(card.id)).status).toBe("open");
     await w.store.close();

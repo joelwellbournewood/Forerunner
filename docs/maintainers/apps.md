@@ -3210,3 +3210,14 @@ L4 (fixup)").
   `after.kept_start` and `kept_id`, and its Undo; the Undo is refused with the daemon's reason once
   the project's kept start is another one or none ("the start kept for the reset has already run
   or was cancelled; there is nothing to undo").
+
+## l4-chat-final (run L4, 2026-11-24)
+
+- **An Update's tone** (InboxPage's Updates list): a warning Update shows an amber dot
+  (`data-testid="message-tone"`, role img, accessible name "Worth a look"), as the session log
+  does, never the stored type "warning" as a word (design section 5 rule 6). Test:
+  apps/ui/test/chat-final.test.tsx. The phone's InboxScreen still shows `message.type` (phone
+  round).
+- Real-daemon cases: apps/ui/test/real-daemon.test.ts describe "l4-chat-final, run L4" (the
+  person's own note on a pause and on a failed task's card; a note the stand-in's model made up,
+  `FORERUNNER_BENCH_CHAT_NOTE`). No route or shape changed, so the fake daemon is unchanged.

@@ -248,6 +248,22 @@ const NOW_STATE =
   /^\s*(?:(?:any|no)\s+(?:(?:failed|open|ready|running|waiting|paused|blocked|queued|cancelled|done|finished|new|other|more|unanswered)\s+)*(?:tasks?|cards?|sessions?|questions?|changes?|problems?|errors?|failures?|work)|anything\s+(?:waiting|open|running|left|failed|paused|blocked))(?:\s+(?:right\s+now|now|at\s+the\s+moment|today|yet|left|here|open|running|waiting|for\s+(?:you|your\s+(?:yes|answer))|in\s+(?:this|the)\s+project|in\s+[A-Z][\w-]*(?:\s+[A-Z][\w-]*){0,3}))*\s*[.!]?$/;
 
 /**
+ * l4-chat-final, run L4 (L4h-left-7; the review of l4-chat-carried): sessions and changes are
+ * history (recall has them), so "I don't see any changes." or "... any sessions." is an absence
+ * claim to look up; only one that says a state now ("any running sessions", "any changes waiting
+ * for your yes", "... right now") stays free. Tasks, cards and questions are the facts' own.
+ */
+const HISTORY_NOUN = /^\s*(?:any|no)\s+(?:[a-z]+\s+)*?(?:sessions?|changes?)\b/i;
+const SAYS_NOW =
+  /\b(?:running|open|waiting|paused|queued|blocked|right\s+now|now|at\s+the\s+moment|for\s+(?:you|your\s+(?:yes|answer)))\b/i;
+
+/** Whether what follows "I don't see" is a state now (`NOW_STATE`), sessions and changes only with a word of now. */
+function aboutNow(rest: string): boolean {
+  if (!NOW_STATE.test(rest)) return false;
+  return !HISTORY_NOUN.test(rest) || SAYS_NOW.test(rest);
+}
+
+/**
  * Review of l4-chat-answers (blocking 2): a clarifying question asks which, who, where or what
  * ("Which task should I add it to?", "Where should I put the new page?") or offers a choice ("Add
  * it to Notes or to Site?", "Start it now or wait for the next session?"). It asks for no yes and
@@ -305,7 +321,7 @@ export function claimsOf(text: string): ReplyClaim[] {
   absent: for (const s of own)
     for (const re of ABSENT)
       for (const m of s.matchAll(re)) {
-        if (NOW_STATE.test(s.slice((m.index ?? 0) + m[0].length))) continue;
+        if (aboutNow(s.slice((m.index ?? 0) + m[0].length))) continue;
         out.push({ kind: "absent", phrase: m[0].trim() });
         break absent;
       }
