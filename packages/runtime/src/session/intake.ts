@@ -2536,6 +2536,7 @@ export class IntakeService {
         });
       }
     }
+    await this.recordDocsOutcome(project, docs);
     const after = await store.humanRequest.mustGet(row.id);
     await store.humanRequest.patch(row.id, {
       change_card: { ...(after.change_card ?? {}), docs: docs as unknown as JsonValue },
@@ -2565,6 +2566,49 @@ export class IntakeService {
         error: errorMessage(e),
       });
       return `; the standard doc set could not be scaffolded (${redact(cut(errorMessage(e)))})`;
+    }
+  }
+
+  /**
+   * L4i-left-8 (L4e-left-5): the intake's docs outcome on a repository project's row
+   * (`summary_cache.docs`, as the scaffold records its own): the docs pull request it opened, or
+   * none and why. A take-over made with a brief leaves its docs to the intake, so this is what
+   * the Overview's no-pull-request line and its Try again read (`scaffoldLeftNoMarker`); before,
+   * nothing was recorded and a failed docs pull request was said nowhere.
+   */
+  private async recordDocsOutcome(
+    project: ProjectRow,
+    docs: IntakeDocsOutcome | { error: string },
+  ): Promise<void> {
+    if (!repoRefOf(project.repos[0])) return;
+    const now = this.deps.clock.nowIso();
+    const failed =
+      "error" in docs
+        ? docs.error
+        : docs.target === "workspace"
+          ? (docs.repo_error ?? "the docs went to this computer only")
+          : null;
+    try {
+      const current = await this.deps.store.project.mustGet(project.id);
+      const kept = (current.summary_cache?.docs ?? {}) as JsonObject;
+      const { error: _error, failed_at: _failedAt, ...rest } = kept;
+      const record: JsonObject = failed
+        ? { ...rest, location: "repo", pr_url: null, error: failed, failed_at: now, intake_at: now }
+        : {
+            ...rest,
+            location: "repo",
+            ...("branch" in docs && docs.branch ? { branch: docs.branch } : {}),
+            pr_url: "prUrl" in docs ? (docs.prUrl ?? null) : null,
+            intake_at: now,
+          };
+      await this.deps.store.project.patch(project.id, {
+        summary_cache: { ...current.summary_cache, docs: record } as never,
+      });
+    } catch (e) {
+      this.logger.warn("intake docs outcome not recorded", {
+        projectId: project.id,
+        error: errorMessage(e),
+      });
     }
   }
 

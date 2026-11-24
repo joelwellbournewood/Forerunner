@@ -1202,11 +1202,25 @@ export class ProjectDocs implements ProjectDocsPort {
     );
     if (!onBranch || !took.includes(onBranch.project.toLowerCase())) return false;
     const base = `origin/${target.base}`;
+    // L4i-left-14: a file the default branch changed after the branch left it (another
+    // Forerunner's merged docs, D9) keeps the default branch's version; only what the branch
+    // alone changed is carried over. Before, the branch's copy replaced main's newer one.
+    const forkedAt = await git.mergeBase(base, `origin/${branch}`);
     const added = new Map<string, string>();
+    const keptMain: string[] = [];
     for (const file of await git.changedFiles(base, `origin/${branch}`)) {
       if (file === INSTALL_MARKER_FILE) continue;
       const text = await git.fileAt(`origin/${branch}`, file);
-      if (text !== null) added.set(file, text);
+      if (text === null) continue;
+      if (forkedAt) {
+        const was = await git.fileAt(forkedAt, file);
+        const now = await git.fileAt(base, file);
+        if (now !== null && now !== was && now !== text) {
+          keptMain.push(file);
+          continue;
+        }
+      }
+      added.set(file, text);
     }
     await this.switchCopy(git, dir, branch, base);
     for (const [file, text] of added) {
@@ -1218,6 +1232,7 @@ export class ProjectDocs implements ProjectDocsPort {
       projectId: project.id,
       branch,
       files: added.size,
+      keptFromDefaultBranch: keptMain,
     });
     return true;
   }

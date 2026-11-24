@@ -901,4 +901,57 @@ describe("l4-github-link, run L4: the scaffold's branch starts from the default 
       await w.rt.close();
     }
   }, 90_000);
+
+  it("L4i-left-14: the take-over's rebuild keeps the default branch's newer version of a file main changed after the scaffold branch left it (another Forerunner's merged docs), and carries over only what the branch alone changed", async () => {
+    const w = await world();
+    try {
+      const kite = await w.repo("kite3");
+      await kite.commit(
+        "main",
+        { "README.md": "# kite\n", [INSTALL_MARKER_FILE]: mk(KITE, "Kite club") },
+        "Kite club",
+      );
+      const project = await w.rt.store.project.insert({
+        name: "Kites",
+        goal: "g",
+        repos: ["o/kite3"],
+        author_human: w.rt.human.id,
+      });
+      await w.rt.docs.scaffoldProject(project);
+      const [pr] = await w.host.listPullRequests({ owner: "o", name: "kite3" }, { state: "open" });
+      expect(pr?.head.ref).toBe(DOCS_SCAFFOLD_BRANCH);
+      // Main moves under the branch: another Forerunner's docs pull request merged its own
+      // docs/overview.md; the scaffold branch still has the template's.
+      await kite.seed.fetch();
+      await run(["git", "-C", kite.seedDir, "reset", "-q", "--hard", "origin/main"]);
+      await kite.commit(
+        "main",
+        { "docs/overview.md": "# Overview\n\nWritten by the team.\n" },
+        "docs: the team's overview",
+      );
+      const taken = await w.post("/commands/execute", {
+        commands: [{ name: "repo.take_over", params: { project: project.id } }],
+        wordsUsed: "Take it over (Overview)",
+        source: "ui",
+        projectId: project.id,
+        confirm: "tap",
+      });
+      expect((await json(taken)).status).toBe("done");
+      // Before: the branch's template replaced the team's overview in the rebuilt branch.
+      expect(await show(kite.bare, DOCS_SCAFFOLD_BRANCH, "docs/overview.md")).toBe(
+        "# Overview\n\nWritten by the team.\n",
+      );
+      expect(await diffNames(kite.bare, "main", DOCS_SCAFFOLD_BRANCH)).not.toContain(
+        "docs/overview.md",
+      );
+      // What the branch alone added is still on it, with the replaced marker.
+      expect(await show(kite.bare, DOCS_SCAFFOLD_BRANCH, "docs/runbook.md")).not.toBeNull();
+      expect(
+        parseInstallMarker((await show(kite.bare, DOCS_SCAFFOLD_BRANCH, INSTALL_MARKER_FILE)) ?? "")
+          ?.project,
+      ).toBe(project.id);
+    } finally {
+      await w.rt.close();
+    }
+  }, 90_000);
 });

@@ -484,6 +484,62 @@ describe("w8-repo-guide, wave 8: a docs pull request this install did not open i
     }, 120_000);
   }
 
+  it("L4i-left-8: a take-over made with a brief whose plan's docs pull request could not be opened says so on the Overview with Try again, also after her daemon starts again; Try again opens it", async () => {
+    const two = await composeTwo({ host: "memory" });
+    const work = mkdtempSync(join(tmpdir(), "fr-repo-guide-"));
+    try {
+      const { ada } = two;
+      await seedRepo(two, work, "old", {
+        "README.md": "# old\n",
+        ".forerunner/project.json": markerOf(OLD, "Old site"),
+      });
+      const took = await ada.client.createProject({
+        name: "Old site again",
+        goal: "The old site, kept going",
+        repos: ["team/old"],
+        switch: true,
+        takeOver: { projects: [OLD] },
+        brief: "A one-page site for the club: plain HTML and CSS.",
+        intake: true,
+      });
+      await ada.rt.intake.inFlight(took.id);
+      const me = await ada.client.me();
+      const card = (await ada.client.inbox(me.id)).requests.find(
+        (r) => r.projectId === took.id && r.status === "open",
+      );
+      if (!card) throw new Error("no plan card");
+      // GitHub does not answer while the plan's docs go out: no docs pull request names the
+      // project. Before, the Overview said nothing (no scaffold record).
+      ada.githubOff();
+      await ada.client.answerRequest(card.id, {
+        version: card.version,
+        answer: "Approve and start",
+      });
+      ada.githubOn();
+      const oldRepo = { owner: "team", name: "old" };
+      expect(
+        (await two.pullRequests(oldRepo)).filter((p) => p.head.ref.startsWith("fr/intake-")),
+      ).toEqual([]);
+      const line = {
+        outcome: "took_over_no_pull_request",
+        tryAgainLine: "Tries again to open the docs pull request that names this project.",
+        text: 'Took over team/old from "Old site" here, but the docs pull request that names this project could not be opened, so GitHub still names "Old site".',
+      };
+      expect((await ada.client.project(took.id)).repositoryElsewhere).toMatchObject(line);
+      await ada.restart();
+      expect((await ada.client.project(took.id)).repositoryElsewhere).toMatchObject(line);
+      // Try again opens the docs pull request that names the project, and the line goes.
+      const again = await ada.client.retryTakeOver(took.id);
+      expect(again.state, again.sentence).toBe("opened");
+      const opened = (await two.pullRequests(oldRepo)).filter((p) => p.state === "open");
+      expect(opened.map((p) => [p.head.ref, p.authorLogin])).toEqual([["fr/docs-scaffold", "ada"]]);
+      expect((await ada.client.project(took.id)).repositoryElsewhere?.outcome).toBeUndefined();
+    } finally {
+      removeHomes([work]);
+      await two.close();
+    }
+  }, 180_000);
+
   it("a docs pull request Ada's install opened stays hers by its recorded address after its body lost the mark, also after her daemon starts again", async () => {
     const two = await composeTwo({ host: "memory" });
     try {

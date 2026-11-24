@@ -83,15 +83,16 @@ export function tookOverOf(project: Pick<ProjectRow, "settings">): TookOverFacts
  * L4-github-102: the project's last scaffold run (`summary_cache.docs`, written by the
  * scaffold) left no docs pull request that names this project: it failed, opened nothing, or
  * left another project's marker. Read only for a take-over (`overviewOf`): the Overview then
- * says GitHub still names the other project. False with no record (the intake writes the docs
- * of a project created with a brief).
+ * says GitHub still names the other project. L4i-left-8: the intake's docs write of a project
+ * created with a brief records its outcome the same way (`intake_at`); false with no record.
  */
 export function scaffoldLeftNoMarker(project: Pick<ProjectRow, "summary_cache">): boolean {
   const docs = (project.summary_cache as JsonObject | null | undefined)?.docs;
   if (!docs || typeof docs !== "object" || Array.isArray(docs)) return false;
   const d = docs as JsonObject;
   if (typeof d.error === "string") return true;
-  if (d.together === true || typeof d.scaffolded_at !== "string") return false;
+  if (d.together === true) return false;
+  if (typeof d.scaffolded_at !== "string" && typeof d.intake_at !== "string") return false;
   const marker = d.marker;
   const other =
     !!marker &&
