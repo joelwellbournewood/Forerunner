@@ -36,8 +36,9 @@ describe("d1109-onerepo-link, run C: two Forerunners on one repository (OR-15)",
     const host = new MemoryGitHost("alice");
     const repo = { owner: "o", name: "kite" };
     await host.createRepo({ ...repo, private: true, cloneUrl: bare });
-    const asBob = Object.create(host) as MemoryGitHost;
-    asBob.whoAmI = async () => ({ login: "bob" });
+    // w8-two-homes (W8-homes-2): bob's own view of the same GitHub, so whatever B's Forerunner
+    // writes carries bob (an Object.create copy overriding whoAmI wrote as alice).
+    const asBob = host.asLogin("bob");
     const clock = new SimulatedClock("2026-03-05T08:00:00Z");
     // GitHub stamps its pull requests on the daemons' day.
     host.now = () => clock.nowIso();
@@ -228,8 +229,8 @@ describe("l4-github-link, run L4", () => {
     const host = new MemoryGitHost("alice");
     const repo = { owner: "o", name: "kite" };
     await host.createRepo({ ...repo, private: true, cloneUrl: bare });
-    const asBob = Object.create(host) as MemoryGitHost;
-    asBob.whoAmI = async () => ({ login: "bob" });
+    // w8-two-homes (W8-homes-2): bob's own view of the same GitHub.
+    const asBob = host.asLogin("bob");
     const clock = new SimulatedClock("2026-03-05T08:00:00Z");
     host.now = () => clock.nowIso();
     const compose = async (name: string, gitHost: MemoryGitHost) => {
