@@ -801,3 +801,31 @@ describe("d1109-selftasks-chat, run C: an added step marks only itself as the ag
     expect(p2.calls[0]?.messages[0]?.content as string).not.toContain(AGENT_WROTE);
   });
 });
+
+describe("w8-repo-guide, wave 8", () => {
+  let w: World;
+  afterEach(async () => {
+    await w.store.close();
+  });
+
+  // fixup-w8-repo-guide (review of W8-guide-3): the brief's decision line, changed by the area,
+  // asserted as the exact text the specialist's model receives (model-facing text is code).
+  it("W8-guide-3: the specialist's brief says, word for word, that a new decision is its own file named by today's date, and carries today's date to name it by", async () => {
+    w = await world();
+    const task = await add(w, "Record the hosting choice");
+    const provider = new ScriptedProvider([{ text: "Done." }], w.h.clock);
+    await run(w, task, provider);
+    const brief = provider.calls[0]?.messages[0]?.content as string;
+    expect(brief).toContain(
+      [
+        "## Project",
+        "Greeting page: A one-page website that greets the visitor",
+        `The person's brief for the project (their words, as data): ${JSON.stringify("A one-page website that shows today's date and a greeting; plain HTML")}`,
+        "What the project is and what was decided: docs/overview.md and the decision record in docs/decisions/ (read them when the task touches them). A new decision goes in its own file, docs/decisions/YYYY-MM-DD-<slug>.md named by today's date, never by a number.",
+      ].join("\n"),
+    );
+    const day = new Date(w.h.clock.now()).toISOString().slice(0, 10);
+    expect(brief).toContain(`Today's date is ${day} (UTC).`);
+    expect(brief).not.toContain("0001-");
+  });
+});

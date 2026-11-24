@@ -534,9 +534,8 @@ describe("w8-repo-guide, wave 8: the Inbox answers go to the file the card names
     const home = mkdtempSync(join(tmpdir(), "fr-person-record-"));
     const day1 = new SimulatedClock("2026-10-31T09:00:00Z");
     const replies: ScriptReply[] = [];
-    let { rt, req } = await compose(home, day1, new ScriptedProvider(replies, day1), {
-      startServices: false,
-    });
+    const planner = new ScriptedProvider(replies, day1);
+    let { rt, req } = await compose(home, day1, planner, { startServices: false });
     try {
       const created = await req("/projects", {
         method: "POST",
@@ -590,6 +589,27 @@ describe("w8-repo-guide, wave 8: the Inbox answers go to the file the card names
       });
       const proposed = await req(`/projects/${projectId}/intake`, { method: "POST", body: "{}" });
       expect(proposed.status, await proposed.clone().text()).toBe(202);
+      // fixup-w8-repo-guide (review of W8-guide-3): the first plan's decision lines, changed by
+      // the area, as the exact text the planning model receives (model-facing text is code),
+      // and the Today date it names the record by.
+      expect(planner.calls).toHaveLength(1);
+      const asked = planner.calls[0];
+      expect(asked?.system).toContain(
+        [
+          "and docs/decisions/YYYY-MM-DD-<slug>.md for the first decision, named by the Today date;",
+          "each a markdown file with a title",
+          "line, concrete to this project. A standard doc you leave out is written from Forerunner's",
+        ].join("\n"),
+      );
+      expect(asked?.system).toContain(
+        [
+          "Choose what the brief points to (the stack, the hosting, the repository) and write each",
+          "choice and why in that decision record. Its first line under the title is",
+          '"Decision: " and the choice in one or two sentences: the person reads that line on the plan',
+        ].join("\n"),
+      );
+      expect(asked?.system).not.toContain("0001");
+      expect(JSON.stringify(asked?.messages)).toContain("Today: 2026-10-31 (UTC)");
       const intakeRequest = String(((await proposed.json()) as Json).requestId);
       const plan = await rt.store.humanRequest.mustGet(intakeRequest);
       const approved = await req(`/requests/${intakeRequest}/answer`, {
@@ -625,6 +645,72 @@ describe("w8-repo-guide, wave 8: the Inbox answers go to the file the card names
       expect(text).toContain("**Which domain should the site use?**\n\nclub.example");
     } finally {
       await settleSessions(rt);
+      await rt.close();
+      removeHomes([home]);
+    }
+  }, 120_000);
+
+  it("a first plan's reply naming a doc outside the set is asked again with the exact problem line the model receives, naming the decision record's form by the Today date", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-person-record-"));
+    const day1 = new SimulatedClock("2026-10-31T09:00:00Z");
+    const replies: ScriptReply[] = [];
+    const planner = new ScriptedProvider(replies, day1);
+    const { rt, req } = await compose(home, day1, planner, { startServices: false });
+    try {
+      const created = await req("/projects", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Club page",
+          goal: "A page for the club",
+          brief: "A one-page site for the club.\n- The next meetings.\n- A contact address.",
+        }),
+      });
+      const projectId = String(((await created.json()) as Json).id);
+      const plan = (docs: Record<string, string>) => ({
+        text: JSON.stringify({
+          plan: {
+            reason: "planned from the brief",
+            milestones: [
+              {
+                name: "The page",
+                successCriteria: ["The page is online"],
+                targetDate: null,
+                tasks: [
+                  {
+                    key: "page",
+                    title: "Write the page",
+                    outcome: "index.html lists the meetings",
+                    acceptanceCriteria: ["index.html lists the meetings"],
+                    priority: "high",
+                  },
+                ],
+              },
+            ],
+            tasks: [],
+          },
+          docs,
+          firstSession: {
+            summary: "The page.",
+            items: [{ key: "page", estimateUsdMicro: 50_000 }],
+          },
+        }),
+      });
+      const record = {
+        "docs/decisions/2026-10-31-plain-page.md": "# A plain page\n\nDecision: plain HTML.\n",
+      };
+      replies.push(plan({ ...record, "docs/notes.md": "# Notes\n" }), plan(record));
+      const proposed = await req(`/projects/${projectId}/intake`, { method: "POST", body: "{}" });
+      expect(proposed.status, await proposed.clone().text()).toBe(202);
+      expect(planner.calls).toHaveLength(2);
+      expect(String(planner.calls[1]?.messages.at(-1)?.content)).toBe(
+        [
+          "Forerunner could not use your reply:",
+          "- docs.docs/notes.md: docs may only name the standard doc set (README.md, docs/overview.md, docs/architecture.md, docs/decisions/README.md, docs/runbook.md, docs/data.md, docs/testing.md) or docs/decisions/YYYY-MM-DD-<slug>.md, named by the Today date",
+          "",
+          "Reply again with the whole JSON object in the shape the instructions give, with these problems fixed and nothing else changed: no text and no code fence around it.",
+        ].join("\n"),
+      );
+    } finally {
       await rt.close();
       removeHomes([home]);
     }
