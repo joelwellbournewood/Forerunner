@@ -1,0 +1,97 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "Bench \"review-l4-chat-final\" (--provider bench, daemon 49231, UI 2831, started from this worktree at 8288019, FORERUNNER_BENCH_FAIL=digest). Scripts: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/review-walk-{note,card,restart,inbox}.cjs and review-brief.cjs. Steps: /tmp/frbench/review-l4-chat-final/steps/.\n(1) Person's own note (01..05-own-*): Chat, `tool: task_pause {\"task\":\"Write the FAQ\",\"note\":\"Wait for the logo.\"}`. The read-back was 'Pause \"Write the FAQ\"? No session runs it until you press Resume.' with no note clause. Yes gave '... Your note goes into its next brief.' The queue_item has author_human = me. A task_update with the note \"it opens the page\" was also read back without the note. Its Yes said \"Your note\", and the drawer reason became \"it opens the page\". Changes shows both rows as Chat with \"me\".\n(2) Note the model made up (11..15-made-*, restarted with FORERUNNER_BENCH_CHAT_NOTE=\"Put on hold by the person.\"): the pause read-back ends 'Note for its next brief: \"Put on hold by the person.\"'. Yes says 'The note goes into its next brief.' and the queue author is the agent. On the update, the read-back names the note, and the task reason stays \"Changed by you: priority to High\" (L4h-left-6 holds).\n(3) Restart (restart-walk.json, 16..18): the person's own note was read back, the daemon crashed (--hard), the same read-back came back, and Yes said \"Your note\" with author_human. That holds.\n(4) Failed task's card. The high-risk ladder card (\"failed 4 times\", 06/07-card-*): chat files nothing, the card stays open, and the reply ends 'Nothing else was filed; type your note there with Try again.' The medium card (FAIL_MODE=error, card2-walk.json, 08..10): the read-back is 'Try again (\"Write the digest page\" failed)? Tries again with your note, if any; it runs at your next Start.' with no note clause. Yes answered the card {choice:\"Try again\", note:\"Use the old layout.\"} and moved the task to ready. The next session's specialist brief carries the note under \"Left for this session by the human\" (review-brief.cjs: 4 of 4 specialist calls hold \"Use the old layout\").\n(5) Inbox Updates (inbox-*): I inserted a warning message. It shows an amber dot named \"Worth a look\", and the word \"warning\" appears nowhere.\nEvery screen I walked matches design §3.8/§3.9 and §5. Then I probed the moves next to these. In chat, \"mark it done anyway\" with the person's own words as a note is now refused (blocking item below). Bench stopped (stoppedAt set, no pids alive); its home and browser profile were deleted.\nValidation I ran:\n- The 9 named test files: 203 passed.\n- Fail-first: I put the base versions of task.ts, request.ts and executor.ts in place. 4 of the 6 commands chat-final cases, both composed chat-fix-tasks 'l4-chat-final' cases and both real-daemon 'l4-chat-final, run L4' cases failed. With the base task-proposal.ts, task-proposal-words.ts, pr-answers.ts, claims.ts and sentences.ts, 8 runtime cases failed. I restored every file afterwards.\n- UI vitest suite: 1524 passed.\n- `DOCS_CHECK_BASE=claude/nifty-knuth-f9udt0 pnpm check`: exit 0 (567 files, 6267 passed, 7 skipped).\n- Not run by me: Playwright, test:integration, test:e2e, test:injection.",
+ "blocking": [
+  {
+   "issue": "Regression in the area's own never-cut item (L4h-left-1). Chat's 'mark it done anyway' with the person's own words as a note is now refused. Before, it answered the failed task's card. moveAsCardAnswer returns null (keeps the move) for any card option that takes no note when the note is the person's. It never checks whether the move itself is allowed. A failed or needs_human task cannot move to done (packages/state/src/workflow.ts TASK_TRANSITIONS: failed and needs_human go only to ready or cancelled). So task.transition to done hits assertMove and is refused. The person's words, meant to be kept and answered, now block the answer.",
+   "where": "packages/commands/src/commands/task.ts:509",
+   "evidence": "A probe (written and deleted again) in packages/commands/test, built like chat-final.test.ts's failedWithCard (medium-risk card, options Try again / Mark done anyway / Cancel task), executor.execute task.transition {task:'digest', to:'done', note:'the client accepted it as it is'}, ctx actor agent, source chat, onPersonsWords, wordsUsed 'mark the digest page done anyway, the client accepted it as it is'. On HEAD 8288019: {status:'refused', reason:'\"Write the digest page\" is failed now, so it cannot be done; nothing changed.'}. With the model's own note, or no note: pending request.answer 'Mark done anyway (\"Write the digest page\" failed)?'. On base claude/nifty-knuth-f9udt0 (base task.ts, request.ts and executor.ts), all three cases give the pending request.answer 'Mark done anyway (...)?' read-back. The same refusal follows from a voice turn, and from any card that offers Mark done anyway.",
+   "expected": "Keep the move only when it is a move the task can make (canTransition from its status; Cancel task: yes; Mark done anyway from failed/needs_human: no). Otherwise answer the card with its option, and say that the person's note was not kept, as the high-risk path already does ('..., and your note was not kept.'), or carry the note. Add a failing-first case for Mark done anyway with the person's own note: in commands/test/chat-final.test.ts, plus the read-back or reply the person sees."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "L4h-left-1: the person's own words given as a chat note are not read back, the Yes says 'Your note', and the note is queued as theirs; a note the model made up is read back, 'The note', and the agent's",
+   "holds": true,
+   "note": "Walked on the bench with and without FORERUNNER_BENCH_CHAT_NOTE and across a hard daemon restart. Composed (chat-fix-tasks) and real-daemon cases fail on base and pass on HEAD."
+  },
+  {
+   "claim": "L4h-left-1: a failed task's card is answered Try again with the person's note, not read back, and the note reaches the next brief",
+   "holds": true,
+   "note": "Bench: the card answer is {choice:'Try again', note:'Use the old layout.'}, and the next specialist brief carries the note. The queued note is author_agent: findings.ts:657-665, the Inbox's own Try again path (pre-existing). The brief still files it under 'by the human', so nothing visible changes."
+  },
+  {
+   "claim": "L4h-left-1: the person's note on an option that takes no note keeps the move, so their words are kept",
+   "holds": false,
+   "note": "True for Cancel task. For Mark done anyway the kept move is refused (blocking item); on base it answered the card."
+  },
+  {
+   "claim": "L4h-left-6: a note or reason the model wrote never becomes the task's reason; the person's own words do",
+   "holds": true,
+   "note": "Bench and the composed case confirm it. The commands-level case 'a note the model wrote ... (L4h-left-6)' listed in failing_test_before passes on base sources too: the pause's reason was already 'Paused by you'. The composed case is the real fail-first."
+  },
+  {
+   "claim": "L4h-left-2: the Stop cases assert the exact line 'You stopped this answer: under CHF 0.01 spent.'",
+   "holds": true,
+   "note": "chat-depth and conversation-memory now use toBe. The reply toBe('') was kept; booked cost equals the reply's cost and is above zero. No assertion weakened."
+  },
+  {
+   "claim": "L4h-left-3: options that hold a comma are joined with '; '",
+   "holds": true,
+   "note": "Fails on base and passes on HEAD. The old comma assertion was changed for the design, and the reason is recorded."
+  },
+  {
+   "claim": "L4h-left-5: the suggestion card is settled once (compare-and-set on the card's version); the recovered path names what was left out and admits the touched tasks",
+   "holds": true,
+   "note": "task-proposal-sync tests fail on base and pass on HEAD. humanRequest.update throws version_conflict (state base.ts:270-283)."
+  },
+  {
+   "claim": "L4h-left-5 sibling: a Take this work out cut short by a crash is finished at the next sync",
+   "holds": true,
+   "note": "pr-answers-takeout test fails on base and passes on HEAD. syncApprovals runs at the daemon's start (compose.ts:6122). TaskTakeOut.takeOut returns refusals instead of throwing, so a finished card is not retried for ever."
+  },
+  {
+   "claim": "L4h-left-4: the Inbox Update shows a named dot, never 'warning'",
+   "holds": true,
+   "note": "Walked on the bench. The phone's InboxScreen.tsx:240 still shows message.type; the fixer names this in new_problems."
+  },
+  {
+   "claim": "L4h-left-4: the answer_on_card reply says where the note goes",
+   "holds": true,
+   "note": "Bench: 'Nothing else was filed; type your note there with Try again.'"
+  },
+  {
+   "claim": "L4h-left-4: the Done line follows what was applied and names a task of yours it waits for",
+   "holds": true,
+   "note": "Tested at the sync and words level only. No route or UI case, and neither the fixer nor I walked it on the bench."
+  },
+  {
+   "claim": "L4h-left-7: absences about sessions or changes are history unless they say now; the stand-in's tool lines never go to answer_thoroughly",
+   "holds": true,
+   "note": "runtime chat-final claimOf case fails on base."
+  },
+  {
+   "claim": "not_done items L4h-left-8, L4h-left-7 rest, L4h-left-6 task_create are cut-line items with a reason; the items listed as fixed at base are fixed",
+   "holds": true,
+   "note": "Spot-checked at base: views.ts:920-930 replaced count, commits b731511, c8184e3 and 440b6bc, and the agent.ts doc block above switchedHere. One inconsistency: not_done says task_create at Assisted 'still reads back the description'. The ADR 0119 amendment and executor.ts:559 say task.create acts at once."
+  },
+  {
+   "claim": "pnpm check, the UI suite and the named tests are green",
+   "holds": true,
+   "note": "Rerun here: pnpm check exit 0 (6267 passed), UI vitest 1524 passed."
+  }
+ ],
+ "non_blocking": [
+  "answer_on_card wording for a note the model made up: 'Nothing else was filed; type the note there with Try again.' asks the person to type a note they never gave and cannot see. Better to leave the note clause out, or quote the note (packages/commands/src/executor.ts, the `whose` and `filed` lines).",
+  "The answer_on_card reply uses the model's raw `answer` string (`String(params?.answer ?? \"it\")`), not the matched option's label. A lower-case 'try again', or a missing answer ('with it'), would reach the person as is.",
+  "Phone sibling not fixed: apps/ui/src/mobile/screens/InboxScreen.tsx:240 renders <Badge>{message.type}</Badge> (design §5 rule 6). The fixer deferred it to the phone round in new_problems.",
+  "claims.ts: the new HISTORY_NOUN and SAYS_NOW doc block sits right under NOW_STATE's existing doc block. That leaves two stacked doc blocks, NOW_STATE's comment now above the wrong declaration, the same nit L4h-left-7 named in agent.ts.",
+  "Report accuracy: failing_test_before lists the commands-level L4h-left-6 case, which passes on base. not_done's description of chat task_create ('still reads back the description') contradicts the ADR 0119 amendment and executor.ts:559, which say it acts at once. The claim 'queued as the person's' holds for direct moves, not for the card's Try again path (author_agent, pre-existing in findings.ts).",
+  "The L4h-left-4 Done line (waits_for_you, appliedChanges) and the L4h-left-5 recovery are tested at the sync and words level with seeded crash state. No GET /inbox or UI case shows the new Answered lines, and no case composes twice (validation rules 1 and 4). Acceptable for crash windows, but the bench check_in_the_app steps for the suggestion card were not walked.",
+  "appliedChanges matches left_out lines by prefix (startsWith). A change whose line is a prefix of another, left-out change's line is wrongly treated as left out.",
+  "waits_for_you is computed at apply time. Once the person does that task, the Answered line still says the changed task waits for it, as the existing 'your next Start runs it' line already does.",
+  "settleProposal's compare-and-set returns 'skipped' on any version bump between list and update, including unrelated writes. The card then waits for the next sync (an answer, the poll when remote is on, or a restart).",
+  "finishTakeOuts pages through every answered decision card of the person on every syncPrAnswers. A crash after the pull request was opened but before the merge record was written would open a second take-out. The live check ('exactly one take-out pull request') depends on that order.",
+  "Not run by me: Playwright, test:integration, test:e2e, test:injection (the fixer reports them green, with one flaky updates.spec.ts case on a page this branch does not touch)."
+ ]
+}

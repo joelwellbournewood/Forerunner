@@ -1,0 +1,88 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "I checked out fix/l4-starts-carried (a8eaa8a) detached in /home/user/Forerunner/.claude/worktrees/wf_9dc331fe-c87-2 and ran four benches named review-l4-starts-carried (daemon 49230, UI 2830), one at a time. Each bench was stopped and its home deleted afterwards. Evidence is kept outside --fresh in /tmp/frbench/review-l4-starts-carried-steps/.\n\nBench 1 (--provider bench, LONG=long guide, USAGE=club motto:20000), /tmp/frbench/review-l4-starts-carried-steps/bench1/:\n- L4g-left-3: Start from the header ran a one-task session in \"Bird notes\". The note in docs/status.md read \"Note: Done. Spent CHF 0.01.\" and the result read \"CHF 0.01.\", which agree. The stand-in session cost CHF 0.013, so the under-a-centime case could not be made on the bench. The unit tests that fail on base cover it.\n- L4g-left-1: \"Club motto\" had a project budget of CHF 0.06 and its task paused at that budget.\n  - The Start dialog (05-b3) says 'Nothing can run: \"Write the club motto in motto.txt\" paused before the project's budget ran out; raise it in Settings.' with Open Settings. Start is off, and Open Settings lands on /settings#other-settings.\n  - Under that sentence the dialog adds a new line: \"Give your agent work first: add a task on the Tasks tab, click Make ready on a draft there, or ask in Chat ...\" (BLOCKING 1).\n  - Chat's \"start a session\" gives the same sentence as the dialog (07-b5).\n  - With a waiter (08-b6) and with a dependency the person paused (09-c1), the blocker sentence names the limit. The waiting list in the same box still says '... which needs your answer, so it cannot run. Answer it in the Inbox ...', also for the task the person paused (BLOCKING 2).\n  - After raising the project budget the dialog offers Start (10-c2).\n- L4g-left-2: a CHF 1.00 session ran (D1-D3, F1-F2).\n  - A draft whose estimate was set above the work budget (est_cost_usd_micro, as the fixer's check-in step says) read back 'Make \"Research local garden suppliers\" ready? It is larger than this session's budget, so it runs at your next Start.' The Yes line says the same, and the session was still running at both.\n  - A small draft read back the \"joins this session if budget is left\" line.\n  - A draft with a large task budget but a small estimate reads \"joins ...\". That matches admit, which also prices by estimate.\n\nBench 2 (--provider bench-api --api-key limited, LIMIT_MIN=60), /tmp/frbench/review-l4-starts-carried-steps/bench2-limited/:\n- L4g-left-4:\n  - A header Start met the key's limit and the session ended to wait.\n  - At 1280 px (01-g1) and 375 px (04-g4) the header has no Start session. The bar reads \"Map notes · waiting until 04:25, then it goes on\" with Cancel.\n  - The Start dialog opened from the palette (03-g3) says \"Nothing can run until 04:25 (your API key's limit); then your session goes on.\" with Cancel the wait, and Start is off.\n  - The bar's Cancel brings Start session back (05-g5).\n- L4a-left-5:\n  - A chat question got the hold reply \"Your API key is at its limit until 04:25, so I have not answered. I can still add and change tasks; a Start now runs at 04:25.\" This does show on the stand-in.\n  - \"run it now\" read back \"Start a session on Map notes at 04:25 (up to CHF 5.00)?\". Yes kept it: \"A session of Map notes starts at 04:25.\" with Undo, no new session, and the header's line reads \"Starts at 04:25 (your API key's limit)\" with Cancel and no Start session (09-g9).\n  - A second \"run it now\" says the one-wait sentence.\n  - After restart-daemon.mjs the start is still kept, and the chat's Undo drops it (12-h1 to 14-h3), so the Undo holds across a restart.\n\nBench 3 (--api-key refused), /tmp/frbench/review-l4-starts-carried-steps/bench3-refused/:\n- L4d-left-2: after planning met the refusal, the Start dialog says \"Nothing can run until you save a new API key in Settings.\" with Start off.\n- POST /sessions answers 400 with the same sentence, chat's \"start a session\" says it too, and no session is listed.\n- After a key that works was saved through /setup/anthropic, Start ran and the task finished.\n\nBench 4 (limited, LIMIT_MIN=2), /tmp/frbench/review-l4-starts-carried-steps/bench4-kept-undo/:\n- A start kept from chat fired at the reset and the task finished: the header reads \"Done: all 1 task.\"\n- The chat reply still offered Undo. Pressing it answered \"Undone: a session on Map notes on your PC is back to no session.\" (03-m3, walk7.json) (BLOCKING 3).\n\nFailing-first on base: with every changed source file put back to 4a884ef and the new tests kept, these failed with the stated messages:\n- the 4 real-daemon cases 'l4-starts-carried, run L4' (L4g-left-1: needs your answer; L4g-left-2: 'Make \"...\" ready?' with no line; L4d-left-2: expected ApiError, got null; L4a-left-5: read-back without the time)\n- the 2 run-indicator cases\n- the loop-docs, notifications-channels and conversation-memory cases\n\nchat.test.tsx passes on base too, because it only exercises the fake daemon. With the fix restored, they all pass.\n\nSuites on the fix branch: UI vitest 104 files / 1528 passed; Playwright (local config) 40 passed; pnpm test 564 files / 6256 passed, 7 skipped; typecheck, lint and docs-check (base claude/nifty-knuth-f9udt0) all clean.",
+ "blocking": [
+  {
+   "issue": "L4g-left-1 regression on the Start dialog: when a task is held at a limit (or a waiter waits on a task the person paused), the dialog now adds 'Give your agent work first: add a task on the Tasks tab, click Make ready on a draft there, or ask in Chat, for example \"add a task: write the README\".' under the new sentence. That is a second, competing instruction; the work exists and only the limit holds it. The dialog's noReadyTask rule leaves out only blockers whose link is /inbox. The fix moved this blocker's link to /settings#other-settings (and to the Tasks tab for 'which you paused') without updating the dialog, so the line now appears and the test id flips to start-session-no-work. No UI test covers the dialog in this state: the real-daemon case checks only client.startCheck().",
+   "where": "apps/ui/src/pages/project/StartSessionDialog.tsx:399",
+   "evidence": "/tmp/frbench/review-l4-starts-carried-steps/bench1/05-b3-start-dialog-paused-at-the-project-s-budget.png (and .txt): 'Nothing can run: \"Write the club motto in motto.txt\" paused before the project's budget ran out; raise it in Settings. / Open Settings / Give your agent work first: ...'. On base the blocker's link was /inbox, so the line was hidden.",
+   "expected": "With a held-at-limit or paused-by-you blocker, the dialog shows only the blocker sentence and its button (Open Settings or Open Tasks), as design §3.6 says: 'Disabled with the reason and the unblocking button'. Add a UI test (fake daemon) and a real-daemon or Playwright check of the dialog's text in both states."
+  },
+  {
+   "issue": "L4g-left-1 is still half-false on the same dialog. Its waiting list says '\"B\" waits on \"A\", which needs your answer, so it cannot run. Answer it in the Inbox, or change what it waits for on the Tasks tab.' for a dependency paused at the project's budget, and for one the person paused (which has no Inbox card). In the paused-at-the-budget case, the same yellow box first says the dependency is paused at the project's budget and to raise it in Settings. stateClause and stuckAdvice read only the stored status. This breaks design §2's one status map, which the Start dialog uses: 'needs_human, no card (the person paused it) -> Paused by you'. It also makes the user-guide paragraph this branch added ('... never \"needs your answer\"') a promise the app does not keep (§5 rule 9). The fixer logged it as a new problem, but it is the item's own sentence on the screen the item is about.",
+   "where": "apps/ui/src/pages/project/StartSessionDialog.tsx:80",
+   "evidence": "/tmp/frbench/review-l4-starts-carried-steps/bench1/08-b6-start-dialog-with-a-waiter.png and 09-c1-start-dialog-with-paused-by-you-dependency.txt: '\"Sing the club song from song.txt\" waits on \"Write the club song in song.txt\", which needs your answer, so it cannot run. Answer it in the Inbox ...' (that task was paused by the person, no card). The same wording is shown after the budget was raised (10-c2). See also stuckAdvice at line 112.",
+   "expected": "The waiting list words each needs_human dependency the way StartCheckView.held / heldFacts does: 'paused at the project's budget ...; raise it in Settings' or 'which you paused', and 'needs your answer' only when a card asks. The fake daemon mirrors this, and a UI test asserts the exact text."
+  },
+  {
+   "issue": "L4a-left-5's new Undo of a start kept from chat is never refused. It still says it undid the start after that start already ran. CommandLoop.startUndoRefusal returns null for after.kept_start, so the check that refuses other session.start undos once their session ended is skipped. The command's undo then calls cancelKeptStart, which is dropKeptStart(projectId) and drops any kept wait of the project. So a stale Undo also silently drops a later wait: the person's own session waiting to go on after the next limit, or a Start kept later from the dialog.",
+   "where": "packages/runtime/src/loop/commands.ts:611",
+   "evidence": "/tmp/frbench/review-l4-starts-carried-steps/bench4-kept-undo/walk7.json and 03-m3-after-undo-after-the-reset.png. Chat's 'run it now' kept the start for 03:44, the session ran at the reset and the task is done (header: 'Done: all 1 task.'). Pressing the reply's Undo answered 'Undone: a session on Map notes on your PC is back to no session.' dropKeptStart is at packages/runtime/src/wiring/billing-pick.ts:1496; the undo is in packages/commands/src/commands/session.ts at the a.kept_start branch.",
+   "expected": "Once the kept start has fired, or the project's wait is no longer this start's, the Undo is refused in words like any ended session.start ('nothing left to undo'), and the change row is marked irreversible. Undo drops only the start it kept, never a continuation or a later kept Start. Add a real-daemon case: keep from chat, tick past the reset, then Undo."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "L4g-left-3: the status note says 'Spent less than CHF 0.01.' and the budget-stop notification never says CHF 0.00",
+   "holds": true,
+   "note": "The loop-docs and notifications-channels cases fail on base and pass now. On the bench the session cost CHF 0.013, so the note read 'Spent CHF 0.01.', which matches its result."
+  },
+  {
+   "claim": "L4g-left-1: the Start check and chat's start name the limit and Settings ('...; raise it in Settings.' with Open Settings), and a waiter on a task the person paused says 'which you paused' with Open Tasks",
+   "holds": false,
+   "note": "The wire sentence and chat's sentence are right (real-daemon case fails on base; bench 05-b3, 07-b5). On screen, the dialog adds 'Give your agent work first ...' and its waiting list still says 'which needs your answer' (blocking 1 and 2)."
+  },
+  {
+   "claim": "L4g-left-2: chat's read-back of a move to ready says 'It is larger than this session's budget, so it runs at your next Start.' as the press does",
+   "holds": true,
+   "note": "The real-daemon case fails on base. On the bench, with the estimate above the work budget, the read-back and the Yes line are right while the session runs."
+  },
+  {
+   "claim": "L4g-left-4: no Start session in the header while the project's own start waits; Cancel on the wait brings it back; the Start dialog shows the wait with Cancel the wait",
+   "holds": true,
+   "note": "The run-indicator cases fail on base. Bench checked at 1280 and 375 px, through the palette dialog, the bar's Cancel, the kept-Start line and its Cancel."
+  },
+  {
+   "claim": "L4d-left-2: under a known refused credential, POST /sessions, chat and the phone refuse with the Start dialog's sentence, kept session or not",
+   "holds": true,
+   "note": "The real-daemon case fails on base. On the bench, POST /sessions answers 400 with the sentence, chat says it too, and no session starts. The phone path is checked only through rt.refusedStart, an internal function (non-blocking note)."
+  },
+  {
+   "claim": "L4a-left-5: chat's start during a rest is read back with its time, kept for the reset, Undo drops it, it starts once at the reset, and the hold reply says 'a Start now runs at HH:MM'",
+   "holds": false,
+   "note": "All of that works, including across a daemon restart (bench2 h1-h3) and the hold reply on the stand-in. But the Undo stays offered after the kept start fired and claims success (blocking 3)."
+  },
+  {
+   "claim": "Every other item is in not_done with a reason (207 rest, 210-216, L4g-left-5/6/8, L4b-left-6, L4c-left-1/2/3, L4d-left-1/3/4; L4g-left-7 default kept and noted)",
+   "holds": true,
+   "note": "All 19 area items are accounted for. L4g-left-5 (fixed Make ready dialog words) and L4g-left-6 (the wait said four times) are visible on the bench, as stated."
+  },
+  {
+   "claim": "Validation: pnpm check, UI suite 1528, Playwright 40, integration and e2e green",
+   "holds": true,
+   "note": "Rerun here: UI 1528 passed, Playwright 40 passed, unit suite 6256 passed, typecheck, lint and docs-check clean. Integration and e2e were not rerun."
+  },
+  {
+   "claim": "tests_changed_for_design keep their intent and weaken nothing",
+   "holds": true,
+   "note": "No assertion was removed. The L4-money-201 and refused-key cases now start through rt.scheduler.requestStart (internal) instead of POST /sessions. continuity-cancel's check became stricter."
+  },
+  {
+   "claim": "Fake daemon changed in the same commit as each route change",
+   "holds": true,
+   "note": "Start check, project card startWait, POST /sessions 409 and 400, and chat 'run it now' are mirrored. The fake's 409 text differs from the daemon's."
+  }
+ ],
+ "non_blocking": [
+  "The phone start path is checked only through rt.refusedStart(project.id), an internal function. No test shows the remote row failing with the sentence (validation rule 2). Also, the remote watcher's runStart calls kill.resume() before deps.start throws the refusal (packages/runtime/src/remote/watcher.ts:782-783), so a phone Start under a refused key now lifts Stop all and starts nothing.",
+  "RuntimeApp.refusedStart passes stopped:false and hasModel:true, so with Stop all on and a refused key, POST /sessions answers with the key's sentence instead of Stop all's.",
+  "The L4-money-201 case and the refused-key case now start their sessions through rt.scheduler.requestStart, an internal path. They could start through POST /sessions before keyRefusedFirst instead, which keeps the person's boundary and is the state the fixer describes ('a start made before the refusal was known').",
+  "The R-startcred comment on server.ts startBlocked (around lines 1695-1698, 'POST /sessions does not refuse on it') is now stale.",
+  "Two sentences disagree on 'on' versus 'of': the kept start's change-card sentence 'A session on X starts at 15:40 (up to CHF 5.00).' and the run's sentence 'A session of X starts at 15:40.'",
+  "The fake daemon's 409 text ('<head>; then your session goes on.') differs from the daemon's ('Your session of 09:00 goes on by itself at 11:40.').",
+  "The 400's details.cause 'credential_refused' is overwritten to 'validation' by the server's error handler (server.ts:559), so the client never sees it. It is harmless.",
+  "On the bench, a task paused at the project's budget has a card titled 'paused before the project's budget ran out' with room_usd_micro 35809 > estimate_left 6756. Its Last result reads 'Stopped at the project's budget of CHF 0.06. CHF 0.04.' (L4c-left-1, not done). The header says 'Waiting for you ... Answer' for a card whose only option is Cancel task. All of this predates this branch.",
+  "L4g-left-5 is visible: Make ready's confirm dialog said 'Ready to run: the running session takes it if it fits, else your next Start.' after the session had ended (bench1 15-e1). L4g-left-6 is visible: the wait is said four times on the waiting Overview (bench2 01-g1, 04-g4). Both are in not_done.",
+  "No bench BEFORE screenshots, as the fixer said. The failing-first tests stand in for them, and I confirmed they fail on base."
+ ]
+}

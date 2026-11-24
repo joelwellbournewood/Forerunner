@@ -1,0 +1,89 @@
+{
+ "verdict": "pass",
+ "acceptance_walk": "Bench \"review-l4-github-carried\" (daemon 49232, UI 2832, GitHub stand-in 49233, --provider bench), started from my worktree at 7e08fe8. Screenshots are in /tmp/frbench/review-l4-github-carried/steps/ and the walk results are in steps/walk-*.json.\n\n(1) L4-github-130 Close and L4e-left-2. I made the project \"Kite club\" on bench/seeded with two coder tasks, \"Update yarn.lock\" and \"Write kite/rules.txt with the rules\", and started the session from the project page's Start session (01). Both PRs waited (02). The yarn.lock task pushed branch fr/640836bf-update-yarn-lock and opened PR #2, so the dots became dashes and git accepted the branch. On the Tasks tab I pressed Redo (03) and then Cancel (04, 05). On the Overview, \"Cancelled, still open on GitHub\" read \"Its task was cancelled: close its pull request, or reopen the task in Tasks.\" with Open and Close (06). Close's title is \"Closes this pull request on GitHub; you can reopen it there.\". I pressed Close. The answer read \"Closed #2 on GitHub; you can reopen it there.\", the cancelled block was gone, and #3 and the docs PR stayed (07). The GitHub stand-in's request log after the press shows exactly one write, \"PATCH /repos/bench/seeded/pulls/2 200\", with no ref delete. The bare repo still has fr/640836bf-update-yarn-lock. I restarted the daemon with scripts/bench/restart-daemon.mjs. The cancelled row was still gone, a second Close on #2 answered \"#2 is not open on GitHub any more, so there is nothing to close.\", a Close on done task #3 answered the not-cancelled refusal, and a Close on 'abc' got a 400.\n\n(2) L4e-left-1 Try again and L4e-left-4 Docs. I planted a .forerunner/project.json naming \"Kite club\" (an id not on this PC) on bench/empty's main and added a pre-receive hook that refuses every push. In New project I entered \"Kite flyers\" with Repository link https://github.com/bench/empty (09). The offer gave Work together and Take it over (10); I pressed Take it over. The Overview read 'Took over bench/empty from \"Kite club\" here, but the docs pull request that names this project could not be opened, so GitHub still names \"Kite club\".' with Try again and \"Tries again to open the docs pull request that names this project.\" (11). Pressing Try again while the hook still refused gave a red one-sentence refusal, and the line stayed (12). Docs showed the same line with its Try again (13). I removed the hook and pressed again (14). The answer was \"Opened #1: once you merge it, GitHub names this project.\", the line was gone, and '\"The project's standard docs\" · pull request #1' with Merge was listed at once (15). The writes were one git-receive-pack and POST /repos/bench/empty/pulls; main was untouched and the branch was this project's own fr/docs-scaffold. Docs lists the docs in PR #1 and shows no line (16). After a daemon restart, repositoryElsewhere is null and a further retry answers \"There is nothing to try again: ...\".\n\n(3) L4c-left-4. I used New project with https://github.com/bench/seeded and pressed Add to it on Kite club, which has tasks (17, 18). The project page says \"Waiting for you: approve the plan.\" exactly once, as the banner; project-status is not rendered (19).\n\n(4) L4e-left-10 header. /projects/<unknown id> shows the switcher as \"Switch project\" (20).\n\nThe screens match core-experience §3.4 and §5: one sentence per answer or refusal, no ids, CHF only where money shows, Try again with a visible consequence line, and the person's press is the only GitHub write. Nothing runs by itself: Close and Try again write to GitHub only on the press. I stopped the bench with stop.mjs and deleted its home, the GitHub stand-in data and the seed clone.",
+ "blocking": [],
+ "claims_checked": [
+  {
+   "claim": "L4-github-130: POST /projects/:id/pull-requests/:number/close closes only a cancelled task's open PR with one PATCH and no branch delete; the row goes, also after a restart; refusals are one sentence and keep the row",
+   "holds": true,
+   "note": "Bench: exactly one PATCH, branch kept, row gone, still gone after a daemon restart. On base (source reverted) the l3-merge.test.ts 'l4-github-carried, run L4' cases (5) and the real-daemon case fail ('client.closePullRequest is not a function'); at HEAD they pass. The real-daemon case composes twice on one home."
+  },
+  {
+   "claim": "Route parity: real-daemon case and fake-daemon change in the same commit for both new routes",
+   "holds": true,
+   "note": "28a11d6 (close) and 0ee296a (retry) each change real-daemon.test.ts and fake-daemon.ts together."
+  },
+  {
+   "claim": "L4e-left-1: Try again on the Overview and Docs reruns the scaffold under the L4-github-102 rules; refused push and another project's open docs PR are refused in one sentence; the opened PR is listed at once; line gone after restart",
+   "holds": true,
+   "note": "Walked on the bench with a pre-receive hook. The real-daemon case fails on base and passes at HEAD."
+  },
+  {
+   "claim": "L4e-left-2: branchSegment turns dots into dashes for task, intake-docs and scaffold branches",
+   "holds": true,
+   "note": "On base pr-executor.test.ts fails with \"fatal: 'fr/ac709397-update-yarn.lock' is not a valid branch name\"; it passes at HEAD. The bench pushed fr/640836bf-update-yarn-lock."
+  },
+  {
+   "claim": "L4e-left-3: no endless 'Try again in a minute'; the merge commit is read from main's history; a fast-forward gets noMergeCommitSentence",
+   "holds": true,
+   "note": "On base the case fails with the 'still reading ... Try again in a minute' sentence; it passes at HEAD. The restart is simulated with new PrTaskExecutor/TaskTakeOut instances on the same store (see non_blocking)."
+  },
+  {
+   "claim": "L4e-left-4: Docs shows only the took_over_no_pull_request outcome line, never OR-07's offer",
+   "holds": true,
+   "note": "UI tests fail on base and pass at HEAD; bench Docs showed the outcome line with Try again."
+  },
+  {
+   "claim": "L4c-left-4: 'Waiting for you: approve the plan' shows once after Add to",
+   "holds": true,
+   "note": "Bench step 19 counts one occurrence. Design §2 puts the plan first among the status sentences, so hiding the status line while the plan waits loses nothing."
+  },
+  {
+   "claim": "L4-github-124 (b)(c): singular or plural cancelled line; a rebuilt_without PR is listed under 'Rebuilt since the critic's review'",
+   "holds": true,
+   "note": "The view and UI tests fail on base and pass at HEAD; the singular line was seen on the bench."
+  },
+  {
+   "claim": "L4e-left-6: 'Since then: merged #B. #A's change reached main through #B.'; facts and recall never call A merged",
+   "holds": true,
+   "note": "dependent-branches-merge and chat-recall cases fail on base and pass at HEAD; the model-facing line is asserted."
+  },
+  {
+   "claim": "L4e-left-8: joined result drops 'Left N reviewed pull requests ...'; held-start refusal says 'waits to start by itself'",
+   "holds": true,
+   "note": "project-status and project-join cases fail on base and pass at HEAD. The changed earlier assertions keep their one-sentence and 100-character checks."
+  },
+  {
+   "claim": "L4e-left-10: enterprise hosts, marker name cut at a word, fake import other_host, header 'Switch project'",
+   "holds": true,
+   "note": "The repository-use and onerepo-join cases fail on base and pass at HEAD. The contracts case passes on base too, because it only tests the fake daemon. The bench header showed 'Switch project'."
+  },
+  {
+   "claim": "No test weakened",
+   "holds": true,
+   "note": "Every removed test line is a design-driven sentence change (plural→singular, 'soon'→'waits to start', the facts line naming Close), an example.test→github.com locator that the daemon itself refuses, or an import widened; the intent of each is kept."
+  },
+  {
+   "claim": "Validation: pnpm check, UI vitest, Playwright, injection",
+   "holds": true,
+   "note": "I ran each myself under flock: pnpm check exit 0 (563 files, 6269 passed, 7 skipped; lint, typecheck, check-paths, link-check, secret-scan clean); docs-check --base claude/nifty-knuth-f9udt0 ok (45 files); UI vitest 104 files, 1533 passed; Playwright with the local config 40 passed; pnpm test:injection PASS, 92 of 92. I did not rerun integration or e2e."
+  },
+  {
+   "claim": "not_done items (L4-github-106, L4e-left-5, -7, -9, part of -11) are cut-line with reasons",
+   "holds": true,
+   "note": "All are on the spec's cut line; none of the never-cut items (130, L4e-left-1, -2, -3) is in not_done."
+  }
+ ],
+ "non_blocking": [
+  "Try again's refusal names the repository as the person typed it, not as the line above it does. retryTakeOverDocs and the fake daemon use project.repos[0]. On the bench the person typed https://github.com/bench/empty in 'Repository link', so the line reads 'Took over bench/empty from ...' and the refusal under it reads '... check that the saved GitHub token can push to https://github.com/bench/empty, then try again.' (steps/12-retry-04-overview-still-refused.png). Use the same locator the line uses (RepositoryUse.repositoryOf(project).locator) in packages/runtime/src/daemon/take-over-retry.ts and apps/ui/test/fake-daemon.ts.",
+  "take-over-retry.ts sorts failures with a heuristic that can say something untrue. 'blocked' is chosen when !out.prUrl and the branch is fr/docs-scaffold or absent. When scaffoldBranchFor returns null because every scaffold branch is another project's but no pull request is open, the sentence still says 'another project's docs pull request is open ... close it on GitHub'. Any thrown error, GitHub not answering included, reads 'check that the saved GitHub token can push'. These are edge cases; design §5 rule 8 asks for what actually went wrong.",
+  "TAKE_OVER_NOTHING_TO_RETRY ('a docs pull request already names this project') is answered for any project whose line is not that outcome, including a project with no repository. Only a direct route call reaches it.",
+  "Close's consequence line ('Closes this pull request on GitHub; you can reopen it there.') shows only as the button's title, as Start session's explanation does. The visible block line does not say the pull request can be reopened. Consider showing it as text the way Try again's line is shown.",
+  "The L4e-left-3 'restart' builds a new PrTaskExecutor and TaskTakeOut on the same in-process store (dependent-branches-merge.test.ts takeOutAfterRestart). That is not two composes on one home as validation rule 4 describes. It is acceptable because the state is a plain merge-record row, but a compose-twice or real-daemon case would be stronger; it fits with L4e-left-9, which is in not_done.",
+  "Fake/daemon drift: the fake daemon's close route answers 403 'not your project' for an unknown project, while the daemon's owned() → mustGet answers 404 not_found. Also, POST /projects/:id/take-over/retry in server.ts has no ownership check, unlike the close route in docs-routes.ts; this matches other server.ts routes such as POST /projects/:id/intake.",
+  "Pre-existing, named by the fixer in new_problems: after Cancel and after Close, the Overview's Last result still says 'Left 2 reviewed pull requests for you to merge.' with no 'Since then' line for the closed one (steps/06 and 07). mergedSinceLine handles merged records only; this is a sibling of L4e-left-6 for closed-without-merge.",
+  "Pre-existing, not this area: the project page for an unknown id shows 'project 01a20000-... not found' in its error banner, which is an id on screen (steps/20-header-unknown-project.png).",
+  "The fixer's new_problems #1 (W15-01's sole-linked rule treats an unmarked open fr/docs-scaffold pull request of another project as this project's) also applies to Try again, because it reruns the same scaffold; it is pre-existing scaffold logic.",
+  "Live check for the session lead: on the real app, the Try again refusal will name whatever the person typed in 'Repository link' (usually a full https://github.com/... URL), not the owner/name the line above it shows."
+ ]
+}

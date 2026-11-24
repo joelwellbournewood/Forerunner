@@ -1,0 +1,212 @@
+{
+ "area": "l4-starts-carried",
+ "branch": "fix/l4-starts-carried",
+ "head_sha": "a8eaa8a",
+ "commits": [
+  {
+   "sha": "d5621f1",
+   "subject": "runtime: the status note and the budget-stop notification say \"less than CHF 0.01\" (U-090, U-093, L4g-left-3)"
+  },
+  {
+   "sha": "63ec00c",
+   "subject": "runtime, ui: the Start check says the limit that holds a paused task and what changes it (U-093, L4g-left-1)"
+  },
+  {
+   "sha": "b685c80",
+   "subject": "runtime, commands: chat's read-back of a move to ready says what the running session does with that task (U-093, L4g-left-2)"
+  },
+  {
+   "sha": "78a94fc",
+   "subject": "ui, runtime: no Start session in the header while the project's own start waits (U-093, L4g-left-4)"
+  },
+  {
+   "sha": "55b9282",
+   "subject": "runtime, ui: a start under a refused Claude credential is refused in words, kept session or not (U-078, U-093, L4d-left-2)"
+  },
+  {
+   "sha": "7f86d19",
+   "subject": "commands, runtime: chat's start while the credential rests is kept for its reset, with its own read-back and Undo (U-078, U-093, L4a-left-5)"
+  },
+  {
+   "sha": "a8eaa8a",
+   "subject": "docs: the l4-starts-carried starts in the maintainer docs and the user guide (U-078, U-093)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "L4g-left-3: the status note in the project's folder or repository (docs/status.md) said 'Spent CHF 0.00.' for a session whose result said 'Less than CHF 0.01.'. A sibling in the budget-stop notification said 'The session spent CHF 0.00.' and left 'Less than.' behind in its body.",
+   "u_ids": [
+    "U-090",
+    "U-093"
+   ],
+   "failing_test_before": "packages/runtime/test/loop-docs.test.ts 'l4-starts-carried, run L4' > 'L4g-left-3: the status note of a session that spent under a centime says less than CHF 0.01, never CHF 0.00'. Sibling: packages/runtime/test/notifications-channels.test.ts 'l4-starts-carried, run L4' > 'L4g-left-3 sibling' (it received 'The session spent CHF 0.00. Less than.').",
+   "how": "Root cause: runner.ts built endedNote with formatChf only. It now uses the W14-6 moneyWords. producers.budgetStop uses moneyWords for the body and the title, and its strip of the result's money line now also removes 'Less than CHF 0.01.'.",
+   "check_in_the_app": "Run a small task that costs less than a centime (on the bench, a one-line note). Open the project's folder, then docs/status.md. The note reads 'Done. Spent less than CHF 0.01.' and the session's result says 'Less than CHF 0.01.'. No line says 'CHF 0.00'. Live (final_check): after a real-model session that costs less than a centime, docs/status.md in the folder or on the status branch says 'Spent less than CHF 0.01.'."
+  },
+  {
+   "problem": "L4g-left-1: a task was paused at the project's budget (or this month's cap, or the subscription's share) with no room left. The Start dialog said 'Nothing can run: \"X\" needs your answer.' with Open it, but the card asks nothing until the limit changes. Chat's 'start a session' said 'Nothing can run: no task is ready.' for the same project. A task waiting on one the person had paused also read 'needs your answer'.",
+   "u_ids": [
+    "U-093"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-starts-carried, run L4' > 'L4g-left-1: with a task paused at the project's budget and no room, the Start check and chat's start say the limit and that Settings changes it'. It received 'Nothing can run: \"Write the club motto\" needs your answer.' with Open it. New unit cases are in packages/runtime/test/held-words.test.ts.",
+   "how": "New leaf daemon/held-words.ts, which the fake daemon also imports. HeldTask can be answer, limit or paused. outerLimitHold takes the limit words from the card's title and adds what changes the limit: '; raise it in Settings', '; raise it in Settings, or it resets on 1 December' or '; it resets on 1 December, or raise the share in Settings'. heldBlocker builds the sentence and the button (Open Settings, /settings#other-settings for the project's budget). For a dependency it gives '\"B\" waits on \"A\", paused at ...' or '\"B\" waits on \"A\", which you paused.' with Open Tasks. start-blocked.ts heldFacts reads all of this once. GET /projects/:id/start-check, POST /sessions and chat's session.start port use it; compose's chat port had no such fact before. The fake daemon mirrors it in fakeHeld.",
+   "check_in_the_app": "Give a project a CHF 0.06 budget and a task that pauses at it. Do not raise the budget. Open Start (or type 'start a session' in the project's chat). Both say 'Nothing can run: \"<task>\" paused at the project's budget of CHF 0.06; raise it in Settings.'. The dialog's button is Open Settings and opens Other settings. Raise the budget in Settings, then open Start again: the task is ready and runs (L4-money-204). Pause a task that another task waits on: Start says '\"B\" waits on \"A\", which you paused.' with Open Tasks. Live (final_check): the same with the real model after a run paused at the project's budget."
+  },
+  {
+   "problem": "L4g-left-2: a session was running with CHF 1.00. In chat, 'make it ready' on a draft larger than the session's whole work budget either read back no line (task.transition had no preview) or said 'It joins this session if budget is left after its own tasks'. Pressing Make ready on the same draft said 'It is larger than this session's budget, so it runs at your next Start.'.",
+   "u_ids": [
+    "U-093"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-starts-carried, run L4' > 'L4g-left-2: chat's read-back of Make ready on a draft larger than the running session's budget says it runs at your next Start, as the press does'. It received 'Make \"Research local garden suppliers\" ready?' with no line.",
+   "how": "AdmitHandle.preview(taskIds) in runner.ts answers what admit would, read-only: stopping, joined, too_large above the whole work budget, else no_room. previewWork takes taskIds and says that outcome's line. CommandPorts.previewWork carries taskIds. task.transition's ask to ready now reads the line back with withPreview, as Resume and Reopen already do, and so do the dependency lines.",
+   "check_in_the_app": "Start a CHF 1.00 session on a project. While it runs, add a draft and give it an estimate above CHF 0.80 (bench: est_cost_usd_micro). In the project's chat, ask to make the draft ready. The Yes/No reads 'Make \"<draft>\" ready? It is larger than this session's budget, so it runs at your next Start.'. Ask the same for a small draft: it reads 'Make \"<draft>\" ready? It joins this session if budget is left after its own tasks, else your next Start.'. Live (final_check): the same read-back with the real chat model during a real session."
+  },
+  {
+   "problem": "L4g-left-4: while the project's own session waited to go on after its credential (a continuation), or a Start was kept for the reset, the header still offered Start session at 1280 and 375 px. Its press answered 409 ('Your session of 16:41 goes on by itself at 16:44.').",
+   "u_ids": [
+    "U-093"
+   ],
+   "failing_test_before": "apps/ui/test/run-indicator.test.tsx 'l4-starts-carried, run L4' > 'L4g-left-4: while the project's own session waits to go on, the header offers no Start session; the bar's Cancel drops the wait and Start comes back' and 'L4g-left-4: a Start kept for the reset offers no second Start in the header; its line's Cancel drops it'. In both, the start-session button was present. Real daemon: the S-10 case now asserts GET /projects/:id startWait 'goes_on', then null after Cancel.",
+   "how": "ProjectCard.startWait is 'goes_on' or 'kept' (views.ts, from the same startsWaitOf the project's line uses). The header hides Start session while it is set. The wait's own Cancel stays where it is: the run indicator's bar for a continuation, the project's line for a kept Start. The Start dialog in that state already shows the wait's sentence with Cancel the wait and Start off. The fake daemon gained startWait and the daemon's 409.",
+   "check_in_the_app": "Bench with --provider bench-api --api-key limited. Start a session on a project; it meets the limit and waits to go on. Open the project at full width and at 375 px. The header has no Start session, and the bar reads '<project> · waiting until HH:MM, then it goes on' with Cancel. Press Cancel: Start session comes back. Screenshots: /tmp/frbench/fix-l4-starts-carried-kept-steps/01-02 (waiting) and 03 (after Cancel). Live (final_check): with the real subscription at its limit, the same header after a session ended to wait."
+  },
+  {
+   "problem": "L4d-left-2 (the session lead's decision of 2026-11-23): a start under a refused Claude credential, with no session kept, started a session that only met the refusal and ended to wait. This happened through POST /sessions (the API, Continue) and the phone, while the Start dialog's Start was off and the user guide promised 'every Start says the same'.",
+   "u_ids": [
+    "U-078",
+    "U-093"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-starts-carried, run L4' > 'L4d-left-2: with the API key refused and no session kept, POST /sessions is refused with the Start dialog's sentence and starts nothing'. POST /sessions answered started.",
+   "how": "New RuntimeApp.refusedStart(projectId). It returns the Start dialog's sentence when the work's credential wait is a refusal (not startable, its link the setup assistant), else null. POST /sessions asks it first; before, it only asked while a session was kept. The phone's start (the remote watcher's start dep in compose) asks it too, and the row fails with that sentence. Chat already refused (L4-creds-8). ONE_OFF_UNDER_WAIT is kept as built. The fake daemon answers 400 the same way.",
+   "check_in_the_app": "Bench with --provider bench-api --api-key refused. Create a project from a brief so the key's refusal is known ('Planning waits for a new API key'). Add a ready task to another project. The Start dialog says 'Nothing can run until you save a new API key in Settings.' with Start off. Sending POST /sessions for that project (the session page's Continue, or curl with the bench token) answers 400 with the same sentence. Chat's 'start a session' says it too. No session is listed. Save a key that works in Settings, then press Start: it runs. Live (final_check): with a revoked real key, the phone's Start shows that sentence on the phone."
+  },
+  {
+   "problem": "L4a-left-5 (L4-creds-8 part 3): chat's 'run it now' while the subscription rested read back 'Start a session on Map notes (up to CHF 5.00)?', and the session then ended at once to wait. The Start dialog keeps such a start for the reset ('Start at 15:40'). The hold reply's 'a Start now runs at 15:40' clause had been left out.",
+   "u_ids": [
+    "U-078",
+    "U-093"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-starts-carried, run L4' > 'L4a-left-5: chat's start while the subscription rests is kept for its reset with its own read-back, Undo drops it, and kept again it starts once at the reset'. It received 'Start a session on Map notes (up to CHF 5.00)?', then Undo was refused as ended. New: apps/ui/test/chat.test.tsx and packages/runtime/test/conversation-memory.test.ts 'l4-starts-carried, run L4'.",
+   "how": "compose has startKeptWhen(projectId): 'at 15:40' or 'on 1 Dec' from the wait's startLabel when the work's credential rests, nothing is kept or running, Stop all is off and something would run. The commands get startKeptWhen, keepStart and cancelKeptStart ports. session.start reads back 'Start a session on X at 15:40 (up to CHF 5.00)?'. Its run keeps the start through continuations.keepStart (sentence 'A session of X starts at 15:40.', after.kept_start). Its undo drops the kept start; loop/commands.ts lets that Undo through. In the project chat, chatHoldReply gives '...; a Start now runs at 15:40.' when startKeptWhen holds (credentialHold({projectId})), and HOLD_REPLY_RE matches that form. The fake daemon's 'run it now' mirrors this.",
+   "check_in_the_app": "Bench with --provider bench-api --api-key limited --env FORERUNNER_BENCH_API_LIMIT_MIN=60. Start a session; it meets the limit. Press Cancel on the bar's wait. In the project's chat type 'run it now'. The Yes/No reads 'Start a session on Map notes at HH:MM (up to CHF 5.00)?'. Press Yes: the reply is 'A session of Map notes starts at HH:MM.' with Undo. No new session appears, and the header has no Start session (the line says Starts at HH:MM with Cancel). Undo drops it. Screenshots: /tmp/frbench/fix-l4-starts-carried-kept-steps/04-06. Live (final_check): with the real subscription at its limit, ask a question in the project's chat. The hold reply ends '...; a Start now runs at HH:MM.' (this is not on the stand-in: the bench's chat answers on the key), then 'run it now' keeps the start and a session starts once at the reset."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L4-money-207 (rest): the 'Interrupted' end line shows the restart's time, and one crash that released tasks in several projects posts one Update with project_id null.",
+   "why": "On the cut line. The time half needs the session.ended event and ended_at stamped at the last event's time. recovery.ts already keeps handoff.last_worked_at, but event.append stamps created_at from the store's clock, so the change goes deeper than this run had room for. The per-project Update needs ghosts of two agents with projects; one agent holds one active session, and the critic's has no project. That case is not reachable on one install."
+  },
+  {
+   "problem": "L4-money-210/211/212/215/216.",
+   "why": "On the cut line and not reached. 216 also needs its behaviour checked before the words change: whether tasks that were already ready start when 'Start a session by itself' is turned on (prepareWork runs only on an action)."
+  },
+  {
+   "problem": "L4g-left-5 (fixed words of the Tasks-row tooltips for Go ahead without, Redo and Try again, chat's option line, Make ready's confirm dialog), L4g-left-6 (the wait said four times on a waiting Overview, visible in /tmp/frbench/fix-l4-starts-carried-kept-steps/02; 'goes on' twice; the queued Cancel's explanation only in a tooltip; Bird notes' 'No session yet.' while its start waits in line; a running continuation's Sessions row startedBy null).",
+   "why": "On the cut line and not reached. The time went to the six never-cut items."
+  },
+  {
+   "problem": "L4g-left-7: the 'Done' badge beside 'You paused \"X\"; nothing else ran.'.",
+   "why": "Default kept, as the area's decision says (a queue end). It is noted in notes_for_other_areas for the owner."
+  },
+  {
+   "problem": "L4g-left-8: the fake daemon does not model the limit wake (budget.set's woken line, the start-check wake). listedWhere does not list stop_reason plan_awaiting_approval or a session another one continues.",
+   "why": "On the cut line and not reached. This run's own route changes are mirrored in the fake: held words, startWait, the 409, the refused 400 and chat's kept start."
+  },
+  {
+   "problem": "L4b-left-6 (assisted-mode plan card labels 'approve'/'reject' without explanation lines), L4c-left-1/2/3 (outer-limit status words, the result.ts 'budget used' branch, 'Ended: 1 paused' against 'Done; its review waits'), L4d-left-1/3/4 (key-first mixed-work words, the kept-state dialog's Use API key figure, the Settings read-back card and Playwright for the credential section).",
+   "why": "Carried items on the cut line, not reached. Of these, L4d-left-3 may already be closed by the L4d fixup (StartSessionDialog runOutOffered also holds for blocked.kept, so the plan sentence stays beside Use API key). It was not re-verified here."
+  },
+  {
+   "problem": "Bench BEFORE screenshots.",
+   "why": "The before state of each item is its failing-first test, quoted under each fix with what it received. Only AFTER screenshots were taken, on a bench-api limited bench, and kept outside --fresh in /tmp/frbench/fix-l4-starts-carried-kept-steps."
+  }
+ ],
+ "validation": [
+  {
+   "command": "DOCS_CHECK_BASE=claude/nifty-knuth-f9udt0 flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0. Lint, typecheck, unit tests: 564 files, 6256 passed, 7 skipped. docs-check ok (33 files), link-check ok (213 files), secret-scan clean (2280 files)."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped; 30 passed, 83 skipped. The Postgres cases skip without FORERUNNER_TEST_PG, as expected."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && FORCE_COLOR=1 flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 104 files, 1528 passed (real-daemon.test.ts included)"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 40 passed (1.1 min)"
+  },
+  {
+   "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (33 files)"
+  },
+  {
+   "command": "node scripts/bench/start.mjs --name fix-l4-starts-carried --daemon-port 49220 --ui-port 2820 --fresh --provider bench-api --api-key limited --env FORERUNNER_BENCH_API_LIMIT_MIN=60; node <scratchpad>/walk.cjs; node scripts/bench/stop.mjs --name fix-l4-starts-carried",
+   "result": "8/8 checks passed (/tmp/frbench/fix-l4-starts-carried-kept-steps/after-walk.json). The bench was stopped and its home and browser profile deleted."
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "nothing found"
+  },
+  {
+   "command": "pnpm test:injection; cargo checks",
+   "result": "Not run. No new channel reaches a model: the hold reply's clause is the app's own text, kept out of history by HOLD_REPLY_RE. The desktop shell was not touched."
+  }
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'l4-starts-sessions, run L4' > 'L4-money-204: right after a raise in Settings ...'",
+   "why": "Before the raise, the check now says the limit ('... paused at the project's budget of CHF 0.06; raise it in Settings.') instead of 'needs your answer' (L4g-left-1). After the raise it is unchanged."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'l4-starts-sessions, run L4' > 'L4-money-201: a person's Start that stopped at once ...'",
+   "why": "L4d-left-2 refuses the person's Start under a known refused key in words. The session that stops at once to wait now comes from a start that reached the runner (rt.scheduler.requestStart, by person), as a start made before the refusal was known. The listing, count and restart assertions are unchanged."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts credential-refusal case 'a refused API key: one card ... starts both by itself'",
+   "why": "L4d-left-2: the case first asserts that the API's Start is refused with 'Nothing can run until you save a new API key in Settings.'. The session that meets the mark then comes from a start that reached the runner. The rest is unchanged."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'S-10: the person's session that waited goes on once ...'",
+   "why": "Added assertions only: GET /projects/:id startWait is 'goes_on' while the session waits and null after Cancel (L4g-left-4)."
+  },
+  {
+   "test": "packages/runtime/test/continuity-cancel.test.ts L4-money-214 case",
+   "why": "The status note's money now uses the result's words ('Spent less than CHF 0.01.'), so it asserts the pattern and that 'CHF 0.00' never appears (L4g-left-3)."
+  }
+ ],
+ "screenshots": {
+  "before": [],
+  "after": [
+   "/tmp/frbench/fix-l4-starts-carried-kept-steps/01-after-l4g-left-4-waiting-header-1280.png",
+   "/tmp/frbench/fix-l4-starts-carried-kept-steps/02-after-l4g-left-4-waiting-header-375.png",
+   "/tmp/frbench/fix-l4-starts-carried-kept-steps/03-after-l4g-left-4-cancelled-header-1280.png",
+   "/tmp/frbench/fix-l4-starts-carried-kept-steps/04-after-l4a-left-5-readback-1280.png",
+   "/tmp/frbench/fix-l4-starts-carried-kept-steps/05-after-l4a-left-5-kept-1280.png",
+   "/tmp/frbench/fix-l4-starts-carried-kept-steps/06-after-l4a-left-5-kept-header-1280.png"
+  ]
+ },
+ "new_problems": [
+  "The phone's plain 'start' (remote watcher, kind start) goes straight to scheduler.requestStart. It skips POST /sessions' other refusals: nothing runnable, a budget above the monthly cap, the one-wait rule. This run added only the refused-credential check. Evidence: packages/runtime/src/remote/watcher.ts runStart and the compose wiring of its start dep.",
+  "The Start dialog's waiting list (StartSessionDialog waitsOnText/stateClause) still says 'which needs your answer' for any needs_human dependency, including one the person paused or one paused at an outer limit. It reads the status only; the blocker sentence above it is now right.",
+  "The waiting Overview still says the wait four times, in the bar, the header line, Working now and Last result/Next (L4g-left-6; visible at 375 px in 02-after-l4g-left-4-waiting-header-375.png)."
+ ],
+ "notes_for_other_areas": [
+  "daemon/held-words.ts (a leaf, safe for the fake daemon): HeldTask {answer|limit|paused}, outerLimitHold(card, resetDay), heldBlocker(h, waiter, tasksTab). start-blocked.ts heldFacts(store, projectId) gives {needsYou, held}. StartBlockedFacts.needsYou takes a HeldTask (a string still means an answer), and StartBlockedFacts.held maps task ids to HeldTask. request-words.ts now exports resetDay.",
+  "AdmitHandle.preview?(taskIds) is read-only. previewWork and CommandPorts.previewWork take taskIds. task.transition's ask to ready now carries the prepared line, as task.resume and task.reopen do.",
+  "ProjectCard.startWait is 'goes_on' or 'kept' (null otherwise). The header offers no Start session while it or startsAfter is set. The Overview (l4-github-carried shares it) should read the same field if it offers a start.",
+  "RuntimeApp.refusedStart(projectId) is the one check for a person's start under a refused credential. POST /sessions and the phone's start use it.",
+  "CommandPorts.startKeptWhen, keepStart and cancelKeptStart. session.start's outcome after.kept_start and after.project_id. ChatCredentialHold.startsWhen and credentialHold({oneOff, projectId}). chatHoldReply's third argument startsWhen; HOLD_REPLY_RE matches '; a Start now runs at|on ...'.",
+  "Fake daemon: fakeHeld; startWait on cards; POST /sessions answers 409 while startsWait is continuation or kept_start, and 400 under a refused credential wait; pendingConfirmation.keptAt for chat's 'run it now' during a rest.",
+  "Owner-visible default kept (L4g-left-7): a session whose only task the person paused, or cancelled (W15-59), shows the badge 'Done' beside 'You paused \"X\"; nothing else ran.'. The alternative is 'Ended: paused by you'. One place changes it: endedStatusText / listEndWords in the daemon.",
+  "Decision built (L4d-left-2, the session lead's of 2026-11-23, the owner can overrule): a start under a refused credential is refused in words with the Start dialog's sentence, also with no session kept. To overrule it, drop the refusedStart call in server.ts POST /sessions and in compose's remote start.",
+  "Suggested UPDATE-LOG line: 'l4-starts-carried (run L4i): the Start check names the limit a paused task waits on and what changes it (Open Settings), or that you paused the task it waits on; chat's read-back of a move to ready says what the running session does with it; the folder's status note and the budget-stop notification say \"less than CHF 0.01\"; no Start session in the header while the project's own start waits; every Start under a refused credential is refused in words; chat's start while the credential rests is kept for its reset (\"Start a session on X at 15:40?\", Undo drops it) and its hold reply says \"a Start now runs at 15:40\" (U-078, U-090, U-093).'",
+  "Suggested design §3.6 example: 'Nothing can run: \"Write the motto\" paused at the project's budget of CHF 0.06; raise it in Settings. [Open Settings]'."
+ ]
+}

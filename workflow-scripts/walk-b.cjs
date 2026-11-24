@@ -1,84 +1,123 @@
-// Walk B: both credentials, 'Subscription first, ask before API key', the subscription at its
-// limit for an hour (failure injection: limits.restingUntil, as Claude Code's limit leaves it).
-// The person in Zurich presses Start; the ask card and its notification; answer Wait (or Use API
-// key with argv[2] = "use") in the Inbox UI; then the session page, the Overview's Last result
-// and the Inbox read what is true now. Phase 2 (argv[3] = "after-restart") reads them again.
-const L = require("./walk-lib.cjs");
-const { R, N, enc } = L;
-const mode = process.argv[2] || "wait";
-const phase = process.argv[3] || "first";
-const file = `walk-b-${mode}-${phase}.json`;
-const out = { at: new Date().toISOString(), mode, phase };
+// fixup-l4-starts-carried bench walk B (--provider bench-api --api-key limited,
+// FORERUNNER_BENCH_API_LIMIT_MIN=2): chat's start kept for the reset runs at the reset; its Undo is
+// then refused in words (the review's blocking 3), in chat and on the Changes screen.
+"use strict";
+const path = require("node:path");
+const fs = require("node:fs");
+const repo = process.argv[2];
+const name = process.argv[3];
+const out = process.argv[4];
+const { openApp, step, api, until, skipSetup, bench } = require(
+  path.join(repo, "scripts/bench/recorder.cjs"),
+);
+
+const checks = [];
+const check = (label, ok, seen) => {
+  checks.push({ label, ok: !!ok, seen });
+  console.log(`${ok ? "PASS" : "FAIL"} ${label}${ok ? "" : ` :: ${String(seen).slice(0, 500)}`}`);
+};
+const gone =
+  "the start kept for the reset has already run or was cancelled; there is nothing to undo";
+
 (async () => {
-  const { browser, page } = await R.openApp(N, { path: "/" });
-  let projectId;
-  if (phase === "first") {
-    out.tz = (await R.api(N, "POST", "/setup/profile", { timezone: "Europe/Zurich" })).timezone;
-    // The plan is drafted on the key first (the bench has no Claude Code), then the person picks
-    // 'ask' and the subscription is at its limit for an hour (failure injection).
-    await L.cmd([{ name: "settings.set", params: { key: "credential_policy", value: "key_only" } }]);
-    const planned = await R.createPlannedProject(N, {
-      project: `Pond notes ${mode}`,
-      goal: "Pond notes",
-      brief: "Write a short markdown note about the pond in notes/pond.md.",
-      approve: false,
-    });
-    projectId = planned.projectId;
-    out.policy = (await L.cmd([
-      { name: "settings.set", params: { key: "credential_policy", value: "subscription_then_ask" } },
-    ])).status;
-    const until = new Date(Date.now() + 60 * 60_000);
-    until.setUTCSeconds(0, 0);
-    out.restingUntil = until.toISOString();
-    L.patchLimits("subscription", (l) => ({ ...l, restingUntil: out.restingUntil }));
-    await L.goto(page, "/inbox", 2500);
-    out.planCard = await R.step(page, `b ${mode} plan card`);
-    const plan = page.getByTestId("request").filter({ hasText: /Pond notes/ }).first();
-    await plan.getByRole("button", { name: /^Approve and start/ }).first().click();
-    await page.waitForTimeout(10000);
-    await L.goto(page, "/inbox", 2500);
-    out.inboxBefore = await R.step(page, `b ${mode} inbox ask card`);
-    const inbox = await R.api(N, "GET", "/inbox");
-    const card = (inbox.requests ?? []).find((r) => /^Use your API key/.test(r.title ?? ""));
-    out.card = card ? { title: card.title, body: card.body, choices: (card.choices ?? []).map((c) => [c.label, c.explain]) } : null;
-    out.notifications = ((await R.api(N, "GET", "/notifications/recent?limit=50")).notifications ?? []).map((n) => ({ kind: n.kind, title: n.title, body: n.body, link: n.link }));
-    out.sessionsBefore = L.q("select id, status, summary from session where project_id = ?", projectId);
-    // The person answers on the card.
-    const cardEl = page.getByTestId("request").filter({ hasText: /Use your API key/ }).first();
-    const label = mode === "use" ? "Use API key" : "Wait";
-    await cardEl.getByRole("button", { name: label, exact: true }).first().click();
-    await page.waitForTimeout(1500);
-    const confirm = page.getByRole("button", { name: /^(Confirm|Yes)/ });
-    if (await confirm.count()) await confirm.first().click();
-    await page.waitForTimeout(10000);
-    out.inboxAfterAnswer = await R.step(page, `b ${mode} inbox after answer`);
-    L.save(`walk-b-${mode}-project.json`, { projectId });
+  const ui = bench(name).uiUrl.replace(/\/$/, "");
+  const project = await api(name, "POST", "/projects", { name: "Map notes", goal: "A note" });
+  await api(name, "POST", `/projects/${project.id}/tasks`, {
+    title: "Write notes/map.md",
+    outcome: "notes/map.md is written",
+    acceptanceCriteria: ["it is written"],
+    priority: "medium",
+    status: "ready",
+    dependsOn: [],
+    budgetUsdMicro: 0,
+    specialist: "coder",
+    riskTier: 0,
+  });
+  const agents = await api(name, "GET", "/agents");
+  const first = await api(name, "POST", "/sessions", {
+    agentId: agents[0].id,
+    projectId: project.id,
+    trigger: "manual",
+  });
+  await until(
+    async () => {
+      const s = await api(name, "GET", `/sessions?projectId=${project.id}`);
+      return s.length > 0 && s.every((x) => !["planned", "running", "paused"].includes(x.status));
+    },
+    60_000,
+    1000,
+    "the first session to end to wait",
+  );
+  check("the first start met the limit", first.result === "started" || first.result === "kept", first);
+  await api(name, "POST", `/projects/${project.id}/continuation/cancel`, {});
+  const { browser, page } = await openApp(name);
+  await skipSetup(page).catch(() => undefined);
+  await page.goto(`${ui}/projects/${project.id}/chat`);
+  const input = page.getByTestId("chat-input");
+  await input.waitFor();
+  await input.fill("run it now");
+  await page.getByTestId("chat-send").click();
+  await page.getByTestId("pending-confirmation").waitFor({ timeout: 30_000 });
+  const readback = await page.getByTestId("pending-confirmation").innerText();
+  await step(page, "after-b1-chat-readback-start-at-the-reset");
+  check("the read-back names the reset's time", /Start a session on Map notes at \d{2}:\d{2} \(up to CHF \d+\.\d{2}\)\?/.test(readback), readback);
+  await page.getByTestId("confirm-yes").click();
+  await page.waitForFunction(
+    () => /A session of Map notes starts at \d{2}:\d{2}\./.test(document.body.innerText),
+    null,
+    { timeout: 30_000 },
+  );
+  await step(page, "after-b2-chat-kept-with-undo");
+  check("chat says the start is kept", true, "");
+  // Wait for the reset: the kept start runs once and finishes the task.
+  await until(
+    async () => {
+      const ts = await api(name, "GET", `/projects/${project.id}/tasks`);
+      return ts.length > 0 && ts.every((t) => t.status === "done");
+    },
+    300_000,
+    3000,
+    "the kept start to run at the reset and finish the task",
+  );
+  await until(
+    async () => {
+      const s = await api(name, "GET", `/sessions?projectId=${project.id}`);
+      return s.every((x) => !["planned", "running", "paused"].includes(x.status));
+    },
+    60_000,
+    1000,
+    "the session to end",
+  );
+  const sessions = await api(name, "GET", `/sessions?projectId=${project.id}`);
+  check("one session ran at the reset (two in all)", sessions.length === 2, sessions.map((s) => s.status));
+  await page.goto(`${ui}/projects/${project.id}/chat`);
+  await page.getByTestId("chat-messages").waitFor();
+  await page.waitForTimeout(1000);
+  const undo = page.getByTestId("chat-undo");
+  if (await undo.count()) {
+    await undo.last().click();
+    await page.getByTestId("chat-undo-note").last().waitFor({ timeout: 15_000 });
+    const note = await page.getByTestId("chat-undo-note").last().innerText();
+    await step(page, "after-b3-chat-undo-after-the-start-ran");
+    check("chat's Undo after the start ran is refused in words", note.includes(`Not undone: ${gone}.`), note);
+    check("chat's Undo never says Undone", !/Undone:/.test(note), note);
   } else {
-    projectId = JSON.parse(L.fs.readFileSync(L.path.join(R.bench(N).home, "..", "evidence", `walk-b-${mode}-project.json`), "utf8")).projectId;
+    await step(page, "after-b3-chat-no-undo-after-the-start-ran");
+    check("chat offers no Undo once the start ran", true, "");
   }
-  const inbox2 = await R.api(N, "GET", "/inbox");
-  out.inboxMessages = (inbox2.messages ?? []).map((m) => ({ title: m.title, body: m.body }));
-  out.inboxRequests = (inbox2.requests ?? []).map((r) => ({ title: r.title, status: r.status, done: r.done ?? r.doneLine ?? null }));
-  out.sessions = L.q("select id, status, summary, started_at from session where project_id = ? order by started_at", projectId);
-  const first = out.sessions[out.sessions.length - 1];
-  if (first) {
-    out.sessionView = (await R.api(N, "GET", `/sessions/${enc(first.id)}`)).summary;
-    await L.goto(page, `/sessions/${enc(first.id)}`, 2000);
-    out.sessionPage = await R.step(page, `b ${mode} ${phase} session page`);
-  }
-  out.lastResult = (await R.api(N, "GET", `/projects/${enc(projectId)}/summary`)).lastSession?.summary ?? null;
-  await L.goto(page, `/projects/${enc(projectId)}`, 2000);
-  out.overview = await R.step(page, `b ${mode} ${phase} overview`);
-  out.rows = (await R.api(N, "GET", `/projects/${enc(projectId)}/tasks`)).map((t) => ({ status: t.status, label: t.display?.label }));
-  out.running = await R.api(N, "GET", "/running");
-  out.apiRequests = L.fs.existsSync(R.bench(N).apiRequestLog)
-    ? L.fs.readFileSync(R.bench(N).apiRequestLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).map((r) => ({ path: r.path, status: r.status, answer: r.answer }))
-    : [];
-  out.problems = R.problems(N);
-  console.log(L.save(file, out));
+  const changes = await api(name, "GET", `/changes?projectId=${project.id}`);
+  const row = changes.find((c) => (c.commands?.[0]?.name ?? "") === "session.start");
+  check("the change row is refused with the reason", row?.undoBlockedReason === gone || row?.undoState === "irreversible", row);
+  await page.goto(`${ui}/changes`);
+  await page.waitForTimeout(1500);
+  const changesText = await step(page, "after-b4-changes-screen");
+  check("Changes shows the reason in place of Undo", changesText.includes(gone) || /cannot be undone/i.test(changesText), changesText.slice(0, 2000));
+  fs.writeFileSync(out, JSON.stringify({ checks, row }, null, 2));
   await browser.close();
+  const failed = checks.filter((c) => !c.ok).length;
+  console.log(`${checks.length - failed}/${checks.length} checks passed`);
+  process.exit(failed ? 1 : 0);
 })().catch((e) => {
-  out.error = String(e.stack || e);
-  console.log(L.save(file, out));
-  process.exit(1);
+  console.error(e);
+  process.exit(2);
 });

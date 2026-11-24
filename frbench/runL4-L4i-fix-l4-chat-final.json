@@ -1,0 +1,250 @@
+{
+ "area": "l4-chat-final",
+ "branch": "fix/l4-chat-final",
+ "head_sha": "8288019f600c3bc757d0af72f204a62ddfc35969",
+ "commits": [
+  {
+   "sha": "d7bcaed1d3e979d629945f0902aa4d242af8bb27",
+   "subject": "commands, runtime: the person's own words in a chat note stay the person's (L4h-left-1, L4h-left-6, U-095)"
+  },
+  {
+   "sha": "8f9e156984fd053f11c61e9697ef07824913cb07",
+   "subject": "runtime tests: a Stop during the claim guard's nudge asserts the exact stopped line (L4h-left-2, U-084)"
+  },
+  {
+   "sha": "d72b228b9a0c7ae930b3f83989a30e3b36dffffc",
+   "subject": "runtime: a parser question sets apart options that hold a comma (L4h-left-3, U-084)"
+  },
+  {
+   "sha": "0ea15639e277a561d8aec7dc50743d0c908ebf8c",
+   "subject": "runtime: a suggestion card is settled once, and a crash's leftover names what it left out (L4h-left-5, U-095)"
+  },
+  {
+   "sha": "0a16759cc9dc8eb33aa5e19f9936f1cd96e4c41f",
+   "subject": "ui: an Inbox Update shows its tone as a named dot, never the word \"warning\" (L4h-left-4, U-084)"
+  },
+  {
+   "sha": "a48d003d09cbcffe9b39af185d447bf3b0931637",
+   "subject": "commands: a card that needs this computer's OK, answered in chat, says where the note goes (L4h-left-4, U-095)"
+  },
+  {
+   "sha": "15cdd67f4678a50aaf65f6f477054c03c836f9b5",
+   "subject": "runtime: the suggestion card's Done line follows what was applied and never promises a Start that waits for you (L4h-left-4, U-095)"
+  },
+  {
+   "sha": "de62ae9c3a4f5a0e7b63ae4157ed3aeea64c709e",
+   "subject": "runtime: an absence about sessions or changes is history unless it says now; the stand-in's tool lines are tested (L4h-left-7, U-084)"
+  },
+  {
+   "sha": "d80e203ce8b0606f62e8eb475acb709e1bb4ed43",
+   "subject": "runtime: a Take this work out cut short by a crash is finished at the next start (L4h-left-5, U-095)"
+  },
+  {
+   "sha": "6c3df38ce1e137ef4e7c20a0fe0b5bf22bdb4185",
+   "subject": "docs: whose words a chat note is, settled-once suggestion cards, finished take-outs (L4h-left-1, -4, -5, -7)"
+  },
+  {
+   "sha": "5e56c0984399e880534bec78a1d65cdca8ff37a5",
+   "subject": "runtime tests: the recovered-path check reads its call's task with a safe optional chain (lint)"
+  },
+  {
+   "sha": "8288019f600c3bc757d0af72f204a62ddfc35969",
+   "subject": "runtime tests: the stand-in test joins its paths through @forerunner/platform/paths (lint:paths)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "L4h-left-1 (never cut): in chat every note reaches a task command through the model's call, so L4f's rule (a note is the person's only on their own command) made every chat note the model's. 'Try the digest page again and tell it to use the old layout' was read back to the person as if the model wrote it ('Note for its next brief: ...'), the Yes said 'The note goes into its next brief.', and the note was queued as the agent's. Session lead decision 2026-11-24: a note is the person's when its words are in the person's own message; a note the model wrote without them is read back.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/commands/test/chat-final.test.ts 'a move with the person's own words as its note: no note in the read-back, 'Your note' after the yes, queued as the person's, and its reason is the person's words' and 'a failed task's card: the person's own words answer its Try again with the note, read back without it; after a restart the yes still answers it so' (3 of the file's 5 cases failed at base); packages/runtime/test/chat-fix-tasks.test.ts 'the person's words passed as the note: the read-back names none, the yes after a restart says 'Your note', and the note is queued as theirs' (composed, two composes on one store); apps/ui/test/real-daemon.test.ts 'l4-chat-final, run L4' > 'L4h-left-1: POST /chat: the person's own words as a pause's note are not read back, the Yes says 'Your note' and the note is theirs; a note the model made up is read back, 'The note' and the agent's' and 'L4h-left-1: POST /chat: the person's own words to try a failed task again answer its card's Try again with their note, which is not read back to them, and reach the next brief' (both failed at base)",
+   "how": "New notesPersons(ctx, note) and saidInLine(line, note) in packages/commands/src/commands/shared.ts. A note is the person's when the actor is the person on their own command, or when the turn is chat or voice and the note's words appear together and in order in the person's own line (ctx.wordsUsed, which the stored card context keeps across a restart). The words must not come within 4 words after a turning word of the same clause, such as don't, without or nicht. task.ts's noteClause, noteGoes, queued-note author and notedByAgent all use it, and request.ts's ask read-back does too. moveAsCardAnswer (task.ts) answers a redirected move with the card's note-taking option and the person's note (not read back). On an option that takes no note, the person's note keeps the move so their words are kept, except on a high-risk card. The bench stand-in gains FORERUNNER_BENCH_CHAT_NOTE, which makes the chat model add a note it made up. A note written in a 'tool:' line is in the person's line.",
+   "check_in_the_app": "Bench (--provider bench): make a project with a ready task 'Write the FAQ', open its Chat and send: tool: task_pause {\"task\": \"Write the FAQ\", \"note\": \"Wait for the logo.\"}. The read-back reads 'Pause \"Write the FAQ\"? No session runs it until you press Resume.' with no 'Note for its next brief' clause. Press Yes: 'Paused \"Write the FAQ\": no session runs it until you press Resume. Your note goes into its next brief.' Then start the bench with FORERUNNER_BENCH_CHAT_NOTE='Put on hold by the person.' and send tool: task_pause {\"task\": \"Write the FAQ\"}. The read-back ends 'Note for its next brief: \"Put on hold by the person.\"' and the Yes says 'The note goes into its next brief.' live_check (real model, owner): (1) in a project's chat type 'Pause Write the FAQ and note: wait for the logo.' Expect no note clause in the read-back; after Yes, 'Your note goes into its next brief.', and the task drawer's queued note is yours. (2) With a failed task's card open, type 'Try the digest page again and tell it to use the old layout.' The card is answered Try again, the read-back does not repeat the note, and the next session's brief carries 'use the old layout'. (3) Type 'Pause Write the FAQ' with no note. If the model adds a note of its own, the read-back names it and the Yes says 'The note ...'."
+  },
+  {
+   "problem": "L4h-left-6 (in part): task.transition, task.update, task.dependencies and Redo kept a note or reason the model wrote as the task's reason (shown on the Changes row and drawer as if it were the person's).",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/commands/test/chat-final.test.ts 'a note the model wrote without the person's words is read back, 'The note' after the yes and the agent's, its words never the task's reason (L4h-left-6)'; packages/runtime/test/chat-fix-tasks.test.ts 'L4h-left-6: a note the model made up is never the reason an edit keeps; the person's own words are'",
+   "how": "givenReason(ctx, ...texts) in task.ts: in a chat or voice turn, only the person's own words (notesPersons) stand as a reason. Otherwise the command's own default reason is kept (transition, dependencies, update edit reason, 'Redo asked by you').",
+   "check_in_the_app": "Bench: start with FORERUNNER_BENCH_CHAT_NOTE='Put on hold by the person.', send tool: task_update {\"task\": \"Write the FAQ\", \"priority\": \"high\"} in chat and press Yes. On Changes (and in the task drawer's reason line), the reason is not 'Put on hold by the person.'. live_check: ask the chat to raise a task's priority without giving a reason; the change's reason is the app's own, never words the model made up."
+  },
+  {
+   "problem": "L4h-left-2 (never cut): the Stop cases asserted weakly. chat-depth's 'Stop pressed during the nudge' went from an exact line to negative checks, and conversation-memory's stopped-turn case matched the footer only by a pattern.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "None failed. This is a test-only item: the code was right and the assertions were weaker than the cases meant. The tightened cases are packages/runtime/test/chat-depth.test.ts 'Stop pressed during the nudge: the reply is neither the claim nor the guard's line, and it says the person stopped it' and packages/runtime/test/conversation-memory.test.ts 'the turn ends stopped: no guard line, the stopped line with what it cost, nothing changed, nothing waits'.",
+   "how": "Both cases now assert the exact footer 'You stopped this answer: under CHF 0.01 spent.' (deterministic on the stand-in's tokens; checked over three runs). chat-depth also asserts that the booked turn cost equals the reply's amount and is above zero.",
+   "check_in_the_app": "Bench: in a project's chat, ask a question and press Stop while the answer is being written. The reply ends 'You stopped this answer: under CHF 0.01 spent.' live_check: same with the real model. The amount matches the chat row on Costs."
+  },
+  {
+   "problem": "L4h-left-3: the parser's budget question joined options that contain commas with ', ', so voice and Read aloud could not tell where one option ends: 'Options: The session budget, until then, The project budget, permanently, Nothing.'",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-carried-sentences.test.ts 'l4-chat-final (L4h-left-3): 'No' is not named by 'Notes'; the parser's own budget question lists its three options apart' (and the comma case of 'names each option once: in the text when it names them, after it otherwise', changed for the design)",
+   "how": "parserQuestionReply (packages/runtime/src/conversation/sentences.ts) joins with '; ' when any option holds a comma: 'Options: The session budget, until then; The project budget, permanently; Nothing.' Lists without commas are unchanged. The other half of L4h-left-3 (the 'named' substring test) was already fixed at base by namesWords; a 'No'/'Notes' case now pins it.",
+   "check_in_the_app": "In Talk (voice) or any path the parser answers, ask to change the budget without saying which one. The question lists 'The session budget, until then; The project budget, permanently; Nothing.' and Read aloud pauses between options. live_check: say 'raise the budget to 20 francs' in Talk and listen for three separate options."
+  },
+  {
+   "problem": "L4h-left-5 (review of l4-chat-carried C4-left-7): (1) a second sync in the same process that read a suggestion card as 'applying' while the first sync was applying it took the card for a crash's leftover and settled it again, so a set the first sync could not make was tried twice. (2) A card a crash left at 'applying' after its change was made was settled without naming the changes the apply left out, and admitted no tasks it touched.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/runtime/test/task-proposal-sync.test.ts 'a second sync that read the card as 'applying' while the first applied it does not apply it again' and 'a card a crash left at 'applying' after its change was made names the change the apply left out and admits the task it changed'",
+   "how": "settleProposal (packages/runtime/src/session/task-proposal.ts) now marks the card with a compare-and-set on its version (store.humanRequest.update). On version_conflict it returns 'skipped' and the sync does not count it. The recovered path computes left_out with the commands' own check (deps.check), admits the touched tasks as well as the made ones, and records waits_for_you.",
+   "check_in_the_app": "Bench: let the agent file a suggestion card ('The agent suggests changes'), press 'Make these changes' in the Inbox, and read the Answered line. It names each change that was left out, with why. live_check: press 'Make these changes' and stop the app at once. After a restart, the card's Answered line names what was left out, and the changed tasks run at the next Start, with no change applied twice."
+  },
+  {
+   "problem": "L4h-left-5 sibling: a merged-through card's 'Take this work out' is marked taken_out before the take-out runs. A crash between that mark and the take-out's answer left the card at 'Taking the work out: the answer comes in a moment.' for good, because no later sync looked at it again.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/runtime/test/pr-answers-takeout.test.ts 'the next sync asks the take-out again and the Answered line says what came of it; a later sync asks nothing'",
+   "how": "A new finishTakeOuts(deps) runs first in syncPrAnswers (packages/runtime/src/session/pr-answers.ts). For answered, left-open decision rows with outcome taken_out, applied_at set and no take_out_result, it asks TaskTakeOut.takeOut again. That call is idempotent on the task's merge record: an open pull request reads 'is being taken out in #N' and a merged one 'was taken out in #N'. It patches take_out_result into the Answered line. A take-out this process is running now is left alone (takingOutNow).",
+   "check_in_the_app": "Bench with the GitHub stand-in: on a merged-through card press 'Take this work out' and stop the app before the answer comes. After a restart, the card's Answered line says what came of it ('... is being taken out in #N'), not 'Taking the work out: the answer comes in a moment.'. live_check (owner, real GitHub sandbox): the same with a real pull request. Exactly one take-out pull request is opened."
+  },
+  {
+   "problem": "L4h-left-4: the Inbox's Updates list printed the stored message type 'warning' under a lapse Update (design section 5 rule 6: no raw states or type names).",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "apps/ui/test/chat-final.test.tsx 'a warning Update shows its sentence and a named dot, never the word 'warning''",
+   "how": "InboxPage.tsx replaces <Badge>warning</Badge> with an amber dot (role img, aria-label and title 'Worth a look', data-testid message-tone), matching the session log.",
+   "check_in_the_app": "Inbox > Updates: an Update of tone warning (for example a lapsed answer: '... ask again if you still want it.') shows a small amber dot whose tooltip reads 'Worth a look', and the word 'warning' appears nowhere."
+  },
+  {
+   "problem": "L4h-left-4: chat cannot answer a card that needs this computer's OK (the ladder's '\"X\" failed 4 times'). It replied 'Answer it on its card in the Inbox: ... Nothing else was filed.' and silently dropped any note the person gave with the answer.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/commands/test/chat-final.test.ts 'a card that needs this computer's OK: the reply says where the person's note goes, or that it was not kept'",
+   "how": "The executor's answer_on_card refusal now carries the note. cardTitleOf returns {title, takesNote}. The reply ends 'Nothing else was filed; type your note there with Try again.' for an option with a note field, or 'Nothing else was filed, and your note was not kept.' for one without. It says 'the note' when the model wrote it (notesPersons).",
+   "check_in_the_app": "With a task that failed 4 times (its '\"X\" failed 4 times' card open in the Inbox), type in chat 'try X again and tell it to use the old layout'. The reply reads 'Answer it on its card in the Inbox: \"X\" failed 4 times. Nothing else was filed; type your note there with Try again.' live_check: same with the real model."
+  },
+  {
+   "problem": "L4h-left-4 (C4-left-5's words): the suggestion card's Done line read the proposed changes, not the applied ones. A set whose split was left out and whose drop applied still said 'your next Start runs it', and it said so even when what changed waits for a task only the person can do, which no Start runs.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/runtime/test/task-proposal-sync.test.ts 'a set whose split was left out and whose drop applied promises no Start' and 'what changed waits for a task only the person can do: the line names it and promises no Start'",
+   "how": "appliedChanges(card) in packages/runtime/src/daemon/task-proposal-words.ts leaves out any change whose line starts a left_out entry, and onlyDrops reads the applied list. The apply records waits_for_you (waitsForYou: the person's task that every changed ready or draft task waits for, directly or through other tasks). The line then reads 'Changed 1 task; it waits for \"Send the logo\", which is yours to do.' ('they wait' for several tasks).",
+   "check_in_the_app": "Bench: have a 'Me' task 'Send the logo' that 'Style the page' depends on, let the agent suggest a change to 'Style the page', and press 'Make these changes'. The Answered line reads 'Changed 1 task; it waits for \"Send the logo\", which is yours to do.' and promises no Start."
+  },
+  {
+   "problem": "L4h-left-7: the claim guard's NOW_STATE treated 'I don't see any changes.' and 'I don't see any sessions.' as statements about now, so the model was never asked to look history up first. The stand-in also sent a 'tool:' line naming review.md to answer_thoroughly.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-final.test.ts 'claimOf: plain sessions and changes are absence claims; in a state now they are free' and 'a tool line naming review.md calls that tool, not answer_thoroughly; the made-up note goes on a call that takes one'",
+   "how": "aboutNow(rest) in packages/runtime/src/conversation/claims.ts frees an absence about sessions or changes only with a word of now (running, open, waiting, right now, for your yes). Tasks, cards and questions behave as before. In testenv/src/bench/role-player.ts, thoroughWhy returns null for '^tool:' lines.",
+   "check_in_the_app": "live_check only (needs the real model): ask the chat 'did anything change yesterday?'. If the model starts with 'I don't see any changes.', the guard has it look up the Changes history and the answer names them. 'I don't see any running sessions.' is answered as before."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L4h-left-8 (all): the Connect offer's kind; the fence's silent wait drop (L4b-left-2); the plan card's repeated title (L4b-left-3); the L4b-left-5 coverage cases",
+   "why": "These are cut-line items in intake, plan-card and fence code, outside this area's chat files. The time went to the never-cut items (L4h-left-1, -2) and the review findings of L4h-left-3..7. Nothing was changed, so they stay in /tmp/frbench/phaseE.json as found."
+  },
+  {
+   "problem": "L4h-left-7 rest: conversationOfCard reads up to 400 rows; the fake daemon's split Undo lacks the 'waits changed' refusal; the fake's switchedHere says 'there'; Talk flashes for a project not in the store",
+   "why": "Cut-line test-fixture and performance polish. Only the claim guard and the stand-in tool-line parts were done. None of these changes what a person sees in the real app."
+  },
+  {
+   "problem": "L4h-left-6 rest: a chat task_create at Assisted still reads back the task's description as written by the model",
+   "why": "Left unchanged on purpose. The description is the model's draft of the person's ask, and the read-back is the person's chance to see it. Whether the person's own words in it should skip the read-back is a question for the session lead, recorded in the ADR 0119 amendment of 2026-11-24."
+  },
+  {
+   "problem": "Parts of L4h-left-4 and L4h-left-7 were already fixed at base, so no change was made: the measured line (packages/runtime/src/daemon/views.ts:926-930), polling openCards (b731511), the lapse's single emit (c8184e3), the fake heardChat 'no' (440b6bc), ADR 0109's labels, and agent.ts's doc blocks",
+   "why": "Each was checked against the base code and is already right. The L4h-left-3 namesWords half is also fixed at base and is now pinned by a test."
+  }
+ ],
+ "validation": [
+  {
+   "command": "DOCS_CHECK_BASE=claude/nifty-knuth-f9udt0 flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0: lint 0 errors (40 existing warnings), lint:paths ok, typecheck clean, unit 567 files / 6267 passed, 7 skipped; docs-check ok (29 files); secret-scan clean (2283 files). The two earlier runs found a biome noUnsafeOptionalChaining issue and a lint:paths node:path import in new tests, fixed in 5e56c09 and 8288019."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped by their own environment guards; 30 tests passed, 83 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 105 files, 1524 tests passed (includes real-daemon.test.ts and its new 'l4-chat-final, run L4' cases)"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "39 passed, 1 failed: e2e/updates.spec.ts:31 'the model watch recommendation can be adopted' got by 'human' instead of 'human_alice'. This is a race in UpdatesPage.tsx:136 (me?.id ?? 'human'), a page this branch does not touch."
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts e2e/updates.spec.ts --repeat-each 3",
+   "result": "6 passed: the failure above is flaky and unrelated"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "exit 0; Failures: None"
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "no matches"
+  },
+  {
+   "command": "fail-first check: base sources restored temporarily (git show of the base file into place), new tests run, then the fixed sources put back from the scratchpad copies",
+   "result": "every failing_test_before listed above failed on base sources and passes on HEAD"
+  },
+  {
+   "command": "bench walks (--provider bench) before and after with /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk-note.cjs",
+   "result": "before: the read-back ended 'Note for its next brief: \"Wait for the logo.\"' and the Yes said 'The note goes into its next brief.'. after: no note clause, and the Yes says 'Your note goes into its next brief.'. after with FORERUNNER_BENCH_CHAT_NOTE: the model's note is still read back and called 'The note'. Bench stopped (stoppedAt set, no pids alive)."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-l4-chat-final-shots/before/01-before-1-readback-of-the-persons-note.png",
+   "/tmp/frbench/fix-l4-chat-final-shots/before/02-before-2-after-yes.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-l4-chat-final-shots/after/01-after-1-readback-of-the-persons-note.png",
+   "/tmp/frbench/fix-l4-chat-final-shots/after/02-after-2-after-yes.png",
+   "/tmp/frbench/fix-l4-chat-final-shots/after/03-after-model-note-1-readback-of-the-persons-note.png",
+   "/tmp/frbench/fix-l4-chat-final-shots/after/04-after-model-note-2-after-yes.png"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/commands/test/selftasks-carried.test.ts (the parser-note case)",
+   "why": "Under the session lead's 2026-11-24 decision, the person's own words given as a note answer the failed card's Try again with that note (request.answer), and the read-back has no note clause."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts (the fixup-l4-selftasks-carried model-note case)",
+   "why": "A note written in a bench 'tool:' line is now in the person's own line and so is the person's. The case gets its model-made note from the stand-in's new FORERUNNER_BENCH_CHAT_NOTE knob, and the tool line carries no note."
+  },
+  {
+   "test": "packages/runtime/test/chat-carried-sentences.test.ts 'names each option once: in the text when it names them, after it otherwise' (comma case)",
+   "why": "Options that hold a comma are now set apart with '; ' (L4h-left-3)."
+  }
+ ],
+ "new_problems": [
+  "Phone: apps/ui/src/mobile/screens/InboxScreen.tsx:240 renders <Badge>{message.type}</Badge>, so the raw type ('warning') shows on the phone's Inbox. This is the sibling of the desktop fix in 0a16759, left for the phone round.",
+  "apps/ui/src/pages/UpdatesPage.tsx:136 sends `me?.id ?? \"human\"`: a press on the model-watch report before /me has loaded answers it as 'human'. e2e/updates.spec.ts:31 failed once on this race (expected by 'human_alice'), then passed 3 of 3. Not touched by this branch.",
+  "Question for the session lead: should a chat task_create at Assisted skip reading back a description that is the person's own words (L4h-left-6 rest)? Recorded in the docs/decisions/0119 amendment of 2026-11-24."
+ ],
+ "notes_for_other_areas": [
+  "notesPersons(ctx, note) and saidInLine(line, note) in packages/commands/src/commands/shared.ts are the one test of whose words a note is (the person's when its words are together and in order in ctx.wordsUsed of a chat or voice turn, and not within 4 words after a turning word of the clause). Any command that reads back or attributes a note or reason should use it rather than ctx.actor alone.",
+  "givenReason(ctx, ...texts) in packages/commands/src/commands/task.ts: in chat or voice, only the person's own words become a task's reason. Use it for any new command that stores a reason.",
+  "moveAsCardAnswer (task.ts) carries the note for a note-taking option or a high-risk card. The executor's cardTitleOf now returns {title, takesNote}, and the answer_on_card refusal ends 'Nothing else was filed; type your note there with <option>.' or 'Nothing else was filed, and your note was not kept.'",
+  "task_proposal sync: settleProposal returns 'applied' | 'kept' | 'failed' | 'skipped'. 'skipped' means another sync won the compare-and-set and is not counted. The card's change_card gains waits_for_you (the title of the person's task the changed tasks wait for), which proposalOutcome words as 'it waits for \"X\", which is yours to do.'",
+  "pr-answers.ts: finishTakeOuts(deps) runs first in syncPrAnswers and the takingOutNow set guards in-process take-outs. l4-github-carried or any later take-out change should keep both (take_out_result is the patched Answered line).",
+  "Bench stand-in: FORERUNNER_BENCH_CHAT_NOTE='<words>' makes the chat model add a note it made up to a tool call that takes a note (documented in scripts/bench/README.md). A note in a 'tool:' line is the person's own.",
+  "conversation/claims.ts aboutNow(rest): absences about sessions or changes are history (recall first) unless they carry a word of now. Tasks, cards and questions are unchanged.",
+  "parserQuestionReply joins options with '; ' when any option holds a comma.",
+  "Docs touched: docs/decisions/0119 amendment dated 2026-11-24 (appended), docs/maintainers/commands.md, runtime.md, apps.md, testing.md, scripts/bench/README.md, and docs/user-guide.md '### Your own words in a chat note stay yours (2026-11-24)'. UPDATE-LOG, CHANGELOG, requirements and core-experience were not edited.",
+  "Suggested UPDATE-LOG lines: 'Chat: your own words given as a note stay yours: not read back, \"Your note goes into its next brief\", queued as yours; a note the model made up is still read back (U-095, L4h-left-1).' 'Suggestion cards are applied once even when two syncs race, and the Done line follows what was applied and names a task of yours it waits for (U-095).' 'A Take this work out cut short by a crash is finished at the next start (U-095).' 'Inbox Updates show a named dot instead of the word warning (U-084).'"
+ ]
+}

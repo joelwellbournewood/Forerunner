@@ -1,0 +1,162 @@
+{
+ "area": "l4-starts-carried",
+ "branch": "fix/l4-starts-carried",
+ "head_sha": "84f9e7e",
+ "commits": [
+  {
+   "sha": "f3544ed",
+   "subject": "commands, runtime: the Undo of a start kept from chat drops only that start, and is refused once it ran or was cancelled (U-078, U-093, L4a-left-5)"
+  },
+  {
+   "sha": "3b6f374",
+   "subject": "runtime, ui: the Start dialog says what holds each waiting task and no \"Give your agent work first\" beside a held task; a refused phone Start lifts no Stop all (U-093, U-078, L4g-left-1, L4d-left-2)"
+  },
+  {
+   "sha": "84f9e7e",
+   "subject": "runtime: a waiting task whose dependency's review waits for room reads \"which is done; its review waits ...\" (U-093, L4g-left-1)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Review blocking 1 (L4g-left-1): a task was paused at the project's budget and nothing else was ready. The Start dialog said the limit with Open Settings, and under it 'Give your agent work first: add a task on the Tasks tab ...'. That second instruction competed with the first, although the work exists and only the limit holds it.",
+   "u_ids": [
+    "U-093"
+   ],
+   "failing_test_before": "apps/ui/test/project.test.tsx 'l4-starts-carried, run L4' > 'L4g-left-1 (fixup): a task paused at the project's budget: the limit and Open Settings, never 'Give your agent work first'' (no start-session-cannot-run box; the dialog had flipped to start-session-no-work). Also apps/ui/test/real-daemon.test.ts 'l4-starts-carried, run L4' > 'L4g-left-1 (fixup): ...' (blocked.holds undefined).",
+   "how": "Root cause: StartSessionDialog's noReadyTask rule left out only blockers that link to /inbox. The fix had moved the held blocker's link to /settings#other-settings, and to the Tasks tab for 'which you paused'. Now heldBlocker (held-words.ts) and the inline answer path of startBlocked set StartCheckView.blocked.holds ('answer', 'limit' or 'paused'). The dialog shows 'Give your agent work first' only when holds is absent. The fake daemon gets the same field through the same leaf.",
+   "check_in_the_app": "Bench --provider bench --env 'FORERUNNER_BENCH_USAGE=club motto:20000'. Give a project a CHF 0.06 budget (Settings) and the ready task 'Write the club motto in motto.txt'. Start a session; the task pauses at the budget. Open Start. The box says 'Nothing can run: \"Write the club motto in motto.txt\" ... raise it in Settings.' with Open Settings and nothing else; there is no 'Give your agent work first', and Start is off. Evidence: /tmp/frbench/fixup-l4-starts-carried-steps/bench-a/04-after-1-start-dialog-paused-at-the-project-budget.png. Before: /tmp/frbench/review-l4-starts-carried-steps/bench1/05-b3-start-dialog-paused-at-the-project-s-budget.png. Live (final_check): the same dialog after a real-model run paused at a project's budget."
+  },
+  {
+   "problem": "Review blocking 2 (L4g-left-1 on the waiting list): in the same yellow box, the Start dialog's waiting list said '\"B\" waits on \"A\", which needs your answer, so it cannot run. Answer it in the Inbox ...'. This happened for a dependency paused at the project's budget and for one the person paused, which has no card. Sibling: a dependency that a run left paused with no card, and that the person did not pause, said the same.",
+   "u_ids": [
+    "U-093"
+   ],
+   "failing_test_before": "apps/ui/test/project.test.tsx 'l4-starts-carried, run L4' > 'L4g-left-1 (fixup): the waiting list says what holds each dependency ...' (all three lines said 'which needs your answer'). apps/ui/test/real-daemon.test.ts 'L4g-left-1 (fixup)' (no waitsOn[].held). packages/runtime/test/held-words.test.ts 'fixup: ...'.",
+   "how": "Root cause: stateClause and stuckAdvice read only the stored status, and the start check sent nothing else. Now GET /projects/:id/start-check sends waiting[].waitsOn[].held from heldDependency(h) (held-words.ts). heldFacts is read once for both the blocker and the list. The words by hold:\n- limit: state 'paused at the project's budget of CHF 0.06', advice 'Raise the project's budget in Settings, or change what it waits for on the Tasks tab.' outerLimitHold also returns limit and raise: 'Raise the monthly cap in Settings' and 'Raise the share in Settings'.\n- paused: 'which you paused', or 'which is paused' for a pause the person did not make. The advice is 'Resume \"A\", or change what it waits for on the Tasks tab.'\n- answer: 'which needs your answer' with the Inbox, only when an open card asks.\n\nheldFacts now words every needs_human task (HeldTask paused has byYou). The dialog uses held.state and held.advice. The fake daemon sends the same through heldDependency and fakeHeld.\n\nThe bench walk found one more form. For a dependency whose work is done and whose review waits for room, the dialog said '\"A\", is done; its review waits ...'. A limit that does not start with 'paused' now takes 'which' (afterName), in the blocker and in the list.",
+   "check_in_the_app": "On the same bench, add 'Write the club rules in rules.txt' waiting on the motto task. Add 'Write the club song in song.txt' and pause it on the Tasks tab, then add 'Sing the club song from song.txt' waiting on it. Open Start. The list reads:\n- '\"Write the club rules in rules.txt\" waits on \"Write the club motto in motto.txt\", which is done; its review waits for room in the project's budget, so it cannot run. Raise the project's budget in Settings, or change what it waits for on the Tasks tab.'\n- '\"Sing the club song from song.txt\" waits on \"Write the club song in song.txt\", which you paused, so it cannot run. Resume \"Write the club song in song.txt\", or change what it waits for on the Tasks tab.'\n\nNo 'needs your answer' appears. The 375 px view shows the same lines. Evidence: /tmp/frbench/fixup-l4-starts-carried-steps/bench-a/05-after-2-start-dialog-with-waiters.png and 06-...-375.png; walk-a.json has 8/8 checks. Before: review bench1 08-b6 and 09-c1. Live (final_check): the same lines after a real run paused at a limit."
+  },
+  {
+   "problem": "Review blocking 3 (L4a-left-5): the Undo of a start kept from chat for the credential's reset was never refused. Once that start had run at the reset, Undo still answered 'Undone: a session on Map notes on your PC is back to no session.'. It also dropped whatever the project had kept by then: a Start kept later from the dialog, or the person's session waiting to go on.",
+   "u_ids": [
+    "U-078",
+    "U-093"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-starts-carried, run L4' > 'L4a-left-5 (fixup): the Undo of a start kept from chat drops only that start, after a restart too, and once it ran or was cancelled the Undo is refused in words' (undoBlockedReason was undefined). With the kept id not read back, the restart step fails (undoable false).",
+   "how": "Root cause: CommandLoop.startUndoRefusal returned null for after.kept_start. The command's undo called cancelKeptStart(projectId), which is dropKeptStart(store, projectId) and drops every kept start of the project.\n\nNow:\n- KeptStart.id is stored on the wait and parsed by keptOf, so it survives a restart.\n- The keepStart port keeps the start with newId() and returns { sentence, keptId }; session.start's after carries kept_id.\n- CommandLoop gets the dep keptStartWaits(projectId, keptId). Once that start no longer waits (it ran, was cancelled, or Stop all dropped it), the Undo is refused with KEPT_START_GONE_REASON ('the start kept for the reset has already run or was cancelled; there is nothing to undo') and the row is marked irreversible. Changes shows the same reason.\n- cancelKeptStart(projectId, keptId) is dropKeptStart(store, projectId, { id }), which drops only that person start.\n- The fake daemon records chat's kept start as a change with an Undo and refuses it the same way.",
+   "check_in_the_app": "Bench --provider bench-api --api-key limited --env FORERUNNER_BENCH_API_LIMIT_MIN=2.\n1. Start a session on 'Map notes' (task 'Write notes/map.md'). It meets the limit; press Cancel on the wait.\n2. In the project's chat type 'run it now'. The read-back is 'Start a session on Map notes at HH:MM (up to CHF 5.00)?'. Press Yes: 'A session of Map notes starts at HH:MM.' with Undo.\n3. Wait for the reset. The session runs once and the task is done.\n4. Press the reply's Undo. Chat says 'Not undone: the start kept for the reset has already run or was cancelled; there is nothing to undo.', never 'Undone'. Changes shows the row as 'Cannot be undone'.\n\nEvidence: /tmp/frbench/fixup-l4-starts-carried-steps/bench-b/01..04 and walk-b.json (8/8). Before: review bench4 03-m3.\n\nLive (final_check): with the real subscription at its limit, keep a start from chat. After the reset its Undo says the same sentence. A Start kept later from the dialog stays when an older chat Undo is pressed."
+  },
+  {
+   "problem": "Review notes (cheap and fixed here), L4d-left-2 siblings:\n- The phone's plain Start lifted Stop all before the refused-credential check threw, so Stop all went off and nothing ran.\n- With Stop all on and a refused key, POST /sessions answered with the key's sentence instead of Stop all's.\n- No test showed the phone's row failing with the sentence.\n- The R-startcred comment on server.ts startBlocked was stale.\n- The kept start's change sentence said 'A session on X' while the run's own sentence said 'A session of X'.",
+   "u_ids": [
+    "U-078",
+    "U-093"
+   ],
+   "failing_test_before": "packages/runtime/test/remote-watcher.test.ts 'l4-starts-carried, run L4' > 'a phone start refused in words fails its row with that sentence and lifts no Stop all' (the row was done and Stop all was lifted). apps/ui/test/real-daemon.test.ts 'L4d-left-2: ...', at its new Stop all lines (received 'Nothing can run until you save a new API key in Settings.' instead of KILL_ACTIVE_START_MESSAGE).",
+   "how": "RemoteCommandDeps.startRefused is asked before the watcher's kill.resume(). Compose passes refusedStart(projectId, { evenStopped: true }). The row fails with the Start dialog's sentence and Stop all stays. RuntimeApp.refusedStart returns null while Stop all is on unless evenStopped, so POST /sessions answers Stop all's 409 first, as the Start dialog does. The comment and the 'of' sentence are updated.",
+   "check_in_the_app": "Bench --provider bench-api --api-key refused. Create a project from a brief so the refusal is known, then add a ready task to another project. Press Stop all, then send a phone Start for that project. The phone's row fails with 'Nothing can run until you save a new API key in Settings.' and the header still shows Stop all. A Start from the API answers 'Stop all is on, so no session can start. ...'. Live (final_check): with a revoked real key and Stop all on, the phone's Start shows that sentence and Stop all stays."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "The fixer's own not_done items (L4-money-207 rest, 210/211/212/215/216, L4g-left-5/6/8, L4b-left-6, L4c-left-1/2/3, L4d-left-1/3/4).",
+   "why": "They were outside this fix-up. The fix-up covered the review's three blocking findings and its cheap notes. Their reasons stand as the fixer gave them."
+  },
+  {
+   "problem": "Reviewer note: the L4-money-201 case and the refused-key case still start their sessions through rt.scheduler.requestStart, an internal path. They could instead start through POST /sessions before the refusal is known.",
+   "why": "This only refines tests. The assertions are unchanged and nothing is weakened. The bench and the new phone row test cover the person's boundary. Left as the fixer built it."
+  },
+  {
+   "problem": "Reviewer note: the fake daemon's 409 text ('<head>; then your session goes on.') differs from the daemon's ('Your session of 09:00 goes on by itself at 11:40.').",
+   "why": "The fake does not model session start times. No UI test reads the 409's text. Left as it is."
+  },
+  {
+   "problem": "Reviewer note: the 400's details.cause 'credential_refused' is overwritten to 'validation' by the server's error handler.",
+   "why": "Harmless: no client reads the cause."
+  },
+  {
+   "problem": "Bench BEFORE screenshots.",
+   "why": "The before state of each blocking item is the reviewer's bench evidence: bench1 05-b3, 08-b6 and 09-c1; bench4 03-m3 under /tmp/frbench/review-l4-starts-carried-steps/. It is also each failing-first test. Only AFTER screenshots were taken, kept in /tmp/frbench/fixup-l4-starts-carried-steps/bench-a and bench-b."
+  }
+ ],
+ "validation": [
+  {
+   "command": "DOCS_CHECK_BASE=claude/nifty-knuth-f9udt0 flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0. Unit tests: 564 files, 6258 passed, 7 skipped. docs-check ok (38 files), link-check ok (213 files), secret-scan clean (2280 files). Lint and typecheck clean."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped. The Postgres cases skip without FORERUNNER_TEST_PG."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx vitest run --config vitest.config.ts",
+   "result": "exit 0: 104 files, 1532 passed (real-daemon.test.ts included)"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 40 passed (1.1 min)"
+  },
+  {
+   "command": "node scripts/bench/start.mjs --name fixup-l4-starts-carried --daemon-port 49240 --ui-port 2840 --fresh --provider bench --env 'FORERUNNER_BENCH_USAGE=club motto:20000'; node <scratchpad>/walk-a.cjs",
+   "result": "8/8 checks passed (bench-a/walk-a.json). The first run found the 'is done; its review waits' grammar, which is fixed in 84f9e7e; the daemon was restarted and the walk run again."
+  },
+  {
+   "command": "node scripts/bench/start.mjs --name fixup-l4-starts-carried --daemon-port 49240 --ui-port 2840 --fresh --provider bench-api --api-key limited --env FORERUNNER_BENCH_API_LIMIT_MIN=2; node <scratchpad>/walk-b.cjs",
+   "result": "8/8 checks passed (bench-b/walk-b.json). The bench was stopped and /tmp/frbench/fixup-l4-starts-carried was deleted."
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "nothing found"
+  },
+  {
+   "command": "pnpm test:injection; cargo checks",
+   "result": "Not run. No new text reaches a model: the new words are the app's own Start dialog and Undo sentences. The desktop shell was not touched."
+  }
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'C2-left-2: with only a paused task whose card asks ...' and 'l4-starts-carried, run L4' > 'L4g-left-1: ...' (blocked toEqual)",
+   "why": "The blocked object gains holds: 'answer' or 'limit', which says a task of the work holds it. The sentence and the action are unchanged."
+  },
+  {
+   "test": "packages/runtime/test/held-words.test.ts 'L4g-left-1: the month's cap ...' and 'a card that asks something ...'",
+   "why": "outerLimitHold also returns limit and raise, and heldBlocker's answer blocker carries holds: 'answer'. The clause and the sentences are unchanged."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'l4-starts-carried, run L4' > 'L4d-left-2: ...'",
+   "why": "Assertions only added (Stop all's 409 first; refusedStart with and without evenStopped). Nothing removed."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-l4-starts-carried-steps/bench1/05-b3-start-dialog-paused-at-the-project-s-budget.png",
+   "/tmp/frbench/review-l4-starts-carried-steps/bench1/08-b6-start-dialog-with-a-waiter.png",
+   "/tmp/frbench/review-l4-starts-carried-steps/bench1/09-c1-start-dialog-with-paused-by-you-dependency.png",
+   "/tmp/frbench/review-l4-starts-carried-steps/bench4-kept-undo/03-m3-after-undo-after-the-reset.png"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-l4-starts-carried-steps/bench-a/04-after-1-start-dialog-paused-at-the-project-budget.png",
+   "/tmp/frbench/fixup-l4-starts-carried-steps/bench-a/05-after-2-start-dialog-with-waiters.png",
+   "/tmp/frbench/fixup-l4-starts-carried-steps/bench-a/06-after-3-start-dialog-with-waiters-375.png",
+   "/tmp/frbench/fixup-l4-starts-carried-steps/bench-b/01-after-b1-chat-readback-start-at-the-reset.png",
+   "/tmp/frbench/fixup-l4-starts-carried-steps/bench-b/02-after-b2-chat-kept-with-undo.png",
+   "/tmp/frbench/fixup-l4-starts-carried-steps/bench-b/03-after-b3-chat-undo-after-the-start-ran.png",
+   "/tmp/frbench/fixup-l4-starts-carried-steps/bench-b/04-after-b4-changes-screen.png"
+  ]
+ },
+ "new_problems": [
+  "The Start dialog still says the blocker for one waiter in the box's first sentence, then says it again in the waiting list below (the line adds what to do). The failed and cancelled dependencies already did this before this area. Evidence: bench-a/05-after-2-start-dialog-with-waiters.png. Folding the two into one is a design question; the related wait-said-four-times item is L4g-left-6.",
+  "A project whose only task the person paused, with nothing else to run, still says 'Nothing can run: no task is ready.' and 'Give your agent work first'. heldFacts' needsYou leaves out paused tasks, as the fixer built it. Saying '\"X\" which you paused [Open Tasks]' there would need the no-waiter blocker for paused tasks."
+ ],
+ "notes_for_other_areas": [
+  "StartCheckView.blocked.holds ('answer' | 'limit' | 'paused'): a task of the project's work holds the start. A screen that offers 'add work' next to a blocker should hide it while holds is set (the Start dialog does).",
+  "StartCheckView.waiting[].waitsOn[].held { why, state, advice } comes from held-words.ts heldDependency(h). It is sent only for a needs_human dependency. HeldTask 'limit' now carries limit and raise; HeldTask 'paused' has byYou (false: 'which is paused'). heldFacts now words every needs_human task.",
+  "KeptStart.id (billing-pick.ts) is persisted on the wait. dropKeptStart(store, projectId, { id }) drops one person start only; keptStartWaits(store, projectId, id) says whether it still waits. CommandPorts.keepStart returns { sentence, keptId }, and cancelKeptStart(projectId, keptId) is new. session.start's after carries kept_id. KEPT_START_GONE_REASON is exported from @forerunner/commands, and CommandLoopDeps.keptStartWaits is new.",
+  "RemoteCommandDeps.startRefused(projectId) is asked before the phone's Start lifts Stop all. RuntimeApp.refusedStart(projectId, { evenStopped }) is null while Stop all is on unless evenStopped.",
+  "The kept start's change-card sentence now reads 'A session of X starts at HH:MM (up to CHF 5.00).' ('of', as the run's sentence).",
+  "Suggested UPDATE-LOG addition for l4-starts-carried: 'the Start dialog's waiting list says what holds each task (\"paused at the project's budget ...; Raise the project's budget in Settings\", \"which you paused\" with Resume; \"needs your answer\" only when a card asks) and no \"Give your agent work first\" beside a held task; the Undo of a start kept from chat drops that start only and, once it ran or was cancelled, says there is nothing to undo; a phone Start refused for a refused key lifts no Stop all (U-078, U-093).'"
+ ]
+}

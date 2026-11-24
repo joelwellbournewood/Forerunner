@@ -1,0 +1,429 @@
+{
+ "why": "Run L4 sub-run L4i's leftovers (merged and pushed at c15d75e). Run L4 is complete; these go to the wave 8 planner (an L4 leftovers area in its plan, sized there) and to phase H.",
+ "base": "c15d75e",
+ "routing": {
+  "never_cut": [
+   "Phone plain 'start' (remote watcher, kind start) goes straight to scheduler.requestStart and skips POST /sessions' refusals (nothing runnable, a budget above the monthly cap, the one-wait rule): money rule. Route: phase H (the phone), never cut; wave 8 may take it if its area touches the remote watcher.",
+   "W15-01's sole-linked rule: an unmarked open fr/docs-scaffold pull request of another project counts as this project's own when this project is the only one linked to the repository, so the scaffold and Try again write into it. Writing into another project's pull request breaks wave 8's 'Never' rule. Route: wave 8, never cut."
+  ],
+  "early": [
+   "UpdatesPage.tsx:136 sends `me?.id ?? \"human\"`: a press before /me has loaded answers as 'human' (attribution), and e2e/updates.spec.ts failed once on this race. Route: wave 8's first group (a flaky UI test source)."
+  ],
+  "decided": [
+   "Assisted chat task_create description read-back: decided by the L4h-left-1 rule (session lead 2026-11-24): a description whose words are in the person's own message is the person's and is not read back; one the model wrote is read back."
+  ],
+  "phase_h": [
+   "Phone Inbox renders <Badge>{message.type}</Badge> (apps/ui/src/mobile/screens/InboxScreen.tsx:240): the raw type 'warning' shows on the phone (desktop fixed in 0a16759)."
+  ]
+ },
+ "merge_problems_left": [
+  "Nothing the merge broke is left: every suite above passed on the merged tree, and no fix was needed after the merge.",
+  "Each area's not_done items and new_problems still stand as its report lists them:\n- starts-carried: L4-money-207 rest, 210-216, L4g-left-5/6/8, L4b-left-6, L4c-left-1/2/3, L4d-left-1/3/4.\n- chat-final: L4h-left-8, the rest of L4h-left-7, the phone Inbox's raw 'warning' badge (apps/ui/src/mobile/screens/InboxScreen.tsx:240), the UpdatesPage me?.id race.\n- github-carried: L4-github-106, L4e-left-5/7/9; after Close, 'Left N reviewed pull requests for you to merge.' stays.",
+  "Two non-blocking review notes on l4-github-carried were not handled before the merge:\n- Try again's refusal names the repository as the person typed it, not as the owner/name the line above it shows (packages/runtime/src/daemon/take-over-retry.ts and apps/ui/test/fake-daemon.ts).\n- The fake daemon's close route answers 403 for an unknown project; the daemon answers 404.",
+  "Still to run: CI and the Desktop app workflow on c15d75e."
+ ],
+ "items": [
+  {
+   "area": "l4-starts-carried",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "L4-money-207 (rest): the 'Interrupted' end line shows the restart's time, and one crash that released tasks in several projects posts one Update with project_id null. — why: On the cut line. The time half needs the session.ended event and ended_at stamped at the last event's time. recovery.ts already keeps handoff.last_worked_at, but event.append stamps created_at from the store's clock, so the change goes deeper than this run had room for. The per-project Update needs ghosts of two agents with projects; one agent holds one active session, and the critic's has no project. That case is not reachable on one install."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "L4-money-210/211/212/215/216. — why: On the cut line and not reached. 216 also needs its behaviour checked before the words change: whether tasks that were already ready start when 'Start a session by itself' is turned on (prepareWork runs only on an action)."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "L4g-left-5 (fixed words of the Tasks-row tooltips for Go ahead without, Redo and Try again, chat's option line, Make ready's confirm dialog), L4g-left-6 (the wait said four times on a waiting Overview, visible in /tmp/frbench/fix-l4-starts-carried-kept-steps/02; 'goes on' twice; the queued Cancel's explanation only in a tooltip; Bird notes' 'No session yet.' while its start waits in line; a running continuation's Sessions row startedBy null). — why: On the cut line and not reached. The time went to the six never-cut items."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "L4g-left-7: the 'Done' badge beside 'You paused \"X\"; nothing else ran.'. — why: Default kept, as the area's decision says (a queue end). It is noted in notes_for_other_areas for the owner."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "L4g-left-8: the fake daemon does not model the limit wake (budget.set's woken line, the start-check wake). listedWhere does not list stop_reason plan_awaiting_approval or a session another one continues. — why: On the cut line and not reached. This run's own route changes are mirrored in the fake: held words, startWait, the 409, the refused 400 and chat's kept start."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "L4b-left-6 (assisted-mode plan card labels 'approve'/'reject' without explanation lines), L4c-left-1/2/3 (outer-limit status words, the result.ts 'budget used' branch, 'Ended: 1 paused' against 'Done; its review waits'), L4d-left-1/3/4 (key-first mixed-work words, the kept-state dialog's Use API key figure, the Settings read-back card and Playwright for the credential section). — why: Carried items on the cut line, not reached. Of these, L4d-left-3 may already be closed by the L4d fixup (StartSessionDialog runOutOffered also holds for blocked.kept, so the plan sentence stays beside Use API key). It was not re-verified here."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "Bench BEFORE screenshots. — why: The before state of each item is its failing-first test, quoted under each fix with what it received. Only AFTER screenshots were taken, on a bench-api limited bench, and kept outside --fresh in /tmp/frbench/fix-l4-starts-carried-kept-steps."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fix",
+   "kind": "new_problem",
+   "text": "The phone's plain 'start' (remote watcher, kind start) goes straight to scheduler.requestStart. It skips POST /sessions' other refusals: nothing runnable, a budget above the monthly cap, the one-wait rule. This run added only the refused-credential check. Evidence: packages/runtime/src/remote/watcher.ts runStart and the compose wiring of its start dep."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fix",
+   "kind": "new_problem",
+   "text": "The Start dialog's waiting list (StartSessionDialog waitsOnText/stateClause) still says 'which needs your answer' for any needs_human dependency, including one the person paused or one paused at an outer limit. It reads the status only; the blocker sentence above it is now right."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fix",
+   "kind": "new_problem",
+   "text": "The waiting Overview still says the wait four times, in the bar, the header line, Working now and Last result/Next (L4g-left-6; visible at 375 px in 02-after-l4g-left-4-waiting-header-375.png)."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "The phone start path is checked only through rt.refusedStart(project.id), an internal function. No test shows the remote row failing with the sentence (validation rule 2). Also, the remote watcher's runStart calls kill.resume() before deps.start throws the refusal (packages/runtime/src/remote/watcher.ts:782-783), so a phone Start under a refused key now lifts Stop all and starts nothing."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "RuntimeApp.refusedStart passes stopped:false and hasModel:true, so with Stop all on and a refused key, POST /sessions answers with the key's sentence instead of Stop all's."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "The L4-money-201 case and the refused-key case now start their sessions through rt.scheduler.requestStart, an internal path. They could start through POST /sessions before keyRefusedFirst instead, which keeps the person's boundary and is the state the fixer describes ('a start made before the refusal was known')."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "The R-startcred comment on server.ts startBlocked (around lines 1695-1698, 'POST /sessions does not refuse on it') is now stale."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "Two sentences disagree on 'on' versus 'of': the kept start's change-card sentence 'A session on X starts at 15:40 (up to CHF 5.00).' and the run's sentence 'A session of X starts at 15:40.'"
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "The fake daemon's 409 text ('<head>; then your session goes on.') differs from the daemon's ('Your session of 09:00 goes on by itself at 11:40.')."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "The 400's details.cause 'credential_refused' is overwritten to 'validation' by the server's error handler (server.ts:559), so the client never sees it. It is harmless."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "On the bench, a task paused at the project's budget has a card titled 'paused before the project's budget ran out' with room_usd_micro 35809 > estimate_left 6756. Its Last result reads 'Stopped at the project's budget of CHF 0.06. CHF 0.04.' (L4c-left-1, not done). The header says 'Waiting for you ... Answer' for a card whose only option is Cancel task. All of this predates this branch."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "L4g-left-5 is visible: Make ready's confirm dialog said 'Ready to run: the running session takes it if it fits, else your next Start.' after the session had ended (bench1 15-e1). L4g-left-6 is visible: the wait is said four times on the waiting Overview (bench2 01-g1, 04-g4). Both are in not_done."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "No bench BEFORE screenshots, as the fixer said. The failing-first tests stand in for them, and I confirmed they fail on base."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fixup",
+   "kind": "not_done",
+   "text": "The fixer's own not_done items (L4-money-207 rest, 210/211/212/215/216, L4g-left-5/6/8, L4b-left-6, L4c-left-1/2/3, L4d-left-1/3/4). — why: They were outside this fix-up. The fix-up covered the review's three blocking findings and its cheap notes. Their reasons stand as the fixer gave them."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fixup",
+   "kind": "not_done",
+   "text": "Reviewer note: the L4-money-201 case and the refused-key case still start their sessions through rt.scheduler.requestStart, an internal path. They could instead start through POST /sessions before the refusal is known. — why: This only refines tests. The assertions are unchanged and nothing is weakened. The bench and the new phone row test cover the person's boundary. Left as the fixer built it."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fixup",
+   "kind": "not_done",
+   "text": "Reviewer note: the fake daemon's 409 text ('<head>; then your session goes on.') differs from the daemon's ('Your session of 09:00 goes on by itself at 11:40.'). — why: The fake does not model session start times. No UI test reads the 409's text. Left as it is."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fixup",
+   "kind": "not_done",
+   "text": "Reviewer note: the 400's details.cause 'credential_refused' is overwritten to 'validation' by the server's error handler. — why: Harmless: no client reads the cause."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fixup",
+   "kind": "not_done",
+   "text": "Bench BEFORE screenshots. — why: The before state of each blocking item is the reviewer's bench evidence: bench1 05-b3, 08-b6 and 09-c1; bench4 03-m3 under /tmp/frbench/review-l4-starts-carried-steps/. It is also each failing-first test. Only AFTER screenshots were taken, kept in /tmp/frbench/fixup-l4-starts-carried-steps/bench-a and bench-b."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fixup",
+   "kind": "new_problem",
+   "text": "The Start dialog still says the blocker for one waiter in the box's first sentence, then says it again in the waiting list below (the line adds what to do). The failed and cancelled dependencies already did this before this area. Evidence: bench-a/05-after-2-start-dialog-with-waiters.png. Folding the two into one is a design question; the related wait-said-four-times item is L4g-left-6."
+  },
+  {
+   "area": "l4-starts-carried",
+   "stage": "fixup",
+   "kind": "new_problem",
+   "text": "A project whose only task the person paused, with nothing else to run, still says 'Nothing can run: no task is ready.' and 'Give your agent work first'. heldFacts' needsYou leaves out paused tasks, as the fixer built it. Saying '\"X\" which you paused [Open Tasks]' there would need the no-waiter blocker for paused tasks."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "L4h-left-8 (all): the Connect offer's kind; the fence's silent wait drop (L4b-left-2); the plan card's repeated title (L4b-left-3); the L4b-left-5 coverage cases — why: These are cut-line items in intake, plan-card and fence code, outside this area's chat files. The time went to the never-cut items (L4h-left-1, -2) and the review findings of L4h-left-3..7. Nothing was changed, so they stay in /tmp/frbench/phaseE.json as found."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "L4h-left-7 rest: conversationOfCard reads up to 400 rows; the fake daemon's split Undo lacks the 'waits changed' refusal; the fake's switchedHere says 'there'; Talk flashes for a project not in the store — why: Cut-line test-fixture and performance polish. Only the claim guard and the stand-in tool-line parts were done. None of these changes what a person sees in the real app."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "L4h-left-6 rest: a chat task_create at Assisted still reads back the task's description as written by the model — why: Left unchanged on purpose. The description is the model's draft of the person's ask, and the read-back is the person's chance to see it. Whether the person's own words in it should skip the read-back is a question for the session lead, recorded in the ADR 0119 amendment of 2026-11-24."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "Parts of L4h-left-4 and L4h-left-7 were already fixed at base, so no change was made: the measured line (packages/runtime/src/daemon/views.ts:926-930), polling openCards (b731511), the lapse's single emit (c8184e3), the fake heardChat 'no' (440b6bc), ADR 0109's labels, and agent.ts's doc blocks — why: Each was checked against the base code and is already right. The L4h-left-3 namesWords half is also fixed at base and is now pinned by a test."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "fix",
+   "kind": "new_problem",
+   "text": "Phone: apps/ui/src/mobile/screens/InboxScreen.tsx:240 renders <Badge>{message.type}</Badge>, so the raw type ('warning') shows on the phone's Inbox. This is the sibling of the desktop fix in 0a16759, left for the phone round."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "fix",
+   "kind": "new_problem",
+   "text": "apps/ui/src/pages/UpdatesPage.tsx:136 sends `me?.id ?? \"human\"`: a press on the model-watch report before /me has loaded answers it as 'human'. e2e/updates.spec.ts:31 failed once on this race (expected by 'human_alice'), then passed 3 of 3. Not touched by this branch."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "fix",
+   "kind": "new_problem",
+   "text": "Question for the session lead: should a chat task_create at Assisted skip reading back a description that is the person's own words (L4h-left-6 rest)? Recorded in the docs/decisions/0119 amendment of 2026-11-24."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "answer_on_card wording for a note the model made up: 'Nothing else was filed; type the note there with Try again.' asks the person to type a note they never gave and cannot see. Better to leave the note clause out, or quote the note (packages/commands/src/executor.ts, the `whose` and `filed` lines)."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "The answer_on_card reply uses the model's raw `answer` string (`String(params?.answer ?? \"it\")`), not the matched option's label. A lower-case 'try again', or a missing answer ('with it'), would reach the person as is."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "Phone sibling not fixed: apps/ui/src/mobile/screens/InboxScreen.tsx:240 renders <Badge>{message.type}</Badge> (design §5 rule 6). The fixer deferred it to the phone round in new_problems."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "claims.ts: the new HISTORY_NOUN and SAYS_NOW doc block sits right under NOW_STATE's existing doc block. That leaves two stacked doc blocks, NOW_STATE's comment now above the wrong declaration, the same nit L4h-left-7 named in agent.ts."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "Report accuracy: failing_test_before lists the commands-level L4h-left-6 case, which passes on base. not_done's description of chat task_create ('still reads back the description') contradicts the ADR 0119 amendment and executor.ts:559, which say it acts at once. The claim 'queued as the person's' holds for direct moves, not for the card's Try again path (author_agent, pre-existing in findings.ts)."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "The L4h-left-4 Done line (waits_for_you, appliedChanges) and the L4h-left-5 recovery are tested at the sync and words level with seeded crash state. No GET /inbox or UI case shows the new Answered lines, and no case composes twice (validation rules 1 and 4). Acceptable for crash windows, but the bench check_in_the_app steps for the suggestion card were not walked."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "appliedChanges matches left_out lines by prefix (startsWith). A change whose line is a prefix of another, left-out change's line is wrongly treated as left out."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "waits_for_you is computed at apply time. Once the person does that task, the Answered line still says the changed task waits for it, as the existing 'your next Start runs it' line already does."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "settleProposal's compare-and-set returns 'skipped' on any version bump between list and update, including unrelated writes. The card then waits for the next sync (an answer, the poll when remote is on, or a restart)."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "finishTakeOuts pages through every answered decision card of the person on every syncPrAnswers. A crash after the pull request was opened but before the merge record was written would open a second take-out. The live check ('exactly one take-out pull request') depends on that order."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "Not run by me: Playwright, test:integration, test:e2e, test:injection (the fixer reports them green, with one flaky updates.spec.ts case on a page this branch does not touch)."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "fixup",
+   "kind": "not_done",
+   "text": "Phone sibling of the Inbox tone fix: apps/ui/src/mobile/screens/InboxScreen.tsx:240 still shows <Badge>{message.type}</Badge> (for example 'warning'). — why: This belongs to the phone round (it is a separate pending task). The fixer deferred it in new_problems and I left it unchanged. Phone tests assert the badge, so changing it here would reach past this area."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "fixup",
+   "kind": "not_done",
+   "text": "Review non-blocking items left as they are: waits_for_you is computed at apply time, so the line goes stale once the person does that task; settleProposal returns 'skipped' on any version bump; finishTakeOuts could open a second take-out if a crash lands between opening the pull request and writing the merge record; there is no GET /inbox or UI case for the new Answered lines. — why: These are crash-window or stale-line edge cases, and the review called them acceptable. Fixing them means design changes in the runtime sync, which go beyond a fixup. The session lead's live check ('exactly one take-out pull request') covers the take-out order."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "fixup",
+   "kind": "not_done",
+   "text": "No walk of a high-risk ('failed 4 times') card after the executor wording change. — why: It needs four failed runs on the bench. The changed lines (a note the model made up, and the option label) are pinned by commands tests. The person's-note path was not changed, and the reviewer walked it."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "fixup",
+   "kind": "new_problem",
+   "text": "Reviewer claim checked and accurate: the Try again note answered through the card is queued with author_agent (findings.ts:657-665, the Inbox's own Try again path, from before this area). The fixer's 'queued as the person's' holds for direct moves only. Nothing visible changes, because the brief files it under 'by the human'."
+  },
+  {
+   "area": "l4-chat-final",
+   "stage": "fixup",
+   "kind": "new_problem",
+   "text": "Report accuracy for the session lead: the fixer's failing_test_before listed the commands-level L4h-left-6 case, which passes on base sources too. The composed chat-fix-tasks case is the real fail-first. The fixer's not_done says chat task_create at Assisted 'still reads back the description', but the ADR 0119 amendment and executor.ts:559 say task.create acts at once."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "L4-github-106: Add to waits about 10 s on 'Adding...' with no 'Drafting the plan...' state. — why: Cut-line. It needs a route change: POST /projects/:id/intake (server.ts) answers only after the planning call. It would have to answer at once and plan in the background, with a project-page drafting state, a real-daemon case and a fake-daemon change. I spent the time on the never-cut items and the other cut-line items. Evidence: server.ts POST /projects/:id/intake awaits the planning call; NewProjectDialog.tsx shows 'Adding...' while it waits."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "L4e-left-5: when a take-over made with a brief (intake: true) fails to open the intake's docs pull request, the Overview says nothing. — why: Cut-line, not built. scaffoldLeftNoMarker needs a scaffold record, and the intake path records no push outcome on the project. The fix is to record the intake's push outcome on the project and reuse the no-pull-request line with Try again (the outcome field and TakeOverTryAgain are ready for it), plus a composed test with a host refusal."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "L4e-left-7: one rule for Costs' tries and runs, with and without a period. — why: Cut-line, not built. Evidence: views.ts taskRunFacts counts a paused run that no later run has continued as a try ('0 / 1 (0%)' while its Continue card waits). With a period, it takes runs by created_at, so a run started before the period and billed inside it reads runs 0 beside its cost (costFacts filters ledger entries by occurred_at; taskRunFacts filters runs by created_at). The existing L4-money-301 cases pin the current rule, so a change needs the rule decided, then GET /costs cases with and without a period."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "L4e-left-9: the real-daemon cases the L4e areas left (Take this work out pressed through the Inbox for a merged-through task, L4-github-122's acceptance case, the Redo-after-join count, a mergedOnHost watcher test). — why: Cut-line, not written. L4e-left-3's take-out is covered at the composed level (chainWorld with real git and FakeGitHost, including a restart) but not through the Inbox press of a real daemon. The other three were not started."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "fix",
+   "kind": "not_done",
+   "text": "L4e-left-11 (in part): bench walks before and after. — why: I walked only 'after', with screenshots: the Close press, Try again (twice, before and after the PR-list fix), and the 'Update yarn.lock' branch push. There is no 'before' walk at the base build: it needs a second worktree and install (about 1-2 GB with 12 GB free) and time this run did not have, so the failing-first tests are the before evidence. The first Try again walk (run1/07) is a 'before' for the PR-list fix. The 'Add to shows Drafting the plan…' walk was not done because L4-github-106 was not built."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "fix",
+   "kind": "new_problem",
+   "text": "W15-01's sole-linked rule: an unmarked open fr/docs-scaffold pull request of another project counts as this project's own when this project is the only one linked to the repository, so the scaffold (and Try again) writes onto it. Evidence: the real-daemon Try again case first wrote onto fr/docs-scaffold until Sandbox's PR body was marked with forerunnerMarker({project: SANDBOX_ID}); the rule is in loop/docs.ts scaffoldBranchFor."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "fix",
+   "kind": "new_problem",
+   "text": "After Close (or any pull request closed without merging), the Overview's Last result still says 'Left 2 reviewed pull requests for you to merge.' with no 'Since then' line for the closed one: mergedSinceLine handles merged records only. Evidence: /tmp/frbench/fix-l4-github-carried-evidence/run1/03-after-3-overview-closed.txt ('Left 2 reviewed pull requests for you to merge. Nothing left.' beside 'Closed #2 on GitHub; you can reopen it there.')."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "Try again's refusal names the repository as the person typed it, not as the line above it does. retryTakeOverDocs and the fake daemon use project.repos[0]. On the bench the person typed https://github.com/bench/empty in 'Repository link', so the line reads 'Took over bench/empty from ...' and the refusal under it reads '... check that the saved GitHub token can push to https://github.com/bench/empty, then try again.' (steps/12-retry-04-overview-still-refused.png). Use the same locator the line uses (RepositoryUse.repositoryOf(project).locator) in packages/runtime/src/daemon/take-over-retry.ts and apps/ui/test/fake-daemon.ts."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "take-over-retry.ts sorts failures with a heuristic that can say something untrue. 'blocked' is chosen when !out.prUrl and the branch is fr/docs-scaffold or absent. When scaffoldBranchFor returns null because every scaffold branch is another project's but no pull request is open, the sentence still says 'another project's docs pull request is open ... close it on GitHub'. Any thrown error, GitHub not answering included, reads 'check that the saved GitHub token can push'. These are edge cases; design §5 rule 8 asks for what actually went wrong."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "TAKE_OVER_NOTHING_TO_RETRY ('a docs pull request already names this project') is answered for any project whose line is not that outcome, including a project with no repository. Only a direct route call reaches it."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "Close's consequence line ('Closes this pull request on GitHub; you can reopen it there.') shows only as the button's title, as Start session's explanation does. The visible block line does not say the pull request can be reopened. Consider showing it as text the way Try again's line is shown."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "The L4e-left-3 'restart' builds a new PrTaskExecutor and TaskTakeOut on the same in-process store (dependent-branches-merge.test.ts takeOutAfterRestart). That is not two composes on one home as validation rule 4 describes. It is acceptable because the state is a plain merge-record row, but a compose-twice or real-daemon case would be stronger; it fits with L4e-left-9, which is in not_done."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "Fake/daemon drift: the fake daemon's close route answers 403 'not your project' for an unknown project, while the daemon's owned() → mustGet answers 404 not_found. Also, POST /projects/:id/take-over/retry in server.ts has no ownership check, unlike the close route in docs-routes.ts; this matches other server.ts routes such as POST /projects/:id/intake."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "Pre-existing, named by the fixer in new_problems: after Cancel and after Close, the Overview's Last result still says 'Left 2 reviewed pull requests for you to merge.' with no 'Since then' line for the closed one (steps/06 and 07). mergedSinceLine handles merged records only; this is a sibling of L4e-left-6 for closed-without-merge."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "Pre-existing, not this area: the project page for an unknown id shows 'project 01a20000-... not found' in its error banner, which is an id on screen (steps/20-header-unknown-project.png)."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "The fixer's new_problems #1 (W15-01's sole-linked rule treats an unmarked open fr/docs-scaffold pull request of another project as this project's) also applies to Try again, because it reruns the same scaffold; it is pre-existing scaffold logic."
+  },
+  {
+   "area": "l4-github-carried",
+   "stage": "review",
+   "kind": "review_non_blocking",
+   "text": "Live check for the session lead: on the real app, the Try again refusal will name whatever the person typed in 'Repository link' (usually a full https://github.com/... URL), not the owner/name the line above it shows."
+  }
+ ]
+}

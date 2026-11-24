@@ -1,70 +1,42 @@
-// l4-github-link walk: Add to it on a project with done tasks (L4-github-106).
-// node walk-addto.cjs <repo> <bench name> <label> <projectName> <repo link>
-const REPO = process.argv[2];
-const NAME = process.argv[3];
-const LABEL = process.argv[4] || "walk";
-const PROJECT = process.argv[5];
-const LINK = process.argv[6];
-const R = require(`${REPO}/scripts/bench/recorder.cjs`);
+// Review walk: Add to on a project with tasks; 'Waiting for you: approve the plan' once (L4c-left-4).
+const path = require("node:path");
 const fs = require("node:fs");
-const out = { label: LABEL, checks: [], timeline: [] };
-const check = (what, ok, seen) => {
-  out.checks.push({ what, ok, seen });
-  console.log(ok ? "PASS" : "FAIL", what, seen ?? "");
-};
-const ui = () => JSON.parse(fs.readFileSync(`/tmp/frbench/${NAME}/bench.json`, "utf8")).uiUrl;
-
+const repo = process.argv[3];
+const R = require(path.join(repo, "scripts/bench/recorder.cjs"));
+const n = process.argv[2];
+const out = {};
 (async () => {
-  const { browser, page } = await R.openApp(NAME);
-  await R.skipSetup(page);
+  const { browser, page } = await R.openApp(n);
+  const ui = R.bench(n).uiUrl;
   try {
-    const project = (await R.api(NAME, "GET", "/projects")).find((p) => p.name === PROJECT);
-    if (!project) throw new Error(`no project ${PROJECT}`);
-    const intake = await R.api(NAME, "GET", `/projects/${encodeURIComponent(project.id)}/intake`);
-    if (intake.state === "pending") {
-      await page.goto(`${ui()}/inbox`);
-      await page.waitForTimeout(1500);
-      await page.getByRole("button", { name: "Approve and start" }).first().click();
-      await page.waitForTimeout(3000);
-      await R.until(
-        async () => {
-          const s = await R.api(NAME, "GET", `/sessions?projectId=${encodeURIComponent(project.id)}`);
-          const list = Array.isArray(s) ? s : [];
-          return list.length && list.every((x) => !["running", "starting", "queued"].includes(x.status)) ? list : null;
-        },
-        300_000,
-        3000,
-        "the session to end",
-      );
-    }
-    await page.goto(ui());
-    await page.waitForTimeout(1500);
-    await page.getByRole("button", { name: "New project", exact: true }).first().click();
-    await page.waitForTimeout(500);
-    await page.getByLabel("Name").fill("Kite gallery");
-    await page.getByLabel(/^Brief/).fill("Add a gallery page with photos of each kite.");
-    await page.getByLabel(/^Repository link/).fill(LINK);
-    await page.getByRole("button", { name: "Create project", exact: true }).click();
-    await page.waitForTimeout(2500);
-    await R.step(page, `${LABEL}-20-in-use-offer`);
+    await page.goto(`${ui}/`);
+    await page.getByTestId("new-project").click();
+    await page.locator('input[name="name"]').fill("Kite club pages");
+    await page.locator('[name="goal"]').fill("More pages for the club");
+    await page.locator('[name="brief"]').fill("Add a page with the club's meeting times.");
+    await page.locator('input[name="repo"]').fill("https://github.com/bench/seeded");
+    await page.getByTestId("create-project").click();
+    await page.getByTestId("link-offer").waitFor({ timeout: 30_000 });
+    out.offer = await R.step(page, "addto-01-offer");
     const t0 = Date.now();
     await page.getByTestId("offer-add").click();
     await page.waitForTimeout(300);
-    out.timeline.push({ ms: Date.now() - t0, url: page.url() });
-    const early = await R.step(page, `${LABEL}-21-after-add-press`);
-    out.early = early.slice(0, 800);
-    await page.waitForURL(/\/projects\/[^/]+/, { timeout: 60_000 });
-    out.timeline.push({ ms: Date.now() - t0, landed: page.url() });
-    const landed = await R.step(page, `${LABEL}-22-landed`);
-    check("the page says Drafting the plan... after Add to it", /Drafting the plan/.test(landed) || /Drafting the plan/.test(early), landed.slice(0, 400));
-    await page.waitForTimeout(6000);
-    await R.step(page, `${LABEL}-23-plan-card`);
-  } catch (e) {
-    out.error = String(e && e.stack ? e.stack : e);
-    console.error(e);
-    await R.step(page, `${LABEL}-error`).catch(() => {});
+    out.adding = await R.step(page, "addto-02-adding");
+    await page.waitForURL(/\/projects\//, { timeout: 90_000 });
+    out.navigatedAfterMs = Date.now() - t0;
+    await page.getByTestId("intake-banner").waitFor({ timeout: 60_000 });
+    await page.waitForTimeout(2500);
+    out.page = await R.step(page, "addto-03-project-page");
+    const text = await page.locator("body").innerText();
+    out.count = text.split("Waiting for you: approve the plan").length - 1;
+    out.bannerState = await page.getByTestId("intake-banner").getAttribute("data-state");
+    out.statusShown = await page.getByTestId("project-status").count();
+    fs.writeFileSync(path.join(`/tmp/frbench/${n}`, "steps", "walk-addto.json"), JSON.stringify(out, null, 2));
   } finally {
-    fs.writeFileSync(`/tmp/frbench/${NAME}/steps/${LABEL}-addto.json`, JSON.stringify(out, null, 2));
     await browser.close();
   }
-})();
+  console.log(JSON.stringify(out, null, 2));
+})().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

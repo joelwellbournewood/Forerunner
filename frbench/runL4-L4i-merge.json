@@ -1,0 +1,77 @@
+{
+ "merged": [
+  "fix/l4-starts-carried (84f9e7e) merged as 9a32656, with no conflicts",
+  "fix/l4-chat-final (477cf6e) merged as 41e9e13",
+  "fix/l4-github-carried (7e08fe8) merged as c15d75e"
+ ],
+ "head_sha": "c15d75e1ef6a7b060421d587f2a29e7da2041344",
+ "pushed": true,
+ "conflicts_resolved": [
+  "apps/ui/test/real-daemon.test.ts (both merges): each area appended its own describe block at the end of the file. I kept all three, in merge order: 'l4-starts-carried, run L4', then 'l4-chat-final, run L4', then the two 'l4-github-carried, run L4' describes. Each block got its closing '});' back. No line inside any case was changed.",
+  "docs/maintainers/apps.md, docs/maintainers/commands.md, docs/maintainers/runtime.md: append-only conflicts between dated paragraphs. I kept every area's section in key order: starts-carried and its fixup, then chat-final, then github-carried.",
+  "docs/maintainers/testing.md and docs/user-guide.md: append-only conflicts. I kept the chat-final paragraph, then the github-carried paragraph.",
+  "packages/runtime/src/daemon/server.ts imports: starts-carried added heldFacts to the start-blocked.ts import, and github-carried added an import of retryTakeOverDocs from take-over-retry.ts. I kept both imports."
+ ],
+ "integration_fixes": [],
+ "validation": [
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "nothing found"
+  },
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "done, lockfile unchanged"
+  },
+  {
+   "command": "DOCS_CHECK_BASE=origin/claude/nifty-knuth-f9udt0 flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0. Lint: 0 errors (the 40 warnings that were already there, 1 info). lint:paths ok (1637 files). Typecheck clean. Unit tests: 568 files, 6297 passed, 7 skipped. docs-check ok (95 files), link-check ok (213 files), secret-scan clean (2288 files)."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped. The Postgres cases skip without FORERUNNER_TEST_PG, as expected."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm --filter @forerunner/live test",
+   "result": "exit 0: 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "exit 0: PASS, 92 cases (65 hostile, 27 controls), 92 passed, 0 failed. Failures: none."
+  },
+  {
+   "command": "FORCE_COLOR=1 HOME=<empty dir> flock /tmp/frbench/heavy.lock pnpm test (CI-style)",
+   "result": "exit 0: 568 files, 6297 passed, 7 skipped"
+  },
+  {
+   "command": "cd apps/ui && FORCE_COLOR=1 HOME=<empty dir> flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts (CI-style)",
+   "result": "exit 0: 105 files, 1548 tests passed (real-daemon.test.ts included)"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 40 passed (1.2 min). The local config is the template copy, excluded through .git/info/exclude and not committed."
+  },
+  {
+   "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+   "result": "Not run: no area touched apps/desktop (git diff 0c89b72..HEAD -- apps/desktop is empty)."
+  },
+  {
+   "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+   "result": "printed nothing: all 39 commits are signed, the 3 merge commits included"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "pushed 0c89b72..c15d75e on the first try, fast-forward, no force"
+  }
+ ],
+ "smoke": "node scripts/bench/start.mjs --name merge-w33 --daemon-port 49250 --ui-port 2850 --fresh, then node scripts/bench/journeys/smoke.cjs merge-w33: 25/25 checks passed, 0 findings, 0 recorded problems. There were 17 model calls: intake 1, specialist 9, critic 6, chat 1. The plan had 2 tasks; Approve and start ran 1 session and both tasks finished. The result is /tmp/frbench/merge-w33/steps/smoke-result.json. The journey script needed no change. The bench was stopped with scripts/bench/stop.mjs and its home deleted. The logs of every validation run are in /tmp/frbench/merge-w33/.",
+ "problems_left": [
+  "Nothing the merge broke is left: every suite above passed on the merged tree, and no fix was needed after the merge.",
+  "Each area's not_done items and new_problems still stand as its report lists them:\n- starts-carried: L4-money-207 rest, 210-216, L4g-left-5/6/8, L4b-left-6, L4c-left-1/2/3, L4d-left-1/3/4.\n- chat-final: L4h-left-8, the rest of L4h-left-7, the phone Inbox's raw 'warning' badge (apps/ui/src/mobile/screens/InboxScreen.tsx:240), the UpdatesPage me?.id race.\n- github-carried: L4-github-106, L4e-left-5/7/9; after Close, 'Left N reviewed pull requests for you to merge.' stays.",
+  "Two non-blocking review notes on l4-github-carried were not handled before the merge:\n- Try again's refusal names the repository as the person typed it, not as the owner/name the line above it shows (packages/runtime/src/daemon/take-over-retry.ts and apps/ui/test/fake-daemon.ts).\n- The fake daemon's close route answers 403 for an unknown project; the daemon answers 404.",
+  "Still to run: CI and the Desktop app workflow on c15d75e."
+ ]
+}
