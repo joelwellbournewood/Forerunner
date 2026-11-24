@@ -503,6 +503,23 @@ export function droppedWords(d: Pick<HeldDependency, "number" | "title" | "state
 }
 
 /**
+ * One part of a branch name made from a person's words (a task's title, a project's name):
+ * lower case, `safeSegment`'s characters, dots turned into dashes, at most `max` characters, no
+ * dash or underscore at its end; `fallback` when nothing is left. L4e-left-2: git refuses ".."
+ * and a component ending ".lock", which "Wait... what" and "Update yarn.lock" gave a task's
+ * branch, so its push failed. The task's branch (`taskBranchName`), the plan's docs branch
+ * (`intakeDocsBranch`) and the scaffold's (`scaffoldBranchesOf`) all use this one rule.
+ */
+export function branchSegment(text: string, fallback: string, max = 40): string {
+  return (
+    safeSegment(text.toLowerCase(), fallback)
+      .replace(/\.+/g, "-")
+      .slice(0, max)
+      .replace(/[-_]+$/, "") || fallback
+  );
+}
+
+/**
  * A task's branch name: `fr/<8 characters of its id>-<its title>` (R-branch, leftovers7-merge).
  * The 8 characters are the id's random end, never its start: a UUIDv7 starts with its creation
  * time, which is the same for 65 s, so two tasks titled alike created within a minute got one
@@ -516,7 +533,7 @@ export function taskBranchName(task: Pick<TaskRow, "id" | "title">): string {
     hex.length === 32
       ? hex.slice(-8)
       : safeSegment(task.id.toLowerCase(), "task").slice(0, 8);
-  return `fr/${own}-${safeSegment(task.title.toLowerCase(), "task").slice(0, 40)}`;
+  return `fr/${own}-${branchSegment(task.title, "task")}`;
 }
 
 /**
