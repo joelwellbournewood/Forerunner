@@ -8391,10 +8391,14 @@ describe("the UI client against the real daemon: a Claude credential at its limi
       );
       expect(again).toBeInstanceOf(ApiError);
       expect((again as ApiError).message).toBe("Your session of 09:00 goes on by itself at 11:40.");
+      // l4-starts-carried (L4g-left-4): the project's card says its own start waits, so the
+      // header offers no Start session that would only meet this 409.
+      expect((await client.project(project.id)).startWait).toBe("goes_on");
       expect(await client.cancelContinuation(project.id)).toEqual({
         cancelled: true,
         sentence: "Cancelled: nothing goes on by itself; its tasks run at your next Start.",
       });
+      expect((await client.project(project.id)).startWait ?? null).toBeNull();
       clock.set(Date.parse("2026-03-05T10:41:00Z"));
       await rt.scheduler.tick();
       await rt.scheduler.tick();

@@ -2289,6 +2289,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         !working && state.startsWait[p.id]?.kind === "queued"
           ? ((state.startsWait[p.id] as { behind: string }).behind ?? null)
           : null,
+      // L4g-left-4, as the daemon: the project's own start waits (goes on, or a kept Start).
+      startWait: working
+        ? null
+        : state.startsWait[p.id]?.kind === "continuation"
+          ? "goes_on"
+          : state.startsWait[p.id]?.kind === "kept_start"
+            ? "kept"
+            : null,
       progress: progressOf(tasks.map((t) => ({ status: t.status as never }))),
       working,
       folder,
@@ -3671,6 +3679,22 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const agent = AGENTS.find((a) => a.id === parsed.data.agentId);
     if (!agent) return errorBody(c, 404, "not_found", "no such agent");
+    // S-10 and L4g-left-4, as the daemon: one wait per project: while the project's own session
+    // waits to go on (or a Start is kept for the reset), a start keeps nothing new and starts
+    // nothing (409 with when it goes on). "Use API key" is the wait's own answer (below).
+    const ownWait = parsed.data.projectId ? state.startsWait[parsed.data.projectId] : undefined;
+    if (
+      !parsed.data.useOtherCredential &&
+      (ownWait?.kind === "continuation" || ownWait?.kind === "kept_start")
+    )
+      return errorBody(
+        c,
+        409,
+        "claim_conflict",
+        ownWait.kind === "continuation"
+          ? `${ownWait.head}; then your session goes on.`
+          : `${ownWait.head}.`,
+      );
     // d1109-cred-screens (CS-3), as the daemon: the Start dialog's "Use API key" is the person's
     // yes for this stop; refused in words when the dialog offered none. The project's wait ends
     // (the key serves), and the start goes on as usual below.

@@ -214,6 +214,14 @@ export const ProjectCard = z.object({
    * offers no second Start. Null or absent when none waits.
    */
   startsAfter: z.string().nullable().optional(),
+  /**
+   * l4-starts-carried (L4g-left-4): the project's own start waits: its session goes on by itself
+   * after its Claude credential is back (`goes_on`, the run indicator carries it with Cancel), or
+   * a Start was kept for the reset (`kept`, the project's line carries it with Cancel). A start
+   * then keeps nothing new and starts nothing (`POST /sessions` answers 409 with when it goes
+   * on), so the header offers no Start session. Null or absent when none waits.
+   */
+  startWait: z.enum(["goes_on", "kept"]).nullable().optional(),
   /** "3 of 7 done": the tasks not cancelled, and the ones done. */
   progress: z.object({ done: z.number().int(), total: z.number().int() }).optional(),
   /**
