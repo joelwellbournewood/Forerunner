@@ -1,0 +1,274 @@
+{
+ "area": "l4-selftasks-carried",
+ "branch": "fix/l4-selftasks-carried",
+ "head_sha": "b2c1bd38cce107c5b654fe00195632567081454e",
+ "commits": [
+  {
+   "sha": "c730831",
+   "subject": "commands, runtime, ui: every closed card tells the screens once; an open chat is read again only for its own card (L4f-left-1, L4f-left-6, U-084, U-095)"
+  },
+  {
+   "sha": "c43e69c",
+   "subject": "commands: a 'fix the tasks' Yes is judged on the tasks its set names and the list's membership (L4f-left-2, U-095)"
+  },
+  {
+   "sha": "968ceae",
+   "subject": "commands: the redirect guards judge a note by who wrote it (L4-selftasks-120, U-095)"
+  },
+  {
+   "sha": "8cd98f5",
+   "subject": "commands: an Undo read back in chat says what is back, also after a restart (L4f-left-3, U-084)"
+  },
+  {
+   "sha": "d39d739",
+   "subject": "commands, runtime, ui: a merged card's change names both who asked (L4f-left-4, U-095)"
+  },
+  {
+   "sha": "7d90c73",
+   "subject": "runtime, ui: the reviewer's line names a file the task's words ask for; Edit asks with its words (L4-other-1 D-3, D-5, U-098)"
+  },
+  {
+   "sha": "99c2274",
+   "subject": "commands: chat's read-back of a reviewer task says it writes no file (L4-other-1 D-6, U-098)"
+  },
+  {
+   "sha": "d190865",
+   "subject": "bench, scripts: the stand-in writes nothing about a waiting card and holds the reviewer to its report; docs:check says what it needs (L4f-left-7, L4-selftasks-125)"
+  },
+  {
+   "sha": "01e0cbe",
+   "subject": "tests: a value read back in chat that moved since, the header beside a question, a lapsed Settings card (L4f-left-5, U-084, U-095)"
+  },
+  {
+   "sha": "6448857",
+   "subject": "runtime: the agent's suggested changes to the tasks count as others' words in chat (L4b-left-4, U-095)"
+  },
+  {
+   "sha": "657473a",
+   "subject": "session: a task check's left-out line says what each change asked for in words (L4b-left-3, U-095)"
+  },
+  {
+   "sha": "9d669a3",
+   "subject": "docs: every close tells, fix sets judged per task, the reviewer's file, the stand-in (ADR 0109 and 0119 amended, U-084, U-095, U-098)"
+  },
+  {
+   "sha": "95d532e",
+   "subject": "commands: a reviewer task made or changed at once says it writes no file too (L4-other-1 D-6, U-098)"
+  },
+  {
+   "sha": "b2c1bd3",
+   "subject": "lint: format and import order of this area's files (pnpm check)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "L4f-left-1 (never cut): a chat read-back closed by a route other than the chat turn (Inbox Yes/No, POST /commands/:id/confirm or cancel, phone, email, a lapse) left the project header on 'Waiting for you: 1 change to confirm' and the open chat's Yes/No in place until a reload: those routes sent inbox.changed but no project.changed and no conversation event.",
+   "u_ids": [
+    "U-084",
+    "U-095"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-selftasks-carried, run L4' > 'L4f-left-1: every close of a chat read-back (the Inbox's No and Yes, a chat No, a refused Yes) tells the screens ...'; apps/ui/test/selftasks-carried.test.tsx 'a closed chat card leaves no stale waiting header (L4f-left-1)' (UI guard cases)",
+   "how": "The executor tells every close once: ExecutorOptions.onClosed gets a ClosedConfirmation {id, humanId, projectId, source, sessionId, how: yes|no|refused|expired} after confirm/cancel/answerPending (all routes) and after expirePending (timer and sweepPending). compose.ts turns it into inbox.changed, project.changed and, unless that conversation's turn is in flight, conversation.changed for the conversation the card was read back in (conversationOfCard). server.ts heardChat no longer emits for a card the turn answered. Fake daemon follows.",
+   "check_in_the_app": "Open a project at Assisted, Chat tab. Type: tool: task_pause {\"task\":\"<a task>\"} (on a real model: 'pause <task>'). The header says 'Waiting for you: 1 change to confirm' and the Inbox badge shows 1. Press No: the header goes back (e.g. 'Ready: 1 task waits for your Start') and the badge goes, without a reload. Ask again, then answer the card in the Inbox in another window: the chat's Yes/No go and the header follows at once. live_check: bench walk1 after (/tmp/frbench/fix-l4-selftasks-carried/steps/01-after-1a-readback.png, 02-after-1b-after-no.png, 04-after-3c-chat-after-inbox-no.png)."
+  },
+  {
+   "problem": "L4f-left-2 (never cut): a 'fix the tasks' read-back answered while a session ran nearly always said 'The tasks changed since I checked them', because its fingerprint was one hash of every task's fields; a session finishing any task voided the Yes.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-selftasks-carried, run L4' > 'L4f-left-2: a session finishes a task the set does not name between the read-back and the Yes, and the set applies'",
+   "how": "Session lead decision 2026-11-23: taskListFingerprint is per task (v2|<id>=<hash of status,title,outcome,dependencies>); fixListMoved compares list membership and only the tasks the set names (namedTaskIds from the calls' NAMING_PARAMS and the card's subjects); a stored whole-list fingerprint is compared as before; a read failure counts as moved. Guards both ways: named task finished by a session refuses; a task added refuses, also after a restart (real-daemon and packages/commands/test/selftasks-carried.test.ts). ADR 0119 amended.",
+   "check_in_the_app": "At Assisted with a running session, say 'fix the tasks: \"Style the page\" is two jobs, the layout and the colours'. While the read-back waits, let the session finish another task, then press Yes: the split is made. Ask again, and this time edit 'Style the page' on the Tasks tab before Yes: the reply is 'The tasks changed since I checked them; say \"fix the tasks\" to check again.' and nothing changes."
+  },
+  {
+   "problem": "L4-selftasks-120 rest (never cut): the redirect guards of task.transition and task.resume judged a note by its presence, so a note the chat model wrote kept a move off the card it should answer; after a restart the re-armed read-back was a task.transition, not the card's answer.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/commands/test/selftasks-carried.test.ts 'the redirect guards judge a note by who wrote it' > the chat model's note case and 'after a restart, the read-back a model's note made of the card's answer is armed again as that answer, and its yes answers the card'",
+   "how": "ownNote(ctx, note) in task.ts: a note is the person's only on onPersonsWords or a human actor; both guards use it, including on a card armed again after a restart (stored actor).",
+   "check_in_the_app": "With a failed task whose card offers Try again, have chat retry it with a note it wrote (stand-in: tool: task_transition {\"task\":\"<t>\",\"to\":\"ready\",\"note\":\"...\"}): the read-back is the card's own 'Try again (\"<t>\" failed)? ...'; restart Forerunner and answer Yes: the card is answered 'Try again'. With your own note typed, the move stays a move."
+  },
+  {
+   "problem": "L4f-left-3: an Undo read back in chat and confirmed after a restart said the change row's sentence ('Undone: Lowered the monthly cap from CHF 150.00 to CHF 100.00.'), reading as if the cap was lowered now.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "packages/commands/test/selftasks-carried.test.ts 'an Undo read back in chat says what is back, also after a restart'",
+   "how": "performUndo(changeLogId, ctx, shown) builds the sentence from the card as read back (stored card after a restart; UNDO_UNKNOWN_BEFORE when it holds no value).",
+   "check_in_the_app": "Lower the monthly cap in Settings, then in Chat say 'undo that'; restart Forerunner; press Yes: 'Undone: the monthly cap is back to CHF 150.00.' (same as without a restart)."
+  },
+  {
+   "problem": "L4f-left-4: a merged card (the agent's fix_tasks plus a change the person named) was one change row authored by the agent alone; Changes said only the agent; chat's recall said 'You' for every row including the agent's own fixes.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-fix-tasks.test.ts 'a merged card's row names both who asked'; apps/ui/test/real-daemon.test.ts 'L4f-left-4: GET /changes names both ...'; apps/ui/test/changes.test.tsx; packages/runtime/test/chat-recall.test.ts 'chat's recall names who made a change as the Changes page does'",
+   "how": "record()'s alsoPerson writes author_human beside author_agent; ChangeLogView.byYouAndAgent; ChangesPage whoOf says '<your name> and <agent>'; recall whoOf uses byYouAndAgent/byAgent.",
+   "check_in_the_app": "At Assisted say 'fix the tasks and raise the priority of Publish'; press Yes; open Changes: the row reads 'J and Alice'. Ask chat 'what changed today?': it names both, and the agent's own fixes as the agent's."
+  },
+  {
+   "problem": "L4-other-1 D-3/D-5/D-6: the reviewer's 'writes no file' line did not name the file the task's words ask for; Edit asked with no words; chat's read-back (and a task made or changed at once) of a reviewer task said nothing about it.",
+   "u_ids": [
+    "U-098"
+   ],
+   "failing_test_before": "packages/runtime/test/reviewer-file-line.test.ts; apps/ui/test/real-daemon.test.ts 'L4-other-1 (D-5): GET /settings/models names the file ...'; apps/ui/test/tasks.test.tsx 'the reviewer's line names a file the words ask for; Edit asks with its words'; packages/commands/test/selftasks-carried.test.ts 'chat's read-back of a reviewer task says it writes no file' (2 cases) and 'a reviewer task made at once (no read-back) says the line in its done sentence too'",
+   "how": "writesNoFileLine(specialist, fileTheWordsWrite(words)); GET /settings/models passes the typed words; TaskDrawer Edit passes title/outcome/criteria; CommandPorts.modelSettings.writesNoFile + noFileClause on task.create's ask, card sentence and run sentence, and task.update's ask and run sentence (editNoFile) when the edit gives the task to such a specialist or changes its words. ADR 0109 amended.",
+   "check_in_the_app": "Tasks > New task: title 'Review the plan', what done looks like 'review.md lists the gaps and risks found in notes/plan.md', Who does it: reviewer. The line reads 'The reviewer writes no file, so review.md is not written: its findings are its report, which you read in the task's drawer.' Edit an existing reviewer task: same line. In Chat ask to add a reviewer task whose outcome names gaps.md: the read-back or the done sentence ends with 'The reviewer writes no file, so gaps.md is not written: ...'. live_check: /tmp/frbench/fix-l4-selftasks-carried/steps/08-after-w2-1-new-task-reviewer-line.png and 09-after-w2-2-chat-reviewer-added.png."
+  },
+  {
+   "problem": "L4f-left-7 and L4-selftasks-125 rest: the bench stand-in quoted CHAT_PENDING_NOTE and the question back (read-back said twice), and its critic sent every reviewer run back ('changed no file'), so the ladder handed the task to the data-analyst and U-098 step 4 could not be walked; scripts/bench/README.md lacked FORERUNNER_BENCH_TASK_LIST/_SAYS; docs:check in a worktree printed git's fatal error and passed silently.",
+   "u_ids": [
+    "U-098"
+   ],
+   "failing_test_before": "testenv/test/bench-role-player.test.ts 'a command that waits for a yes is answered with no word about the card; ...' and 'a reviewer that changed no file is accepted on its report when the criterion says the report stands for the file'; scripts/docs-check.test.ts 'says what it needs when origin/main is not there, and checks with --base'",
+   "how": "role-player chatAnswer returns '[stand-in model]' alone for a tool result holding 'Write nothing about it'; criticAnswer holds a writes-no-file specialist to its report (REPORT_CRITERION). README lists the knobs and behaviours. docs-check.mjs checks the base first and says 'docs-check: nothing was checked: origin/main is not in this checkout ... pnpm docs:check --base <branch>, or set DOCS_CHECK_BASE.' (exit 0; '1 file' singular).",
+   "check_in_the_app": "Bench: start --provider bench, create a reviewer task 'Review the plan' (outcome review.md lists the gaps ...) and Start session: the task ends Done by the reviewer, Critic 'Reviewed', no hand-over to the data-analyst. In Chat a read-back shows the stand-in reply '[stand-in model]' with the question only on the card. live_check: /tmp/frbench/fix-l4-selftasks-carried/steps/10-after-w2-3-tasks-after-review.png, 01-after-1a-readback.png; walk2-after.json (task done by reviewer, lastVerdict accept)."
+  },
+  {
+   "problem": "L4f-left-5: L4-selftasks-117's details had no test of their own: changedSince for value cards (also after a restart), the header after the Inbox answers a chat card beside another card, a lapsed Settings card telling the screens.",
+   "u_ids": [
+    "U-084",
+    "U-095"
+   ],
+   "failing_test_before": "none failed: coverage added for behaviour that holds at head (packages/commands/test/selftasks-carried.test.ts 'a value read back in chat that moved since says so, also after a restart (L4f-left-5)'; apps/ui/test/real-daemon.test.ts 'L4f-left-5: after the Inbox answers the chat's card the header names the question that still waits; a Settings card that lapses tells the screens'). The fake-clock 'fix the tasks' POST /chat case already exists ('L4-selftasks-117 (real daemon, fake clock): a fix the tasks read-back still waits after 10.5 minutes and after a restart').",
+   "how": "Tests only: monthly cap and email mode read back in chat, changed in Settings before the Yes, with and without a restart: refused with 'The monthly cap is CHF 120.00 now, not CHF 150.00 as I read it back. Nothing was changed; ask again if you still want it.' and nothing applied; header 'Waiting for you: 1 question and 1 change to confirm' then 'Waiting for you: \"Confirm the stack\"' after the Inbox No; a Settings card lapsing at 11 minutes emits inbox.changed.",
+   "check_in_the_app": "In Chat ask 'set the monthly cap to CHF 100'; before answering, set it to CHF 120 in Settings; press Yes in Chat: 'The monthly cap is CHF 120.00 now, not CHF 150.00 as I read it back. Nothing was changed; ask again if you still want it.'"
+  },
+  {
+   "problem": "L4f-left-6 (performance): store/context.tsx reloaded every conversation showing a waiting card on every inbox.changed, including the polling mode's periodic counts, which now repeats GET /conversation for as long as a chat card waits.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "apps/ui/test/selftasks-carried.test.tsx 'an open chat is read again only when its card closed (L4f-left-6)' (5 and 7 conversation reads where 3 and 4 were expected)",
+   "how": "Reload on inbox.changed only in polling mode and only when the count moved; on the live stream wait for the daemon's conversation.changed for the conversation whose card closed (part of the L4f-left-1 commit).",
+   "check_in_the_app": "Open a chat with a waiting card and leave it open: the network tab shows no repeated GET /projects/<id>/conversation while it waits; answering it in the Inbox reads that conversation once."
+  },
+  {
+   "problem": "L4b-left-4: quotesOthersWords did not count a task_proposal card (the agent's suggested changes quote a report or review), so a chat turn listing it in full could act at once on a line those words asked for.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-facts.test.ts 'counts the suggestion card; a card in Forerunner's own words still does not count'",
+   "how": "quotesOthersWords returns true for key TASK_PROPOSAL_KEY.",
+   "check_in_the_app": "With the agent's suggestion card open in a project, ask chat to make a change: the change is read back with Yes and No first, never made at once."
+  },
+  {
+   "problem": "L4b-left-3 (first half): Details' and chat's left-out line used the change kind as a noun ('Left out (and 1 more): the add of \"Write thanks.html\": ...', 'the edit of', 'a settings').",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/runtime/test/task-check.test.ts 'refuses an unknown field ...' (now asserts each change's words) and the left-out Details case in session-task-list.test.ts (changed for the design)",
+   "how": "changeWhat says 'adding \"X\"', 'splitting \"X\"', 'dropping \"X\"', 'the change to \"X\"', 'the order of \"X\"', and 'a change' for an unknown kind.",
+   "check_in_the_app": "Bench with FORERUNNER_BENCH_TASK_LIST and a report line naming a task that does not exist: the session's Details show 'Left out: adding \"…\": … is no task of <project>.'"
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L4-selftasks-127 rest (cut-able): the Connect offer kind beside 'Fixing the tasks needs Claude: connect it in Settings, Basics.'",
+   "why": "Needs a new offer action ('connect') through the agent's ChatOffer, the transcript's stored offer (offerOf), ChatOfferView in api-types, GET /conversation, both daemons and Conversation.tsx (a Link to /setup like IntakeBanner's 'Connect Claude'); cut for time in favour of the never-cut items, validation and the bench walks. The sentence part is done (L4f)."
+  },
+  {
+   "problem": "L4b-left-2 (cut-able): the fence silently drops a wait whose order names a pending add of the same set and a name neither stored nor pending; it should refuse it in words and re-run the loop check for the extra waits (session/task-check.ts).",
+   "why": "Cut for time; it touches the fence's order folding (task-check.ts ~1100-1450) and needs its own failing case at the task-check boundary."
+  },
+  {
+   "problem": "L4b-left-3 second half: the plan card's warning repeats the task's title right under that task's row.",
+   "why": "Cut for time (UI words on the plan card); the left-out wording half is fixed."
+  },
+  {
+   "problem": "L4b-left-5 (cut-able): L4-selftasks-109 restart composed twice on one home, L4-selftasks-111's critic-notes body at the real daemon, a CostsTab render test for L4-selftasks-114, L4-selftasks-112 (a) quoting two sentences within 160 characters.",
+   "why": "Coverage-only cases, cut for time after the never-cut items, the L4f-left set and full validation."
+  },
+  {
+   "problem": "Bench BEFORE screenshots of walk1",
+   "why": "Restarting the bench with --fresh for the AFTER walk emptied its steps folder; the BEFORE values remain in /tmp/frbench/fix-l4-selftasks-carried/walk1-before.json. The before walk did not reproduce a stale header on the chat routes (the L4f fixup had fixed those); the Inbox/other-route bug was shown by the failing real-daemon test."
+  }
+ ],
+ "validation": [
+  {
+   "command": "DOCS_CHECK_BASE=3e1ab9d flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "pass: lint/typecheck, 562 test files, 6203 passed, 7 skipped; docs-check ok; link-check ok; secret-scan clean"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "pass: 5 files passed, 7 skipped; 30 tests passed, 83 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "pass: 13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "pass: 104 files, 1511 tests (real-daemon included)"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "pass: 40 passed"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "pass: Failures: None"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "no conflict markers"
+  },
+  {
+   "command": "node scripts/bench/start.mjs --name fix-l4-selftasks-carried --provider bench; walk1.cjs after; walk2.cjs after; stop.mjs",
+   "result": "walk1: header and badge follow every close; walk2: New task line names review.md, chat names gaps.md, reviewer task Done with critic accept. Bench stopped, home deleted."
+  }
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "apps/ui/test/chat.test.tsx L4f Inbox case",
+   "why": "The fake daemon now emits conversation.changed for the closed card (L4f-left-1), as the real daemon does; the case sends it instead of relying on a reload on inbox.changed (L4f-left-6)."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'L4-selftasks-117 (real daemon): after a restart, a fix the tasks Yes whose list changed since the check says so and changes nothing'",
+   "why": "Session lead decision 2026-11-23 (L4f-left-2): a change to a task the set does not name no longer voids the Yes, so the case edits the named task's outcome."
+  },
+  {
+   "test": "packages/commands/test/undo.test.ts restart case",
+   "why": "L4f-left-3: the confirmation after a restart is now 'Undone: the monthly cap is back to CHF 150.00.' like without a restart."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'L4-other-1: GET /settings/models says the reviewer writes no file' and apps/ui/test/tasks.test.tsx L4f New task case",
+   "why": "D-3: words that ask for review.md now get the line naming it; the plain line stays for words without a file."
+  },
+  {
+   "test": "packages/runtime/test/task-check.test.ts (2 refused 'what' values) and session-task-list.test.ts (left-out Details line)",
+   "why": "L4b-left-3: 'the edit of \"X\"' is 'the change to \"X\"' and 'the add of \"X\"' is 'adding \"X\"'."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-l4-selftasks-carried/walk1-before.json (values only; the before PNGs were removed by the --fresh restart)"
+  ],
+  "after": [
+   "/tmp/frbench/fix-l4-selftasks-carried/steps/01-after-1a-readback.png",
+   "/tmp/frbench/fix-l4-selftasks-carried/steps/02-after-1b-after-no.png",
+   "/tmp/frbench/fix-l4-selftasks-carried/steps/03-after-2-after-refused-yes.png",
+   "/tmp/frbench/fix-l4-selftasks-carried/steps/04-after-3c-chat-after-inbox-no.png",
+   "/tmp/frbench/fix-l4-selftasks-carried/steps/after-3b-inbox-after-no.png",
+   "/tmp/frbench/fix-l4-selftasks-carried/steps/08-after-w2-1-new-task-reviewer-line.png",
+   "/tmp/frbench/fix-l4-selftasks-carried/steps/09-after-w2-2-chat-reviewer-added.png",
+   "/tmp/frbench/fix-l4-selftasks-carried/steps/10-after-w2-3-tasks-after-review.png"
+  ]
+ },
+ "new_problems": [
+  "task.update's run (packages/commands/src/commands/task.ts, task.edit reason) and other task.ts reason lines use `params.note?.trim() || ...` as the change's reason whatever wrote the note, so a model-written note can stand as the change log's reason text; only the redirect guards were moved to ownNote (L4-selftasks-120). Outside the never-cut scope; worth a follow-up.",
+  "The stand-in's thoroughWhy (testenv/src/bench/role-player.ts) matches \\breview\\b, so a chat 'tool:' line whose JSON names review.md goes to answer_thoroughly instead of the tool; bench walks must avoid the word (walk2 used gaps.md).",
+  "At Assisted, chat's task_create acts at once with no read-back unless a record was read in the turn (bench walk2); this matches d1109-chat-guard's rule but means the reviewer line shows in the done sentence, not a read-back, in the common case."
+ ],
+ "notes_for_other_areas": [
+  "ExecutorOptions.onClosed(ClosedConfirmation {id, humanId, projectId, source, sessionId, how: yes|no|refused|expired}) fires once for every close of a pending confirmation, from any route and on expiry; compose.ts emits inbox.changed, project.changed and conversation.changed (unless that conversation's turn is in flight). Do not emit for closed cards in route handlers again.",
+  "conversationOfCard(card) in runtime/conversation/transcript.ts names the conversation a card was read back in.",
+  "Fix sets: taskListFingerprint is now 'v2|<id>=<hash>,...'; use fixListMoved(store, projectId, print, namedTaskIds(calls, shown)) to judge a Yes; old whole-list prints still compare whole.",
+  "ChangeLogView.byYouAndAgent (GET /changes) marks rows by the person and the agent together (author_human + author_agent via record()'s alsoPerson).",
+  "CommandPorts.modelSettings.writesNoFile(specialist) and registry/tools.ts writesNoFileLine(specialist, file) + fileTheWordsWrite(words) give the reviewer line naming the file; GET /settings/models takes ?title=&outcome=&criteria=.",
+  "UI store/context.tsx: on SSE, open chats reload only on conversation.changed; in polling mode only when the Inbox count moved.",
+  "Stand-in: a tool result containing 'Write nothing about it' gets '[stand-in model]' alone; the critic accepts a writes-no-file specialist on its report.",
+  "pnpm docs:check in a worktree needs --base <branch> or DOCS_CHECK_BASE; without it says nothing was checked."
+ ]
+}

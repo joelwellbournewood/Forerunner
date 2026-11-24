@@ -1,0 +1,98 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "Bench \"review-l4-selftasks-carried\" (stand-in model, daemon 49191, UI 2791), started from my worktree at fix/l4-selftasks-carried (b2c1bd3). Scripts are in /tmp/frbench/review-l4-selftasks-carried/scripts, results in walkA/B/C-part1/D/E.json, screenshots in /tmp/frbench/review-l4-selftasks-carried/steps.\n\nWalk A (L4f-left-1, never cut). Project \"Garden club\" at Assisted, Chat tab, `tool: task_pause {\"task\":\"Write the FAQ\"}`. The header read 'Waiting for you: 1 change to confirm' with badge 1 (01-a1-readback.png). I timed four closes until the header left \"Waiting for you\", the badge was gone and the chat's Yes was gone, with no reload:\n- No in chat: 377 ms. Header went back to 'Ready: 1 task waits for your Start' (02-a2-after-chat-no.png).\n- Yes refused after the task's outcome was edited elsewhere: 358 ms. The reply was '\"Write the FAQ\" changed since I asked: what done looks like changed. Nothing was changed; ask again if you still want it.' (03-a3-after-refused-yes.png).\n- No pressed in the Inbox in a second window: 411 ms. The chat's Yes/No went too (A4-inbox-card.png, 04-a5-chat-after-inbox-no.png).\n- Yes pressed in the Inbox: 428 ms. The header became 'Paused: \"Write the FAQ\"' [Open Tasks] and the task was paused (05-a6-chat-after-inbox-yes.png).\n\nWalk E (L4f-left-1, expiry). I opened Home and filed a Settings card ('Raise the monthly cap to CHF 400.00? Confirm in the app on a paired device.', POST /commands/execute, source ui), which took the badge from 1 to 2. 343 ms after its expiresAt the badge showed none, with 0 page navigations. The Inbox Update reads 'The change you asked for was not made: the monthly cap (CHF 150.00 to CHF 400.00). Its card closed after 10 minutes without your yes; ask again if you still want it.'\n\nWalk B (L4f-left-2, never cut). Project \"Quote page\" at Assisted with tasks Create the page in index.html (ready), Choose the colours (draft) and Style the page (waits on the draft). I said 'fix the tasks: \"Style the page\" is two jobs, the layout and the colours; nothing checks that the links work.' and got the read-back 'Make these 2 changes to the tasks of Quote page? Split ... ; add \"Check that the links work\".'. I started a session and approved its plan; it finished \"Create the page in index.html\", a task the set does not name. After a reload the card still waited. Yes made 'Split \"Style the page\" into ... Added \"Check that the links work\" ...'. The tasks are now layout, colours, check, ready (B1–B4). Second project: after the same read-back I edited the named task's outcome, then pressed Yes. The reply was 'The tasks changed since I checked them; say \"fix the tasks\" to check again.' and the task list was unchanged (B5).\n\nWalk C (L4-selftasks-120). I restarted the bench with FORERUNNER_BENCH_FAIL=digest. The ladder ended with the card '\"Write the digest page\" failed 4 times' (Try again / Mark done anyway / Cancel task). In chat, `tool: task_transition {...\"to\":\"ready\",\"note\":\"Put on hold by the person.\"}` now redirects to the card's answer, and because that card is high-risk the reply is 'Answer it on its card in the Inbox: \"Write the digest page\" failed 4 times. Nothing else was filed.' The same call without a note gives the same reply (chatprobe). So a note the model wrote no longer keeps the move off the card. The medium-risk read-back and the restart path I verified through the commands tests, not on the bench.\n\nWalk D (U-098, D-3/D-5/D-6):\n- New task with Reviewer: the line is plain with no outcome. With outcome 'review.md lists the gaps and risks found in notes/plan.md' it reads 'The reviewer writes no file, so review.md is not written: its findings are its report, which you read in the task's drawer.' (15-d1).\n- Edit of a coder task with outcome 'gaps.md lists ...', switched to reviewer: the line names gaps.md (16-d2).\n- Chat task_create for the reviewer (it acted at once): the done sentence carries the gaps.md line (17-d3).\n- Defect: outcome 'Write a review of the Node.js setup' showed 'The reviewer writes no file, so Node.js is not written: ...' on New task.\n\nScreens and design. Every screen the journey passes follows the area's design. The header, the badge and the open chat follow every close at once. The read-back reply shows once ('[stand-in model]' alone, with the question only on the card). The writing rules hold, with one exception: the false file name in the reviewer line (blocking item).\n\nTests and validation:\n- Fail-first: I reverted the fix's source files locally and kept the new tests. The real-daemon describe 'l4-selftasks-carried, run L4' then had 5 of 7 cases fail on the base code: L4f-left-1 ('expected [] to include <projectId>'), L4f-left-2 (unnamed task), L4f-left-4, L4f-left-5 and D-5. With only task.ts at the base, 5 commands cases failed: the 120 cases got task.transition instead of request.answer, plus the three D-6 cases. With only context.tsx at the base, the L4f-left-6 UI cases read the conversation 5 and 7 times where 3 and 4 were expected. All of these pass on the branch, and I restored the worktree afterwards.\n- Suites on the branch: `pnpm check` exit 0 (562 files, 6203 passed, 7 skipped; docs-check ok, 46 files; secret scan clean). UI vitest 104 files and 1511 tests passed. Playwright (local config) 40 passed. `pnpm test:injection` 92 of 92 passed. `pnpm test:e2e` 25 passed, 1 skipped. I did not re-run `pnpm test:integration`.\n- Cleanup: bench stopped, its home and browser profile deleted, worktree clean.",
+ "blocking": [
+  {
+   "issue": "The reviewer line this area adds (D-5/D-6) names a technology as the file the task 'asks for'. fileTheWordsWrite reads any word with a dot and a letter-led suffix as a file, so ordinary words in a reviewer task become a false sentence on New task, Edit, chat's read-back and chat's done sentence.",
+   "where": "packages/runtime/src/registry/tools.ts:103 (FILE) and :114/:136 (FILE_WRITTEN, fileTheWordsWrite)",
+   "evidence": "Bench walk D (/tmp/frbench/review-l4-selftasks-carried/walkD.json, d1_nodejs): New task > Reviewer, outcome 'Write a review of the Node.js setup' shows 'The reviewer writes no file, so Node.js is not written: its findings are its report, which you read in the task's drawer.' A direct probe of fileTheWordsWrite: 'Create a report on the Express.js routes' -> Express.js; 'Write up the risks in the ASP.NET app' -> ASP.NET; 'Produce a list of issues with the Vue.js components' -> Vue.js. Design section 5 rules 4 and 9 (true now; no promises the code does not keep) are broken by a sentence that tells the person a file named 'Node.js' will not be written. The repository already treats this case as a non-file elsewhere: scripts/bench/README.md says of the stand-in critic that 'a technology such as Node.js is not a file'.",
+   "expected": "A technology or product name (Node.js, Express.js, Vue.js, ASP.NET and similar) is never taken as the file the words ask for, so the plain line 'The reviewer writes no file: its findings are its report, which you read in the task's drawer.' shows. A test at the same boundary pins it: the reviewer-file-line test and the D-5 real-daemon case get these inputs with the exact plain line."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "L4f-left-1: every close (chat No, refused Yes, Inbox No/Yes, POST /commands/:id/confirm or cancel, a lapse) tells the screens once: inbox.changed, project.changed, conversation.changed",
+   "holds": true,
+   "note": "Bench walk A: header and badge followed within 358–428 ms after each of the four closes, with no reload. Walk E: a lapsing Settings card cleared the badge 343 ms after expiry. The real-daemon case fails on the base code and passes on the branch. executor.confirm wraps answerPending and tellClosed; expirePending tells with 'expired'."
+  },
+  {
+   "claim": "L4f-left-2: a fix set's Yes is judged on the tasks it names and the list's membership",
+   "holds": true,
+   "note": "Bench walk B: after a session finished the unnamed task the Yes applied the set; after the named task was edited the Yes was refused with TASKS_CHANGED_REPLY and nothing changed. The real-daemon case fails on the base code. Old fingerprints are still compared whole (the old algorithm is kept). The calls carry task ids (task-check callsOf idOf), so namedTaskIds matches fingerprint keys."
+  },
+  {
+   "claim": "L4-selftasks-120: the redirect guards judge a note by who wrote it, also after a restart",
+   "holds": true,
+   "note": "The commands cases fail with base task.ts (task.transition instead of request.answer) and pass on the branch, including the restorePending case. On the bench, a high-risk ladder card answers chat's retry with 'Answer it on its card in the Inbox: ...' whether or not the model wrote a note, so a model's note no longer sidesteps the card."
+  },
+  {
+   "claim": "L4f-left-3: an Undo read back in chat after a restart says 'Undone: the monthly cap is back to CHF 150.00.'",
+   "holds": true,
+   "note": "The undo.test restart case and the new case pass. The item's other two parts (double period, lapsed Update values) were already fixed at the base by the L4f fix-up: noteClause drops the second period and lapsedCardUpdate gives '(CHF 150.00 to CHF 400.00)', which the bench Update shows."
+  },
+  {
+   "claim": "L4f-left-4: a merged card's change row names both who asked ('J and Alice'); recall says 'You and Alice'",
+   "holds": true,
+   "note": "The real-daemon GET /changes case fails on the base code. Only executor.record sets both authors (the undo and revert rows set one each), so older rows are not mislabelled."
+  },
+  {
+   "claim": "L4-other-1 D-3/D-5/D-6: the reviewer line names the file in New task, Edit and chat",
+   "holds": false,
+   "note": "The mechanism works: review.md and gaps.md show on New task, Edit and the chat done sentence on the bench, and the tests fail on the base code. But the file heuristic names technologies such as Node.js, Express.js and ASP.NET (blocking item)."
+  },
+  {
+   "claim": "L4f-left-6: an open chat is read again only for its own card",
+   "holds": true,
+   "note": "With base context.tsx the UI cases read the conversation 5 and 7 times where 3 and 4 were expected; on the branch they pass. In polling mode the chat reloads only when the count moved."
+  },
+  {
+   "claim": "L4f-left-7 and L4-selftasks-125: the stand-in writes nothing about a waiting card and holds the reviewer to its report; the README lists TASK_LIST/_SAYS; docs:check says what it needs",
+   "holds": true,
+   "note": "Bench: every read-back reply is '[stand-in model]' alone. bench-role-player.test.ts and docs-check.test.ts pass. I did not re-run a reviewer session on the bench; the fixer's walk2-after.json shows it accepted by the critic."
+  },
+  {
+   "claim": "L4f-left-5: coverage for value cards (also after a restart), the header beside a question, a lapsed Settings card",
+   "holds": true,
+   "note": "Tests only, added for behaviour that already held; they run and pass. The fake-clock 'fix the tasks' POST /chat case already existed at line 27213."
+  },
+  {
+   "claim": "L4b-left-4: a task_proposal card counts as others' words",
+   "holds": true,
+   "note": "chat-facts test passes. The change is stricter (read back first). Injection suite 92 of 92."
+  },
+  {
+   "claim": "L4b-left-3 first half: 'adding \"X\"' / 'the change to \"X\"' / 'a change' instead of 'the add of'",
+   "holds": true,
+   "note": "The task-check and session-task-list assertions were changed for the design, not weakened."
+  },
+  {
+   "claim": "New or changed routes have a real-daemon case and a fake-daemon change in the same commit",
+   "holds": true,
+   "note": "c730831 (closes, /chat, Inbox answer), d39d739 (GET /changes byYouAndAgent) and 7d90c73 (GET /settings/models words) each touch real-daemon.test.ts and fake-daemon.ts."
+  },
+  {
+   "claim": "Validation: pnpm check, UI suite 1511, Playwright 40, injection, e2e all pass",
+   "holds": true,
+   "note": "Reproduced here, all green. Integration not re-run."
+  },
+  {
+   "claim": "not_done items carry reasons",
+   "holds": true,
+   "note": "L4-selftasks-127 rest, L4b-left-2, L4b-left-3 second half and L4b-left-5 are all inside the spec's cut line, each with a reason. Every never-cut item is done."
+  }
+ ],
+ "non_blocking": [
+  "L4-selftasks-120 drops the person's own words. In chat every note is passed by the model, so ownNote is always false there. 'Try X again and tell it to use the old layout' now becomes the card's answer, and the read-back 'Try again (\"X\" failed)? Starts a session that tries again.' says nothing of the note, which is dropped (request.answer has no note). This is what the spec asked for, but the lost words are not said anywhere; a follow-up should either say so or carry them to the next brief.",
+  "The fixer's check_in_the_app for L4-selftasks-120 needs a medium-risk failed-task card, for example the critic could not review it. On the ladder's '\"X\" failed N times' card, which is high risk, chat answers 'Answer it on its card in the Inbox: ...' (seen on the bench) and no read-back appears. Correct the live_check steps.",
+  "ADR 0109's 2026-11-23 amendment swaps the labels: it calls the file-naming line D-3 and Edit's words D-5, while the spec and the code comments say D-5 is the line and D-3 is Edit.",
+  "Fake daemon heardChat(…, closed) sets the closed card's answer to 'yes' even when the chat said No (apps/ui/test/fake-daemon.ts). It is a fidelity nit and no test reads it.",
+  "On a lapse inbox.changed is emitted twice: once from onClosed and once after the Update is filed. Harmless.",
+  "If p.perform throws after answerRequest has recorded the answer, confirm() never calls tellClosed. Unlikely: perform catches step errors, so only a change-log write failure triggers it.",
+  "In polling mode the open chat is reloaded only when the count moved. A card that closes while another arrives in the same poll leaves the chat's Yes/No until the next move.",
+  "conversationOfCard scans the session's last 400 chat.reply rows. An older card falls back to the project's conversation.",
+  "Trial merge with fix/l4-chat-carried, which merges first: content conflicts in apps/ui/test/real-daemon.test.ts, packages/runtime/test/chat-recall.test.ts and docs/decisions/0119-the-agent-keeps-its-task-list-right.md. All three are append-only, so keep both areas' blocks. No overlap in executor or server close paths.",
+  "The real-daemon case 'a session finishes the task the set names ... Yes says the tasks changed' also passes on the base code, because the base refused every change. It guards the refusal direction only; the unnamed-task case is the one that fails first.",
+  "The fixer's open new_problems still stand: task.update and the other reason lines in task.ts use a model-written note as the change log's reason; the stand-in's thoroughWhy catches 'review.md' in chat tool lines; at Assisted, chat's task_create acts at once.",
+  "Not this area: the Inbox's Updates list shows the raw message type 'warning' under the lapse Update (E3), against design section 5 rule 6."
+ ]
+}

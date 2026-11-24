@@ -1,0 +1,144 @@
+{
+ "area": "l4-chat-carried",
+ "branch": "fix/l4-chat-carried",
+ "head_sha": "31865c70fd304b79e25a6e4d923a0f0bb949dd64",
+ "commits": [
+  {
+   "sha": "8ddb7e9",
+   "subject": "ui: the hotkey and the palette's Talk on a joined project start no voice turn (L4-selftasks-123, C4-left-9, U-084)"
+  },
+  {
+   "sha": "a052fd0",
+   "subject": "critic: a split task whose first part ran is measured as it ran (L4-selftasks-123, SC-13, U-095)"
+  },
+  {
+   "sha": "31865c7",
+   "subject": "chat: a parser question names its options only as whole words; exact Stop-during-nudge replies (L4c-left-9, C3-left-11)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Review blocking 1 (C4-left-9 sibling). On a joined (closed) project, the global hotkey and the palette's Talk still started a voice turn. The fixer had hidden the Listening badge, the Send button and the message box, but the voiceRequest effect in ConversationPanel called startTurn whatever closedChat said. With voice installed, the microphone recorded with nothing on screen to show it, and the second press sent the words to the closed project's chat. Without voice, the closed panel said 'Voice is not installed. Install it in Settings → Voice, or type below.' with nowhere to type.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "apps/ui/test/hotkey.test.tsx, describe \"l4-chat-carried, run L4: the hotkey and the palette's Talk on a joined project (C4-left-9)\". All three cases failed: (1) the hotkey started a capture and a voice session on Beacon (mic.log ['start','stop','start']); (2) the palette's Talk showed the 'or type below' reason; (3) a turn that was listening was not ended when its project closed (no /stop call).",
+   "how": "apps/ui/src/shell/ConversationPanel.tsx: a voice request now waits until the panel knows whether the project on screen takes words (closedKnown: the project is in the projects list, or its card has been read). On a closed project the request starts nothing: no capture and no voice session. A request seen while the panel is closed is used up, so the header's Talk never starts a left-over one. A card read for a different project is ignored. A new effect handles a turn that is starting, listening or waiting when the project becomes closed (for example joined from the phone or from chat): it is ended with endVoice. The capture stops, the voice session stops, no release press is sent, and the phase goes back to idle. The voice-reason line is cleared and never shows under the closed line. Siblings: searched startVoiceSession, startTurn and voiceRequest in apps/ui/src. The header's Talk was already handled. The phone's chat lists only open projects (mobile/store.tsx).",
+   "check_in_the_app": "Desktop app with voice installed: make Beacon one project with Atlas, open Beacon's page and press the global hotkey (or Ctrl+K, then 'Talk to your agent'). Talk opens with 'This chat is kept to read; ask about its work in the Chat of \"Atlas\".' and Open it. There is no Listening badge, the microphone does not turn on, and a second press sends nothing; Beacon's chat stays as it was after a reload. With voice not installed, the same panel shows no 'or type below' line. Press Open it, then the hotkey on Atlas's Chat: a turn starts (or the voice reason shows, with the message box). Bench evidence (AFTER): /tmp/frbench/fixup-l4-chat-carried-evidence/steps/11-b-7-palette-talk-joined.png shows only the closed line, with zero /voice/ requests. 13-c-1-palette-talk-atlas.png shows that on Atlas the same palette Talk reads GET /voice/status and shows the reason with a message box. BEFORE is the reviewer's /tmp/frbench/review-l4-chat-carried/steps/19-c1-palette-talk.png."
+  },
+  {
+   "problem": "Review blocking 2 (SC-13). task.split keeps the split task as its first part, so the plan's task id is that part. replacedDuring marked that id as replaced for the whole session, and sessionChecks then left it out of every measure (done, failed, sent back, waiting). A first part that went on to run and fail, or that waits for the person, disappeared from the session review. A session whose only planned work failed after CHF 0.12 read 'accepted (grade 100, 0 findings)' instead of revise (grade 70). On the bench, a failed 'Style the page in styles.css: layout' read '3 of 4 planned tasks done'.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/critic/test/session-review.test.ts, describe 'l4-chat-carried, run L4: a split or dropped task counts as replaced (SC-13)': 'a split whose kept first part then ran and failed is measured as it ran…' and 'a split whose kept first part then ran and waits for the person is measured as waiting; one that ran to done counts as planned and done'. Also packages/runtime/test/event-lines.test.ts, describe 'l4-chat-carried, run L4: the measured line names the replaced tasks (SC-13)': both cases.",
+   "how": "packages/critic/src/session-review.ts: replacedDuring now returns how each task was replaced, as ReplacedTask { taskId, by: 'split' | 'duplicate' }. SessionReviewData.replaced replaces replacedTaskIds. A task dropped as a duplicate stays replaced. A split task counts as replaced only while its kept first part has not run in this session: its status is draft or ready, no work run exists, and it was not sent back or paused. Once that part has run, it is measured like any planned task. The same paused set is reused for the onlyPaused check. In packages/runtime/src/daemon/views.ts, the session page's Details line (critic.session_review_metrics) now names the replaced count: 'Session review measured: 1 of 1 planned task done, 1 replaced; …', or '2 planned tasks replaced; …' when every planned task was replaced (before: '0 of 0 planned tasks done'). Reviews written before this change read as they did.",
+   "check_in_the_app": "At Standard, plan a web project and run a session in which the task check splits 'Style the page in styles.css' and its first part then fails (bench: FORERUNNER_BENCH_TASK_LIST='Create the', FORERUNNER_BENCH_TASK_LIST_SAYS='\"Style the page in styles.css\" is two jobs, the layout and the colours.', FORERUNNER_BENCH_FAIL='styles.css: layout'). On the session page, under Details, the line reads 'Session review measured: 3 of 5 planned tasks done; …'; before the fix it read '3 of 4'. The failed part counts as planned and not done. Bench evidence: /tmp/frbench/fixup-l4-chat-carried-evidence/steps/a2-walk.json. With the real model, the session lead should also check a session whose split parts are left for the next Start: the line should end '…, 1 replaced; …' and the review should be accepted."
+  },
+  {
+   "problem": "Review non-blocking items, done because they were cheap. (a) The fixer had changed the C3-left-11 Stop-during-nudge assertions in chat-depth.test.ts and conversation-memory.test.ts to check only what the reply is not; chat-depth.test.ts asserted TRUE_LINE exactly before, so this weakened a test. (b) L4c-left-9: the check that a parser question already names its options matched part of a word ('No' in 'Notes', 'Site' in 'siteworks'). So 'No project named \"siteworks\". Which one?' with options Site and Works dropped them, and voice read 'Which one?' with no choices. (c) In agent.ts, trueLine's doc comment sat above switchedHere.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-carried-sentences.test.ts 'l4-chat-carried, run L4: a parser question names its options as whole words (L4c-left-9)'. The siteworks case failed with the substring check. The Stop-during-nudge exact assertions pass on the fixer's code; they restore the strength the case had before.",
+   "how": "The new parserQuestionReply in conversation/sentences.ts matches options only as whole words, and agent.ts uses it. chat-depth.test.ts and conversation-memory.test.ts now assert reply === '' (the held nudge call had streamed nothing) together with the stopped footer and the reloaded transcript. ADR 0114 has a dated note: after a Stop during the nudge, the app shows the nudge call's complete sentences without checking them again, the same as after a Stop in the first call.",
+   "check_in_the_app": "In chat, with projects Site and Works and no project called siteworks, type 'switch to siteworks'. The reply reads 'No project named \"siteworks\". Which one? Options: Site, Works.' and shows two buttons. 'Which project: Notes or Site?' still has no 'Options:'."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "Review non-blocking: C4-left-7 race (a second sync in the same process settles a card it read as 'applying' after another sync already settled it), and the recovered path admitting only the tasks the change made",
+   "why": "Neither is in the blocking list. Closing the race properly needs a compare-and-set mark on the change card. That belongs to task-proposal.ts recovery work, which has no failing test yet. Left as found."
+  },
+  {
+   "problem": "Review non-blocking: onlyDrops reads the card's proposed changes rather than the applied ones; 'runs it' is said even when the first part waits for a person task",
+   "why": "This changes the Done-line words and needs its own decision on the sentence. Left for the session lead or a later words pass."
+  },
+  {
+   "problem": "Review non-blocking: NOW_STATE also treats 'I don't see any changes.' and 'any sessions.' as not being absence claims",
+   "why": "Whether those should count as history (which recall covers) is a decision on how narrow the absence rule should be. Not changed."
+  },
+  {
+   "problem": "Review non-blocking: the fake daemon does not model the waits-changed refusal of a split's Undo or switchedHere for 'there'; Talk on a project missing from the store briefly shows the message box; the '# Last session' line in conversation-agent.md is wider than the file's wrap width",
+   "why": "Rewrapping the prompt would change the exact text the model receives and its version. The fake-daemon gaps cannot be reached from the UI tests. The brief flash would mean hiding the box for open projects too while the store loads. All are cosmetic or stand-in only."
+  },
+  {
+   "problem": "The guard does not check what a Stop during the nudge shows",
+   "why": "Added a dated note to ADR 0114 instead. A failing test needs the fake provider to stream a full sentence and then hold on the simulated clock. This behaviour is the same as a Stop in the first call."
+  },
+  {
+   "problem": "L4c-left-6 injection-suite case (the fixer's not_done)",
+   "why": "Unchanged. The session lead should accept the fixer's reason (model output, not a new input channel to a model) or reassign it."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0: lint, lint:paths, typecheck, 561 test files / 6198 tests passed (7 skipped), docs:links, secret scan clean (2275 files). docs:check could not diff against origin/main in this worktree."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (42 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 103 files, 1504 tests passed"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 40 passed"
+  },
+  {
+   "command": "bench fixup-l4-chat-carried (--provider bench, ports 49200/2800), walks /tmp/frbench/fixup-l4-chat-carried-evidence/walk{A,B,C}.cjs",
+   "result": "(a2) a split whose first part then failed: 'Session review measured: 3 of 5 planned tasks done' (the reviewer's before: '3 of 4'). (b) a suggestion card left at 'applying' through a daemon restart was settled ('Nothing changed: none of the changes applies now…', never 'Making the changes…'). Talk and the palette's Talk on joined Beacon show only the closed line, with no message box, no 'type below' and zero /voice/ requests. (c) the palette's Talk on Atlas reads /voice/status and shows the reason with a box. Answering the Quote page card split 'Style the page'; after a wait was added, Changes reads 'Cannot be undone now: \"Publish the page\" was made to wait for \"Check the colours\" after the split; undo would drop that.' The only logged problems are the expected connection refusals during the restart. The bench is stopped and its home deleted."
+  },
+  {
+   "command": "cargo checks",
+   "result": "not run: the desktop shell (apps/desktop/src-tauri) is unchanged"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-l4-chat-carried/steps/19-c1-palette-talk.png",
+   "/tmp/frbench/review-l4-chat-carried/steps/06-a2r-1.png"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-l4-chat-carried-evidence/steps/09-b-5-talk-joined.png",
+   "/tmp/frbench/fixup-l4-chat-carried-evidence/steps/11-b-7-palette-talk-joined.png",
+   "/tmp/frbench/fixup-l4-chat-carried-evidence/steps/13-c-1-palette-talk-atlas.png",
+   "/tmp/frbench/fixup-l4-chat-carried-evidence/steps/06-b-2-card-after-restart.png",
+   "/tmp/frbench/fixup-l4-chat-carried-evidence/steps/15-c-3-changes-split-refused.png"
+  ]
+ },
+ "new_problems": [
+  "Bench walk note: the fixer's walk.cjs patches the first open task_proposal card it finds. When another project's card is also open, it patches the wrong one: in my walk it patched Quote site's stale card, which the restart then settled correctly as 'Nothing changed: none of the changes applies now…'. Future walks should select the card by project.",
+  "At Standard, a task check that both splits and drops goes to the Inbox as one suggestion card (a drop asks first), so the split is not made during the session. A bench walk of the 'replaced' line therefore needs a split-only check. This is by design, noted for walkers.",
+  "The fixer's earlier new_problems still stand: pr-answers' take-out mark has no start-time recovery, and parser options that contain commas read ambiguously ('Options: The session budget, until then, The project budget, permanently, Nothing.')."
+ ],
+ "notes_for_other_areas": [
+  "critic: replacedDuring(store, session) now returns ReplacedTask[] ({ taskId, by: 'split' | 'duplicate' }); SessionReviewData.replaced replaces replacedTaskIds. A split task counts as replaced only while its kept first part has not run in the session (draft or ready, no work run, not sent back or paused). Once it has run, it is measured as it ran.",
+  "runtime views.ts critic.session_review_metrics: when metrics.replacedTasks > 0 the line reads '… N of M planned tasks done, K replaced; …', or 'K planned tasks replaced; …' when M is 0. This is l4-money-pause's line; its intent and its existing assertions are unchanged.",
+  "apps/ui ConversationPanel: a voice request (hotkey or palette) waits for closedKnown, and on a closed project it starts no capture and no voice session. When the project on screen closes, a turn that is starting, listening or waiting is ended with endVoice and its words go nowhere.",
+  "runtime conversation/sentences.ts: parserQuestionReply(q) is the one place for a parser question's reply text. Options are left out only when the text names them all as whole words.",
+  "Suggested UPDATE-LOG lines (not edited here): 'Talk on a joined project starts no voice turn from the hotkey or the palette either: no microphone, no voice session, no \"type below\".' / 'A split task whose first part then failed or waits for you is counted in the session review: Session review measured: 3 of 5 planned tasks done.' / 'The session page names replaced tasks: Session review measured: 1 of 1 planned task done, 1 replaced; …'.",
+  "Design §5 words for the session lead to consider in core-experience.md: the measured line's ', 1 replaced' clause and 'N planned tasks replaced'."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/chat-depth.test.ts 'Stop pressed during the nudge…' and packages/runtime/test/conversation-memory.test.ts C3-left-11 case",
+   "why": "The exact reply is asserted again (empty, plus the stopped footer). This restores the strength the fixer's negative-only checks had lost; the behaviour is unchanged."
+  }
+ ]
+}

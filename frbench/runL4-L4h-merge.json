@@ -1,0 +1,83 @@
+{
+ "merged": [
+  "fix/l4-chat-carried at 31865c7 (fixup head; fix 83f3a55 plus fixup 8ddb7e9, a052fd0, 31865c7) -> merge commit 6cce40c, no conflicts",
+  "fix/l4-selftasks-carried at a7367f7 (fixup head; fix b2c1bd3 plus fixup fa6a725, 440b6bc, c8c16fb-era c8c4..., b731511, 51ac1e8, a7367f7) -> merge commit 4a884ef, three append-only conflicts resolved"
+ ],
+ "head_sha": "4a884ef6de9ec48676cf2e6ae2879c613586333f",
+ "pushed": true,
+ "conflicts_resolved": [
+  "apps/ui/test/real-daemon.test.ts: both areas added a describe block at the end of the file, and git split it into two interleaved hunks because both blocks begin with the same createProject('Quote page') lines. Resolved per the append-only rule in shared_files (one describe per area, key order): the whole 'l4-chat-carried, run L4' block first, then the whole 'l4-selftasks-carried, run L4' block, each closed by its own '});'. A script checked that each branch's block appears byte for byte in the merged file.",
+  "packages/runtime/test/chat-recall.test.ts: same shape. The 'l4-chat-carried, run L4: an absence about now is no claim (L4c-left-8)' describe (with its doc comment) comes first, then 'l4-selftasks-carried, run L4: chat's recall names who made a change as the Changes page does (L4f-left-4)'. Both were checked byte for byte against their branches.",
+  "docs/decisions/0119-the-agent-keeps-its-task-list-right.md: kept all four dated amendments in merge order: l4-chat-carried 2026-11-23, fixup-l4-chat-carried 2026-11-23, l4-selftasks-carried 2026-11-23, fixup-l4-selftasks-carried 2026-11-24. Both sides were checked byte for byte.",
+  "Auto-merged with no conflict, and confirmed by typecheck and the full suites: executor.ts (chat-carried's undoBlocked change argument and stepWords renames, beside selftasks' onClosed/tellClosed and confirm finally); task.ts (task.split depends_on and undoBlocked, beside ownNote, noFileClause and moveAsCardAnswer); types.ts; transcript.ts (APP_MARKER_ANY_CASE_RE and HOLD_REPLY_RE, beside conversationOfCard); server.ts; fake-daemon.ts; api-types.ts; project-facts.ts; the maintainer docs (runtime.md, commands.md, testing.md); user-guide.md; scripts/bench/README.md; session-task-list.test.ts."
+ ],
+ "integration_fixes": [],
+ "validation": [
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "ok (lockfile unchanged)"
+  },
+  {
+   "command": "DOCS_CHECK_BASE=origin/claude/nifty-knuth-f9udt0 flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0. Lint, lint:paths and typecheck clean; unit 563 files, 6251 passed, 7 skipped; docs-check ok (73 files) against origin/claude/nifty-knuth-f9udt0 (3e1ab9d); link-check ok (213 files); secret-scan clean (2278 files). Log: /tmp/frbench/merge-w32/check.log"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped (the Postgres cases skip without FORERUNNER_TEST_PG, as expected)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm --filter @forerunner/live test (dry run, live credentials unset)",
+   "result": "exit 0: 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed"
+  },
+  {
+   "command": "FORCE_COLOR=1 HOME=<empty dir> flock /tmp/frbench/heavy.lock pnpm test:unit (as CI runs it)",
+   "result": "exit 0: 563 files; 6251 passed, 7 skipped"
+  },
+  {
+   "command": "cd apps/ui && FORCE_COLOR=1 HOME=<empty dir> flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 104 files, 1521 tests passed (real-daemon included)"
+  },
+  {
+   "command": "FORCE_COLOR=1 HOME=<empty dir> pnpm --filter @forerunner/approvals-web test (a CI step)",
+   "result": "exit 0: 11 files, 59 tests passed"
+  },
+  {
+   "command": "pnpm secrets:scan --logs (a CI step)",
+   "result": "clean"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 40 passed"
+  },
+  {
+   "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+   "result": "not run: neither area touched the desktop shell (git diff 3e1ab9d..HEAD -- apps/desktop is empty)"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "no matches; working tree clean"
+  },
+  {
+   "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+   "result": "printed nothing: all 42 commits are signed (40 area commits and the 2 merge commits)"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "3e1ab9d..4a884ef fast-forward, first try; origin/claude/nifty-knuth-f9udt0 = 4a884ef"
+  }
+ ],
+ "smoke": "25/25 checks passed, 0 findings, 0 recorded problems. Run with node scripts/bench/start.mjs --name merge-w32 --daemon-port 49210 --ui-port 2810 --fresh (provider bench), then node scripts/bench/journeys/smoke.cjs merge-w32. Model calls: intake 1, specialist 9, critic 6, chat 1. The journey script needed no change. The bench is stopped and its home and browser profile are deleted. Result: /tmp/frbench/merge-w32/steps/smoke-result.json; log: /tmp/frbench/merge-w32/smoke.log.",
+ "problems_left": [
+  "Nothing the merge broke is left. Every suite passed on the first run after the merge, so no integration fix was needed.",
+  "CI and the Desktop app workflow on 4a884ef have not been checked yet. They were just triggered by the push; the session lead confirms them before L4i.",
+  "The areas' own not_done and new_problems carry over unchanged, as their reports say. l4-chat-carried: pr-answers' take-out mark has no start-time recovery; parser options that contain commas read ambiguously; the C4-left-7 sync race and recovered-path admit; onlyDrops reads the proposed changes, not the applied ones; NOW_STATE breadth; fake-daemon gaps; the L4c-left-6 injection case was moved to not_done with a reason, for the session lead to accept or reassign. l4-selftasks-carried: L4-selftasks-127 rest (the Connect offer kind); L4b-left-2 (the fence drops a wait silently); L4b-left-3 second half; L4b-left-5 coverage cases; task.ts reason lines still use a note the model wrote; a high-risk card answered from chat does not mention the note; the Inbox Updates list shows the raw type 'warning' under the lapse Update (design section 5 rule 6, not this area)."
+ ]
+}

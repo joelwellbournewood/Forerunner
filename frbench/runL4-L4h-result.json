@@ -1,0 +1,1209 @@
+{
+ "wave": 32,
+ "areas": [
+  {
+   "key": "l4-chat-carried",
+   "fix": {
+    "area": "l4-chat-carried",
+    "branch": "fix/l4-chat-carried",
+    "head_sha": "83f3a55c85b4bea41e8ebe61c0947d828b422651",
+    "commits": [
+     {
+      "sha": "df1c8cc45316ccf8652ea99ba78800d5196bd49a",
+      "subject": "session: a suggestion card a crash left at 'applying' is applied once at the next start (L4-selftasks-123, C4-left-7, U-095)"
+     },
+     {
+      "sha": "09fa0e09a65ea97f4abf8b0aba2a296b2b7ed045",
+      "subject": "commands: a split's Undo that would drop a later change is refused in words (L4-selftasks-123, C4-left-6, L4-selftasks-129, U-095)"
+     },
+     {
+      "sha": "05fdab1a826be23b78f43fdb860ed9f3425c5473",
+      "subject": "critic: a split or dropped task counts as replaced in the session review (L4-selftasks-123, SC-13, U-095)"
+     },
+     {
+      "sha": "7a08d09fbcd4dc470c2d2b364e5263b1b0e18c21",
+      "subject": "conversation: a Stop during the claim guard's nudge ends the turn stopped, never with the guard's line (L4-selftasks-123, C3-left-11, U-084)"
+     },
+     {
+      "sha": "f30842966fbc2245611e2534d9ab4f38b30e0a10",
+      "subject": "words: the suggestion card's Done line and a set's Undo say what is true (L4-selftasks-123, C4-left-5, U-095)"
+     },
+     {
+      "sha": "09542026e0d78ddbf565a8ef4ff9049986c08859",
+      "subject": "ui: Talk on a joined project says the chat is kept to read, with no message box (L4-selftasks-123, C4-left-9, U-084)"
+     },
+     {
+      "sha": "32db6f123919da759a6fb1dae83ad1cf28abd1fe",
+      "subject": "conversation: only the app writes its lines, in any letter case (L4c-left-6, U-084)"
+     },
+     {
+      "sha": "0fba4f474654f0e846a3ae63e0c3a636edb5207a",
+      "subject": "conversation: an old hold reply never reaches the model's history as its own words (L4d-left-5, U-078)"
+     },
+     {
+      "sha": "a0d4804aa63bf0aa5e565e58fde541cec9322859",
+      "subject": "conversation: the chat's facts say a review that waits, and every fix sentence is asserted word for word (L4c-left-5, SC-10, U-084)"
+     },
+     {
+      "sha": "adf5df0320de57da9e428e9db5e6d57f152264b0",
+      "subject": "test: a kept suggestion is not filed again in the same session (C4-left-3, U-095)"
+     },
+     {
+      "sha": "e30dfda631f956ad53a200761c62f648e9ac5406",
+      "subject": "docs: the run-order tie in the selftasks restart case is settled by the shared comparator (C5-left-6)"
+     },
+     {
+      "sha": "1d9a928ffd148753af55cb9200f1b0164d1047ab",
+      "subject": "chat: the true line after a yes asked in words drops \"say it again\" (L4c-left-7)"
+     },
+     {
+      "sha": "95e06981f71048cd913ff2d9e0c8a2a36e65fe45",
+      "subject": "chat: \"I don't see any failed tasks\" is no absence claim (L4c-left-8)"
+     },
+     {
+      "sha": "ec68795ef9c3267d4995c1d116b004d3bec85f7a",
+      "subject": "chat: a parser question that names its options does not repeat them (L4c-left-9)"
+     },
+     {
+      "sha": "1325aebfe13aeaa7d2d9a822b04d8cb99191cc36",
+      "subject": "chat: \"there\" is the project this conversation switched to, not the header's (L4c-left-10)"
+     },
+     {
+      "sha": "739c9b246e34238f95e3650cc495528fedf03ff4",
+      "subject": "session page: an undone change line keeps the undo's sentence after a reload (L4-selftasks-129)"
+     },
+     {
+      "sha": "83f3a55c85b4bea41e8ebe61c0947d828b422651",
+      "subject": "chat: format trueLine and the C4-left-9 test name (L4c-left-7, C4-left-9)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "C4-left-7: if the daemon stopped between marking a suggestion card 'applying' and finishing the apply, the card read 'Making the changes…' forever and the split never happened. The base sync skipped any card whose outcome was already set. This was confirmed on the BEFORE bench at 3e1ab9d.",
+      "u_ids": [
+       "U-095"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts, describe 'l4-chat-carried, run L4': 'C4-left-7: a suggestion card a crash left between its mark and its apply is applied once at the next start…' and 'C4-left-7: a card a crash left after its changes were made and before its outcome was written is not applied twice…'",
+      "how": "session/task-proposal.ts: syncTaskProposals now also handles answered cards left at 'applying' (the mark carries applying_at), and an in-process applyingNow set stops two applies at once. If the person's ui change_log row with the card's calls already exists, the card is marked applied with that row; otherwise the change is applied once. The sync runs at daemon start through syncApprovals.",
+      "check_in_the_app": "On an Assisted project, let a session's task check file 'the agent suggests 1 change to the tasks'. Press Make these changes and quit the app at once (or stop the daemon). Start it again. Under Inbox > Answered the card reads 'Changed 1 task; your next Start runs it.' and not 'Making the changes…'. The Tasks tab shows the two parts once, and Changes shows one split row."
+     },
+     {
+      "problem": "C4-left-6 and L4-selftasks-129 (refusal words): a split's Undo was offered even after a later change, and pressing it would have silently dropped that change, for example a wait added to the task after the split. A part that had only started read 'has run since'.",
+      "u_ids": [
+       "U-095"
+      ],
+      "failing_test_before": "packages/commands/test/selftasks-run.test.ts, describe 'l4-chat-carried, run L4: a split's Undo after a later change (C4-left-6, L4-selftasks-129)': four cases ('a step added before the task that waited for the split…', 'a step added before one part…', 'the step's own Undo first…', 'a part the running session took reads as running…')",
+      "how": "task.split's after.parts now store depends_on, and undoBlocked gets the whole change's steps as a fifth argument. The Undo is refused in one sentence when a part is running ('is running now'), was cancelled, or has run. It is also refused when the waits of the task after the split changed since: '\"Publish the page\" was made to wait for \"Check that the links work\" after the split; undo would drop that'. Parts made in the same change still undo together.",
+      "check_in_the_app": "Split a task, either by its suggestion card or by chat 'fix the tasks'. Then make the task after it wait for one more task (task drawer > waits for). Open Changes: the split row shows 'Cannot be undone' with 'Cannot be undone now: \"Publish the page\" was made to wait for \"Check that the links work\" after the split; undo would drop that.' and no Undo button. Undo the wait first; the split's Undo is then offered again."
+     },
+     {
+      "problem": "SC-13: the session review counted a planned task that the session's own check split or dropped as a duplicate as not done. A session that replaced its only planned task read 'spent and no task reached done'.",
+      "u_ids": [
+       "U-095"
+      ],
+      "failing_test_before": "packages/critic/test/session-review.test.ts, describe 'l4-chat-carried, run L4: a split or dropped task counts as replaced (SC-13)': three of four cases",
+      "how": "critic/session-review.ts: the new replacedDuring(store, session) reads the not-undone change_log rows made during the session (task.split, task.transition with duplicate_of). The checks leave replaced tasks out of the planned counts. The summary reads '(1/1 planned, 1 replaced)', or '(N planned task(s) replaced)' when nothing else was planned, and the metrics carry replacedTasks.",
+      "check_in_the_app": "At Standard, run a session whose task check splits the only planned task. The session page's review line reads 'accepted', with '(… planned task replaced)' and no 'no task reached done' finding."
+     },
+     {
+      "problem": "C3-left-11: Stop pressed while the claim guard's nudge was running gave the guard's 'Nothing changed, and nothing waits for your yes…' line instead of the stopped line.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "packages/runtime/test/conversation-memory.test.ts, describe 'l4-chat-carried, run L4: a Stop during the claim guard's nudge (C3-left-11)': 'the turn ends stopped: no guard line…'",
+      "how": "agent.ts: the claim-guard loop reads entry.stopped after the nudge call. When the turn was stopped it clears claimGuard.replaced and breaks, so the turn ends as any stopped turn does ('You stopped this answer: CHF … spent.').",
+      "check_in_the_app": "On the bench, with FORERUNNER_BENCH_CHAT_HOLD_MS=4000, send 'say: I've added the task \"Write the FAQ\" for you.' and press Stop while 'Checking what changed…' shows. The reply reads 'You stopped this answer: CHF … spent.', never 'Nothing changed…'."
+     },
+     {
+      "problem": "C4-left-5: a set's Undo sentence named a task by a title the set itself had changed. The suggestion card's Done line said 'runs them' for one task, and promised a Start for a set that only dropped duplicates.",
+      "u_ids": [
+       "U-095"
+      ],
+      "failing_test_before": "packages/commands/test/selftasks-run.test.ts 'the Undo of a set names what is there after it (C4-left-5)'; packages/runtime/test/task-proposal-words.test.ts 'the Done line agrees with what changed (C4-left-5)'",
+      "how": "executor.ts stepWords maps each step's after-title back to its before-title. task-proposal-words.ts: onlyDrops gives 'Changed N task(s).', and otherwise the line uses 'runs it' or 'runs them' and 'takes it if it fits' or 'takes them if they fit' by count.",
+      "check_in_the_app": "Answer a one-change suggestion card with Make these changes. The answered line reads 'Changed 1 task; your next Start runs it.' Undo a set holding a split and a step before its first part: the sentence names \"Style the page\"."
+     },
+     {
+      "problem": "C4-left-9: Talk on a joined (closed) project still showed the message box, the examples and the Talk button, so the person could type to a project that takes no work. A split asked for a closed project's task was also not refused in the same words as other new work.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "apps/ui/test/onerepo-join.test.tsx 'on the joined project's page Talk says the chat is kept to read, with Open it, and has no message box, examples or Talk button…' (failed before). packages/commands/test/project-join.test.ts guard case (passes on base as well; kept as a guard)",
+      "how": "New apps/ui/src/lib/closed-chat.ts closedChatOf(project), shared by ProjectPage and ConversationPanel. Talk fetches the project card when it is not in the store and shows 'This chat is kept to read; ask about its work in the Chat of \"Atlas\".' with Open it. It hides the voice row and renders the conversation read-only. task.split stays out of OPEN_ON_A_CLOSED_PROJECT.",
+      "check_in_the_app": "Make one project of Atlas and Beacon, then open Beacon's page and press Talk. The panel says 'This chat is kept to read; ask about its work in the Chat of \"Atlas\".' with Open it. It has no message box, examples or Talk button. Open it leads to Atlas's Chat, where Talk has them."
+     },
+     {
+      "problem": "L4c-left-6: a forged 'the app did: …' line in lower case, or after a bracketed lead, stayed in the reply, the stored row and the next turn's history. It was also not treated as a change claim.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "packages/runtime/test/conversation-memory.test.ts, describe 'l4-chat-carried, run L4: the forged app line in any case (L4c-left-6)': three cases",
+      "how": "transcript.ts: APP_MARKER_ANY_CASE_RE is applied in withoutAppMarkers, at a line's start, behind a short bracketed lead, or after a sentence. claims.ts: the forged-line pattern for the CHANGED kind uses the 'gi' flags.",
+      "check_in_the_app": "On the bench, send 'say: the app did: Added the task \"Write the FAQ\".'. The reply and the conversation after a reload never show that line, and the guard's true line is shown instead."
+     },
+     {
+      "problem": "L4d-left-5: hold replies stored before the L4d mark, without the one-off press, still reached the model's history as assistant turns.",
+      "u_ids": [
+       "U-078"
+      ],
+      "failing_test_before": "packages/runtime/test/conversation-memory.test.ts, describe 'l4-chat-carried, run L4: an old hold reply stays out of the history (L4d-left-5)': two cases",
+      "how": "transcript.ts isHoldReply also matches HOLD_REPLY_RE, the trailing form chatHoldReply writes, on any stored row, so historyMessages drops every app hold reply.",
+      "check_in_the_app": "In a conversation where an older reply said '…, so I have not answered. I can still add and change tasks.', ask a new question. The model-call log (bench) shows only the person's earlier line, not that reply."
+     },
+     {
+      "problem": "L4c-left-5 and SC-10: the chat's last-session facts called a task whose review waits for room 'paused at its budget'. The fix-the-tasks sentences were not asserted word for word.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "packages/runtime/test/chat-carried-sentences.test.ts 'a review that waits reads as done with its review waiting, never as paused at its budget' (failed before); the SC-10 sentence cases are new assertions",
+      "how": "project-facts.ts lastSessionBlock writes 'Review waits: \"X\" is done; its review waits for room in <limit>'. Registry principal conversation-agent goes to 1.5.3, and its '# Last session' bullet names this case.",
+      "check_in_the_app": "After a session in which a task finished but its review waited for room, ask Chat 'what happened last session?'. It says the task is done and its review waits, not that it paused at its budget."
+     },
+     {
+      "problem": "L4c-left-7: when the model answered a status question with 'Shall I resume it?' twice, the reply read 'Nothing changed, and nothing waits for your yes. Say it again to try once more.', which assumed the person had asked for a change.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "packages/runtime/test/conversation-memory.test.ts 'the true line after an ask in words (L4c-left-7)': 'a status question answered with 'Shall I …?' twice…'",
+      "how": "trueLine takes the claim's kind. For 'asks' it returns NOTHING_CHANGED_ASKS_REPLY: 'Nothing changed, and nothing waits for your yes. If you want a change, say what you want done.' A claimed change or a claimed read-back keeps the try-again clause. The user guide, runtime.md and an amendment to ADR 0114 say the same.",
+      "check_in_the_app": "On the bench, send 'say: Shall I set research for Garden club to any public website again?'. The reply reads 'Nothing changed, and nothing waits for your yes. If you want a change, say what you want done.'"
+     },
+     {
+      "problem": "L4c-left-8: 'I don't see any failed tasks.' in a 'what is left?' answer was read as an absence claim, which cost a nudge and a recall call.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'an absence about now is no claim (L4c-left-8)': both cases",
+      "how": "claims.ts: an ABSENT match whose rest of the sentence is only a state about now (NOW_STATE: 'any failed tasks', 'any open questions in Quote Page', 'anything waiting for your answer') stays free. Words that name what was looked for ('about the FAQ', 'called …') are still nudged.",
+      "check_in_the_app": "Ask Chat 'what is left?' while nothing has failed. The answer comes in one call, the step line 'Looking through everything recorded…' does not show, and on the bench the model-call log has one chat call."
+     },
+     {
+      "problem": "L4c-left-9: parser questions listed their options in the text and again as buttons ('Which project: Notes or Site? Options: Notes, Site.'), so voice and the phone read them twice.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts \"POST /chat in Notes' Chat tab: 'add a task to Site: …' adds to Site; …\" (expected 'Which project: Notes or Site?')",
+      "how": "agent.ts adds ' Options: …' only when the question does not already name every option, so 'Which budget did you mean?' keeps them. The fake daemon matches. The user guide already documented 'add a task to <project>: …', 'open <project>' and 'This chat stays about <tab>' (checked).",
+      "check_in_the_app": "With two projects and no switch in this Chat, type 'add a task there: write the about page'. The reply reads 'Which project: Notes or Site?' with two buttons and no 'Options:'."
+     },
+     {
+      "problem": "L4c-left-10: after 'switch to Site' in Notes' Chat and a later switch to Shop in the header, 'add a task there: …' added the task to Shop.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts \"POST /chat in Notes' Chat tab: after 'switch to Site' here and a header switch to Shop, 'add a task there: …' adds to Site, the project this conversation named\"",
+      "how": "ConversationAgent.switchedHere reads the newest project.switch action of this conversation from its own change_log row (after.active_project). A switch undone since does not count, and old rows without ids fall back to the registry's record. The fake daemon already played 'add a task to Site: …' and recall sources (checked).",
+      "check_in_the_app": "In Notes' Chat type 'switch to Site', then switch to Shop in the header, then type 'add a task there: write the about page' in Notes' Chat. The reply says it was added to Site, and Shop's Tasks tab has no new task."
+     },
+     {
+      "problem": "L4-selftasks-129 (reload line): on the session page, an undone change line read only 'Undone.' after a reload, although the click had shown the undo's own sentence.",
+      "u_ids": [
+       "U-095"
+      ],
+      "failing_test_before": "apps/ui/test/session.test.tsx 'an undone line read again (a reload) keeps the undo's own sentence'",
+      "how": "GET /sessions/:id/events gives an undone change line undoneSentence, read from the undo's change_log row (first command 'undo' with the change's change_log_id, once per project). SessionPage shows it and falls back to 'Undone.' only when there is none. The fake daemon matches. The real-daemon SC-6 case now asserts the field.",
+      "check_in_the_app": "At Standard, let a session split a task. On the session page press Undo on the change line, then reload the page. The line still reads 'Undone: …' with the undo's own sentence."
+     },
+     {
+      "problem": "C4-left-3: a kept suggestion ('Keep the tasks') being filed again in the same session had no test.",
+      "u_ids": [
+       "U-095"
+      ],
+      "failing_test_before": "packages/runtime/test/session-task-list.test.ts 'Keep the tasks, then the same set: no second card; a different set: a card'. This is new coverage: it passes now and failed when the `if (kept) return null;` check was disabled (mutation, reverted).",
+      "how": "Test only; fileTaskProposal's fingerprint check was already there.",
+      "check_in_the_app": "Answer a suggestion card with Keep the tasks. A later task check in the same session that suggests the same split files no new card."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "C5-left-6 (run-order tie in the selftasks restart case)",
+      "why": "Already fixed at the base by 5fbce48 (the shared runOrder comparator: priority, then created_at, then id). A frozen clock that forces the tie passes 10 out of 10 runs, so no code change was needed. Commit e30dfda documents it in docs/maintainers/testing.md. No failing test was possible."
+     },
+     {
+      "problem": "Injection-suite case for a forged lower-case 'the app did:' line (L4c-left-6)",
+      "why": "This is model output, not a new channel into a model. withoutAppMarkers and the claim guard cover it in conversation-memory.test.ts (reply, stored row and next turn's history). The injection suite has no reply-channel harness to put it in. pnpm test:injection passes 92 of 92."
+     }
+    ],
+    "validation": [
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm check",
+      "result": "exit 0: lint, lint:paths, typecheck, 561 test files / 6193 tests passed (7 skipped), docs:links, secret scan clean (2275 files). docs:check could not diff against origin/main here."
+     },
+     {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (38 files)"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+      "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+      "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+      "result": "PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0: 103 files, 1501 tests passed"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+      "result": "exit 0: 40 passed"
+     },
+     {
+      "command": "git grep -n \"^<<<<<<< \"",
+      "result": "no matches; working tree clean; fix/l4-chat-carried = HEAD 83f3a55"
+     },
+     {
+      "command": "bench fix-l4-chat-carried (--provider bench, ports 49180/2780), walk script /tmp/frbench/fix-l4-chat-carried-evidence/walk.cjs: BEFORE from the base checkout at 3e1ab9d, AFTER from this worktree",
+      "result": "BEFORE: after the restart the card read 'Making the changes…' and the tasks were not split; Talk on joined Beacon showed the message box, examples and Talk button. AFTER: 'Changed 1 task; your next Start runs it.', split applied once, Changes shows the split's refusal sentence, Talk shows the closed line with Open it and no message box. Only problems logged were the expected connection refusals during the restart. Bench stopped and its home deleted."
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/fix-l4-chat-carried-evidence/before/01-before-1-suggestion-card.png",
+      "/tmp/frbench/fix-l4-chat-carried-evidence/before/02-before-2-card-after-restart.png",
+      "/tmp/frbench/fix-l4-chat-carried-evidence/before/03-before-3-tasks-after-restart.png",
+      "/tmp/frbench/fix-l4-chat-carried-evidence/before/04-before-4-changes-split-undo.png",
+      "/tmp/frbench/fix-l4-chat-carried-evidence/before/05-before-5-talk-joined.png"
+     ],
+     "after": [
+      "/tmp/frbench/fix-l4-chat-carried-evidence/after/01-after-1-suggestion-card.png",
+      "/tmp/frbench/fix-l4-chat-carried-evidence/after/02-after-2-card-after-restart.png",
+      "/tmp/frbench/fix-l4-chat-carried-evidence/after/03-after-3-tasks-after-restart.png",
+      "/tmp/frbench/fix-l4-chat-carried-evidence/after/04-after-4-changes-split-undo.png",
+      "/tmp/frbench/fix-l4-chat-carried-evidence/after/05-after-5-talk-joined.png"
+     ]
+    },
+    "new_problems": [
+     "Sibling of C4-left-7 (not fixed): packages/runtime pr-answers.ts marks a take-out as `taken_out` before acting, and nothing at start recovers a mark a crash left behind, as syncTaskProposals now does for 'applying'. A crash between the mark and the act could leave that card stuck the same way.",
+     "Words (not fixed): a parser question whose options contain commas joins them with ', ' in the text, so the budget question reads 'Which budget did you mean? Options: The session budget, until then, The project budget, permanently, Nothing.' Voice and the phone cannot tell where one option ends (agent.ts parser-question reply; options from packages/commands/src/intent.ts:935).",
+     "Bench note: at Assisted, a session waits for 'approve' on its plan before the task check can file a suggestion card, so a walk must press approve first (scripts/bench README does not say so for FORERUNNER_BENCH_TASK_LIST)."
+    ],
+    "notes_for_other_areas": [
+     "CommandDef.undoBlocked(params, before, after, ctx, change?) has a fifth argument, the whole change's steps ({ steps: { name, after }[] }), passed by executor.undoBlockedReason.",
+     "task.split's after.parts[] now carry depends_on (null on rows written before; in_turn order derives the expected waits).",
+     "critic: replacedDuring(store, session) is exported; SessionMetrics.replacedTasks and SessionReviewData.replacedTaskIds exist; plannedTasks is the measured (not replaced) count.",
+     "Suggestion cards (task_proposal) carry applying_at with outcome 'applying'; syncTaskProposals settles a card left at 'applying' at start (applied with its existing change row, else applied once).",
+     "apps/ui/src/lib/closed-chat.ts closedChatOf(project) and REMOVED_CHAT are the one place for a closed project's chat line (Chat tab and Talk).",
+     "Registry principal conversation-agent is now 1.5.3 (the '# Last session' bullet names a review that waits). project-facts lastSessionBlock writes 'Review waits: …' when reviewWaits is set.",
+     "claims.ts: new NOTHING_CHANGED_ASKS_REPLY and NOW_STATE; ConversationAgent.trueLine takes the claim kind; transcript.ts APP_MARKER_ANY_CASE_RE and HOLD_REPLY_RE.",
+     "EventView.undoneSentence (GET /sessions/:id/events) is the undo row's sentence for an undone change line.",
+     "ConversationAgent.switchedHere: the chat's namedProjectId ('there', 'it') is the newest project.switch of the conversation's own change_log row, no longer the registry's active project.",
+     "Suggested UPDATE-LOG lines (not edited here): 'A suggestion card answered just before a crash is finished once at the next start: Changed 1 task; your next Start runs it.' / 'A split cannot be undone once something later depends on it: Cannot be undone now: \"Publish the page\" was made to wait for \"Check that the links work\" after the split; undo would drop that.' / 'Talk on a joined project: This chat is kept to read; ask about its work in the Chat of \"Atlas\".' / 'Session review: (1/1 planned, 1 replaced).' / 'Chat after a yes asked in words: Nothing changed, and nothing waits for your yes. If you want a change, say what you want done.' / 'Which project: Notes or Site? (no repeated Options)'. Design §5 words to consider adding to core-experience.md: the refused split Undo sentence, Talk's closed line, the replaced count, and the asks true line."
+    ],
+    "tests_changed_for_design": [
+     {
+      "test": "packages/commands/test/selftasks-run.test.ts 'once the new part ran…' renamed 'once a session took the new part, the Undo says why it cannot'",
+      "why": "C4-left-6/129: a part that is running now reads 'is running now', not 'has run since'."
+     },
+     {
+      "test": "packages/runtime/test/chat-depth.test.ts 'Stop pressed during the nudge…'",
+      "why": "C3-left-11: a Stop during the nudge ends the turn stopped, so the reply is neither the claim nor the guard's true line."
+     },
+     {
+      "test": "packages/runtime/test/task-proposal-words.test.ts and apps/ui/test/real-daemon.test.ts (d1109 left-out suggestion case)",
+      "why": "C4-left-5: one task reads 'runs it', not 'runs them'."
+     },
+     {
+      "test": "version assertions in packages/runtime/test/chat-recall.test.ts, chat-depth.test.ts, conversation-memory.test.ts",
+      "why": "conversation-agent prompt 1.5.2 to 1.5.3 (L4c-left-5)."
+     },
+     {
+      "test": "packages/runtime/test/conversation-memory.test.ts L4-chat-102 'a reply that still asks in words after the nudge is replaced…' and apps/ui/test/real-daemon.test.ts 'POST /chat: a yes asked in words is nudged and put right…'",
+      "why": "L4c-left-7: an ask in words gets 'Nothing changed, and nothing waits for your yes. If you want a change, say what you want done.'"
+     },
+     {
+      "test": "apps/ui/test/real-daemon.test.ts \"POST /chat: ordinary 'add a task to …' lines add at once; only 'there' with two projects asks…\"",
+      "why": "L4c-left-9: the question names its options, so the reply is 'Which project: Notes or Site?' without ' Options: Notes, Site.'"
+     },
+     {
+      "test": "apps/ui/test/fake-daemon.ts (proposal undo refusal words, 'there' question reply)",
+      "why": "The fake follows the daemon: 'is running now' for claimed, in_progress and in_review parts; the 'there' question without repeated options; undoneSentence on undone change lines."
+     }
+    ]
+   },
+   "review": {
+    "verdict": "fix-needed",
+    "acceptance_walk": "Bench \"review-l4-chat-carried\" (--provider bench, daemon 49190, UI 2790), started from this worktree at 83f3a55. It is stopped now and its home is deleted. Screens are in /tmp/frbench/review-l4-chat-carried/steps/ and copied to /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/bench-evidence/steps/.\n\n(1) C4-left-7, suggestion card through a crash. I made an Assisted project \"Price page\" with person tasks: \"Send the logo\", \"Create the page in index.html\", \"Style the page\" (waits for the logo), \"Publish the page\". I started a session and pressed approve on the plan card in the Inbox. The task check filed \"Price page: the agent suggests 1 change to the tasks\" (09-b1-suggestion-card). I stopped the whole bench, set the row to what a crash leaves (answered \"Make these changes\", outcome applying, no change made) with scratchpad/patch_card.py, and started the bench again without --fresh. Inbox > Answered then read \"Changed 1 task; your next Start runs it.\" (10-b2-1). Tasks showed the two parts once (11-b2-2). Changes had one split row with Undo (12-b2-3). Never \"Making the changes…\".\n\n(2) C4-left-6 and L4-selftasks-129. I added \"Check that the links work\" and made \"Publish the page\" wait for it through POST /tasks/:id/dependencies. Changes read: 'Cannot be undone now: \"Publish the page\" was made to wait for \"Check that the links work\" after the split; undo would drop that.', with no Undo button (13-b3-changes-refused). I pressed that wait's own Undo on Changes. The split's Undo came back, and pressing it gave 'Undone: \"Style the page\" is one task again.' Tasks went back to \"Style the page\", with colours cancelled (14/15/16-b3).\n\n(3) SC-13. A planned web project at Standard, with FORERUNNER_BENCH_TASK_LIST making the check split \"Style the page in styles.css\" by itself. The session page shows the split line, and under Details \"Session review: accepted (grade 100, 0 findings).\" and \"Session review measured: 5 of 5 planned tasks done…\". The \"(5/5 planned, 1 replaced)\" summary is only in the review payload, which the project's Reviews tab shows under Session checks (04-a2s-1, 06-a2r-1). With FORERUNNER_BENCH_FAIL=\"styles.css: layout\", the split's kept first part failed and waits for the person, yet the review read \"3 of 4 planned tasks done … accepted (grade 100, 0 findings)\". The failed part is counted as \"replaced\" (project \"Quote site two\", sess.cjs output). This is blocking item 1.\n\n(4) C4-left-9. Beacon joined into Atlas (DB set to the shape project.join writes). The header's Talk shows 'This chat is kept to read; ask about its work in the Chat of \"Atlas\".' with Open it, and no message box, examples or Talk button (17-c1-talk-header). That matches design §3.9. The palette's Talk (the hotkey's action) on the same page still starts a voice turn. The closed panel then shows \"Voice is not installed. Install it in Settings → Voice, or type below.\" with nothing to type into (19-c1-palette-talk). This is blocking item 2.\n\n(5) Chat, with FORERUNNER_BENCH_CHAT_HOLD_MS=4000, in Price page's Chat:\n- 'say: I've added the task \"Write the FAQ\" for you.'. I pressed Stop while \"Checking what changed…\" showed (21-d1). The bubble reads only \"You stopped this answer: CHF 0.02 spent.\" (22-d1-stopped). The same after a reload (26-d1).\n- 'say: Shall I set research…?' gives \"Nothing changed, and nothing waits for your yes. If you want a change, say what you want done.\" (23-d1).\n- \"I don't see any failed tasks.\" takes one chat call and no nudge.\n- \"add a task there: …\" gives \"Which project: Atlas, Price page, Quote site, Quote site two or Shop page?\" with buttons and no \"Options:\" (24-d1).\n- \"switch to Atlas\", then a header-style project.switch to Shop page, then \"add a task there: write the about page\" gives 'Added \"Write the about page\" to Atlas.' (25-d1).\n\nTests:\n- Every named test passes: 9 runtime/commands/critic files (249 tests) and the UI cases (84).\n- Failing on base, checked by putting the base source back locally:\n  - task-proposal.ts: both C4-left-7 real-daemon cases fail with \"Making the changes…\".\n  - task.ts and executor.ts: 6 selftasks-run cases fail; the wait case shows base would undo and drop the wait.\n  - session-review.ts: 3 SC-13 cases fail.\n  - agent.ts: the C3-left-11 case fails with the guard line.\n- Full UI vitest 1501/1501, Playwright 40/40, pnpm test:injection 92/92, commands+critic 503/503, all under the heavy lock.",
+    "blocking": [
+     {
+      "issue": "Talk on a joined (closed) project still starts a voice turn. The global hotkey and the palette's Talk command both send a voice request, and the voiceRequest effect calls startTurn whatever closedChat says. The fix hides the badge that says 'Listening' and the Send button, so on the desktop with voice installed the microphone records with no sign on screen. The second press then sends the spoken words to the closed project's chat. Without voice, the closed panel says 'or type below' with nothing to type into. The fixer's claim and the code comment say 'no message box, no voice turn', which is not true on this path (validation rule 8: the sibling entry point).",
+      "where": "apps/ui/src/shell/ConversationPanel.tsx:662-671 (voiceRequest effect → startTurn, ungated) and :713-763 (voice row hidden while closedChat)",
+      "evidence": "Probe at the UI boundary, /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/zz-review-probe.test.tsx. It uses hotkey.test.tsx's fakeBridge and fakeCapture on '/projects/proj_beacon/summary' with Beacon joined into Atlas. After shell.press(): conversation-closed is shown, mic.log is [\"start\"], POST /voice/sessions has {mode:'push_to_talk', projectId:'proj_beacon'}, and the voice-phase badge is absent. After a second press: mic.log is [\"start\",\"stop\"], the press bodies are [{pressed:true},{pressed:false}], and the read-only conversation shows 'You: add a task: write the faq'. On the bench, palette Talk on joined Beacon shows 'Voice is not installed. Install it in Settings → Voice, or type below.' under the closed line, with no box (/tmp/frbench/review-l4-chat-carried/steps/19-c1-palette-talk.png).",
+      "expected": "While closedChat is set, a hotkey or palette voice request starts no capture and no voice session. A turn that is listening when the line appears is ended. The 'type below' reason is not shown in a panel with no box. Add a UI case: on the joined project, press the hotkey; assert no capture start, no POST /voice/sessions, and the closed line."
+     },
+     {
+      "issue": "SC-13 treats the split task's own id as 'replaced' for the whole session. task.split keeps that id as the first part ('Style the page: layout'), and that part goes on to run. Its outcome is then dropped from every measure: done, failed, sent back and waiting. A failed or waiting first part disappears from the session review. When it is the only unfinished work, a review that should read revise (grade 70) reads accepted (grade 100) with 0 findings. The code comment says 'Its parts are counted as they ran', but the kept part is never counted. This makes the critic's measure untrue and is a regression this change brings.",
+      "where": "packages/critic/src/session-review.ts:323-345 (replacedDuring adds after.task_id of task.split) and :475-476, :549-551, :568-584 (measured excludes it from onlyPaused, plannedFailed, plannedWaiting)",
+      "evidence": "Critic probe through reviewSession, /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/zz-critic-probe.test.ts. The only planned task is split during the session, and both parts run and fail, spending CHF 0.12. With the split row: {verdict:'accept', grade:100, summary:'Session review: 0 done tasks (1 planned task replaced), …; 0 findings.', findings:[]}. The same session without the split row: {verdict:'revise', grade:70, findings:['Session spent CHF 0.12 and no task reached done','No planned task was done: 1 of 1 failed']}. On the bench (FORERUNNER_BENCH_FAIL='styles.css: layout', project 'Quote site two'), 'Style the page in styles.css: layout' failed and waits for the person. The session page line read 'Session review measured: 3 of 4 planned tasks done' and 'Session review: accepted (grade 100, 0 findings).', so the failed part is left out of the count.",
+      "expected": "A split counts the original planned item as replaced only while its kept first part has not run in this session (draft or ready). A kept part that ran is measured as it ran (done, failed, sent back or waiting), like the new parts. Add a session-review case where the split's first part fails: it must still produce the failure finding and the planned count. Drops of duplicates stay excluded as now."
+     }
+    ],
+    "claims_checked": [
+     {
+      "claim": "C4-left-7: a card a crash left at 'applying' is applied once at the next start; the real-daemon cases failed before",
+      "holds": true,
+      "note": "Both real-daemon cases fail with base task-proposal.ts ('Making the changes…') and pass now. On the bench, stop, patch to applying, then start gives 'Changed 1 task; your next Start runs it.', one split row and the parts once."
+     },
+     {
+      "claim": "C4-left-6/L4-selftasks-129: a split's Undo after a later wait is refused in words; 'is running now' for a held part; the four selftasks-run cases failed before",
+      "holds": true,
+      "note": "6 cases fail with base task.ts and executor.ts; base returned null, so it would have undone and dropped the wait. The bench Changes row shows the exact refusal. Undoing the wait first lets the split go back."
+     },
+     {
+      "claim": "SC-13: a split or dropped task counts as replaced; 3 of 4 critic cases failed before",
+      "holds": false,
+      "note": "The 3 cases do fail on base, and the drop case is right. For a split, the replaced id is the kept first part, whose later failure is hidden (blocking item 2). The '(… replaced)' line is not on the session page as the check_in_the_app step says: it is in the Reviews tab under Session checks."
+     },
+     {
+      "claim": "C3-left-11: a Stop during the claim guard's nudge ends the turn stopped with its money line",
+      "holds": true,
+      "note": "The conversation-memory case fails with base agent.ts and passes now. Bench: the bubble shows 'You stopped this answer: CHF 0.02 spent.' and nothing else, the same after a reload."
+     },
+     {
+      "claim": "C4-left-5: 'Changed 1 task; your next Start runs it.' and the set's Undo names \"Style the page\"",
+      "holds": true,
+      "note": "The selftasks-run case fails on base with the \"Style the layout\" wording, and the proposal-words tests pass. The bench Inbox shows the line."
+     },
+     {
+      "claim": "C4-left-9: Talk on a joined project says it is kept to read, with no message box, examples, Talk button or voice turn",
+      "holds": false,
+      "note": "Holds for the header's Talk (bench 17-c1 and the UI test). It does not hold for the hotkey or palette Talk: a voice turn starts with no indicator (blocking item 1)."
+     },
+     {
+      "claim": "L4c-left-6: forged 'the app did:' in any case is removed and treated as a change claim",
+      "holds": true,
+      "note": "conversation-memory cases pass. The injection case is in not_done with a reason."
+     },
+     {
+      "claim": "L4d-left-5: old hold replies never reach the history",
+      "holds": true,
+      "note": "Cases pass; HOLD_REPLY_RE matches all four chatHoldReply forms."
+     },
+     {
+      "claim": "L4c-left-5: the facts say 'Review waits' rather than a budget pause; prompt 1.5.3",
+      "holds": true,
+      "note": "chat-carried-sentences case passes and the version assertions are updated."
+     },
+     {
+      "claim": "L4c-left-7/8/9/10 chat lines",
+      "holds": true,
+      "note": "All four confirmed on the bench (asks true line, one call for the now-absence, the question without Options, 'there' meaning Atlas after a header switch) and by the real-daemon cases."
+     },
+     {
+      "claim": "C4-left-3 fingerprint case; C5-left-6 already fixed at base by 5fbce48",
+      "holds": true,
+      "note": "The case passes. 5fbce48 is an ancestor of the base."
+     },
+     {
+      "claim": "Validation: UI 1501, Playwright 40, injection 92 green",
+      "holds": true,
+      "note": "Re-run here under flock: 1501/1501, 40/40, 92/92 (no failures), commands+critic 503/503."
+     }
+    ],
+    "non_blocking": [
+     "Test assertion made weaker: chat-depth.test.ts 'Stop pressed during the nudge' went from an exact toBe(TRUE_LINE) to two negative checks. The new conversation-memory C3-left-11 case also asserts only negatives for res.reply. Assert the exact reply (on the bench it is empty, with the footer 'You stopped this answer: CHF … spent.').",
+     "After a Stop during the nudge, the reply is completeSentencesOf(streamed) from the nudge call, and the guard does not check it. A complete sentence of a repeated false claim streamed before the Stop would be shown. This matches a Stop at other points, but worth a note in ADR 0114's amendment.",
+     "C4-left-7 recovered path (change found): admit() gets only the tasks the change made, while applyMarked also admits the touched ones. The changes the original check left out are not recorded.",
+     "C4-left-7 race: a second sync in the same process that read the row as 'applying' before another sync wrote 'not_applied' or 'kept' will settle it again. A refused set is then tried once more. Narrow, but a compare-and-set mark would close it.",
+     "onlyDrops checks the card's proposed changes, not the applied ones. A set whose split was left out and whose drop applied still says 'your next Start runs it'. Also, 'runs it' is said when the first part waits for a person task, so a Start would not run it yet.",
+     "SC-13 words: the session page's Details line 'Session review measured: N of M planned tasks done' never mentions the replaced count. In the replaced-only case it reads '0 of 0 planned tasks done'. Correct the fixer's check_in_the_app: the '(… replaced)' summary is in the project's Reviews tab under Session checks, not on the session page.",
+     "L4c-left-8: NOW_STATE also frees 'I don't see any changes.' and 'any sessions.', which are history that recall covers. This may be broader than 'narrow the absence claim' meant.",
+     "L4c-left-9: the `named` check is a substring test, so an option 'No' matches 'Notes'. Use a word-boundary match.",
+     "Fake daemon: it does not model the waits-changed split Undo refusal (only 'is running now'), nor switchedHere for 'there'. These are stand-in gaps the UI tests cannot reach.",
+     "Talk on a project that is not in the store: the message box shows until client.project resolves (a brief flash).",
+     "agent.ts: trueLine's old JSDoc now sits directly above switchedHere's, two stacked doc blocks. The '# Last session' line in conversation-agent.md is now longer than the file's wrap width.",
+     "The L4c-left-6 spec asked for injection cases. The fixer moved this to not_done with a reason (model output, not a new channel). The session lead should accept or reassign it.",
+     "The fixer's new_problems stand: the pr-answers take-out mark has no start-time recovery, and parser options that contain commas read ambiguously."
+    ]
+   },
+   "fixup": {
+    "area": "l4-chat-carried",
+    "branch": "fix/l4-chat-carried",
+    "head_sha": "31865c70fd304b79e25a6e4d923a0f0bb949dd64",
+    "commits": [
+     {
+      "sha": "8ddb7e9",
+      "subject": "ui: the hotkey and the palette's Talk on a joined project start no voice turn (L4-selftasks-123, C4-left-9, U-084)"
+     },
+     {
+      "sha": "a052fd0",
+      "subject": "critic: a split task whose first part ran is measured as it ran (L4-selftasks-123, SC-13, U-095)"
+     },
+     {
+      "sha": "31865c7",
+      "subject": "chat: a parser question names its options only as whole words; exact Stop-during-nudge replies (L4c-left-9, C3-left-11)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "Review blocking 1 (C4-left-9 sibling). On a joined (closed) project, the global hotkey and the palette's Talk still started a voice turn. The fixer had hidden the Listening badge, the Send button and the message box, but the voiceRequest effect in ConversationPanel called startTurn whatever closedChat said. With voice installed, the microphone recorded with nothing on screen to show it, and the second press sent the words to the closed project's chat. Without voice, the closed panel said 'Voice is not installed. Install it in Settings → Voice, or type below.' with nowhere to type.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "apps/ui/test/hotkey.test.tsx, describe \"l4-chat-carried, run L4: the hotkey and the palette's Talk on a joined project (C4-left-9)\". All three cases failed: (1) the hotkey started a capture and a voice session on Beacon (mic.log ['start','stop','start']); (2) the palette's Talk showed the 'or type below' reason; (3) a turn that was listening was not ended when its project closed (no /stop call).",
+      "how": "apps/ui/src/shell/ConversationPanel.tsx: a voice request now waits until the panel knows whether the project on screen takes words (closedKnown: the project is in the projects list, or its card has been read). On a closed project the request starts nothing: no capture and no voice session. A request seen while the panel is closed is used up, so the header's Talk never starts a left-over one. A card read for a different project is ignored. A new effect handles a turn that is starting, listening or waiting when the project becomes closed (for example joined from the phone or from chat): it is ended with endVoice. The capture stops, the voice session stops, no release press is sent, and the phase goes back to idle. The voice-reason line is cleared and never shows under the closed line. Siblings: searched startVoiceSession, startTurn and voiceRequest in apps/ui/src. The header's Talk was already handled. The phone's chat lists only open projects (mobile/store.tsx).",
+      "check_in_the_app": "Desktop app with voice installed: make Beacon one project with Atlas, open Beacon's page and press the global hotkey (or Ctrl+K, then 'Talk to your agent'). Talk opens with 'This chat is kept to read; ask about its work in the Chat of \"Atlas\".' and Open it. There is no Listening badge, the microphone does not turn on, and a second press sends nothing; Beacon's chat stays as it was after a reload. With voice not installed, the same panel shows no 'or type below' line. Press Open it, then the hotkey on Atlas's Chat: a turn starts (or the voice reason shows, with the message box). Bench evidence (AFTER): /tmp/frbench/fixup-l4-chat-carried-evidence/steps/11-b-7-palette-talk-joined.png shows only the closed line, with zero /voice/ requests. 13-c-1-palette-talk-atlas.png shows that on Atlas the same palette Talk reads GET /voice/status and shows the reason with a message box. BEFORE is the reviewer's /tmp/frbench/review-l4-chat-carried/steps/19-c1-palette-talk.png."
+     },
+     {
+      "problem": "Review blocking 2 (SC-13). task.split keeps the split task as its first part, so the plan's task id is that part. replacedDuring marked that id as replaced for the whole session, and sessionChecks then left it out of every measure (done, failed, sent back, waiting). A first part that went on to run and fail, or that waits for the person, disappeared from the session review. A session whose only planned work failed after CHF 0.12 read 'accepted (grade 100, 0 findings)' instead of revise (grade 70). On the bench, a failed 'Style the page in styles.css: layout' read '3 of 4 planned tasks done'.",
+      "u_ids": [
+       "U-095"
+      ],
+      "failing_test_before": "packages/critic/test/session-review.test.ts, describe 'l4-chat-carried, run L4: a split or dropped task counts as replaced (SC-13)': 'a split whose kept first part then ran and failed is measured as it ran…' and 'a split whose kept first part then ran and waits for the person is measured as waiting; one that ran to done counts as planned and done'. Also packages/runtime/test/event-lines.test.ts, describe 'l4-chat-carried, run L4: the measured line names the replaced tasks (SC-13)': both cases.",
+      "how": "packages/critic/src/session-review.ts: replacedDuring now returns how each task was replaced, as ReplacedTask { taskId, by: 'split' | 'duplicate' }. SessionReviewData.replaced replaces replacedTaskIds. A task dropped as a duplicate stays replaced. A split task counts as replaced only while its kept first part has not run in this session: its status is draft or ready, no work run exists, and it was not sent back or paused. Once that part has run, it is measured like any planned task. The same paused set is reused for the onlyPaused check. In packages/runtime/src/daemon/views.ts, the session page's Details line (critic.session_review_metrics) now names the replaced count: 'Session review measured: 1 of 1 planned task done, 1 replaced; …', or '2 planned tasks replaced; …' when every planned task was replaced (before: '0 of 0 planned tasks done'). Reviews written before this change read as they did.",
+      "check_in_the_app": "At Standard, plan a web project and run a session in which the task check splits 'Style the page in styles.css' and its first part then fails (bench: FORERUNNER_BENCH_TASK_LIST='Create the', FORERUNNER_BENCH_TASK_LIST_SAYS='\"Style the page in styles.css\" is two jobs, the layout and the colours.', FORERUNNER_BENCH_FAIL='styles.css: layout'). On the session page, under Details, the line reads 'Session review measured: 3 of 5 planned tasks done; …'; before the fix it read '3 of 4'. The failed part counts as planned and not done. Bench evidence: /tmp/frbench/fixup-l4-chat-carried-evidence/steps/a2-walk.json. With the real model, the session lead should also check a session whose split parts are left for the next Start: the line should end '…, 1 replaced; …' and the review should be accepted."
+     },
+     {
+      "problem": "Review non-blocking items, done because they were cheap. (a) The fixer had changed the C3-left-11 Stop-during-nudge assertions in chat-depth.test.ts and conversation-memory.test.ts to check only what the reply is not; chat-depth.test.ts asserted TRUE_LINE exactly before, so this weakened a test. (b) L4c-left-9: the check that a parser question already names its options matched part of a word ('No' in 'Notes', 'Site' in 'siteworks'). So 'No project named \"siteworks\". Which one?' with options Site and Works dropped them, and voice read 'Which one?' with no choices. (c) In agent.ts, trueLine's doc comment sat above switchedHere.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "packages/runtime/test/chat-carried-sentences.test.ts 'l4-chat-carried, run L4: a parser question names its options as whole words (L4c-left-9)'. The siteworks case failed with the substring check. The Stop-during-nudge exact assertions pass on the fixer's code; they restore the strength the case had before.",
+      "how": "The new parserQuestionReply in conversation/sentences.ts matches options only as whole words, and agent.ts uses it. chat-depth.test.ts and conversation-memory.test.ts now assert reply === '' (the held nudge call had streamed nothing) together with the stopped footer and the reloaded transcript. ADR 0114 has a dated note: after a Stop during the nudge, the app shows the nudge call's complete sentences without checking them again, the same as after a Stop in the first call.",
+      "check_in_the_app": "In chat, with projects Site and Works and no project called siteworks, type 'switch to siteworks'. The reply reads 'No project named \"siteworks\". Which one? Options: Site, Works.' and shows two buttons. 'Which project: Notes or Site?' still has no 'Options:'."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "Review non-blocking: C4-left-7 race (a second sync in the same process settles a card it read as 'applying' after another sync already settled it), and the recovered path admitting only the tasks the change made",
+      "why": "Neither is in the blocking list. Closing the race properly needs a compare-and-set mark on the change card. That belongs to task-proposal.ts recovery work, which has no failing test yet. Left as found."
+     },
+     {
+      "problem": "Review non-blocking: onlyDrops reads the card's proposed changes rather than the applied ones; 'runs it' is said even when the first part waits for a person task",
+      "why": "This changes the Done-line words and needs its own decision on the sentence. Left for the session lead or a later words pass."
+     },
+     {
+      "problem": "Review non-blocking: NOW_STATE also treats 'I don't see any changes.' and 'any sessions.' as not being absence claims",
+      "why": "Whether those should count as history (which recall covers) is a decision on how narrow the absence rule should be. Not changed."
+     },
+     {
+      "problem": "Review non-blocking: the fake daemon does not model the waits-changed refusal of a split's Undo or switchedHere for 'there'; Talk on a project missing from the store briefly shows the message box; the '# Last session' line in conversation-agent.md is wider than the file's wrap width",
+      "why": "Rewrapping the prompt would change the exact text the model receives and its version. The fake-daemon gaps cannot be reached from the UI tests. The brief flash would mean hiding the box for open projects too while the store loads. All are cosmetic or stand-in only."
+     },
+     {
+      "problem": "The guard does not check what a Stop during the nudge shows",
+      "why": "Added a dated note to ADR 0114 instead. A failing test needs the fake provider to stream a full sentence and then hold on the simulated clock. This behaviour is the same as a Stop in the first call."
+     },
+     {
+      "problem": "L4c-left-6 injection-suite case (the fixer's not_done)",
+      "why": "Unchanged. The session lead should accept the fixer's reason (model output, not a new input channel to a model) or reassign it."
+     }
+    ],
+    "validation": [
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm check",
+      "result": "exit 0: lint, lint:paths, typecheck, 561 test files / 6198 tests passed (7 skipped), docs:links, secret scan clean (2275 files). docs:check could not diff against origin/main in this worktree."
+     },
+     {
+      "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (42 files)"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+      "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+      "result": "exit 0: 13 files; 25 passed, 1 skipped"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+      "result": "PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0: 103 files, 1504 tests passed"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+      "result": "exit 0: 40 passed"
+     },
+     {
+      "command": "bench fixup-l4-chat-carried (--provider bench, ports 49200/2800), walks /tmp/frbench/fixup-l4-chat-carried-evidence/walk{A,B,C}.cjs",
+      "result": "(a2) a split whose first part then failed: 'Session review measured: 3 of 5 planned tasks done' (the reviewer's before: '3 of 4'). (b) a suggestion card left at 'applying' through a daemon restart was settled ('Nothing changed: none of the changes applies now…', never 'Making the changes…'). Talk and the palette's Talk on joined Beacon show only the closed line, with no message box, no 'type below' and zero /voice/ requests. (c) the palette's Talk on Atlas reads /voice/status and shows the reason with a box. Answering the Quote page card split 'Style the page'; after a wait was added, Changes reads 'Cannot be undone now: \"Publish the page\" was made to wait for \"Check the colours\" after the split; undo would drop that.' The only logged problems are the expected connection refusals during the restart. The bench is stopped and its home deleted."
+     },
+     {
+      "command": "cargo checks",
+      "result": "not run: the desktop shell (apps/desktop/src-tauri) is unchanged"
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/review-l4-chat-carried/steps/19-c1-palette-talk.png",
+      "/tmp/frbench/review-l4-chat-carried/steps/06-a2r-1.png"
+     ],
+     "after": [
+      "/tmp/frbench/fixup-l4-chat-carried-evidence/steps/09-b-5-talk-joined.png",
+      "/tmp/frbench/fixup-l4-chat-carried-evidence/steps/11-b-7-palette-talk-joined.png",
+      "/tmp/frbench/fixup-l4-chat-carried-evidence/steps/13-c-1-palette-talk-atlas.png",
+      "/tmp/frbench/fixup-l4-chat-carried-evidence/steps/06-b-2-card-after-restart.png",
+      "/tmp/frbench/fixup-l4-chat-carried-evidence/steps/15-c-3-changes-split-refused.png"
+     ]
+    },
+    "new_problems": [
+     "Bench walk note: the fixer's walk.cjs patches the first open task_proposal card it finds. When another project's card is also open, it patches the wrong one: in my walk it patched Quote site's stale card, which the restart then settled correctly as 'Nothing changed: none of the changes applies now…'. Future walks should select the card by project.",
+     "At Standard, a task check that both splits and drops goes to the Inbox as one suggestion card (a drop asks first), so the split is not made during the session. A bench walk of the 'replaced' line therefore needs a split-only check. This is by design, noted for walkers.",
+     "The fixer's earlier new_problems still stand: pr-answers' take-out mark has no start-time recovery, and parser options that contain commas read ambiguously ('Options: The session budget, until then, The project budget, permanently, Nothing.')."
+    ],
+    "notes_for_other_areas": [
+     "critic: replacedDuring(store, session) now returns ReplacedTask[] ({ taskId, by: 'split' | 'duplicate' }); SessionReviewData.replaced replaces replacedTaskIds. A split task counts as replaced only while its kept first part has not run in the session (draft or ready, no work run, not sent back or paused). Once it has run, it is measured as it ran.",
+     "runtime views.ts critic.session_review_metrics: when metrics.replacedTasks > 0 the line reads '… N of M planned tasks done, K replaced; …', or 'K planned tasks replaced; …' when M is 0. This is l4-money-pause's line; its intent and its existing assertions are unchanged.",
+     "apps/ui ConversationPanel: a voice request (hotkey or palette) waits for closedKnown, and on a closed project it starts no capture and no voice session. When the project on screen closes, a turn that is starting, listening or waiting is ended with endVoice and its words go nowhere.",
+     "runtime conversation/sentences.ts: parserQuestionReply(q) is the one place for a parser question's reply text. Options are left out only when the text names them all as whole words.",
+     "Suggested UPDATE-LOG lines (not edited here): 'Talk on a joined project starts no voice turn from the hotkey or the palette either: no microphone, no voice session, no \"type below\".' / 'A split task whose first part then failed or waits for you is counted in the session review: Session review measured: 3 of 5 planned tasks done.' / 'The session page names replaced tasks: Session review measured: 1 of 1 planned task done, 1 replaced; …'.",
+     "Design §5 words for the session lead to consider in core-experience.md: the measured line's ', 1 replaced' clause and 'N planned tasks replaced'."
+    ],
+    "tests_changed_for_design": [
+     {
+      "test": "packages/runtime/test/chat-depth.test.ts 'Stop pressed during the nudge…' and packages/runtime/test/conversation-memory.test.ts C3-left-11 case",
+      "why": "The exact reply is asserted again (empty, plus the stopped footer). This restores the strength the fixer's negative-only checks had lost; the behaviour is unchanged."
+     }
+    ]
+   }
+  },
+  {
+   "key": "l4-selftasks-carried",
+   "fix": {
+    "area": "l4-selftasks-carried",
+    "branch": "fix/l4-selftasks-carried",
+    "head_sha": "b2c1bd38cce107c5b654fe00195632567081454e",
+    "commits": [
+     {
+      "sha": "c730831",
+      "subject": "commands, runtime, ui: every closed card tells the screens once; an open chat is read again only for its own card (L4f-left-1, L4f-left-6, U-084, U-095)"
+     },
+     {
+      "sha": "c43e69c",
+      "subject": "commands: a 'fix the tasks' Yes is judged on the tasks its set names and the list's membership (L4f-left-2, U-095)"
+     },
+     {
+      "sha": "968ceae",
+      "subject": "commands: the redirect guards judge a note by who wrote it (L4-selftasks-120, U-095)"
+     },
+     {
+      "sha": "8cd98f5",
+      "subject": "commands: an Undo read back in chat says what is back, also after a restart (L4f-left-3, U-084)"
+     },
+     {
+      "sha": "d39d739",
+      "subject": "commands, runtime, ui: a merged card's change names both who asked (L4f-left-4, U-095)"
+     },
+     {
+      "sha": "7d90c73",
+      "subject": "runtime, ui: the reviewer's line names a file the task's words ask for; Edit asks with its words (L4-other-1 D-3, D-5, U-098)"
+     },
+     {
+      "sha": "99c2274",
+      "subject": "commands: chat's read-back of a reviewer task says it writes no file (L4-other-1 D-6, U-098)"
+     },
+     {
+      "sha": "d190865",
+      "subject": "bench, scripts: the stand-in writes nothing about a waiting card and holds the reviewer to its report; docs:check says what it needs (L4f-left-7, L4-selftasks-125)"
+     },
+     {
+      "sha": "01e0cbe",
+      "subject": "tests: a value read back in chat that moved since, the header beside a question, a lapsed Settings card (L4f-left-5, U-084, U-095)"
+     },
+     {
+      "sha": "6448857",
+      "subject": "runtime: the agent's suggested changes to the tasks count as others' words in chat (L4b-left-4, U-095)"
+     },
+     {
+      "sha": "657473a",
+      "subject": "session: a task check's left-out line says what each change asked for in words (L4b-left-3, U-095)"
+     },
+     {
+      "sha": "9d669a3",
+      "subject": "docs: every close tells, fix sets judged per task, the reviewer's file, the stand-in (ADR 0109 and 0119 amended, U-084, U-095, U-098)"
+     },
+     {
+      "sha": "95d532e",
+      "subject": "commands: a reviewer task made or changed at once says it writes no file too (L4-other-1 D-6, U-098)"
+     },
+     {
+      "sha": "b2c1bd3",
+      "subject": "lint: format and import order of this area's files (pnpm check)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "L4f-left-1 (never cut): a chat read-back closed by a route other than the chat turn (Inbox Yes/No, POST /commands/:id/confirm or cancel, phone, email, a lapse) left the project header on 'Waiting for you: 1 change to confirm' and the open chat's Yes/No in place until a reload: those routes sent inbox.changed but no project.changed and no conversation event.",
+      "u_ids": [
+       "U-084",
+       "U-095"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-selftasks-carried, run L4' > 'L4f-left-1: every close of a chat read-back (the Inbox's No and Yes, a chat No, a refused Yes) tells the screens ...'; apps/ui/test/selftasks-carried.test.tsx 'a closed chat card leaves no stale waiting header (L4f-left-1)' (UI guard cases)",
+      "how": "The executor tells every close once: ExecutorOptions.onClosed gets a ClosedConfirmation {id, humanId, projectId, source, sessionId, how: yes|no|refused|expired} after confirm/cancel/answerPending (all routes) and after expirePending (timer and sweepPending). compose.ts turns it into inbox.changed, project.changed and, unless that conversation's turn is in flight, conversation.changed for the conversation the card was read back in (conversationOfCard). server.ts heardChat no longer emits for a card the turn answered. Fake daemon follows.",
+      "check_in_the_app": "Open a project at Assisted, Chat tab. Type: tool: task_pause {\"task\":\"<a task>\"} (on a real model: 'pause <task>'). The header says 'Waiting for you: 1 change to confirm' and the Inbox badge shows 1. Press No: the header goes back (e.g. 'Ready: 1 task waits for your Start') and the badge goes, without a reload. Ask again, then answer the card in the Inbox in another window: the chat's Yes/No go and the header follows at once. live_check: bench walk1 after (/tmp/frbench/fix-l4-selftasks-carried/steps/01-after-1a-readback.png, 02-after-1b-after-no.png, 04-after-3c-chat-after-inbox-no.png)."
+     },
+     {
+      "problem": "L4f-left-2 (never cut): a 'fix the tasks' read-back answered while a session ran nearly always said 'The tasks changed since I checked them', because its fingerprint was one hash of every task's fields; a session finishing any task voided the Yes.",
+      "u_ids": [
+       "U-095"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts 'l4-selftasks-carried, run L4' > 'L4f-left-2: a session finishes a task the set does not name between the read-back and the Yes, and the set applies'",
+      "how": "Session lead decision 2026-11-23: taskListFingerprint is per task (v2|<id>=<hash of status,title,outcome,dependencies>); fixListMoved compares list membership and only the tasks the set names (namedTaskIds from the calls' NAMING_PARAMS and the card's subjects); a stored whole-list fingerprint is compared as before; a read failure counts as moved. Guards both ways: named task finished by a session refuses; a task added refuses, also after a restart (real-daemon and packages/commands/test/selftasks-carried.test.ts). ADR 0119 amended.",
+      "check_in_the_app": "At Assisted with a running session, say 'fix the tasks: \"Style the page\" is two jobs, the layout and the colours'. While the read-back waits, let the session finish another task, then press Yes: the split is made. Ask again, and this time edit 'Style the page' on the Tasks tab before Yes: the reply is 'The tasks changed since I checked them; say \"fix the tasks\" to check again.' and nothing changes."
+     },
+     {
+      "problem": "L4-selftasks-120 rest (never cut): the redirect guards of task.transition and task.resume judged a note by its presence, so a note the chat model wrote kept a move off the card it should answer; after a restart the re-armed read-back was a task.transition, not the card's answer.",
+      "u_ids": [
+       "U-095"
+      ],
+      "failing_test_before": "packages/commands/test/selftasks-carried.test.ts 'the redirect guards judge a note by who wrote it' > the chat model's note case and 'after a restart, the read-back a model's note made of the card's answer is armed again as that answer, and its yes answers the card'",
+      "how": "ownNote(ctx, note) in task.ts: a note is the person's only on onPersonsWords or a human actor; both guards use it, including on a card armed again after a restart (stored actor).",
+      "check_in_the_app": "With a failed task whose card offers Try again, have chat retry it with a note it wrote (stand-in: tool: task_transition {\"task\":\"<t>\",\"to\":\"ready\",\"note\":\"...\"}): the read-back is the card's own 'Try again (\"<t>\" failed)? ...'; restart Forerunner and answer Yes: the card is answered 'Try again'. With your own note typed, the move stays a move."
+     },
+     {
+      "problem": "L4f-left-3: an Undo read back in chat and confirmed after a restart said the change row's sentence ('Undone: Lowered the monthly cap from CHF 150.00 to CHF 100.00.'), reading as if the cap was lowered now.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "packages/commands/test/selftasks-carried.test.ts 'an Undo read back in chat says what is back, also after a restart'",
+      "how": "performUndo(changeLogId, ctx, shown) builds the sentence from the card as read back (stored card after a restart; UNDO_UNKNOWN_BEFORE when it holds no value).",
+      "check_in_the_app": "Lower the monthly cap in Settings, then in Chat say 'undo that'; restart Forerunner; press Yes: 'Undone: the monthly cap is back to CHF 150.00.' (same as without a restart)."
+     },
+     {
+      "problem": "L4f-left-4: a merged card (the agent's fix_tasks plus a change the person named) was one change row authored by the agent alone; Changes said only the agent; chat's recall said 'You' for every row including the agent's own fixes.",
+      "u_ids": [
+       "U-095"
+      ],
+      "failing_test_before": "packages/runtime/test/chat-fix-tasks.test.ts 'a merged card's row names both who asked'; apps/ui/test/real-daemon.test.ts 'L4f-left-4: GET /changes names both ...'; apps/ui/test/changes.test.tsx; packages/runtime/test/chat-recall.test.ts 'chat's recall names who made a change as the Changes page does'",
+      "how": "record()'s alsoPerson writes author_human beside author_agent; ChangeLogView.byYouAndAgent; ChangesPage whoOf says '<your name> and <agent>'; recall whoOf uses byYouAndAgent/byAgent.",
+      "check_in_the_app": "At Assisted say 'fix the tasks and raise the priority of Publish'; press Yes; open Changes: the row reads 'J and Alice'. Ask chat 'what changed today?': it names both, and the agent's own fixes as the agent's."
+     },
+     {
+      "problem": "L4-other-1 D-3/D-5/D-6: the reviewer's 'writes no file' line did not name the file the task's words ask for; Edit asked with no words; chat's read-back (and a task made or changed at once) of a reviewer task said nothing about it.",
+      "u_ids": [
+       "U-098"
+      ],
+      "failing_test_before": "packages/runtime/test/reviewer-file-line.test.ts; apps/ui/test/real-daemon.test.ts 'L4-other-1 (D-5): GET /settings/models names the file ...'; apps/ui/test/tasks.test.tsx 'the reviewer's line names a file the words ask for; Edit asks with its words'; packages/commands/test/selftasks-carried.test.ts 'chat's read-back of a reviewer task says it writes no file' (2 cases) and 'a reviewer task made at once (no read-back) says the line in its done sentence too'",
+      "how": "writesNoFileLine(specialist, fileTheWordsWrite(words)); GET /settings/models passes the typed words; TaskDrawer Edit passes title/outcome/criteria; CommandPorts.modelSettings.writesNoFile + noFileClause on task.create's ask, card sentence and run sentence, and task.update's ask and run sentence (editNoFile) when the edit gives the task to such a specialist or changes its words. ADR 0109 amended.",
+      "check_in_the_app": "Tasks > New task: title 'Review the plan', what done looks like 'review.md lists the gaps and risks found in notes/plan.md', Who does it: reviewer. The line reads 'The reviewer writes no file, so review.md is not written: its findings are its report, which you read in the task's drawer.' Edit an existing reviewer task: same line. In Chat ask to add a reviewer task whose outcome names gaps.md: the read-back or the done sentence ends with 'The reviewer writes no file, so gaps.md is not written: ...'. live_check: /tmp/frbench/fix-l4-selftasks-carried/steps/08-after-w2-1-new-task-reviewer-line.png and 09-after-w2-2-chat-reviewer-added.png."
+     },
+     {
+      "problem": "L4f-left-7 and L4-selftasks-125 rest: the bench stand-in quoted CHAT_PENDING_NOTE and the question back (read-back said twice), and its critic sent every reviewer run back ('changed no file'), so the ladder handed the task to the data-analyst and U-098 step 4 could not be walked; scripts/bench/README.md lacked FORERUNNER_BENCH_TASK_LIST/_SAYS; docs:check in a worktree printed git's fatal error and passed silently.",
+      "u_ids": [
+       "U-098"
+      ],
+      "failing_test_before": "testenv/test/bench-role-player.test.ts 'a command that waits for a yes is answered with no word about the card; ...' and 'a reviewer that changed no file is accepted on its report when the criterion says the report stands for the file'; scripts/docs-check.test.ts 'says what it needs when origin/main is not there, and checks with --base'",
+      "how": "role-player chatAnswer returns '[stand-in model]' alone for a tool result holding 'Write nothing about it'; criticAnswer holds a writes-no-file specialist to its report (REPORT_CRITERION). README lists the knobs and behaviours. docs-check.mjs checks the base first and says 'docs-check: nothing was checked: origin/main is not in this checkout ... pnpm docs:check --base <branch>, or set DOCS_CHECK_BASE.' (exit 0; '1 file' singular).",
+      "check_in_the_app": "Bench: start --provider bench, create a reviewer task 'Review the plan' (outcome review.md lists the gaps ...) and Start session: the task ends Done by the reviewer, Critic 'Reviewed', no hand-over to the data-analyst. In Chat a read-back shows the stand-in reply '[stand-in model]' with the question only on the card. live_check: /tmp/frbench/fix-l4-selftasks-carried/steps/10-after-w2-3-tasks-after-review.png, 01-after-1a-readback.png; walk2-after.json (task done by reviewer, lastVerdict accept)."
+     },
+     {
+      "problem": "L4f-left-5: L4-selftasks-117's details had no test of their own: changedSince for value cards (also after a restart), the header after the Inbox answers a chat card beside another card, a lapsed Settings card telling the screens.",
+      "u_ids": [
+       "U-084",
+       "U-095"
+      ],
+      "failing_test_before": "none failed: coverage added for behaviour that holds at head (packages/commands/test/selftasks-carried.test.ts 'a value read back in chat that moved since says so, also after a restart (L4f-left-5)'; apps/ui/test/real-daemon.test.ts 'L4f-left-5: after the Inbox answers the chat's card the header names the question that still waits; a Settings card that lapses tells the screens'). The fake-clock 'fix the tasks' POST /chat case already exists ('L4-selftasks-117 (real daemon, fake clock): a fix the tasks read-back still waits after 10.5 minutes and after a restart').",
+      "how": "Tests only: monthly cap and email mode read back in chat, changed in Settings before the Yes, with and without a restart: refused with 'The monthly cap is CHF 120.00 now, not CHF 150.00 as I read it back. Nothing was changed; ask again if you still want it.' and nothing applied; header 'Waiting for you: 1 question and 1 change to confirm' then 'Waiting for you: \"Confirm the stack\"' after the Inbox No; a Settings card lapsing at 11 minutes emits inbox.changed.",
+      "check_in_the_app": "In Chat ask 'set the monthly cap to CHF 100'; before answering, set it to CHF 120 in Settings; press Yes in Chat: 'The monthly cap is CHF 120.00 now, not CHF 150.00 as I read it back. Nothing was changed; ask again if you still want it.'"
+     },
+     {
+      "problem": "L4f-left-6 (performance): store/context.tsx reloaded every conversation showing a waiting card on every inbox.changed, including the polling mode's periodic counts, which now repeats GET /conversation for as long as a chat card waits.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "apps/ui/test/selftasks-carried.test.tsx 'an open chat is read again only when its card closed (L4f-left-6)' (5 and 7 conversation reads where 3 and 4 were expected)",
+      "how": "Reload on inbox.changed only in polling mode and only when the count moved; on the live stream wait for the daemon's conversation.changed for the conversation whose card closed (part of the L4f-left-1 commit).",
+      "check_in_the_app": "Open a chat with a waiting card and leave it open: the network tab shows no repeated GET /projects/<id>/conversation while it waits; answering it in the Inbox reads that conversation once."
+     },
+     {
+      "problem": "L4b-left-4: quotesOthersWords did not count a task_proposal card (the agent's suggested changes quote a report or review), so a chat turn listing it in full could act at once on a line those words asked for.",
+      "u_ids": [
+       "U-095"
+      ],
+      "failing_test_before": "packages/runtime/test/chat-facts.test.ts 'counts the suggestion card; a card in Forerunner's own words still does not count'",
+      "how": "quotesOthersWords returns true for key TASK_PROPOSAL_KEY.",
+      "check_in_the_app": "With the agent's suggestion card open in a project, ask chat to make a change: the change is read back with Yes and No first, never made at once."
+     },
+     {
+      "problem": "L4b-left-3 (first half): Details' and chat's left-out line used the change kind as a noun ('Left out (and 1 more): the add of \"Write thanks.html\": ...', 'the edit of', 'a settings').",
+      "u_ids": [
+       "U-095"
+      ],
+      "failing_test_before": "packages/runtime/test/task-check.test.ts 'refuses an unknown field ...' (now asserts each change's words) and the left-out Details case in session-task-list.test.ts (changed for the design)",
+      "how": "changeWhat says 'adding \"X\"', 'splitting \"X\"', 'dropping \"X\"', 'the change to \"X\"', 'the order of \"X\"', and 'a change' for an unknown kind.",
+      "check_in_the_app": "Bench with FORERUNNER_BENCH_TASK_LIST and a report line naming a task that does not exist: the session's Details show 'Left out: adding \"…\": … is no task of <project>.'"
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "L4-selftasks-127 rest (cut-able): the Connect offer kind beside 'Fixing the tasks needs Claude: connect it in Settings, Basics.'",
+      "why": "Needs a new offer action ('connect') through the agent's ChatOffer, the transcript's stored offer (offerOf), ChatOfferView in api-types, GET /conversation, both daemons and Conversation.tsx (a Link to /setup like IntakeBanner's 'Connect Claude'); cut for time in favour of the never-cut items, validation and the bench walks. The sentence part is done (L4f)."
+     },
+     {
+      "problem": "L4b-left-2 (cut-able): the fence silently drops a wait whose order names a pending add of the same set and a name neither stored nor pending; it should refuse it in words and re-run the loop check for the extra waits (session/task-check.ts).",
+      "why": "Cut for time; it touches the fence's order folding (task-check.ts ~1100-1450) and needs its own failing case at the task-check boundary."
+     },
+     {
+      "problem": "L4b-left-3 second half: the plan card's warning repeats the task's title right under that task's row.",
+      "why": "Cut for time (UI words on the plan card); the left-out wording half is fixed."
+     },
+     {
+      "problem": "L4b-left-5 (cut-able): L4-selftasks-109 restart composed twice on one home, L4-selftasks-111's critic-notes body at the real daemon, a CostsTab render test for L4-selftasks-114, L4-selftasks-112 (a) quoting two sentences within 160 characters.",
+      "why": "Coverage-only cases, cut for time after the never-cut items, the L4f-left set and full validation."
+     },
+     {
+      "problem": "Bench BEFORE screenshots of walk1",
+      "why": "Restarting the bench with --fresh for the AFTER walk emptied its steps folder; the BEFORE values remain in /tmp/frbench/fix-l4-selftasks-carried/walk1-before.json. The before walk did not reproduce a stale header on the chat routes (the L4f fixup had fixed those); the Inbox/other-route bug was shown by the failing real-daemon test."
+     }
+    ],
+    "validation": [
+     {
+      "command": "DOCS_CHECK_BASE=3e1ab9d flock /tmp/frbench/heavy.lock pnpm check",
+      "result": "pass: lint/typecheck, 562 test files, 6203 passed, 7 skipped; docs-check ok; link-check ok; secret-scan clean"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+      "result": "pass: 5 files passed, 7 skipped; 30 tests passed, 83 skipped"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+      "result": "pass: 13 files, 25 passed, 1 skipped"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+      "result": "pass: 104 files, 1511 tests (real-daemon included)"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+      "result": "pass: 40 passed"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+      "result": "pass: Failures: None"
+     },
+     {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "no conflict markers"
+     },
+     {
+      "command": "node scripts/bench/start.mjs --name fix-l4-selftasks-carried --provider bench; walk1.cjs after; walk2.cjs after; stop.mjs",
+      "result": "walk1: header and badge follow every close; walk2: New task line names review.md, chat names gaps.md, reviewer task Done with critic accept. Bench stopped, home deleted."
+     }
+    ],
+    "tests_changed_for_design": [
+     {
+      "test": "apps/ui/test/chat.test.tsx L4f Inbox case",
+      "why": "The fake daemon now emits conversation.changed for the closed card (L4f-left-1), as the real daemon does; the case sends it instead of relying on a reload on inbox.changed (L4f-left-6)."
+     },
+     {
+      "test": "apps/ui/test/real-daemon.test.ts 'L4-selftasks-117 (real daemon): after a restart, a fix the tasks Yes whose list changed since the check says so and changes nothing'",
+      "why": "Session lead decision 2026-11-23 (L4f-left-2): a change to a task the set does not name no longer voids the Yes, so the case edits the named task's outcome."
+     },
+     {
+      "test": "packages/commands/test/undo.test.ts restart case",
+      "why": "L4f-left-3: the confirmation after a restart is now 'Undone: the monthly cap is back to CHF 150.00.' like without a restart."
+     },
+     {
+      "test": "apps/ui/test/real-daemon.test.ts 'L4-other-1: GET /settings/models says the reviewer writes no file' and apps/ui/test/tasks.test.tsx L4f New task case",
+      "why": "D-3: words that ask for review.md now get the line naming it; the plain line stays for words without a file."
+     },
+     {
+      "test": "packages/runtime/test/task-check.test.ts (2 refused 'what' values) and session-task-list.test.ts (left-out Details line)",
+      "why": "L4b-left-3: 'the edit of \"X\"' is 'the change to \"X\"' and 'the add of \"X\"' is 'adding \"X\"'."
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/fix-l4-selftasks-carried/walk1-before.json (values only; the before PNGs were removed by the --fresh restart)"
+     ],
+     "after": [
+      "/tmp/frbench/fix-l4-selftasks-carried/steps/01-after-1a-readback.png",
+      "/tmp/frbench/fix-l4-selftasks-carried/steps/02-after-1b-after-no.png",
+      "/tmp/frbench/fix-l4-selftasks-carried/steps/03-after-2-after-refused-yes.png",
+      "/tmp/frbench/fix-l4-selftasks-carried/steps/04-after-3c-chat-after-inbox-no.png",
+      "/tmp/frbench/fix-l4-selftasks-carried/steps/after-3b-inbox-after-no.png",
+      "/tmp/frbench/fix-l4-selftasks-carried/steps/08-after-w2-1-new-task-reviewer-line.png",
+      "/tmp/frbench/fix-l4-selftasks-carried/steps/09-after-w2-2-chat-reviewer-added.png",
+      "/tmp/frbench/fix-l4-selftasks-carried/steps/10-after-w2-3-tasks-after-review.png"
+     ]
+    },
+    "new_problems": [
+     "task.update's run (packages/commands/src/commands/task.ts, task.edit reason) and other task.ts reason lines use `params.note?.trim() || ...` as the change's reason whatever wrote the note, so a model-written note can stand as the change log's reason text; only the redirect guards were moved to ownNote (L4-selftasks-120). Outside the never-cut scope; worth a follow-up.",
+     "The stand-in's thoroughWhy (testenv/src/bench/role-player.ts) matches \\breview\\b, so a chat 'tool:' line whose JSON names review.md goes to answer_thoroughly instead of the tool; bench walks must avoid the word (walk2 used gaps.md).",
+     "At Assisted, chat's task_create acts at once with no read-back unless a record was read in the turn (bench walk2); this matches d1109-chat-guard's rule but means the reviewer line shows in the done sentence, not a read-back, in the common case."
+    ],
+    "notes_for_other_areas": [
+     "ExecutorOptions.onClosed(ClosedConfirmation {id, humanId, projectId, source, sessionId, how: yes|no|refused|expired}) fires once for every close of a pending confirmation, from any route and on expiry; compose.ts emits inbox.changed, project.changed and conversation.changed (unless that conversation's turn is in flight). Do not emit for closed cards in route handlers again.",
+     "conversationOfCard(card) in runtime/conversation/transcript.ts names the conversation a card was read back in.",
+     "Fix sets: taskListFingerprint is now 'v2|<id>=<hash>,...'; use fixListMoved(store, projectId, print, namedTaskIds(calls, shown)) to judge a Yes; old whole-list prints still compare whole.",
+     "ChangeLogView.byYouAndAgent (GET /changes) marks rows by the person and the agent together (author_human + author_agent via record()'s alsoPerson).",
+     "CommandPorts.modelSettings.writesNoFile(specialist) and registry/tools.ts writesNoFileLine(specialist, file) + fileTheWordsWrite(words) give the reviewer line naming the file; GET /settings/models takes ?title=&outcome=&criteria=.",
+     "UI store/context.tsx: on SSE, open chats reload only on conversation.changed; in polling mode only when the Inbox count moved.",
+     "Stand-in: a tool result containing 'Write nothing about it' gets '[stand-in model]' alone; the critic accepts a writes-no-file specialist on its report.",
+     "pnpm docs:check in a worktree needs --base <branch> or DOCS_CHECK_BASE; without it says nothing was checked."
+    ]
+   },
+   "review": {
+    "verdict": "fix-needed",
+    "acceptance_walk": "Bench \"review-l4-selftasks-carried\" (stand-in model, daemon 49191, UI 2791), started from my worktree at fix/l4-selftasks-carried (b2c1bd3). Scripts are in /tmp/frbench/review-l4-selftasks-carried/scripts, results in walkA/B/C-part1/D/E.json, screenshots in /tmp/frbench/review-l4-selftasks-carried/steps.\n\nWalk A (L4f-left-1, never cut). Project \"Garden club\" at Assisted, Chat tab, `tool: task_pause {\"task\":\"Write the FAQ\"}`. The header read 'Waiting for you: 1 change to confirm' with badge 1 (01-a1-readback.png). I timed four closes until the header left \"Waiting for you\", the badge was gone and the chat's Yes was gone, with no reload:\n- No in chat: 377 ms. Header went back to 'Ready: 1 task waits for your Start' (02-a2-after-chat-no.png).\n- Yes refused after the task's outcome was edited elsewhere: 358 ms. The reply was '\"Write the FAQ\" changed since I asked: what done looks like changed. Nothing was changed; ask again if you still want it.' (03-a3-after-refused-yes.png).\n- No pressed in the Inbox in a second window: 411 ms. The chat's Yes/No went too (A4-inbox-card.png, 04-a5-chat-after-inbox-no.png).\n- Yes pressed in the Inbox: 428 ms. The header became 'Paused: \"Write the FAQ\"' [Open Tasks] and the task was paused (05-a6-chat-after-inbox-yes.png).\n\nWalk E (L4f-left-1, expiry). I opened Home and filed a Settings card ('Raise the monthly cap to CHF 400.00? Confirm in the app on a paired device.', POST /commands/execute, source ui), which took the badge from 1 to 2. 343 ms after its expiresAt the badge showed none, with 0 page navigations. The Inbox Update reads 'The change you asked for was not made: the monthly cap (CHF 150.00 to CHF 400.00). Its card closed after 10 minutes without your yes; ask again if you still want it.'\n\nWalk B (L4f-left-2, never cut). Project \"Quote page\" at Assisted with tasks Create the page in index.html (ready), Choose the colours (draft) and Style the page (waits on the draft). I said 'fix the tasks: \"Style the page\" is two jobs, the layout and the colours; nothing checks that the links work.' and got the read-back 'Make these 2 changes to the tasks of Quote page? Split ... ; add \"Check that the links work\".'. I started a session and approved its plan; it finished \"Create the page in index.html\", a task the set does not name. After a reload the card still waited. Yes made 'Split \"Style the page\" into ... Added \"Check that the links work\" ...'. The tasks are now layout, colours, check, ready (B1–B4). Second project: after the same read-back I edited the named task's outcome, then pressed Yes. The reply was 'The tasks changed since I checked them; say \"fix the tasks\" to check again.' and the task list was unchanged (B5).\n\nWalk C (L4-selftasks-120). I restarted the bench with FORERUNNER_BENCH_FAIL=digest. The ladder ended with the card '\"Write the digest page\" failed 4 times' (Try again / Mark done anyway / Cancel task). In chat, `tool: task_transition {...\"to\":\"ready\",\"note\":\"Put on hold by the person.\"}` now redirects to the card's answer, and because that card is high-risk the reply is 'Answer it on its card in the Inbox: \"Write the digest page\" failed 4 times. Nothing else was filed.' The same call without a note gives the same reply (chatprobe). So a note the model wrote no longer keeps the move off the card. The medium-risk read-back and the restart path I verified through the commands tests, not on the bench.\n\nWalk D (U-098, D-3/D-5/D-6):\n- New task with Reviewer: the line is plain with no outcome. With outcome 'review.md lists the gaps and risks found in notes/plan.md' it reads 'The reviewer writes no file, so review.md is not written: its findings are its report, which you read in the task's drawer.' (15-d1).\n- Edit of a coder task with outcome 'gaps.md lists ...', switched to reviewer: the line names gaps.md (16-d2).\n- Chat task_create for the reviewer (it acted at once): the done sentence carries the gaps.md line (17-d3).\n- Defect: outcome 'Write a review of the Node.js setup' showed 'The reviewer writes no file, so Node.js is not written: ...' on New task.\n\nScreens and design. Every screen the journey passes follows the area's design. The header, the badge and the open chat follow every close at once. The read-back reply shows once ('[stand-in model]' alone, with the question only on the card). The writing rules hold, with one exception: the false file name in the reviewer line (blocking item).\n\nTests and validation:\n- Fail-first: I reverted the fix's source files locally and kept the new tests. The real-daemon describe 'l4-selftasks-carried, run L4' then had 5 of 7 cases fail on the base code: L4f-left-1 ('expected [] to include <projectId>'), L4f-left-2 (unnamed task), L4f-left-4, L4f-left-5 and D-5. With only task.ts at the base, 5 commands cases failed: the 120 cases got task.transition instead of request.answer, plus the three D-6 cases. With only context.tsx at the base, the L4f-left-6 UI cases read the conversation 5 and 7 times where 3 and 4 were expected. All of these pass on the branch, and I restored the worktree afterwards.\n- Suites on the branch: `pnpm check` exit 0 (562 files, 6203 passed, 7 skipped; docs-check ok, 46 files; secret scan clean). UI vitest 104 files and 1511 tests passed. Playwright (local config) 40 passed. `pnpm test:injection` 92 of 92 passed. `pnpm test:e2e` 25 passed, 1 skipped. I did not re-run `pnpm test:integration`.\n- Cleanup: bench stopped, its home and browser profile deleted, worktree clean.",
+    "blocking": [
+     {
+      "issue": "The reviewer line this area adds (D-5/D-6) names a technology as the file the task 'asks for'. fileTheWordsWrite reads any word with a dot and a letter-led suffix as a file, so ordinary words in a reviewer task become a false sentence on New task, Edit, chat's read-back and chat's done sentence.",
+      "where": "packages/runtime/src/registry/tools.ts:103 (FILE) and :114/:136 (FILE_WRITTEN, fileTheWordsWrite)",
+      "evidence": "Bench walk D (/tmp/frbench/review-l4-selftasks-carried/walkD.json, d1_nodejs): New task > Reviewer, outcome 'Write a review of the Node.js setup' shows 'The reviewer writes no file, so Node.js is not written: its findings are its report, which you read in the task's drawer.' A direct probe of fileTheWordsWrite: 'Create a report on the Express.js routes' -> Express.js; 'Write up the risks in the ASP.NET app' -> ASP.NET; 'Produce a list of issues with the Vue.js components' -> Vue.js. Design section 5 rules 4 and 9 (true now; no promises the code does not keep) are broken by a sentence that tells the person a file named 'Node.js' will not be written. The repository already treats this case as a non-file elsewhere: scripts/bench/README.md says of the stand-in critic that 'a technology such as Node.js is not a file'.",
+      "expected": "A technology or product name (Node.js, Express.js, Vue.js, ASP.NET and similar) is never taken as the file the words ask for, so the plain line 'The reviewer writes no file: its findings are its report, which you read in the task's drawer.' shows. A test at the same boundary pins it: the reviewer-file-line test and the D-5 real-daemon case get these inputs with the exact plain line."
+     }
+    ],
+    "claims_checked": [
+     {
+      "claim": "L4f-left-1: every close (chat No, refused Yes, Inbox No/Yes, POST /commands/:id/confirm or cancel, a lapse) tells the screens once: inbox.changed, project.changed, conversation.changed",
+      "holds": true,
+      "note": "Bench walk A: header and badge followed within 358–428 ms after each of the four closes, with no reload. Walk E: a lapsing Settings card cleared the badge 343 ms after expiry. The real-daemon case fails on the base code and passes on the branch. executor.confirm wraps answerPending and tellClosed; expirePending tells with 'expired'."
+     },
+     {
+      "claim": "L4f-left-2: a fix set's Yes is judged on the tasks it names and the list's membership",
+      "holds": true,
+      "note": "Bench walk B: after a session finished the unnamed task the Yes applied the set; after the named task was edited the Yes was refused with TASKS_CHANGED_REPLY and nothing changed. The real-daemon case fails on the base code. Old fingerprints are still compared whole (the old algorithm is kept). The calls carry task ids (task-check callsOf idOf), so namedTaskIds matches fingerprint keys."
+     },
+     {
+      "claim": "L4-selftasks-120: the redirect guards judge a note by who wrote it, also after a restart",
+      "holds": true,
+      "note": "The commands cases fail with base task.ts (task.transition instead of request.answer) and pass on the branch, including the restorePending case. On the bench, a high-risk ladder card answers chat's retry with 'Answer it on its card in the Inbox: ...' whether or not the model wrote a note, so a model's note no longer sidesteps the card."
+     },
+     {
+      "claim": "L4f-left-3: an Undo read back in chat after a restart says 'Undone: the monthly cap is back to CHF 150.00.'",
+      "holds": true,
+      "note": "The undo.test restart case and the new case pass. The item's other two parts (double period, lapsed Update values) were already fixed at the base by the L4f fix-up: noteClause drops the second period and lapsedCardUpdate gives '(CHF 150.00 to CHF 400.00)', which the bench Update shows."
+     },
+     {
+      "claim": "L4f-left-4: a merged card's change row names both who asked ('J and Alice'); recall says 'You and Alice'",
+      "holds": true,
+      "note": "The real-daemon GET /changes case fails on the base code. Only executor.record sets both authors (the undo and revert rows set one each), so older rows are not mislabelled."
+     },
+     {
+      "claim": "L4-other-1 D-3/D-5/D-6: the reviewer line names the file in New task, Edit and chat",
+      "holds": false,
+      "note": "The mechanism works: review.md and gaps.md show on New task, Edit and the chat done sentence on the bench, and the tests fail on the base code. But the file heuristic names technologies such as Node.js, Express.js and ASP.NET (blocking item)."
+     },
+     {
+      "claim": "L4f-left-6: an open chat is read again only for its own card",
+      "holds": true,
+      "note": "With base context.tsx the UI cases read the conversation 5 and 7 times where 3 and 4 were expected; on the branch they pass. In polling mode the chat reloads only when the count moved."
+     },
+     {
+      "claim": "L4f-left-7 and L4-selftasks-125: the stand-in writes nothing about a waiting card and holds the reviewer to its report; the README lists TASK_LIST/_SAYS; docs:check says what it needs",
+      "holds": true,
+      "note": "Bench: every read-back reply is '[stand-in model]' alone. bench-role-player.test.ts and docs-check.test.ts pass. I did not re-run a reviewer session on the bench; the fixer's walk2-after.json shows it accepted by the critic."
+     },
+     {
+      "claim": "L4f-left-5: coverage for value cards (also after a restart), the header beside a question, a lapsed Settings card",
+      "holds": true,
+      "note": "Tests only, added for behaviour that already held; they run and pass. The fake-clock 'fix the tasks' POST /chat case already existed at line 27213."
+     },
+     {
+      "claim": "L4b-left-4: a task_proposal card counts as others' words",
+      "holds": true,
+      "note": "chat-facts test passes. The change is stricter (read back first). Injection suite 92 of 92."
+     },
+     {
+      "claim": "L4b-left-3 first half: 'adding \"X\"' / 'the change to \"X\"' / 'a change' instead of 'the add of'",
+      "holds": true,
+      "note": "The task-check and session-task-list assertions were changed for the design, not weakened."
+     },
+     {
+      "claim": "New or changed routes have a real-daemon case and a fake-daemon change in the same commit",
+      "holds": true,
+      "note": "c730831 (closes, /chat, Inbox answer), d39d739 (GET /changes byYouAndAgent) and 7d90c73 (GET /settings/models words) each touch real-daemon.test.ts and fake-daemon.ts."
+     },
+     {
+      "claim": "Validation: pnpm check, UI suite 1511, Playwright 40, injection, e2e all pass",
+      "holds": true,
+      "note": "Reproduced here, all green. Integration not re-run."
+     },
+     {
+      "claim": "not_done items carry reasons",
+      "holds": true,
+      "note": "L4-selftasks-127 rest, L4b-left-2, L4b-left-3 second half and L4b-left-5 are all inside the spec's cut line, each with a reason. Every never-cut item is done."
+     }
+    ],
+    "non_blocking": [
+     "L4-selftasks-120 drops the person's own words. In chat every note is passed by the model, so ownNote is always false there. 'Try X again and tell it to use the old layout' now becomes the card's answer, and the read-back 'Try again (\"X\" failed)? Starts a session that tries again.' says nothing of the note, which is dropped (request.answer has no note). This is what the spec asked for, but the lost words are not said anywhere; a follow-up should either say so or carry them to the next brief.",
+     "The fixer's check_in_the_app for L4-selftasks-120 needs a medium-risk failed-task card, for example the critic could not review it. On the ladder's '\"X\" failed N times' card, which is high risk, chat answers 'Answer it on its card in the Inbox: ...' (seen on the bench) and no read-back appears. Correct the live_check steps.",
+     "ADR 0109's 2026-11-23 amendment swaps the labels: it calls the file-naming line D-3 and Edit's words D-5, while the spec and the code comments say D-5 is the line and D-3 is Edit.",
+     "Fake daemon heardChat(…, closed) sets the closed card's answer to 'yes' even when the chat said No (apps/ui/test/fake-daemon.ts). It is a fidelity nit and no test reads it.",
+     "On a lapse inbox.changed is emitted twice: once from onClosed and once after the Update is filed. Harmless.",
+     "If p.perform throws after answerRequest has recorded the answer, confirm() never calls tellClosed. Unlikely: perform catches step errors, so only a change-log write failure triggers it.",
+     "In polling mode the open chat is reloaded only when the count moved. A card that closes while another arrives in the same poll leaves the chat's Yes/No until the next move.",
+     "conversationOfCard scans the session's last 400 chat.reply rows. An older card falls back to the project's conversation.",
+     "Trial merge with fix/l4-chat-carried, which merges first: content conflicts in apps/ui/test/real-daemon.test.ts, packages/runtime/test/chat-recall.test.ts and docs/decisions/0119-the-agent-keeps-its-task-list-right.md. All three are append-only, so keep both areas' blocks. No overlap in executor or server close paths.",
+     "The real-daemon case 'a session finishes the task the set names ... Yes says the tasks changed' also passes on the base code, because the base refused every change. It guards the refusal direction only; the unnamed-task case is the one that fails first.",
+     "The fixer's open new_problems still stand: task.update and the other reason lines in task.ts use a model-written note as the change log's reason; the stand-in's thoroughWhy catches 'review.md' in chat tool lines; at Assisted, chat's task_create acts at once.",
+     "Not this area: the Inbox's Updates list shows the raw message type 'warning' under the lapse Update (E3), against design section 5 rule 6."
+    ]
+   },
+   "fixup": {
+    "area": "l4-selftasks-carried",
+    "branch": "fix/l4-selftasks-carried",
+    "head_sha": "a7367f7ac11f276165274c50924da6c57f8b5e0e",
+    "commits": [
+     {
+      "sha": "fa6a725",
+      "subject": "runtime: the reviewer's line never takes a technology's name for a file (L4-other-1 D-5, D-6, U-098)"
+     },
+     {
+      "sha": "440b6bc",
+      "subject": "ui tests: the fake daemon answers a card closed by a chat No with \"no\" (L4f-left-1, U-084)"
+     },
+     {
+      "sha": "c8184e3",
+      "subject": "commands, runtime: a close is told even when the yes's change throws; a lapse tells its Update first (L4f-left-1, U-084)"
+     },
+     {
+      "sha": "b731511",
+      "subject": "ui: while polling, a card that closed as another came reads the open chat again (L4f-left-6, U-084)"
+     },
+     {
+      "sha": "51ac1e8",
+      "subject": "commands, runtime: a move said in chat with a note answers the card's Try again with that note (L4-selftasks-120, U-095)"
+     },
+     {
+      "sha": "a7367f7",
+      "subject": "commands: request.answer's doc comment sits on its params again (fixup-l4-selftasks-carried)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "Review blocking item (L4-other-1 D-5/D-6): the reviewer's 'writes no file' line named a technology as the file the words ask for. 'Write a review of the Node.js setup' showed 'The reviewer writes no file, so Node.js is not written: ...' on New task, Edit, chat's read-back and chat's done sentence. Express.js, ASP.NET, Vue.js, Socket.IO, example.com and 'e.g' were taken for files too, and 'review.markdown' was cut to 'review.markd'.",
+      "u_ids": [
+       "U-098"
+      ],
+      "failing_test_before": "packages/runtime/test/reviewer-file-line.test.ts: 11 new golden cases (Node.js, node.js, Express.js, ASP.NET, Vue.js, Next.js and D3.js, Socket.IO, example.com, e.g, 'Node.js setup to review.md', review.markdown). packages/commands/test/selftasks-carried.test.ts 'task.create for the reviewer: ...' (the Node.js read-back and sentence). apps/ui/test/real-daemon.test.ts 'L4-other-1 (D-5): GET /settings/models names the file ...' (Node.js, Express.js, ASP.NET). apps/ui/test/tasks.test.tsx 'New task: an outcome that asks for review.md names it ...' (Node.js pasted). I checked fail-first in this fixup: I put the pre-fa6a725 registry/tools.ts back locally, and 12 commands and runtime cases plus 2 UI cases failed ('expected Node.js to be null'; 'so Node.js is not written'). I restored the file and all pass.",
+      "how": "Commit fa6a725 (from the fixup run cut off by the restart; kept as is). registry/tools.ts isFileName decides what counts as a file. The ending must be a file's (FILE_EXTENSIONS: md, csv, json, html, js and the like; not NET, IO or com). The word must also not be a TECHNOLOGY: a capitalised one-word name with .js or .ts, or a well-known lower-case one. A path such as src/App.js is still a file. Every other dotted word loses its dots before fileTheWordsWrite reads the clause, so it is never the file and never ends the clause. FILE ends at a word boundary and allows endings of up to 8 characters. When in doubt the plain line shows, and the plain line is true whatever the words ask for. Docs: ADR 0109's amendment now uses the spec's labels (D-5 is the line, D-3 is Edit's words), plus runtime.md and the user guide.",
+      "check_in_the_app": "Tasks > New task, Who does it: reviewer. Outcome 'Write a review of the Node.js setup': the line reads 'The reviewer writes no file: its findings are its report, which you read in the task's drawer.' Outcome 'Write a review of the Node.js setup to review.md': 'The reviewer writes no file, so review.md is not written: its findings are its report, which you read in the task's drawer.' Edit a coder task whose outcome is 'Write a review of the Vue.js components' and give it to the reviewer: plain line. In Chat add a reviewer task whose outcome names Express.js: the done sentence ends with the plain line. Bench re-walk on the final code (/tmp/frbench/fixup-l4-selftasks-carried/walkD.json; steps 01-06): every one of these holds, and gaps.md is still named. live_check: the same New task entries on the real build, plus in Chat 'add a task for the reviewer: write a review of the Node.js setup'. The read-back or done sentence carries the plain line, never 'so Node.js is not written'."
+     },
+     {
+      "problem": "Review non-blocking item: the fake daemon's heardChat set a closed card's answer to 'yes' even when chat said No. The daemon's executor records 'no'.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "none (a fidelity fix; no test reads the closed card's answer in the fake daemon)",
+      "how": "Commit 440b6bc (from the cut-off fixup run; kept). apps/ui/test/fake-daemon.ts records the close's verdict: 'no' for a chat No, 'yes' for a Yes.",
+      "check_in_the_app": "Not visible in the app (test double only)."
+     },
+     {
+      "problem": "Review non-blocking items (L4f-left-1). (a) If the change after a Yes threw after the card was taken out (for example a change-log write failed), the executor never told the close. The header kept 'Waiting for you' until a reload. (b) On a lapse the daemon emitted inbox.changed twice, the first time before the lapse's Update was filed, so the screens read the Inbox twice.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "packages/commands/test/selftasks-carried.test.ts 'fixup-l4-selftasks-carried, run L4: a close is told once whatever happens after it': 'a yes whose change cannot be recorded still tells the close' (closed was []), and 'a lapse tells its Update first, then the close, once each' (the order was closed then expired). apps/ui/test/real-daemon.test.ts 'L4f-left-5: ... a Settings card that lapses tells the screens' now waits for the Update and expects inbox.changed exactly once; it was heard twice ('expected 2 to be 1').",
+      "how": "executor.confirm tells the close in a finally. 'how' comes from the result; when no result came back, it is 'no' for a No and 'yes' otherwise. expirePending calls onExpired (the Update) first, then onClosed. compose's onExpired files the Update and no longer emits inbox, because onClosed's inbox.changed follows with the Update already in the Inbox. Docs: commands.md, runtime.md.",
+      "check_in_the_app": "Home. Set the monthly cap to CHF 400 in Settings and leave the card unanswered: the Inbox badge shows 1. Ten minutes later the badge goes without a reload, and the Inbox lists one Update: 'The change you asked for was not made: the monthly cap (CHF 150.00 to CHF 400.00). Its card closed after 10 minutes without your yes; ask again if you still want it.' Bench walk E on the final code (/tmp/frbench/fixup-l4-selftasks-carried/walkE.json; steps 16-18): the badge cleared 338 ms after expiresAt, with 0 navigations. Walk A on the final code (walkA.json; steps 07-11): chat No, a refused Yes, the Inbox's No and the Inbox's Yes each cleared the header, the badge and the chat's Yes/No in 366-414 ms. The change-log failure case cannot be produced in the app; the commands test covers it. live_check: the lapse with a real build (wait 10 minutes)."
+     },
+     {
+      "problem": "Review non-blocking item (L4f-left-6). In polling mode the open chat was read again only when the Inbox count moved. When the chat's card was answered in the Inbox and a session's question arrived before the next poll, the count stayed the same, and the chat kept its Yes and No until the count next moved.",
+      "u_ids": [
+       "U-084"
+      ],
+      "failing_test_before": "apps/ui/test/selftasks-carried.test.tsx 'fixup-l4-selftasks-carried, run L4: polling reads the chat again when its card closed, even at the same count' (confirm-yes stayed on screen)",
+      "how": "The poller's inbox.changed (api/sse.ts) carries openCards: the open requests' ids, sorted and joined. It is polling only; the live stream already names the closed card's conversation. store/context.tsx counts a changed set of open cards as moved, both for the chat reload and for the projects' status lines. No daemon route changed. Docs: apps.md.",
+      "check_in_the_app": "Only seen when the app falls back to polling (no live stream). Leave a chat read-back open, answer it in the Inbox in another window while a session files a question: the chat's Yes and No go at the next poll. live_check: none needed (UI-only; the live stream path is unchanged and was walked in walk A)."
+     },
+     {
+      "problem": "Review non-blocking item (L4-selftasks-120). Since the redirect guards judge a note by who wrote it, a move said in chat with words for the next attempt became the failed task's card answer, and the note was dropped unsaid. Example: 'try the digest page again and tell it to use the old layout'. The card's own Try again reads 'Tries again with your note, if any; it runs at your next Start.', so the read-back implied the words were kept. Bench, before the fix (walkC-part1.json, step 12): the read-back had no note.",
+      "u_ids": [
+       "U-095"
+      ],
+      "failing_test_before": "packages/commands/test/selftasks-carried.test.ts 'the redirect guards judge a note by who wrote it': the model's-note case (the read-back lacked 'Note for its next brief: ...'), the restart case (the answer was 'Try again' and not { choice, note }), and 'request.answer's note parameter tells the model what to pass' (no such parameter). apps/ui/test/real-daemon.test.ts 'fixup-l4-selftasks-carried: chat's Try again on a failed task's card carries the note the model passed, ...' (the read-back had no note; I reverted the src files and checked fail-first).",
+      "how": "The cardWords port's choices carry `input`, and compose maps the Inbox choice's input ('note' for Try again and Send it back). moveAsCardAnswer passes the move's note to request.answer when the chosen option takes one. request.answer has a new optional `note`, with ANSWER_NOTE_DESCRIPTION as the exact text the model receives. Its ask ends 'Note for its next brief: \"...\"' so the Yes covers the note, and its run answers the card { choice, note } as the Inbox does. syncSignoffAnswers' answerNote then queues the note for the task's next brief. That is the existing queued-note channel, quoted as data in the brief; the injection suite's brief channel covers it, and it stays 92/92. An option that takes no note (Mark done anyway, Cancel task) answers with the option alone and its read-back names no note; this sibling case passed before and after. Docs: ADR 0119 amended 2026-11-24, commands.md, runtime.md, user guide.",
+      "check_in_the_app": "Bench (on the final code): start with --env FORERUNNER_BENCH_FAIL=digest --env FORERUNNER_BENCH_FAIL_MODE=error. Add the task 'Write the digest page' and Start a session; it fails and its card '\"Write the digest page\" failed' offers Try again, Mark done anyway and Cancel task. In Chat type: tool: task_transition {\"task\":\"Write the digest page\",\"to\":\"ready\",\"note\":\"Use the old layout.\"}. The read-back is 'Try again (\"Write the digest page\" failed)? Tries again with your note, if any; it runs at your next Start. Note for its next brief: \"Use the old layout.\"'. Restart Forerunner: the same read-back waits. Press Yes: 'Trying \"Write the digest page\" again: it runs at your next Start.'. The card is answered { choice: Try again, note: Use the old layout. } and the task is ready (walkC2-ask.json, walkC2-yes.json; steps 13-15). live_check (this corrects the fixer's steps for L4-selftasks-120): use a medium-risk failed-task card, which a run that failed with an error files ('\"X\" failed: ...'). The ladder's '\"X\" failed N times' card is high risk; there chat answers 'Answer it on its card in the Inbox: ...' by design. On the real model, with such a card open, say 'try the digest page again and tell it to use the old layout'. The read-back ends with 'Note for its next brief: \"...\"' quoting those words. After Yes, the next session's brief for that task has the note."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "A card that needs the paired device (the ladder's high-risk '\"X\" failed N times' card) is still answered from chat with 'Answer it on its card in the Inbox: \"X\" failed 4 times. Nothing else was filed.', and a note given in chat is not mentioned there.",
+      "why": "The person answers on the Inbox card, whose Try again has its own note field. Saying that in chat is a new sentence that needs a wording decision, so I left it. It is named in ADR 0119's 2026-11-24 amendment."
+     },
+     {
+      "problem": "conversationOfCard scans only the session's last 400 chat.reply rows; an older card falls back to the project's conversation (review non-blocking item).",
+      "why": "The fallback is the project conversation, which is the right target in nearly every case; I judged a deeper scan not worth it."
+     },
+     {
+      "problem": "task.update, task.transition and task.dependencies still use `params.note?.trim()` as the change log's reason even when the model wrote the note (fixer's new_problem, repeated by the review).",
+      "why": "params.reason is model-writable too, so this is a design decision about reason text. I left it unchanged."
+     },
+     {
+      "problem": "Items the fixer cut (L4-selftasks-127 rest, L4b-left-2, L4b-left-3 second half, L4b-left-5).",
+      "why": "Unchanged by this fixup. They are inside the spec's cut line, and the fixer's report gives the reasons."
+     }
+    ],
+    "validation": [
+     {
+      "command": "git show fa6a725^:packages/runtime/src/registry/tools.ts > (worktree); npx vitest run --project unit packages/runtime/test/reviewer-file-line.test.ts packages/commands/test/selftasks-carried.test.ts; and in apps/ui: npx vitest run test/real-daemon.test.ts test/tasks.test.tsx -t 'D-5|reviewer's line names a file'; then git checkout of the file",
+      "result": "Without fa6a725: 12 failed (11 golden cases plus the commands task.create case) and 2 UI cases failed. With it restored: 41 passed and 3 passed."
+     },
+     {
+      "command": "DOCS_CHECK_BASE=3e1ab9d flock /tmp/frbench/heavy.lock pnpm check",
+      "result": "Pass: lint and typecheck clean; 562 test files, 6218 passed, 7 skipped; docs-check ok (48 files); link-check ok; secret-scan clean."
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+      "result": "Pass: 5 files passed, 7 skipped; 30 tests passed, 83 skipped."
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+      "result": "Pass: 13 files; 25 passed, 1 skipped."
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+      "result": "Pass: 104 files, 1513 tests (real-daemon included)."
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+      "result": "Pass: 40 passed."
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+      "result": "PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed."
+     },
+     {
+      "command": "node scripts/bench/start.mjs --name fixup-l4-selftasks-carried --daemon-port 49201 --ui-port 2801 --fresh --provider bench --env FORERUNNER_BENCH_FAIL=digest --env FORERUNNER_BENCH_FAIL_MODE=error; walkD, walkA, walkC part1 (before the note fix), restart-daemon, walkC2 ask, restart-daemon, walkC2 yes, walkE; stop.mjs",
+      "result": "Walk D: no technology named as a file; review.md and gaps.md still named. Walk A: all four closes clear the header, badge and chat in 366-414 ms. Walk C2: the note is read back, survives a restart, and is stored with Try again. Walk E: the badge clears 338 ms after the lapse, with one Update. Bench stopped; its home and browser profile deleted."
+     },
+     {
+      "command": "git merge-tree --write-tree --name-only fix/l4-chat-carried HEAD",
+      "result": "Content conflicts only in the append-only apps/ui/test/real-daemon.test.ts, packages/runtime/test/chat-recall.test.ts and docs/decisions/0119-the-agent-keeps-its-task-list-right.md, the same three the review found: keep both areas' blocks."
+     },
+     {
+      "command": "git grep -n '^<<<<<<< '; git status --short",
+      "result": "No conflict markers; worktree clean; fix/l4-selftasks-carried = HEAD = a7367f7."
+     }
+    ],
+    "new_problems": [
+     "Not this area (the review's E3, seen again): the Inbox's Updates list shows the raw message type 'warning' under the lapse Update ('...ask again if you still want it.\\n\\nwarning\\nAlice · just now'), against design section 5 rule 6. Evidence: /tmp/frbench/fixup-l4-selftasks-carried/walkE.json inboxText and steps/18-e3-inbox-after-lapse.png.",
+     "Bench stand-in only: when chat acts at once, the stand-in's reply quotes the tool result ('[stand-in model] The command tool task_create answered: Added ...'), so the bench shows the done sentence twice. Not the real model's behaviour, but it makes bench chat screenshots read oddly. Evidence: walkD.json d3_chat and d5_chat.",
+     "Merge order: l4-chat-carried merges first. The trial merge has content conflicts only in the append-only real-daemon.test.ts, chat-recall.test.ts and ADR 0119; keep both areas' describe blocks and both dated amendments (this fixup's ADR 0119 amendment of 2026-11-24 goes after l4-chat-carried's)."
+    ],
+    "notes_for_other_areas": [
+     "request.answer takes an optional `note`. The model is told ANSWER_NOTE_DESCRIPTION: 'Only with an option that takes a note (Try again, Send it back): words the person gave for the next attempt, quoted as they said them; leave it out when they gave none.' The note is kept only when the chosen option's card words say input 'note'; then the ask ends 'Note for its next brief: \"...\"' and the card is answered { choice, note }, which answerNote reads.",
+     "CommandPorts.cardWords choices now carry `input?: 'note' | 'text' | null`, mapped in compose from the Inbox choice's input. moveAsCardAnswer(ctx, { task, project?, note? }, option) passes the note to request.answer when the option takes one.",
+     "Executor: confirm() tells onClosed in a finally, so it fires even if perform throws after the card was taken out. expirePending calls onExpired before onClosed, and compose's onExpired no longer emits inbox: rely on onClosed's inbox.changed for every close, a lapse included.",
+     "UI polling: the poller's inbox.changed has `openCards` (sorted open request ids, polling only). store/context.tsx treats a changed set as moved even at the same count."
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/review-l4-selftasks-carried/walkD.json (d1_nodejs: 'The reviewer writes no file, so Node.js is not written: ...', before fa6a725)",
+      "/tmp/frbench/fixup-l4-selftasks-carried/steps/12-c1-chat-retry-with-model-note.png (read-back without the note, before 51ac1e8; walkC-part1.json)"
+     ],
+     "after": [
+      "/tmp/frbench/fixup-l4-selftasks-carried/steps/02-d1b-new-task-nodejs.png",
+      "/tmp/frbench/fixup-l4-selftasks-carried/steps/03-d1c-new-task-nodejs-to-review-md.png",
+      "/tmp/frbench/fixup-l4-selftasks-carried/steps/04-d2-edit-reviewer-vuejs.png",
+      "/tmp/frbench/fixup-l4-selftasks-carried/steps/05-d3-chat-reviewer-expressjs.png",
+      "/tmp/frbench/fixup-l4-selftasks-carried/steps/06-d5-chat-reviewer-gaps-md.png",
+      "/tmp/frbench/fixup-l4-selftasks-carried/steps/08-a2-after-chat-no.png",
+      "/tmp/frbench/fixup-l4-selftasks-carried/steps/10-a5-chat-after-inbox-no.png",
+      "/tmp/frbench/fixup-l4-selftasks-carried/steps/11-a6-chat-after-inbox-yes.png",
+      "/tmp/frbench/fixup-l4-selftasks-carried/steps/13-c2a-chat-retry-with-note-readback.png",
+      "/tmp/frbench/fixup-l4-selftasks-carried/steps/14-c2b-after-restart.png",
+      "/tmp/frbench/fixup-l4-selftasks-carried/steps/15-c2c-after-yes.png",
+      "/tmp/frbench/fixup-l4-selftasks-carried/steps/17-e2-after-lapse.png",
+      "/tmp/frbench/fixup-l4-selftasks-carried/steps/18-e3-inbox-after-lapse.png"
+     ]
+    },
+    "tests_changed_for_design": [
+     {
+      "test": "packages/commands/test/selftasks-carried.test.ts 'the redirect guards judge a note by who wrote it' (the model's-note case and the restart case); the stub cardWords' Try again now has input 'note', as the daemon's card words do",
+      "why": "The review's follow-up: the note a redirected move carries now goes with Try again. The read-back gains 'Note for its next brief: \"Put on hold by the person.\"' and the answer after Yes is { choice: 'Try again', note } instead of 'Try again'. The guard's intent is kept (the model's note still answers the card), and the person's own note still keeps the move."
+     },
+     {
+      "test": "apps/ui/test/real-daemon.test.ts 'L4f-left-5: ... a Settings card that lapses tells the screens'",
+      "why": "Made stricter, not weaker: it now waits for the lapse's Update in the Inbox and expects inbox.changed exactly once (it was 'greater than 0')."
+     }
+    ]
+   }
+  }
+ ],
+ "missing": [],
+ "merge": {
+  "merged": [
+   "fix/l4-chat-carried at 31865c7 (fixup head; fix 83f3a55 plus fixup 8ddb7e9, a052fd0, 31865c7) -> merge commit 6cce40c, no conflicts",
+   "fix/l4-selftasks-carried at a7367f7 (fixup head; fix b2c1bd3 plus fixup fa6a725, 440b6bc, c8c16fb-era c8c4..., b731511, 51ac1e8, a7367f7) -> merge commit 4a884ef, three append-only conflicts resolved"
+  ],
+  "head_sha": "4a884ef6de9ec48676cf2e6ae2879c613586333f",
+  "pushed": true,
+  "conflicts_resolved": [
+   "apps/ui/test/real-daemon.test.ts: both areas added a describe block at the end of the file, and git split it into two interleaved hunks because both blocks begin with the same createProject('Quote page') lines. Resolved per the append-only rule in shared_files (one describe per area, key order): the whole 'l4-chat-carried, run L4' block first, then the whole 'l4-selftasks-carried, run L4' block, each closed by its own '});'. A script checked that each branch's block appears byte for byte in the merged file.",
+   "packages/runtime/test/chat-recall.test.ts: same shape. The 'l4-chat-carried, run L4: an absence about now is no claim (L4c-left-8)' describe (with its doc comment) comes first, then 'l4-selftasks-carried, run L4: chat's recall names who made a change as the Changes page does (L4f-left-4)'. Both were checked byte for byte against their branches.",
+   "docs/decisions/0119-the-agent-keeps-its-task-list-right.md: kept all four dated amendments in merge order: l4-chat-carried 2026-11-23, fixup-l4-chat-carried 2026-11-23, l4-selftasks-carried 2026-11-23, fixup-l4-selftasks-carried 2026-11-24. Both sides were checked byte for byte.",
+   "Auto-merged with no conflict, and confirmed by typecheck and the full suites: executor.ts (chat-carried's undoBlocked change argument and stepWords renames, beside selftasks' onClosed/tellClosed and confirm finally); task.ts (task.split depends_on and undoBlocked, beside ownNote, noFileClause and moveAsCardAnswer); types.ts; transcript.ts (APP_MARKER_ANY_CASE_RE and HOLD_REPLY_RE, beside conversationOfCard); server.ts; fake-daemon.ts; api-types.ts; project-facts.ts; the maintainer docs (runtime.md, commands.md, testing.md); user-guide.md; scripts/bench/README.md; session-task-list.test.ts."
+  ],
+  "integration_fixes": [],
+  "validation": [
+   {
+    "command": "pnpm install --frozen-lockfile",
+    "result": "ok (lockfile unchanged)"
+   },
+   {
+    "command": "DOCS_CHECK_BASE=origin/claude/nifty-knuth-f9udt0 flock /tmp/frbench/heavy.lock pnpm check",
+    "result": "exit 0. Lint, lint:paths and typecheck clean; unit 563 files, 6251 passed, 7 skipped; docs-check ok (73 files) against origin/claude/nifty-knuth-f9udt0 (3e1ab9d); link-check ok (213 files); secret-scan clean (2278 files). Log: /tmp/frbench/merge-w32/check.log"
+   },
+   {
+    "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+    "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped (the Postgres cases skip without FORERUNNER_TEST_PG, as expected)"
+   },
+   {
+    "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+    "result": "exit 0: 13 files; 25 passed, 1 skipped"
+   },
+   {
+    "command": "flock /tmp/frbench/heavy.lock pnpm --filter @forerunner/live test (dry run, live credentials unset)",
+    "result": "exit 0: 11 files passed, 4 skipped; 63 tests passed, 17 skipped"
+   },
+   {
+    "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+    "result": "PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed"
+   },
+   {
+    "command": "FORCE_COLOR=1 HOME=<empty dir> flock /tmp/frbench/heavy.lock pnpm test:unit (as CI runs it)",
+    "result": "exit 0: 563 files; 6251 passed, 7 skipped"
+   },
+   {
+    "command": "cd apps/ui && FORCE_COLOR=1 HOME=<empty dir> flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+    "result": "exit 0: 104 files, 1521 tests passed (real-daemon included)"
+   },
+   {
+    "command": "FORCE_COLOR=1 HOME=<empty dir> pnpm --filter @forerunner/approvals-web test (a CI step)",
+    "result": "exit 0: 11 files, 59 tests passed"
+   },
+   {
+    "command": "pnpm secrets:scan --logs (a CI step)",
+    "result": "clean"
+   },
+   {
+    "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+    "result": "exit 0: 40 passed"
+   },
+   {
+    "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+    "result": "not run: neither area touched the desktop shell (git diff 3e1ab9d..HEAD -- apps/desktop is empty)"
+   },
+   {
+    "command": "git grep -n '^<<<<<<< '",
+    "result": "no matches; working tree clean"
+   },
+   {
+    "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+    "result": "printed nothing: all 42 commits are signed (40 area commits and the 2 merge commits)"
+   },
+   {
+    "command": "git push -u origin claude/nifty-knuth-f9udt0",
+    "result": "3e1ab9d..4a884ef fast-forward, first try; origin/claude/nifty-knuth-f9udt0 = 4a884ef"
+   }
+  ],
+  "smoke": "25/25 checks passed, 0 findings, 0 recorded problems. Run with node scripts/bench/start.mjs --name merge-w32 --daemon-port 49210 --ui-port 2810 --fresh (provider bench), then node scripts/bench/journeys/smoke.cjs merge-w32. Model calls: intake 1, specialist 9, critic 6, chat 1. The journey script needed no change. The bench is stopped and its home and browser profile are deleted. Result: /tmp/frbench/merge-w32/steps/smoke-result.json; log: /tmp/frbench/merge-w32/smoke.log.",
+  "problems_left": [
+   "Nothing the merge broke is left. Every suite passed on the first run after the merge, so no integration fix was needed.",
+   "CI and the Desktop app workflow on 4a884ef have not been checked yet. They were just triggered by the push; the session lead confirms them before L4i.",
+   "The areas' own not_done and new_problems carry over unchanged, as their reports say. l4-chat-carried: pr-answers' take-out mark has no start-time recovery; parser options that contain commas read ambiguously; the C4-left-7 sync race and recovered-path admit; onlyDrops reads the proposed changes, not the applied ones; NOW_STATE breadth; fake-daemon gaps; the L4c-left-6 injection case was moved to not_done with a reason, for the session lead to accept or reassign. l4-selftasks-carried: L4-selftasks-127 rest (the Connect offer kind); L4b-left-2 (the fence drops a wait silently); L4b-left-3 second half; L4b-left-5 coverage cases; task.ts reason lines still use a note the model wrote; a high-risk card answered from chat does not mention the note; the Inbox Updates list shows the raw type 'warning' under the lapse Update (design section 5 rule 6, not this area)."
+  ]
+ }
+}

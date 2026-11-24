@@ -1,61 +1,77 @@
-// Review walk C: Standard project with the person's own tasks: the set asks first (card), answered
-// while the session runs; the approved tasks join the running session by the admit rule.
-const R = require("/home/user/Forerunner/.claude/worktrees/wf_ab42b5f3-91e-5/scripts/bench/recorder.cjs");
+// Review walk C: Talk on a joined project (C4-left-9): the header's Talk, then the palette's Talk
+// (which starts a push-to-talk turn, as the desktop hotkey does). Usage: node walkC.cjs <repo> <bench> <label>
+const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
-const N = "review-d1109-selftasks-run";
-const pname = process.argv[2] ?? "Corner shop";
-const answerWith = process.argv[3] ?? "Make these changes";
-const check = (name, ok, detail) =>
-  console.log(ok ? "OK  " : "FAIL", name, detail === undefined ? "" : JSON.stringify(detail).slice(0, 900));
-
+const path = require("node:path");
+const [repo, n, label] = process.argv.slice(2);
+const R = require(path.join(repo, "scripts/bench/recorder.cjs"));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const out = { label, texts: {}, checks: {} };
 (async () => {
-  const { browser, page } = await R.openApp(N);
-  const p = await R.api(N, "POST", "/projects", { name: pname, goal: "A small shop page", autonomyLevel: 2 });
-  const add = (body) => R.api(N, "POST", `/projects/${p.id}/tasks`, { status: "ready", ...body });
-  const create = await add({ title: "Create the page skeleton in index.html", outcome: "index.html exists", acceptanceCriteria: ["index.html has a heading"], specialist: "coder", priority: "high" });
-  await add({ title: "Write the README", outcome: "README.md says how to open the page", acceptanceCriteria: ["README.md exists"], specialist: "writer", priority: "high" });
-  await add({ title: "Write the shop notes in notes.md", outcome: "notes.md lists the opening hours", acceptanceCriteria: ["notes.md exists"], specialist: "writer", priority: "medium" });
-  const cid = create.id ?? create.taskId ?? create.task?.id;
-  const style = await add({ title: "Style the page in styles.css", outcome: "styles.css styles the page", acceptanceCriteria: ["styles.css has a layout for phones", "styles.css uses warm colours"], specialist: "designer", priority: "low", dependsOn: [cid] });
-  const sid = style.id ?? style.taskId ?? style.task?.id;
-  await add({ title: "Publish the page", outcome: "the page is ready", acceptanceCriteria: ["index.html links styles.css"], specialist: "coder", priority: "low", dependsOn: [sid] });
-  const tasks0 = await R.api(N, "GET", `/projects/${p.id}/tasks`);
-  check("tasks made", tasks0.length === 5, tasks0.map((t) => [t.title, t.status]));
-  const started = await R.startSession(N, p.id, "review walk C").catch(async (e) => {
-    console.log("start said", String(e).slice(0, 300));
-    return null;
-  });
-  console.log("started", JSON.stringify(started).slice(0, 300));
-  const card = await R.until(async () => {
-    const ib = await R.api(N, "GET", "/inbox");
-    return (ib.requests ?? []).find((r) => r.projectId === p.id && r.status === "open" && /agent suggests/.test(r.title ?? "")) ?? null;
-  }, 300_000, 300, "the suggestion card");
-  const list = await R.api(N, "GET", `/projects/${p.id}/sessions`);
-  const running = (list.rows ?? []).find((r) => r.working);
-  check("the session runs on while the card waits", !!running, { title: card.title, body: card.body, details: card.details });
-  await page.goto(`${R.bench(N).uiUrl}/inbox`);
-  await page.waitForTimeout(1200);
-  const cardEl = page.locator("article, section, li, div").filter({ hasText: `${pname}: the agent suggests` }).filter({ has: page.getByRole("button", { name: "Keep the tasks" }) }).last();
-  await R.step(page, `running-${pname}-card`);
-  await cardEl.getByRole("button", { name: answerWith }).first().click();
-  await page.waitForTimeout(2500);
-  const done = await R.step(page, `running-${pname}-done`);
-  check("Done line", true, done.split("\n").filter((l) => /^Done:/.test(l)));
-  if (running) await R.waitForSession(N, running.id, 600_000);
-  const list2 = await R.api(N, "GET", `/projects/${p.id}/sessions`);
-  check("sessions after", true, (list2.rows ?? []).map((r) => [r.working, r.gist]));
-  const tasks1 = await R.api(N, "GET", `/projects/${p.id}/tasks`);
-  check("tasks after", true, tasks1.map((t) => [t.title, t.status]));
-  await page.goto(`${R.bench(N).uiUrl}/sessions/${running?.id}`);
-  await page.waitForTimeout(2500);
-  const s = await R.step(page, `running-${pname}-session`);
-  check("session page", true, s.split("\n").filter((l) => /Did \d|Took|joined|Left for|Changed|Split|Added/.test(l)));
-  await page.goto(`${R.bench(N).uiUrl}/inbox`);
-  await page.waitForTimeout(2000);
-  const ib = await R.step(page, `running-${pname}-inbox-after`);
-  check("inbox after", true, ib.split("\n").filter((l) => l.includes(pname) || /^Done:/.test(l)));
-  fs.writeFileSync(`/tmp/frbench/${N}/steps/running-${pname}.json`, JSON.stringify({ projectId: p.id }, null, 1));
-  await browser.close();
+  const atlas = await R.api(n, "POST", "/projects", { name: "Atlas", goal: "A site" });
+  const beacon = await R.api(n, "POST", "/projects", { name: "Beacon", goal: "A site too" });
+  const db = `${R.bench(n).home}/data/state.sqlite`;
+  execFileSync(
+    "python3",
+    [
+      "-I",
+      "-c",
+      `
+import json, sqlite3, sys, datetime
+c = sqlite3.connect(sys.argv[1])
+now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+s = json.loads(c.execute("select settings from project where id=?", (sys.argv[2],)).fetchone()[0] or '{}')
+s['joined_into'] = {"project": sys.argv[3], "name": "Atlas", "at": now}
+c.execute("update project set status='archived', settings=?, version=version+1 where id=?", (json.dumps(s), sys.argv[2]))
+c.commit()
+`,
+      db,
+      beacon.id,
+      atlas.id,
+    ],
+    { encoding: "utf8" },
+  );
+  const { browser, page } = await R.openApp(n, { freshProfile: true });
+  try {
+    await R.skipSetup(page).catch(() => {});
+    await page.goto(`${R.bench(n).uiUrl}/projects/${beacon.id}`);
+    await sleep(3000);
+    out.texts.page = await R.step(page, `${label}-joined-page`);
+    await page.getByTestId("talk-open").click();
+    await sleep(2500);
+    out.texts.talk = await R.step(page, `${label}-talk-header`);
+    const panel = page.getByTestId("conversation");
+    out.checks.closedLine = await page.getByTestId("conversation-closed").textContent().catch(() => null);
+    out.checks.textareas = await panel.locator("textarea").count();
+    out.checks.voiceTalk = await page.getByTestId("voice-talk").count();
+    out.checks.voicePhase = await page.getByTestId("voice-phase").count();
+    // Close the panel, then the palette's Talk: a push-to-talk turn, as the hotkey's press.
+    await page.keyboard.press("Escape");
+    await sleep(800);
+    await page.keyboard.press("Control+k");
+    await sleep(800);
+    await page.keyboard.type("Talk");
+    await sleep(800);
+    out.texts.palette = await R.step(page, `${label}-palette`);
+    await page.keyboard.press("Enter");
+    await sleep(3000);
+    out.texts.paletteTalk = await R.step(page, `${label}-palette-talk`);
+    out.checks.afterPalette = {
+      closedLine: await page.getByTestId("conversation-closed").count(),
+      voicePhase: await page.getByTestId("voice-phase").count(),
+      reason: await page.locator("output").allTextContents(),
+    };
+    out.voiceRequests = R.problems(n).slice(-5);
+    // Open it leads to Atlas's Chat.
+    await page.getByRole("link", { name: "Open it" }).first().click().catch(() => {});
+    await sleep(2500);
+    out.texts.openIt = await R.step(page, `${label}-open-it`);
+    out.checks.urlAfterOpenIt = page.url().replace(/token=[^&]+/, "token=…");
+  } finally {
+    await browser.close();
+  }
+  fs.writeFileSync(`/tmp/frbench/${n}/steps/${label}-walk.json`, JSON.stringify(out, null, 2));
+  console.log(JSON.stringify(out.checks, null, 1));
 })().catch((e) => {
   console.error(e);
   process.exit(1);

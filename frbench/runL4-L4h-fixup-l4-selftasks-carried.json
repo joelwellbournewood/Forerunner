@@ -1,0 +1,180 @@
+{
+ "area": "l4-selftasks-carried",
+ "branch": "fix/l4-selftasks-carried",
+ "head_sha": "a7367f7ac11f276165274c50924da6c57f8b5e0e",
+ "commits": [
+  {
+   "sha": "fa6a725",
+   "subject": "runtime: the reviewer's line never takes a technology's name for a file (L4-other-1 D-5, D-6, U-098)"
+  },
+  {
+   "sha": "440b6bc",
+   "subject": "ui tests: the fake daemon answers a card closed by a chat No with \"no\" (L4f-left-1, U-084)"
+  },
+  {
+   "sha": "c8184e3",
+   "subject": "commands, runtime: a close is told even when the yes's change throws; a lapse tells its Update first (L4f-left-1, U-084)"
+  },
+  {
+   "sha": "b731511",
+   "subject": "ui: while polling, a card that closed as another came reads the open chat again (L4f-left-6, U-084)"
+  },
+  {
+   "sha": "51ac1e8",
+   "subject": "commands, runtime: a move said in chat with a note answers the card's Try again with that note (L4-selftasks-120, U-095)"
+  },
+  {
+   "sha": "a7367f7",
+   "subject": "commands: request.answer's doc comment sits on its params again (fixup-l4-selftasks-carried)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Review blocking item (L4-other-1 D-5/D-6): the reviewer's 'writes no file' line named a technology as the file the words ask for. 'Write a review of the Node.js setup' showed 'The reviewer writes no file, so Node.js is not written: ...' on New task, Edit, chat's read-back and chat's done sentence. Express.js, ASP.NET, Vue.js, Socket.IO, example.com and 'e.g' were taken for files too, and 'review.markdown' was cut to 'review.markd'.",
+   "u_ids": [
+    "U-098"
+   ],
+   "failing_test_before": "packages/runtime/test/reviewer-file-line.test.ts: 11 new golden cases (Node.js, node.js, Express.js, ASP.NET, Vue.js, Next.js and D3.js, Socket.IO, example.com, e.g, 'Node.js setup to review.md', review.markdown). packages/commands/test/selftasks-carried.test.ts 'task.create for the reviewer: ...' (the Node.js read-back and sentence). apps/ui/test/real-daemon.test.ts 'L4-other-1 (D-5): GET /settings/models names the file ...' (Node.js, Express.js, ASP.NET). apps/ui/test/tasks.test.tsx 'New task: an outcome that asks for review.md names it ...' (Node.js pasted). I checked fail-first in this fixup: I put the pre-fa6a725 registry/tools.ts back locally, and 12 commands and runtime cases plus 2 UI cases failed ('expected Node.js to be null'; 'so Node.js is not written'). I restored the file and all pass.",
+   "how": "Commit fa6a725 (from the fixup run cut off by the restart; kept as is). registry/tools.ts isFileName decides what counts as a file. The ending must be a file's (FILE_EXTENSIONS: md, csv, json, html, js and the like; not NET, IO or com). The word must also not be a TECHNOLOGY: a capitalised one-word name with .js or .ts, or a well-known lower-case one. A path such as src/App.js is still a file. Every other dotted word loses its dots before fileTheWordsWrite reads the clause, so it is never the file and never ends the clause. FILE ends at a word boundary and allows endings of up to 8 characters. When in doubt the plain line shows, and the plain line is true whatever the words ask for. Docs: ADR 0109's amendment now uses the spec's labels (D-5 is the line, D-3 is Edit's words), plus runtime.md and the user guide.",
+   "check_in_the_app": "Tasks > New task, Who does it: reviewer. Outcome 'Write a review of the Node.js setup': the line reads 'The reviewer writes no file: its findings are its report, which you read in the task's drawer.' Outcome 'Write a review of the Node.js setup to review.md': 'The reviewer writes no file, so review.md is not written: its findings are its report, which you read in the task's drawer.' Edit a coder task whose outcome is 'Write a review of the Vue.js components' and give it to the reviewer: plain line. In Chat add a reviewer task whose outcome names Express.js: the done sentence ends with the plain line. Bench re-walk on the final code (/tmp/frbench/fixup-l4-selftasks-carried/walkD.json; steps 01-06): every one of these holds, and gaps.md is still named. live_check: the same New task entries on the real build, plus in Chat 'add a task for the reviewer: write a review of the Node.js setup'. The read-back or done sentence carries the plain line, never 'so Node.js is not written'."
+  },
+  {
+   "problem": "Review non-blocking item: the fake daemon's heardChat set a closed card's answer to 'yes' even when chat said No. The daemon's executor records 'no'.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "none (a fidelity fix; no test reads the closed card's answer in the fake daemon)",
+   "how": "Commit 440b6bc (from the cut-off fixup run; kept). apps/ui/test/fake-daemon.ts records the close's verdict: 'no' for a chat No, 'yes' for a Yes.",
+   "check_in_the_app": "Not visible in the app (test double only)."
+  },
+  {
+   "problem": "Review non-blocking items (L4f-left-1). (a) If the change after a Yes threw after the card was taken out (for example a change-log write failed), the executor never told the close. The header kept 'Waiting for you' until a reload. (b) On a lapse the daemon emitted inbox.changed twice, the first time before the lapse's Update was filed, so the screens read the Inbox twice.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "packages/commands/test/selftasks-carried.test.ts 'fixup-l4-selftasks-carried, run L4: a close is told once whatever happens after it': 'a yes whose change cannot be recorded still tells the close' (closed was []), and 'a lapse tells its Update first, then the close, once each' (the order was closed then expired). apps/ui/test/real-daemon.test.ts 'L4f-left-5: ... a Settings card that lapses tells the screens' now waits for the Update and expects inbox.changed exactly once; it was heard twice ('expected 2 to be 1').",
+   "how": "executor.confirm tells the close in a finally. 'how' comes from the result; when no result came back, it is 'no' for a No and 'yes' otherwise. expirePending calls onExpired (the Update) first, then onClosed. compose's onExpired files the Update and no longer emits inbox, because onClosed's inbox.changed follows with the Update already in the Inbox. Docs: commands.md, runtime.md.",
+   "check_in_the_app": "Home. Set the monthly cap to CHF 400 in Settings and leave the card unanswered: the Inbox badge shows 1. Ten minutes later the badge goes without a reload, and the Inbox lists one Update: 'The change you asked for was not made: the monthly cap (CHF 150.00 to CHF 400.00). Its card closed after 10 minutes without your yes; ask again if you still want it.' Bench walk E on the final code (/tmp/frbench/fixup-l4-selftasks-carried/walkE.json; steps 16-18): the badge cleared 338 ms after expiresAt, with 0 navigations. Walk A on the final code (walkA.json; steps 07-11): chat No, a refused Yes, the Inbox's No and the Inbox's Yes each cleared the header, the badge and the chat's Yes/No in 366-414 ms. The change-log failure case cannot be produced in the app; the commands test covers it. live_check: the lapse with a real build (wait 10 minutes)."
+  },
+  {
+   "problem": "Review non-blocking item (L4f-left-6). In polling mode the open chat was read again only when the Inbox count moved. When the chat's card was answered in the Inbox and a session's question arrived before the next poll, the count stayed the same, and the chat kept its Yes and No until the count next moved.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "apps/ui/test/selftasks-carried.test.tsx 'fixup-l4-selftasks-carried, run L4: polling reads the chat again when its card closed, even at the same count' (confirm-yes stayed on screen)",
+   "how": "The poller's inbox.changed (api/sse.ts) carries openCards: the open requests' ids, sorted and joined. It is polling only; the live stream already names the closed card's conversation. store/context.tsx counts a changed set of open cards as moved, both for the chat reload and for the projects' status lines. No daemon route changed. Docs: apps.md.",
+   "check_in_the_app": "Only seen when the app falls back to polling (no live stream). Leave a chat read-back open, answer it in the Inbox in another window while a session files a question: the chat's Yes and No go at the next poll. live_check: none needed (UI-only; the live stream path is unchanged and was walked in walk A)."
+  },
+  {
+   "problem": "Review non-blocking item (L4-selftasks-120). Since the redirect guards judge a note by who wrote it, a move said in chat with words for the next attempt became the failed task's card answer, and the note was dropped unsaid. Example: 'try the digest page again and tell it to use the old layout'. The card's own Try again reads 'Tries again with your note, if any; it runs at your next Start.', so the read-back implied the words were kept. Bench, before the fix (walkC-part1.json, step 12): the read-back had no note.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/commands/test/selftasks-carried.test.ts 'the redirect guards judge a note by who wrote it': the model's-note case (the read-back lacked 'Note for its next brief: ...'), the restart case (the answer was 'Try again' and not { choice, note }), and 'request.answer's note parameter tells the model what to pass' (no such parameter). apps/ui/test/real-daemon.test.ts 'fixup-l4-selftasks-carried: chat's Try again on a failed task's card carries the note the model passed, ...' (the read-back had no note; I reverted the src files and checked fail-first).",
+   "how": "The cardWords port's choices carry `input`, and compose maps the Inbox choice's input ('note' for Try again and Send it back). moveAsCardAnswer passes the move's note to request.answer when the chosen option takes one. request.answer has a new optional `note`, with ANSWER_NOTE_DESCRIPTION as the exact text the model receives. Its ask ends 'Note for its next brief: \"...\"' so the Yes covers the note, and its run answers the card { choice, note } as the Inbox does. syncSignoffAnswers' answerNote then queues the note for the task's next brief. That is the existing queued-note channel, quoted as data in the brief; the injection suite's brief channel covers it, and it stays 92/92. An option that takes no note (Mark done anyway, Cancel task) answers with the option alone and its read-back names no note; this sibling case passed before and after. Docs: ADR 0119 amended 2026-11-24, commands.md, runtime.md, user guide.",
+   "check_in_the_app": "Bench (on the final code): start with --env FORERUNNER_BENCH_FAIL=digest --env FORERUNNER_BENCH_FAIL_MODE=error. Add the task 'Write the digest page' and Start a session; it fails and its card '\"Write the digest page\" failed' offers Try again, Mark done anyway and Cancel task. In Chat type: tool: task_transition {\"task\":\"Write the digest page\",\"to\":\"ready\",\"note\":\"Use the old layout.\"}. The read-back is 'Try again (\"Write the digest page\" failed)? Tries again with your note, if any; it runs at your next Start. Note for its next brief: \"Use the old layout.\"'. Restart Forerunner: the same read-back waits. Press Yes: 'Trying \"Write the digest page\" again: it runs at your next Start.'. The card is answered { choice: Try again, note: Use the old layout. } and the task is ready (walkC2-ask.json, walkC2-yes.json; steps 13-15). live_check (this corrects the fixer's steps for L4-selftasks-120): use a medium-risk failed-task card, which a run that failed with an error files ('\"X\" failed: ...'). The ladder's '\"X\" failed N times' card is high risk; there chat answers 'Answer it on its card in the Inbox: ...' by design. On the real model, with such a card open, say 'try the digest page again and tell it to use the old layout'. The read-back ends with 'Note for its next brief: \"...\"' quoting those words. After Yes, the next session's brief for that task has the note."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "A card that needs the paired device (the ladder's high-risk '\"X\" failed N times' card) is still answered from chat with 'Answer it on its card in the Inbox: \"X\" failed 4 times. Nothing else was filed.', and a note given in chat is not mentioned there.",
+   "why": "The person answers on the Inbox card, whose Try again has its own note field. Saying that in chat is a new sentence that needs a wording decision, so I left it. It is named in ADR 0119's 2026-11-24 amendment."
+  },
+  {
+   "problem": "conversationOfCard scans only the session's last 400 chat.reply rows; an older card falls back to the project's conversation (review non-blocking item).",
+   "why": "The fallback is the project conversation, which is the right target in nearly every case; I judged a deeper scan not worth it."
+  },
+  {
+   "problem": "task.update, task.transition and task.dependencies still use `params.note?.trim()` as the change log's reason even when the model wrote the note (fixer's new_problem, repeated by the review).",
+   "why": "params.reason is model-writable too, so this is a design decision about reason text. I left it unchanged."
+  },
+  {
+   "problem": "Items the fixer cut (L4-selftasks-127 rest, L4b-left-2, L4b-left-3 second half, L4b-left-5).",
+   "why": "Unchanged by this fixup. They are inside the spec's cut line, and the fixer's report gives the reasons."
+  }
+ ],
+ "validation": [
+  {
+   "command": "git show fa6a725^:packages/runtime/src/registry/tools.ts > (worktree); npx vitest run --project unit packages/runtime/test/reviewer-file-line.test.ts packages/commands/test/selftasks-carried.test.ts; and in apps/ui: npx vitest run test/real-daemon.test.ts test/tasks.test.tsx -t 'D-5|reviewer's line names a file'; then git checkout of the file",
+   "result": "Without fa6a725: 12 failed (11 golden cases plus the commands task.create case) and 2 UI cases failed. With it restored: 41 passed and 3 passed."
+  },
+  {
+   "command": "DOCS_CHECK_BASE=3e1ab9d flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "Pass: lint and typecheck clean; 562 test files, 6218 passed, 7 skipped; docs-check ok (48 files); link-check ok; secret-scan clean."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "Pass: 5 files passed, 7 skipped; 30 tests passed, 83 skipped."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "Pass: 13 files; 25 passed, 1 skipped."
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "Pass: 104 files, 1513 tests (real-daemon included)."
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "Pass: 40 passed."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed."
+  },
+  {
+   "command": "node scripts/bench/start.mjs --name fixup-l4-selftasks-carried --daemon-port 49201 --ui-port 2801 --fresh --provider bench --env FORERUNNER_BENCH_FAIL=digest --env FORERUNNER_BENCH_FAIL_MODE=error; walkD, walkA, walkC part1 (before the note fix), restart-daemon, walkC2 ask, restart-daemon, walkC2 yes, walkE; stop.mjs",
+   "result": "Walk D: no technology named as a file; review.md and gaps.md still named. Walk A: all four closes clear the header, badge and chat in 366-414 ms. Walk C2: the note is read back, survives a restart, and is stored with Try again. Walk E: the badge clears 338 ms after the lapse, with one Update. Bench stopped; its home and browser profile deleted."
+  },
+  {
+   "command": "git merge-tree --write-tree --name-only fix/l4-chat-carried HEAD",
+   "result": "Content conflicts only in the append-only apps/ui/test/real-daemon.test.ts, packages/runtime/test/chat-recall.test.ts and docs/decisions/0119-the-agent-keeps-its-task-list-right.md, the same three the review found: keep both areas' blocks."
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '; git status --short",
+   "result": "No conflict markers; worktree clean; fix/l4-selftasks-carried = HEAD = a7367f7."
+  }
+ ],
+ "new_problems": [
+  "Not this area (the review's E3, seen again): the Inbox's Updates list shows the raw message type 'warning' under the lapse Update ('...ask again if you still want it.\\n\\nwarning\\nAlice · just now'), against design section 5 rule 6. Evidence: /tmp/frbench/fixup-l4-selftasks-carried/walkE.json inboxText and steps/18-e3-inbox-after-lapse.png.",
+  "Bench stand-in only: when chat acts at once, the stand-in's reply quotes the tool result ('[stand-in model] The command tool task_create answered: Added ...'), so the bench shows the done sentence twice. Not the real model's behaviour, but it makes bench chat screenshots read oddly. Evidence: walkD.json d3_chat and d5_chat.",
+  "Merge order: l4-chat-carried merges first. The trial merge has content conflicts only in the append-only real-daemon.test.ts, chat-recall.test.ts and ADR 0119; keep both areas' describe blocks and both dated amendments (this fixup's ADR 0119 amendment of 2026-11-24 goes after l4-chat-carried's)."
+ ],
+ "notes_for_other_areas": [
+  "request.answer takes an optional `note`. The model is told ANSWER_NOTE_DESCRIPTION: 'Only with an option that takes a note (Try again, Send it back): words the person gave for the next attempt, quoted as they said them; leave it out when they gave none.' The note is kept only when the chosen option's card words say input 'note'; then the ask ends 'Note for its next brief: \"...\"' and the card is answered { choice, note }, which answerNote reads.",
+  "CommandPorts.cardWords choices now carry `input?: 'note' | 'text' | null`, mapped in compose from the Inbox choice's input. moveAsCardAnswer(ctx, { task, project?, note? }, option) passes the note to request.answer when the option takes one.",
+  "Executor: confirm() tells onClosed in a finally, so it fires even if perform throws after the card was taken out. expirePending calls onExpired before onClosed, and compose's onExpired no longer emits inbox: rely on onClosed's inbox.changed for every close, a lapse included.",
+  "UI polling: the poller's inbox.changed has `openCards` (sorted open request ids, polling only). store/context.tsx treats a changed set as moved even at the same count."
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-l4-selftasks-carried/walkD.json (d1_nodejs: 'The reviewer writes no file, so Node.js is not written: ...', before fa6a725)",
+   "/tmp/frbench/fixup-l4-selftasks-carried/steps/12-c1-chat-retry-with-model-note.png (read-back without the note, before 51ac1e8; walkC-part1.json)"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-l4-selftasks-carried/steps/02-d1b-new-task-nodejs.png",
+   "/tmp/frbench/fixup-l4-selftasks-carried/steps/03-d1c-new-task-nodejs-to-review-md.png",
+   "/tmp/frbench/fixup-l4-selftasks-carried/steps/04-d2-edit-reviewer-vuejs.png",
+   "/tmp/frbench/fixup-l4-selftasks-carried/steps/05-d3-chat-reviewer-expressjs.png",
+   "/tmp/frbench/fixup-l4-selftasks-carried/steps/06-d5-chat-reviewer-gaps-md.png",
+   "/tmp/frbench/fixup-l4-selftasks-carried/steps/08-a2-after-chat-no.png",
+   "/tmp/frbench/fixup-l4-selftasks-carried/steps/10-a5-chat-after-inbox-no.png",
+   "/tmp/frbench/fixup-l4-selftasks-carried/steps/11-a6-chat-after-inbox-yes.png",
+   "/tmp/frbench/fixup-l4-selftasks-carried/steps/13-c2a-chat-retry-with-note-readback.png",
+   "/tmp/frbench/fixup-l4-selftasks-carried/steps/14-c2b-after-restart.png",
+   "/tmp/frbench/fixup-l4-selftasks-carried/steps/15-c2c-after-yes.png",
+   "/tmp/frbench/fixup-l4-selftasks-carried/steps/17-e2-after-lapse.png",
+   "/tmp/frbench/fixup-l4-selftasks-carried/steps/18-e3-inbox-after-lapse.png"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "packages/commands/test/selftasks-carried.test.ts 'the redirect guards judge a note by who wrote it' (the model's-note case and the restart case); the stub cardWords' Try again now has input 'note', as the daemon's card words do",
+   "why": "The review's follow-up: the note a redirected move carries now goes with Try again. The read-back gains 'Note for its next brief: \"Put on hold by the person.\"' and the answer after Yes is { choice: 'Try again', note } instead of 'Try again'. The guard's intent is kept (the model's note still answers the card), and the person's own note still keeps the move."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'L4f-left-5: ... a Settings card that lapses tells the screens'",
+   "why": "Made stricter, not weaker: it now waits for the lapse's Update in the Inbox and expects inbox.changed exactly once (it was 'greater than 0')."
+  }
+ ]
+}

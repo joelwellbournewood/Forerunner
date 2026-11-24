@@ -179,3 +179,12 @@
 2026-11-23T17:48:49Z L4g review saved; fixup running (wt -3).
 2026-11-23T18:29:53Z L4g fixup saved (8a611d1, both blocking fixed); merge stage running (local merge 3e1ab9d); worktrees removed.
 2026-11-23T18:39:53Z L4g merged+pushed at 3e1ab9d (signed; validation + smoke green). Leftovers: new area l4-starts-carried (19 items, 6 never cut); last sub-run split: L4h = chat-carried + selftasks-carried, L4i = starts-carried + github-carried. L4h args built.
+2026-11-23T20:03:02Z CI 334 + Desktop 90 green at 3e1ab9d (L4g) on Windows and Linux, incl. the Windows UI tests (CI-flake-1 fixed). L4h fixer at 83f3a55 (17 commits).
+2026-11-23T20:45:19Z L4h fix l4-chat-carried saved (83f3a55); review running (wt -2).
+2026-11-23T21:26:39Z L4h review chat-carried saved; fixup running (wt -3).
+2026-11-23T22:08:15Z L4h fixup chat-carried saved (31865c7; fix branch already there); worktrees -1/-3 removed. L4c-left-6 (lower-case forged 'the app did:' injection case) still not done -> place never-cut into l4-starts-carried with L4h's leftovers. fix:l4-selftasks-carried running (wt -4).
+2026-11-23T23:36:46Z L4h fix selftasks-carried saved (b2c1bd3); review running (wt -5).
+2026-11-24T00:22:33Z L4h review selftasks-carried saved; fixup running (wt -6).
+2026-11-24T00:33:12Z Container restarted ~00:30; L4h workflow stopped during fixup:l4-selftasks-carried. Kept its 2 commits by moving fix/l4-selftasks-carried to 440b6bc; worktrees -4/-6 removed; added ARGS.fixupNotes resume note; resuming wf_ba5b1e59-80e.
+2026-11-24T01:49:35Z L4h fixup selftasks-carried saved (a7367f7); merge stage running (local merges 6cce40c, 4a884ef).
+2026-11-24T01:57:23Z L4h merged+pushed at 4a884ef (signed; validation + smoke green). Leftovers: new area l4-chat-final (8 items, 2 never cut) in L4i between starts-carried and github-carried; L4c-left-6 injection case dropped by decision. L4i args built (3 areas).

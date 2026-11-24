@@ -5968,6 +5968,74 @@
    }
   },
   {
+   "key": "l4-chat-final",
+   "title": "Run L4 sub-run L4h's leftovers close: the person's own words in a chat note stay the person's, the weakened Stop assertions are exact again, and the parser, words, restart, attribution and test gaps the two carried chat areas left",
+   "problems": [
+    "[minor, the person's words, never cut] L4h-left-1: L4-selftasks-120 drops the person's own words in chat: every chat note is passed by the model, so ownNote is always false there, and 'Try X again and tell it to use the old layout' now becomes the card's answer without the person's instruction (review of l4-selftasks-carried). A note the person typed in their own line (the words appear in the person's message) is the person's; only a note the model made up is read back. Composed and real-daemon cases for both. (L4h leftovers) Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left).",
+    "[tests, a weakened assertion, never cut] L4h-left-2: chat-depth.test.ts 'Stop pressed during the nudge' went from an exact toBe(TRUE_LINE) to two negative checks, and the new conversation-memory C3-left-11 case asserts only negatives for res.reply. Never weaken a test: assert the exact stopped reply ('You stopped this answer: CHF … spent.') in both. (L4h leftovers) Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left).",
+    "[minor] L4h-left-3: L4c-left-9: the parser question's `named` check is a substring test, so an option 'No' matches 'Notes'; use a word-boundary match. Parser options that contain commas read ambiguously. (L4h leftovers) Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left).",
+    "[words] L4h-left-4: SC-13: the session page's Details line 'Session review measured: N of M planned tasks done' never mentions the replaced count and reads '0 of 0 planned tasks done' when the only planned task was replaced; onlyDrops reads the card's proposed changes, not the applied ones, and 'runs it' is said when the first part waits for a person task. The Inbox's Updates list shows the raw type 'warning' under the lapse Update (design section 5 rule 6). A high-risk card answered from chat ('Answer it on its card in the Inbox: ...') does not mention the person's note. (L4h leftovers) Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left).",
+    "[minor, restart and races] L4h-left-5: C4-left-7: a second sync in the same process that read the row as 'applying' can settle it again (use a compare-and-set mark); the recovered path admits only the tasks the change made, so the changes the original check left out are not recorded. The pr-answers take-out mark has no start-time recovery. (L4h leftovers) Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left).",
+    "[minor, attribution] L4h-left-6: task.update, task.transition and task.dependencies use a model-written note as the change log's reason (params.note?.trim()); use it only when the person wrote it. At Assisted, chat's task_create acts at once: check it against design section 3.9 and the owner's 2026-11-17 answer (every chat read-back waits) and make it read back if the design says so. (L4h leftovers) Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left).",
+    "[small, cut-able] L4h-left-7: NOW_STATE also frees 'I don't see any changes.' and 'any sessions.' (history that recall covers; narrow it). conversationOfCard scans the session's last 400 chat.reply rows. In polling mode the open chat reloads only when the count moved. A lapse emits inbox.changed twice. The fake daemon does not model the waits-changed split Undo refusal, switchedHere for 'there', or a chat No (heardChat sets 'yes'). Talk on a project not in the store flashes the message box. ADR 0109's 2026-11-23 amendment swaps the D-3 and D-5 labels. agent.ts has two stacked doc blocks above switchedHere. The stand-in's thoroughWhy catches 'review.md' in chat tool lines. (L4h leftovers) Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left).",
+    "[carried from L4h, cut-able] L4h-left-8: L4-selftasks-127 rest (the Connect offer kind beside 'Fixing the tasks needs Claude: connect it in Settings, Basics.'), L4b-left-2 (the fence silently drops a wait whose order names a pending add of the same set; refuse it in words and re-run the loop check), L4b-left-3 second half (the plan card's warning repeats the task's title under that task's row), L4b-left-5 (L4-selftasks-109 restart composed twice on one home, -111's critic-notes body at the real daemon, a CostsTab render test for -114, -112 (a) quoting two sentences), bench walks before and after with screenshots kept outside --fresh. (L4h leftovers) Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left)."
+   ],
+   "decisions": [
+    "Session lead decision 2026-11-24 (L4c-left-6): the fixer's reason is accepted. A forged lower-case 'the app did:' line is the model's output, not text that reaches a model, so it is no new injection channel; 32db6f1 strips the app's markers in any letter case with its own tests. No injection-suite case is added.",
+    "Session lead decision 2026-11-24 (L4h-left-1): a note is the person's when its words are in the person's own message; a note the model wrote without them is read back (L4f's rule, refined)."
+   ],
+   "u_entries": [
+    "U-084 and U-095 (chat changes the tasks; read-backs wait): every item here."
+   ],
+   "root_causes": [
+    "packages/commands/src/commands/task.ts ownNote (L4h-left-1); reason lines params.note (L4h-left-6).",
+    "packages/runtime/test/chat-depth.test.ts and conversation-memory.test.ts (L4h-left-2).",
+    "packages/runtime/src/session/task-proposal.ts syncTaskProposals (L4h-left-5)."
+   ],
+   "fix_scope": "Run L4 area l4-chat-final, sub-run L4i (wave 33), after l4-starts-carried and before l4-github-carried, base: the merge of sub-run L4h (4a884ef). It builds on l4-chat-carried and l4-selftasks-carried: their regions in agent.ts, task.ts, task-proposal.ts, session-review.ts and the fake daemon are re-found and kept. Read runL4-L4h-merge.json and the L4h fix, review and fixup reports first.",
+   "files": [
+    "packages/commands (task.ts, the executor), packages/runtime (agent.ts, task-proposal.ts), packages/critic (session-review.ts), apps/ui (Inbox Updates, session page, ChatTab), the fake daemon, docs/decisions/0109-*.md, docs/maintainers."
+   ],
+   "acceptance": [
+    "Never cut: L4h-left-1 (a composed and a real-daemon case: the person's own note is kept and answered; a model-made note is read back) and L4h-left-2 (exact assertions).",
+    "The rest: each with its failing test first, or in not_done with the reason; exact text for every new sentence (design section 5)."
+   ],
+   "depends_on": [
+    "Base: the merge of sub-run L4h (4a884ef). Runs in L4i after l4-starts-carried, before l4-github-carried (sequential)."
+   ],
+   "handoff_items": [
+    "L4h-left-1",
+    "L4h-left-2",
+    "L4h-left-3",
+    "L4h-left-4",
+    "L4h-left-5",
+    "L4h-left-6",
+    "L4h-left-7",
+    "L4h-left-8"
+   ],
+   "owner_questions": [],
+   "size": "Medium-small: 8 items. Cut line, may end in not_done with the evidence: L4h-left-3 to -8. Never in not_done: L4h-left-1 (the person's words), L4h-left-2 (a weakened test), and every security and money rule.",
+   "sub_run": "L4i",
+   "wave": 33,
+   "items": [
+    "L4h-left-1",
+    "L4h-left-2",
+    "L4h-left-3",
+    "L4h-left-4",
+    "L4h-left-5",
+    "L4h-left-6",
+    "L4h-left-7",
+    "L4h-left-8"
+   ],
+   "counts": {
+    "items": 8,
+    "major": 0,
+    "minor": 8,
+    "words": 0,
+    "blocker": 0
+   }
+  },
+  {
    "key": "l4-github-carried",
    "title": "Run L4 sub-run L4e's GitHub leftovers close: the owner's Close button for a cancelled task's pull request still open on GitHub, a Try again for a take-over whose docs pull request did not open, task branches git accepts, a take-out that never promises what it cannot do, Add to that plans in the background, and the words and tests the two GitHub areas left",
    "problems": [
@@ -12262,6 +12330,70 @@
    "area": "l4-starts-carried",
    "evidence": "Sources: /tmp/frbench/runL4-L4g-{fix,review,fixup}-l4-starts-sessions.json and runL4-L4g-merge.json (problems_left).",
    "note": "(L4g leftovers)"
+  },
+  {
+   "n": "L4h-left-1",
+   "item": "L4h-left-1: L4-selftasks-120 drops the person's own words in chat: every chat note is passed by the model, so ownNote is always false there, and 'Try X again and tell it to use the old layout' now becomes the card's answer without the person's instruction (review of l4-selftasks-carried). A note the person typed in their own line (the words appear in the person's message) is the person's; only a note the model made up is read back. Composed and real-daemon cases for both.",
+   "decision": "fix",
+   "area": "l4-chat-final",
+   "evidence": "Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left).",
+   "note": "(L4h leftovers) never cut"
+  },
+  {
+   "n": "L4h-left-2",
+   "item": "L4h-left-2: chat-depth.test.ts 'Stop pressed during the nudge' went from an exact toBe(TRUE_LINE) to two negative checks, and the new conversation-memory C3-left-11 case asserts only negatives for res.reply. Never weaken a test: assert the exact stopped reply ('You stopped this answer: CHF … spent.') in both.",
+   "decision": "fix",
+   "area": "l4-chat-final",
+   "evidence": "Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left).",
+   "note": "(L4h leftovers) never cut"
+  },
+  {
+   "n": "L4h-left-3",
+   "item": "L4h-left-3: L4c-left-9: the parser question's `named` check is a substring test, so an option 'No' matches 'Notes'; use a word-boundary match. Parser options that contain commas read ambiguously.",
+   "decision": "fix",
+   "area": "l4-chat-final",
+   "evidence": "Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left).",
+   "note": "(L4h leftovers)"
+  },
+  {
+   "n": "L4h-left-4",
+   "item": "L4h-left-4: SC-13: the session page's Details line 'Session review measured: N of M planned tasks done' never mentions the replaced count and reads '0 of 0 planned tasks done' when the only planned task was replaced; onlyDrops reads the card's proposed changes, not the applied ones, and 'runs it' is said when the first part waits for a person task. The Inbox's Updates list shows the raw type 'warning' under the lapse Update (design section 5 rule 6). A high-risk card answered from chat ('Answer it on its card in the Inbox: ...') does not mention the person's note.",
+   "decision": "fix",
+   "area": "l4-chat-final",
+   "evidence": "Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left).",
+   "note": "(L4h leftovers)"
+  },
+  {
+   "n": "L4h-left-5",
+   "item": "L4h-left-5: C4-left-7: a second sync in the same process that read the row as 'applying' can settle it again (use a compare-and-set mark); the recovered path admits only the tasks the change made, so the changes the original check left out are not recorded. The pr-answers take-out mark has no start-time recovery.",
+   "decision": "fix",
+   "area": "l4-chat-final",
+   "evidence": "Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left).",
+   "note": "(L4h leftovers)"
+  },
+  {
+   "n": "L4h-left-6",
+   "item": "L4h-left-6: task.update, task.transition and task.dependencies use a model-written note as the change log's reason (params.note?.trim()); use it only when the person wrote it. At Assisted, chat's task_create acts at once: check it against design section 3.9 and the owner's 2026-11-17 answer (every chat read-back waits) and make it read back if the design says so.",
+   "decision": "fix",
+   "area": "l4-chat-final",
+   "evidence": "Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left).",
+   "note": "(L4h leftovers)"
+  },
+  {
+   "n": "L4h-left-7",
+   "item": "L4h-left-7: NOW_STATE also frees 'I don't see any changes.' and 'any sessions.' (history that recall covers; narrow it). conversationOfCard scans the session's last 400 chat.reply rows. In polling mode the open chat reloads only when the count moved. A lapse emits inbox.changed twice. The fake daemon does not model the waits-changed split Undo refusal, switchedHere for 'there', or a chat No (heardChat sets 'yes'). Talk on a project not in the store flashes the message box. ADR 0109's 2026-11-23 amendment swaps the D-3 and D-5 labels. agent.ts has two stacked doc blocks above switchedHere. The stand-in's thoroughWhy catches 'review.md' in chat tool lines.",
+   "decision": "fix",
+   "area": "l4-chat-final",
+   "evidence": "Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left).",
+   "note": "(L4h leftovers)"
+  },
+  {
+   "n": "L4h-left-8",
+   "item": "L4h-left-8: L4-selftasks-127 rest (the Connect offer kind beside 'Fixing the tasks needs Claude: connect it in Settings, Basics.'), L4b-left-2 (the fence silently drops a wait whose order names a pending add of the same set; refuse it in words and re-run the loop check), L4b-left-3 second half (the plan card's warning repeats the task's title under that task's row), L4b-left-5 (L4-selftasks-109 restart composed twice on one home, -111's critic-notes body at the real daemon, a CostsTab render test for -114, -112 (a) quoting two sentences), bench walks before and after with screenshots kept outside --fresh.",
+   "decision": "fix",
+   "area": "l4-chat-final",
+   "evidence": "Sources: /tmp/frbench/runL4-L4h-{fix,review,fixup}-l4-{chat,selftasks}-carried.json and runL4-L4h-merge.json (problems_left).",
+   "note": "(L4h leftovers)"
   }
  ],
  "wave7_live_check_after_merge": "After the whole wave is merged, the full suite is green, CI is green on Windows and Linux and the Desktop app workflow ran, the session lead walks six journeys with the real model (details and pass criteria: /tmp/frbench/phaseE7-live.md). Cap USD 4.00 in total, stopping at a clean point; GitHub only on joelwellbournewood/forerunner-sandbox; nothing printed or committed of any key. (1) Merging, about USD 1.10, bench-live: a 3-task chain left at 'You press Merge' (Overview, the dependents' words, Open this version, Merge in order as merge commits, Files within a minute without a session, Take this work out naming the dependent), then a 2-task chain whose first PR is squash-merged on GitHub's website (the dependent rebuilt, only its own commits, merges cleanly), then 'Merge automatically after review' with one task. (2) Credentials, about USD 0.20, on the routed provider (no --provider flag; bench-live ignores the vault): an invalid key in the bench's vault gives one 'Anthropic refused your API key' card and a waiting task; saving the real key starts it by itself; a research plan card says where it runs and why. (3) Budgets, about USD 0.90, bench-live: a coder task whose budget is about three times the reserve its run's log names hears the wrap-up, pauses with a local commit, and Continue finishes it with one review; a tiny budget (CHF 0.02) pauses with the save only and no wrap-up text; Cancel on a paused task names the stuck dependent. (4) Research with web search, about USD 1.00, bench-live: the server tool with max_uses at most 10, blocks sent back unchanged, no 400 (a '*.' block-list entry included), sources only from opened pages, the cost well under 2026-11-02's USD 1.32; then 'Only these websites: developer.mozilla.org' refuses another site and the report names the rule. (5) Costs, about USD 0.40: smoke.cjs --live on a fresh bench, each kind within about x2 of the plan card's estimate, cache reads after the first call. (6) The window: the Desktop app workflow's window check on Windows with Ctrl+click on Inbox (no model cost). Reserve about USD 0.40 for one retry. The subscription-only items (Claude Code stopped at a budget stop and counted once; the page reader, the WebSearch lists and the wrapper on the subscription; the SDK refusal card) go to the owner's checklist step 6, with what to look for; the three owner questions go to the owner with the U-entries. Findings go to a fix round with the same pipeline; spend is added to NEXT-SESSION.md.",

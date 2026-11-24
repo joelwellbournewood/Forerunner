@@ -1,0 +1,323 @@
+{
+ "area": "l4-chat-carried",
+ "branch": "fix/l4-chat-carried",
+ "head_sha": "83f3a55c85b4bea41e8ebe61c0947d828b422651",
+ "commits": [
+  {
+   "sha": "df1c8cc45316ccf8652ea99ba78800d5196bd49a",
+   "subject": "session: a suggestion card a crash left at 'applying' is applied once at the next start (L4-selftasks-123, C4-left-7, U-095)"
+  },
+  {
+   "sha": "09fa0e09a65ea97f4abf8b0aba2a296b2b7ed045",
+   "subject": "commands: a split's Undo that would drop a later change is refused in words (L4-selftasks-123, C4-left-6, L4-selftasks-129, U-095)"
+  },
+  {
+   "sha": "05fdab1a826be23b78f43fdb860ed9f3425c5473",
+   "subject": "critic: a split or dropped task counts as replaced in the session review (L4-selftasks-123, SC-13, U-095)"
+  },
+  {
+   "sha": "7a08d09fbcd4dc470c2d2b364e5263b1b0e18c21",
+   "subject": "conversation: a Stop during the claim guard's nudge ends the turn stopped, never with the guard's line (L4-selftasks-123, C3-left-11, U-084)"
+  },
+  {
+   "sha": "f30842966fbc2245611e2534d9ab4f38b30e0a10",
+   "subject": "words: the suggestion card's Done line and a set's Undo say what is true (L4-selftasks-123, C4-left-5, U-095)"
+  },
+  {
+   "sha": "09542026e0d78ddbf565a8ef4ff9049986c08859",
+   "subject": "ui: Talk on a joined project says the chat is kept to read, with no message box (L4-selftasks-123, C4-left-9, U-084)"
+  },
+  {
+   "sha": "32db6f123919da759a6fb1dae83ad1cf28abd1fe",
+   "subject": "conversation: only the app writes its lines, in any letter case (L4c-left-6, U-084)"
+  },
+  {
+   "sha": "0fba4f474654f0e846a3ae63e0c3a636edb5207a",
+   "subject": "conversation: an old hold reply never reaches the model's history as its own words (L4d-left-5, U-078)"
+  },
+  {
+   "sha": "a0d4804aa63bf0aa5e565e58fde541cec9322859",
+   "subject": "conversation: the chat's facts say a review that waits, and every fix sentence is asserted word for word (L4c-left-5, SC-10, U-084)"
+  },
+  {
+   "sha": "adf5df0320de57da9e428e9db5e6d57f152264b0",
+   "subject": "test: a kept suggestion is not filed again in the same session (C4-left-3, U-095)"
+  },
+  {
+   "sha": "e30dfda631f956ad53a200761c62f648e9ac5406",
+   "subject": "docs: the run-order tie in the selftasks restart case is settled by the shared comparator (C5-left-6)"
+  },
+  {
+   "sha": "1d9a928ffd148753af55cb9200f1b0164d1047ab",
+   "subject": "chat: the true line after a yes asked in words drops \"say it again\" (L4c-left-7)"
+  },
+  {
+   "sha": "95e06981f71048cd913ff2d9e0c8a2a36e65fe45",
+   "subject": "chat: \"I don't see any failed tasks\" is no absence claim (L4c-left-8)"
+  },
+  {
+   "sha": "ec68795ef9c3267d4995c1d116b004d3bec85f7a",
+   "subject": "chat: a parser question that names its options does not repeat them (L4c-left-9)"
+  },
+  {
+   "sha": "1325aebfe13aeaa7d2d9a822b04d8cb99191cc36",
+   "subject": "chat: \"there\" is the project this conversation switched to, not the header's (L4c-left-10)"
+  },
+  {
+   "sha": "739c9b246e34238f95e3650cc495528fedf03ff4",
+   "subject": "session page: an undone change line keeps the undo's sentence after a reload (L4-selftasks-129)"
+  },
+  {
+   "sha": "83f3a55c85b4bea41e8ebe61c0947d828b422651",
+   "subject": "chat: format trueLine and the C4-left-9 test name (L4c-left-7, C4-left-9)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "C4-left-7: if the daemon stopped between marking a suggestion card 'applying' and finishing the apply, the card read 'Making the changes…' forever and the split never happened. The base sync skipped any card whose outcome was already set. This was confirmed on the BEFORE bench at 3e1ab9d.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts, describe 'l4-chat-carried, run L4': 'C4-left-7: a suggestion card a crash left between its mark and its apply is applied once at the next start…' and 'C4-left-7: a card a crash left after its changes were made and before its outcome was written is not applied twice…'",
+   "how": "session/task-proposal.ts: syncTaskProposals now also handles answered cards left at 'applying' (the mark carries applying_at), and an in-process applyingNow set stops two applies at once. If the person's ui change_log row with the card's calls already exists, the card is marked applied with that row; otherwise the change is applied once. The sync runs at daemon start through syncApprovals.",
+   "check_in_the_app": "On an Assisted project, let a session's task check file 'the agent suggests 1 change to the tasks'. Press Make these changes and quit the app at once (or stop the daemon). Start it again. Under Inbox > Answered the card reads 'Changed 1 task; your next Start runs it.' and not 'Making the changes…'. The Tasks tab shows the two parts once, and Changes shows one split row."
+  },
+  {
+   "problem": "C4-left-6 and L4-selftasks-129 (refusal words): a split's Undo was offered even after a later change, and pressing it would have silently dropped that change, for example a wait added to the task after the split. A part that had only started read 'has run since'.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/commands/test/selftasks-run.test.ts, describe 'l4-chat-carried, run L4: a split's Undo after a later change (C4-left-6, L4-selftasks-129)': four cases ('a step added before the task that waited for the split…', 'a step added before one part…', 'the step's own Undo first…', 'a part the running session took reads as running…')",
+   "how": "task.split's after.parts now store depends_on, and undoBlocked gets the whole change's steps as a fifth argument. The Undo is refused in one sentence when a part is running ('is running now'), was cancelled, or has run. It is also refused when the waits of the task after the split changed since: '\"Publish the page\" was made to wait for \"Check that the links work\" after the split; undo would drop that'. Parts made in the same change still undo together.",
+   "check_in_the_app": "Split a task, either by its suggestion card or by chat 'fix the tasks'. Then make the task after it wait for one more task (task drawer > waits for). Open Changes: the split row shows 'Cannot be undone' with 'Cannot be undone now: \"Publish the page\" was made to wait for \"Check that the links work\" after the split; undo would drop that.' and no Undo button. Undo the wait first; the split's Undo is then offered again."
+  },
+  {
+   "problem": "SC-13: the session review counted a planned task that the session's own check split or dropped as a duplicate as not done. A session that replaced its only planned task read 'spent and no task reached done'.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/critic/test/session-review.test.ts, describe 'l4-chat-carried, run L4: a split or dropped task counts as replaced (SC-13)': three of four cases",
+   "how": "critic/session-review.ts: the new replacedDuring(store, session) reads the not-undone change_log rows made during the session (task.split, task.transition with duplicate_of). The checks leave replaced tasks out of the planned counts. The summary reads '(1/1 planned, 1 replaced)', or '(N planned task(s) replaced)' when nothing else was planned, and the metrics carry replacedTasks.",
+   "check_in_the_app": "At Standard, run a session whose task check splits the only planned task. The session page's review line reads 'accepted', with '(… planned task replaced)' and no 'no task reached done' finding."
+  },
+  {
+   "problem": "C3-left-11: Stop pressed while the claim guard's nudge was running gave the guard's 'Nothing changed, and nothing waits for your yes…' line instead of the stopped line.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts, describe 'l4-chat-carried, run L4: a Stop during the claim guard's nudge (C3-left-11)': 'the turn ends stopped: no guard line…'",
+   "how": "agent.ts: the claim-guard loop reads entry.stopped after the nudge call. When the turn was stopped it clears claimGuard.replaced and breaks, so the turn ends as any stopped turn does ('You stopped this answer: CHF … spent.').",
+   "check_in_the_app": "On the bench, with FORERUNNER_BENCH_CHAT_HOLD_MS=4000, send 'say: I've added the task \"Write the FAQ\" for you.' and press Stop while 'Checking what changed…' shows. The reply reads 'You stopped this answer: CHF … spent.', never 'Nothing changed…'."
+  },
+  {
+   "problem": "C4-left-5: a set's Undo sentence named a task by a title the set itself had changed. The suggestion card's Done line said 'runs them' for one task, and promised a Start for a set that only dropped duplicates.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/commands/test/selftasks-run.test.ts 'the Undo of a set names what is there after it (C4-left-5)'; packages/runtime/test/task-proposal-words.test.ts 'the Done line agrees with what changed (C4-left-5)'",
+   "how": "executor.ts stepWords maps each step's after-title back to its before-title. task-proposal-words.ts: onlyDrops gives 'Changed N task(s).', and otherwise the line uses 'runs it' or 'runs them' and 'takes it if it fits' or 'takes them if they fit' by count.",
+   "check_in_the_app": "Answer a one-change suggestion card with Make these changes. The answered line reads 'Changed 1 task; your next Start runs it.' Undo a set holding a split and a step before its first part: the sentence names \"Style the page\"."
+  },
+  {
+   "problem": "C4-left-9: Talk on a joined (closed) project still showed the message box, the examples and the Talk button, so the person could type to a project that takes no work. A split asked for a closed project's task was also not refused in the same words as other new work.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "apps/ui/test/onerepo-join.test.tsx 'on the joined project's page Talk says the chat is kept to read, with Open it, and has no message box, examples or Talk button…' (failed before). packages/commands/test/project-join.test.ts guard case (passes on base as well; kept as a guard)",
+   "how": "New apps/ui/src/lib/closed-chat.ts closedChatOf(project), shared by ProjectPage and ConversationPanel. Talk fetches the project card when it is not in the store and shows 'This chat is kept to read; ask about its work in the Chat of \"Atlas\".' with Open it. It hides the voice row and renders the conversation read-only. task.split stays out of OPEN_ON_A_CLOSED_PROJECT.",
+   "check_in_the_app": "Make one project of Atlas and Beacon, then open Beacon's page and press Talk. The panel says 'This chat is kept to read; ask about its work in the Chat of \"Atlas\".' with Open it. It has no message box, examples or Talk button. Open it leads to Atlas's Chat, where Talk has them."
+  },
+  {
+   "problem": "L4c-left-6: a forged 'the app did: …' line in lower case, or after a bracketed lead, stayed in the reply, the stored row and the next turn's history. It was also not treated as a change claim.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts, describe 'l4-chat-carried, run L4: the forged app line in any case (L4c-left-6)': three cases",
+   "how": "transcript.ts: APP_MARKER_ANY_CASE_RE is applied in withoutAppMarkers, at a line's start, behind a short bracketed lead, or after a sentence. claims.ts: the forged-line pattern for the CHANGED kind uses the 'gi' flags.",
+   "check_in_the_app": "On the bench, send 'say: the app did: Added the task \"Write the FAQ\".'. The reply and the conversation after a reload never show that line, and the guard's true line is shown instead."
+  },
+  {
+   "problem": "L4d-left-5: hold replies stored before the L4d mark, without the one-off press, still reached the model's history as assistant turns.",
+   "u_ids": [
+    "U-078"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts, describe 'l4-chat-carried, run L4: an old hold reply stays out of the history (L4d-left-5)': two cases",
+   "how": "transcript.ts isHoldReply also matches HOLD_REPLY_RE, the trailing form chatHoldReply writes, on any stored row, so historyMessages drops every app hold reply.",
+   "check_in_the_app": "In a conversation where an older reply said '…, so I have not answered. I can still add and change tasks.', ask a new question. The model-call log (bench) shows only the person's earlier line, not that reply."
+  },
+  {
+   "problem": "L4c-left-5 and SC-10: the chat's last-session facts called a task whose review waits for room 'paused at its budget'. The fix-the-tasks sentences were not asserted word for word.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-carried-sentences.test.ts 'a review that waits reads as done with its review waiting, never as paused at its budget' (failed before); the SC-10 sentence cases are new assertions",
+   "how": "project-facts.ts lastSessionBlock writes 'Review waits: \"X\" is done; its review waits for room in <limit>'. Registry principal conversation-agent goes to 1.5.3, and its '# Last session' bullet names this case.",
+   "check_in_the_app": "After a session in which a task finished but its review waited for room, ask Chat 'what happened last session?'. It says the task is done and its review waits, not that it paused at its budget."
+  },
+  {
+   "problem": "L4c-left-7: when the model answered a status question with 'Shall I resume it?' twice, the reply read 'Nothing changed, and nothing waits for your yes. Say it again to try once more.', which assumed the person had asked for a change.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts 'the true line after an ask in words (L4c-left-7)': 'a status question answered with 'Shall I …?' twice…'",
+   "how": "trueLine takes the claim's kind. For 'asks' it returns NOTHING_CHANGED_ASKS_REPLY: 'Nothing changed, and nothing waits for your yes. If you want a change, say what you want done.' A claimed change or a claimed read-back keeps the try-again clause. The user guide, runtime.md and an amendment to ADR 0114 say the same.",
+   "check_in_the_app": "On the bench, send 'say: Shall I set research for Garden club to any public website again?'. The reply reads 'Nothing changed, and nothing waits for your yes. If you want a change, say what you want done.'"
+  },
+  {
+   "problem": "L4c-left-8: 'I don't see any failed tasks.' in a 'what is left?' answer was read as an absence claim, which cost a nudge and a recall call.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "packages/runtime/test/chat-recall.test.ts 'an absence about now is no claim (L4c-left-8)': both cases",
+   "how": "claims.ts: an ABSENT match whose rest of the sentence is only a state about now (NOW_STATE: 'any failed tasks', 'any open questions in Quote Page', 'anything waiting for your answer') stays free. Words that name what was looked for ('about the FAQ', 'called …') are still nudged.",
+   "check_in_the_app": "Ask Chat 'what is left?' while nothing has failed. The answer comes in one call, the step line 'Looking through everything recorded…' does not show, and on the bench the model-call log has one chat call."
+  },
+  {
+   "problem": "L4c-left-9: parser questions listed their options in the text and again as buttons ('Which project: Notes or Site? Options: Notes, Site.'), so voice and the phone read them twice.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts \"POST /chat in Notes' Chat tab: 'add a task to Site: …' adds to Site; …\" (expected 'Which project: Notes or Site?')",
+   "how": "agent.ts adds ' Options: …' only when the question does not already name every option, so 'Which budget did you mean?' keeps them. The fake daemon matches. The user guide already documented 'add a task to <project>: …', 'open <project>' and 'This chat stays about <tab>' (checked).",
+   "check_in_the_app": "With two projects and no switch in this Chat, type 'add a task there: write the about page'. The reply reads 'Which project: Notes or Site?' with two buttons and no 'Options:'."
+  },
+  {
+   "problem": "L4c-left-10: after 'switch to Site' in Notes' Chat and a later switch to Shop in the header, 'add a task there: …' added the task to Shop.",
+   "u_ids": [
+    "U-084"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts \"POST /chat in Notes' Chat tab: after 'switch to Site' here and a header switch to Shop, 'add a task there: …' adds to Site, the project this conversation named\"",
+   "how": "ConversationAgent.switchedHere reads the newest project.switch action of this conversation from its own change_log row (after.active_project). A switch undone since does not count, and old rows without ids fall back to the registry's record. The fake daemon already played 'add a task to Site: …' and recall sources (checked).",
+   "check_in_the_app": "In Notes' Chat type 'switch to Site', then switch to Shop in the header, then type 'add a task there: write the about page' in Notes' Chat. The reply says it was added to Site, and Shop's Tasks tab has no new task."
+  },
+  {
+   "problem": "L4-selftasks-129 (reload line): on the session page, an undone change line read only 'Undone.' after a reload, although the click had shown the undo's own sentence.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "apps/ui/test/session.test.tsx 'an undone line read again (a reload) keeps the undo's own sentence'",
+   "how": "GET /sessions/:id/events gives an undone change line undoneSentence, read from the undo's change_log row (first command 'undo' with the change's change_log_id, once per project). SessionPage shows it and falls back to 'Undone.' only when there is none. The fake daemon matches. The real-daemon SC-6 case now asserts the field.",
+   "check_in_the_app": "At Standard, let a session split a task. On the session page press Undo on the change line, then reload the page. The line still reads 'Undone: …' with the undo's own sentence."
+  },
+  {
+   "problem": "C4-left-3: a kept suggestion ('Keep the tasks') being filed again in the same session had no test.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/runtime/test/session-task-list.test.ts 'Keep the tasks, then the same set: no second card; a different set: a card'. This is new coverage: it passes now and failed when the `if (kept) return null;` check was disabled (mutation, reverted).",
+   "how": "Test only; fileTaskProposal's fingerprint check was already there.",
+   "check_in_the_app": "Answer a suggestion card with Keep the tasks. A later task check in the same session that suggests the same split files no new card."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "C5-left-6 (run-order tie in the selftasks restart case)",
+   "why": "Already fixed at the base by 5fbce48 (the shared runOrder comparator: priority, then created_at, then id). A frozen clock that forces the tie passes 10 out of 10 runs, so no code change was needed. Commit e30dfda documents it in docs/maintainers/testing.md. No failing test was possible."
+  },
+  {
+   "problem": "Injection-suite case for a forged lower-case 'the app did:' line (L4c-left-6)",
+   "why": "This is model output, not a new channel into a model. withoutAppMarkers and the claim guard cover it in conversation-memory.test.ts (reply, stored row and next turn's history). The injection suite has no reply-channel harness to put it in. pnpm test:injection passes 92 of 92."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0: lint, lint:paths, typecheck, 561 test files / 6193 tests passed (7 skipped), docs:links, secret scan clean (2275 files). docs:check could not diff against origin/main here."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (38 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files passed; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 103 files, 1501 tests passed"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 40 passed"
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "no matches; working tree clean; fix/l4-chat-carried = HEAD 83f3a55"
+  },
+  {
+   "command": "bench fix-l4-chat-carried (--provider bench, ports 49180/2780), walk script /tmp/frbench/fix-l4-chat-carried-evidence/walk.cjs: BEFORE from the base checkout at 3e1ab9d, AFTER from this worktree",
+   "result": "BEFORE: after the restart the card read 'Making the changes…' and the tasks were not split; Talk on joined Beacon showed the message box, examples and Talk button. AFTER: 'Changed 1 task; your next Start runs it.', split applied once, Changes shows the split's refusal sentence, Talk shows the closed line with Open it and no message box. Only problems logged were the expected connection refusals during the restart. Bench stopped and its home deleted."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-l4-chat-carried-evidence/before/01-before-1-suggestion-card.png",
+   "/tmp/frbench/fix-l4-chat-carried-evidence/before/02-before-2-card-after-restart.png",
+   "/tmp/frbench/fix-l4-chat-carried-evidence/before/03-before-3-tasks-after-restart.png",
+   "/tmp/frbench/fix-l4-chat-carried-evidence/before/04-before-4-changes-split-undo.png",
+   "/tmp/frbench/fix-l4-chat-carried-evidence/before/05-before-5-talk-joined.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-l4-chat-carried-evidence/after/01-after-1-suggestion-card.png",
+   "/tmp/frbench/fix-l4-chat-carried-evidence/after/02-after-2-card-after-restart.png",
+   "/tmp/frbench/fix-l4-chat-carried-evidence/after/03-after-3-tasks-after-restart.png",
+   "/tmp/frbench/fix-l4-chat-carried-evidence/after/04-after-4-changes-split-undo.png",
+   "/tmp/frbench/fix-l4-chat-carried-evidence/after/05-after-5-talk-joined.png"
+  ]
+ },
+ "new_problems": [
+  "Sibling of C4-left-7 (not fixed): packages/runtime pr-answers.ts marks a take-out as `taken_out` before acting, and nothing at start recovers a mark a crash left behind, as syncTaskProposals now does for 'applying'. A crash between the mark and the act could leave that card stuck the same way.",
+  "Words (not fixed): a parser question whose options contain commas joins them with ', ' in the text, so the budget question reads 'Which budget did you mean? Options: The session budget, until then, The project budget, permanently, Nothing.' Voice and the phone cannot tell where one option ends (agent.ts parser-question reply; options from packages/commands/src/intent.ts:935).",
+  "Bench note: at Assisted, a session waits for 'approve' on its plan before the task check can file a suggestion card, so a walk must press approve first (scripts/bench README does not say so for FORERUNNER_BENCH_TASK_LIST)."
+ ],
+ "notes_for_other_areas": [
+  "CommandDef.undoBlocked(params, before, after, ctx, change?) has a fifth argument, the whole change's steps ({ steps: { name, after }[] }), passed by executor.undoBlockedReason.",
+  "task.split's after.parts[] now carry depends_on (null on rows written before; in_turn order derives the expected waits).",
+  "critic: replacedDuring(store, session) is exported; SessionMetrics.replacedTasks and SessionReviewData.replacedTaskIds exist; plannedTasks is the measured (not replaced) count.",
+  "Suggestion cards (task_proposal) carry applying_at with outcome 'applying'; syncTaskProposals settles a card left at 'applying' at start (applied with its existing change row, else applied once).",
+  "apps/ui/src/lib/closed-chat.ts closedChatOf(project) and REMOVED_CHAT are the one place for a closed project's chat line (Chat tab and Talk).",
+  "Registry principal conversation-agent is now 1.5.3 (the '# Last session' bullet names a review that waits). project-facts lastSessionBlock writes 'Review waits: …' when reviewWaits is set.",
+  "claims.ts: new NOTHING_CHANGED_ASKS_REPLY and NOW_STATE; ConversationAgent.trueLine takes the claim kind; transcript.ts APP_MARKER_ANY_CASE_RE and HOLD_REPLY_RE.",
+  "EventView.undoneSentence (GET /sessions/:id/events) is the undo row's sentence for an undone change line.",
+  "ConversationAgent.switchedHere: the chat's namedProjectId ('there', 'it') is the newest project.switch of the conversation's own change_log row, no longer the registry's active project.",
+  "Suggested UPDATE-LOG lines (not edited here): 'A suggestion card answered just before a crash is finished once at the next start: Changed 1 task; your next Start runs it.' / 'A split cannot be undone once something later depends on it: Cannot be undone now: \"Publish the page\" was made to wait for \"Check that the links work\" after the split; undo would drop that.' / 'Talk on a joined project: This chat is kept to read; ask about its work in the Chat of \"Atlas\".' / 'Session review: (1/1 planned, 1 replaced).' / 'Chat after a yes asked in words: Nothing changed, and nothing waits for your yes. If you want a change, say what you want done.' / 'Which project: Notes or Site? (no repeated Options)'. Design §5 words to consider adding to core-experience.md: the refused split Undo sentence, Talk's closed line, the replaced count, and the asks true line."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/commands/test/selftasks-run.test.ts 'once the new part ran…' renamed 'once a session took the new part, the Undo says why it cannot'",
+   "why": "C4-left-6/129: a part that is running now reads 'is running now', not 'has run since'."
+  },
+  {
+   "test": "packages/runtime/test/chat-depth.test.ts 'Stop pressed during the nudge…'",
+   "why": "C3-left-11: a Stop during the nudge ends the turn stopped, so the reply is neither the claim nor the guard's true line."
+  },
+  {
+   "test": "packages/runtime/test/task-proposal-words.test.ts and apps/ui/test/real-daemon.test.ts (d1109 left-out suggestion case)",
+   "why": "C4-left-5: one task reads 'runs it', not 'runs them'."
+  },
+  {
+   "test": "version assertions in packages/runtime/test/chat-recall.test.ts, chat-depth.test.ts, conversation-memory.test.ts",
+   "why": "conversation-agent prompt 1.5.2 to 1.5.3 (L4c-left-5)."
+  },
+  {
+   "test": "packages/runtime/test/conversation-memory.test.ts L4-chat-102 'a reply that still asks in words after the nudge is replaced…' and apps/ui/test/real-daemon.test.ts 'POST /chat: a yes asked in words is nudged and put right…'",
+   "why": "L4c-left-7: an ask in words gets 'Nothing changed, and nothing waits for your yes. If you want a change, say what you want done.'"
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts \"POST /chat: ordinary 'add a task to …' lines add at once; only 'there' with two projects asks…\"",
+   "why": "L4c-left-9: the question names its options, so the reply is 'Which project: Notes or Site?' without ' Options: Notes, Site.'"
+  },
+  {
+   "test": "apps/ui/test/fake-daemon.ts (proposal undo refusal words, 'there' question reply)",
+   "why": "The fake follows the daemon: 'is running now' for claimed, in_progress and in_review parts; the 'there' question without repeated options; undoneSentence on undone change lines."
+  }
+ ]
+}
