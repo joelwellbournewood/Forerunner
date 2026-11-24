@@ -11,7 +11,15 @@ import { readStatusIssueKey } from "../../../packages/runtime/src/loop/status-bo
 import { removeHomes } from "../../../packages/runtime/test/helpers.ts";
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
 import { ApiError, type DaemonClient } from "../src/api/client.ts";
-import { composeTwo, type Home, type TwoHomes } from "./two-installs.ts";
+import {
+  composeTwo,
+  followDefaultBranch,
+  type Home,
+  MEMORY_ACTIONS,
+  seedBranch,
+  type TwoHomes,
+  writeOfRequest,
+} from "./two-installs.ts";
 
 /**
  * Two people's Forerunners on one repository, as people run them (the owner's D9 of 2026-11-09:
@@ -151,8 +159,7 @@ describe("w8-two-homes, wave 8: harness", () => {
           two
             .writesBy("bob")
             .filter(
-              (w) =>
-                !["push", "pull_request.create", "other"].includes(w.action) && !onStatusIssue(w),
+              (w) => !["push", "pull_request.create"].includes(w.action) && !onStatusIssue(w),
             ),
         ).toEqual([]);
         // Each lists only its own pull requests.
@@ -732,7 +739,7 @@ describe("w8-repo-guide, wave 8: the guide is written by the Forerunner that mad
       expect(
         bobWrites.filter(
           (w) =>
-            !["push", "pull_request.create", "pull_request.merge", "other"].includes(w.action) &&
+            !["push", "pull_request.create", "pull_request.merge"].includes(w.action) &&
             !(
               ["issue.create", "issue.update", "issue.pin", "comment", "comment.update"].includes(
                 w.action,
@@ -1207,4 +1214,347 @@ describe("w8-status-write, wave 8: one pinned status issue, one comment per Fore
       await two.close();
     }
   }, 300_000);
+});
+
+describe("w8-together, wave 8: join together", () => {
+  const KITE_LINE =
+    'team/shared is also the Forerunner project "Kite club", which is not on this computer; another GitHub account worked on it on';
+  const UNREADABLE = "GitHub did not answer, so the project cannot be checked. Try again.";
+
+  /** Ada's "Kite club" on team/shared; its marker on the default branch when `merged`. */
+  async function kiteClub(two: TwoHomes, merged: boolean) {
+    const { ada } = two;
+    const kite = await ada.client.createProject({
+      name: "Kite club",
+      goal: "The kite club's site",
+      repos: ["team/shared"],
+    });
+    const docs = (await two.pullRequests()).find((p) => p.head.ref === "fr/docs-scaffold");
+    expect(docs?.authorLogin).toBe("ada");
+    if (merged) {
+      if (two.memory)
+        // The memory host's merge leaves the bare repository as it was: the marker goes on
+        // main as when Ada's docs pull request merged.
+        await seedBranch(two, "main", {
+          ".forerunner/project.json": `${JSON.stringify({ schema: 1, project: kite.id, name: "Kite club" })}\n`,
+        });
+      else {
+        const answer = await ada.client.mergePullRequest(kite.id, docs?.number ?? 0);
+        expect(answer.state, answer.sentence).toBe("queued");
+        await until(
+          "Ada's docs pull request to merge",
+          async () => !!(await two.pullRequests()).find((p) => p.number === docs?.number)?.merged,
+          async () => JSON.stringify((await two.pullRequests()).map((p) => [p.number, p.state])),
+        );
+      }
+    }
+    return { kite, docs: docs as PullRequestInfo };
+  }
+
+  /**
+   * Bob's "Site" on team/shared, made while GitHub did not answer him (the one-repository rule
+   * could not read the repository then), with two tasks and the status pull request an earlier
+   * version of his Forerunner opened for it on fr/status (Site's mark, his session's record).
+   */
+  async function bobsSite(two: TwoHomes) {
+    const { bob } = two;
+    bob.githubOff();
+    const site = await bob.client.createProject({
+      name: "Site",
+      goal: "Another site",
+      repos: ["team/shared"],
+    });
+    bob.githubOn();
+    const tasks = [];
+    for (const title of ["Write the home page in index.html", "Write the contact page"])
+      tasks.push(
+        await bob.client.createTask(site.id, {
+          title,
+          outcome: `${title} is done`,
+          riskTier: 1,
+          specialist: "coder",
+        }),
+      );
+    await seedBranch(two, "fr/status", { "docs/status.md": "# Status\n\nWorking on the site.\n" });
+    const pr = await bob.rt.gitHost.createPullRequest(two.repo, {
+      title: "docs: project status",
+      body: `Status of the project, from an earlier version.\n\n<!-- forerunner:pr project=${site.id} -->`,
+      head: "fr/status",
+      base: "main",
+    });
+    const agent = (await bob.rt.store.agent.list({}))[0]?.id as string;
+    const session = await bob.rt.store.session.insert({
+      agent_id: agent,
+      project_id: site.id,
+      trigger: "manual",
+      plan: {},
+      budget_cap_usd_micro: 1,
+      step_cap: 1,
+      spent_usd_micro: 0,
+      steps: 0,
+      status: "completed",
+      summary: "",
+      handoff: {},
+      runner: "pc",
+    });
+    await bob.rt.store.event.append(session.id, "docs.status_written", {
+      location: "repo",
+      branch: "fr/status",
+      prUrl: pr.htmlUrl,
+    } as never);
+    return { site, tasks, pr };
+  }
+
+  /** The press: Work together on the Overview's line, through the UI's own client. */
+  const workTogether = (home: Home, projectId: string) =>
+    home.client.executeCommands({
+      commands: [
+        { name: "project.join", params: { keep: { together: true }, close: [projectId] } },
+      ],
+      wordsUsed: "Work together (Overview)",
+      source: "ui",
+      projectId,
+      confirm: "tap",
+    });
+
+  it("W8a-left-5: every write the memory host records and every write route of the stand-in GitHub has a name, so 'wrote nothing' sees it", () => {
+    const root = join(process.cwd(), "..", "..");
+    const memory = readFileSync(
+      join(root, "packages", "capabilities", "src", "githost", "memory.ts"),
+      "utf8",
+    );
+    const ops = [...memory.matchAll(/this\.wrote\("(\w+)"/g)].map((m) => m[1] as string);
+    expect(ops.length).toBeGreaterThan(15);
+    expect(ops.filter((op) => !MEMORY_ACTIONS[op])).toEqual([]);
+    const dir = join(root, "testenv", "src", "githost");
+    const routes: string[] = [];
+    for (const file of readdirSync(dir).filter((f) => /^routes-.*\.ts$/.test(f)))
+      for (const m of readFileSync(join(dir, file), "utf8").matchAll(
+        /app\.(post|patch|put|delete)\("([^"]+)"/g,
+      ))
+        routes.push(`${(m[1] as string).toUpperCase()} ${m[2]}`);
+    expect(routes.length).toBeGreaterThan(40);
+    const sample = (path: string) =>
+      path
+        .replace(":owner", "team")
+        .replace(":repo", "shared")
+        .replace(":org", "team")
+        .replace(/:(number|id|sha)/g, "7")
+        .replace("*", "x");
+    const unnamed = routes.filter((r) => {
+      const [method, path] = r.split(" ") as [string, string];
+      return writeOfRequest("ada", method, sample(path)).action === "other";
+    });
+    expect(unnamed).toEqual([]);
+    // A git push and a GraphQL mutation have their names too.
+    expect(writeOfRequest("ada", "POST", "/team/shared.git/git-receive-pack").action).toBe("push");
+    expect(writeOfRequest("ada", "POST", "/graphql", { operation: "Other" }).action).toBe(
+      "graphql.mutation",
+    );
+  });
+
+  it("http: W8-join-1, -2: Work together on Bob's 'Site' makes it Ada's 'Kite club' with its id, moves its two tasks, and writes on GitHub only the close of Site's own old status pull request; Undo after Bob's daemon starts twice puts Site back and says the pull request stays closed", async () => {
+    const two = await composeTwo({ host: "http" });
+    try {
+      const { bob } = two;
+      const { kite, docs } = await kiteClub(two, true);
+      const { site, tasks, pr } = await bobsSite(two);
+      // Before the join Bob wrote no issue and no comment for Site (W8-write-9).
+      const setup = two.writesBy("bob");
+      expect(setup.filter((w) => /^(issue|comment)/.test(w.action))).toEqual([]);
+      // Ada's own writes (her docs pull request's merge may be logged after GitHub says merged).
+      const adaOwn = (w: { action: string; number?: number }) =>
+        !(w.action === "pull_request.merge" && w.number === docs.number);
+      const adaBefore = two.writesBy("ada").filter(adaOwn).length;
+      // Bob's Overview: the line, with Work together first (another GitHub account worked on
+      // "Kite club" within 14 days, so no Take it over).
+      await followDefaultBranch(bob, site.id);
+      const card = await bob.client.project(site.id);
+      expect(card.repositoryElsewhere?.text.startsWith(KITE_LINE)).toBe(true);
+      expect(card.repositoryElsewhere).toMatchObject({
+        kind: "elsewhere",
+        canWorkTogether: true,
+        togetherLine:
+          'This project\'s tasks, plan and cards move into "Kite club"; both Forerunners work on it.',
+        canTakeOver: false,
+      });
+      // The together form: the sentence, the one line on GitHub, what stays.
+      const preview = await bob.client.togetherPreview(site.id);
+      expect(preview.together).toEqual({
+        projectId: kite.id,
+        name: "Kite club",
+        sentence:
+          '"Site" becomes "Kite club", the project GitHub knows: its tasks, plan and cards move into it, and this Forerunner works on it together with the other one.',
+        github: `On GitHub only the old status pull request #${pr.number} of "Site" is closed; nothing of the other Forerunner is touched.`,
+        stays: '"Site" keeps its sessions, changes and spending to read; no budget changes.',
+        refusal: null,
+      });
+      // The dialog read GitHub; it wrote nothing.
+      expect(two.writesBy("bob")).toEqual(setup);
+
+      const done = await workTogether(bob, site.id);
+      expect(done.status, done.reason).toBe("done");
+      expect(done.sentence).toBe(
+        `"Site" joined "Kite club", which this Forerunner works on together with another one; its old status pull request #${pr.number} is closed.`,
+      );
+      // Bob's together project has Ada's id and the marker's name; Site's two tasks are in it.
+      const made = await bob.client.project(kite.id);
+      expect(made.name).toBe("Kite club");
+      expect(made.repositoryElsewhere?.kind).toBe("together");
+      expect((await bob.client.tasks(kite.id)).map((t) => t.id).sort()).toEqual(
+        tasks.map((t) => t.id).sort(),
+      );
+      expect((await bob.client.project(site.id)).joinedInto?.name).toBe("Kite club");
+      // The whole log: from Bob only the line on and the close of Site's own old status pull
+      // request; nothing on Ada's pull requests, comments or issue; Ada wrote nothing.
+      expect(
+        two
+          .writesBy("bob")
+          .slice(setup.length)
+          .map((w) => [w.action, w.number]),
+      ).toEqual([
+        ["comment", pr.number],
+        ["pull_request.update", pr.number],
+      ]);
+      expect((await two.pullRequests()).find((p) => p.number === pr.number)?.state).toBe("closed");
+      expect(two.writesBy("ada").filter(adaOwn).slice(adaBefore)).toEqual([]);
+
+      // Bob's daemon starts again, twice; Undo from Changes then puts Site back with its link
+      // and its tasks, says what stays closed, and removes the together project here.
+      await bob.restart();
+      await bob.restart();
+      const change = (await bob.client.changes({ limit: 20 })).find(
+        (c) => (c.commands[0] as { name?: string } | undefined)?.name === "project.join",
+      );
+      expect(change?.sentence).toBe(done.sentence);
+      const undone = await bob.client.undoChange(change?.id ?? "");
+      expect(undone.status, undone.reason).toBe("done");
+      expect(undone.sentence).toBe(
+        `"Site" is its own project again; its old status pull request #${pr.number} stays closed on GitHub.`,
+      );
+      const back = await bob.client.project(site.id);
+      expect(back.joinedInto ?? null).toBeNull();
+      expect(back.repos).toEqual(["team/shared"]);
+      expect((await bob.client.tasks(site.id)).map((t) => t.id).sort()).toEqual(
+        tasks.map((t) => t.id).sort(),
+      );
+      expect((await bob.client.projects()).some((p) => p.id === kite.id)).toBe(false);
+      expect((await two.pullRequests()).find((p) => p.number === pr.number)?.state).toBe("closed");
+      // The Undo wrote nothing on GitHub; Site's line offers Work together again.
+      expect(two.writesBy("bob").length).toBe(setup.length + 2);
+      expect((await bob.client.project(site.id)).repositoryElsewhere?.canWorkTogether).toBe(true);
+    } finally {
+      await two.close();
+    }
+  }, 300_000);
+
+  for (const kind of ["memory", "http"] as const)
+    it(`${kind}: W8a-left-6: GitHub unreachable at the press, and again after Bob's daemon starts again with it off: the dialog and the press are refused in words, nothing moves, nothing is written`, async () => {
+      const two = await composeTwo({ host: kind });
+      try {
+        const { bob } = two;
+        const { kite } = await kiteClub(two, true);
+        const { site, tasks } = await bobsSite(two);
+        const log = two.writesBy("bob");
+        const check = async () => {
+          const preview = await bob.client.togetherPreview(site.id);
+          expect(preview.together?.refusal).toBe(UNREADABLE);
+          expect(preview.together?.name ?? null).toBeNull();
+          const r = await workTogether(bob, site.id);
+          expect(r.status).toBe("refused");
+          expect(r.reason).toBe(UNREADABLE);
+          expect((await bob.client.tasks(site.id)).map((t) => t.id).sort()).toEqual(
+            tasks.map((t) => t.id).sort(),
+          );
+          expect((await bob.client.projects()).some((p) => p.id === kite.id)).toBe(false);
+          expect((await bob.client.project(site.id)).joinedInto ?? null).toBeNull();
+          expect(two.writesBy("bob")).toEqual(log);
+        };
+        bob.githubOff();
+        await check();
+        await bob.restart();
+        await check();
+        // GitHub back: the same press goes through.
+        bob.githubOn();
+        const r = await workTogether(bob, site.id);
+        expect(r.status, r.reason).toBe("done");
+        expect((await bob.client.project(kite.id)).name).toBe("Kite club");
+      } finally {
+        await two.close();
+      }
+    }, 240_000);
+
+  it("http: W8a-left-7: before Ada's docs pull request merges, Bob's together project is 'Kite club' (the marker on its branch), made both ways: New project's Work together, and the Overview's after that one was undone", async () => {
+    const two = await composeTwo({ host: "http" });
+    try {
+      const { bob } = two;
+      const { kite } = await kiteClub(two, false);
+      // New project's Work together, with a name Bob typed: the repository's name wins.
+      const made = await bob.client.createProject({
+        name: "Bob's site",
+        goal: "The team's site",
+        repos: ["team/shared"],
+        switch: true,
+        together: { project: kite.id },
+      });
+      expect(made.id).toBe(kite.id);
+      expect(made.name).toBe("Kite club");
+      // Undone (the row stays, removed); then Bob's "Site" from before the rule joins it from
+      // its Overview: the same row comes back, under the same name.
+      const created = (await bob.client.changes({ limit: 20 })).find(
+        (c) => (c.commands[0] as { name?: string } | undefined)?.name === "project.create",
+      );
+      expect((await bob.client.undoChange(created?.id ?? "")).status).toBe("done");
+      const { site } = await bobsSite(two);
+      const preview = await bob.client.togetherPreview(site.id);
+      expect(preview.together?.name, JSON.stringify(preview.together)).toBe("Kite club");
+      const r = await workTogether(bob, site.id);
+      expect(r.status, r.reason).toBe("done");
+      const joined = await bob.client.project(kite.id);
+      expect(joined.name).toBe("Kite club");
+      expect(joined.repositoryElsewhere?.kind).toBe("together");
+    } finally {
+      await two.close();
+    }
+  }, 240_000);
+
+  it("http: a pair here of which one is worked on together keeps the together one, with its sentence", async () => {
+    const two = await composeTwo({ host: "http" });
+    try {
+      const { bob } = two;
+      const { kite } = await kiteClub(two, true);
+      await bob.client.createProject({
+        name: "Kite club",
+        goal: "The team's site",
+        repos: ["team/shared"],
+        together: { project: kite.id },
+      });
+      // "Site" on the same repository, made before the one-repository rule (no entry point makes
+      // a second project on a link here now), so it is written to the store as it was then.
+      const site = await bob.rt.store.project.insert({
+        name: "Site",
+        goal: "Another site",
+        repos: ["team/shared"],
+        stage: "planning",
+        status: "active",
+        budget_usd_micro: 0,
+        autonomy_level: 2,
+        summary_cache: {},
+        data_assets: [],
+        settings: { members: [(await bob.rt.store.agent.list({}))[0]?.id ?? ""] },
+        small_project_mode: false,
+        active: true,
+        author_human: (await bob.client.me()).id,
+      });
+      const preview = await bob.client.joinPreview(site.id);
+      expect(preview.keepOnly).toBe(kite.id);
+      expect(preview.keepOnlyLine).toBe('"Kite club" is the project GitHub knows, so it is kept.');
+      // Site's Overview has the pair's line, not Work together (its id is here).
+      const card = await bob.client.project(site.id);
+      expect(card.repositoryElsewhere ?? null).toBeNull();
+      expect(card.sharesRepositoryWith?.projects.map((p) => p.id)).toEqual([kite.id]);
+    } finally {
+      await two.close();
+    }
+  }, 240_000);
 });

@@ -204,6 +204,91 @@ export function joinRefusedDrafting(name: string): string {
   return `The plan of "${name}" is being drafted. Make one project when it waits for you.`;
 }
 
+// --- Work together for a project already here (w8-together, OJ-11, ADR 0117 amended) ----------
+
+/**
+ * OJ-11 (run C decision 13's words): what the together form of the dialog does, in one sentence:
+ * '"Site" becomes "Kite club", the project GitHub knows: its tasks, plan and cards move into it,
+ * and this Forerunner works on it together with the other one.'
+ */
+export function togetherJoinSentence(site: string, kite: string): string {
+  return `"${site}" becomes "${kite}", the project GitHub knows: its tasks, plan and cards move into it, and this Forerunner works on it together with the other one.`;
+}
+
+/**
+ * W8-join-2 (D-W8-45): the dialog's line on what the press writes on GitHub: only the closing
+ * project's own old status pull request is closed, or nothing at all.
+ */
+export function togetherGithubLine(site: string, oldStatusPr: number | null): string {
+  return oldStatusPr === null
+    ? "Nothing on GitHub changes now."
+    : `On GitHub only the old status pull request #${oldStatusPr} of "${site}" is closed; nothing of the other Forerunner is touched.`;
+}
+
+/** OJ-11: the change sentence, also the Changes row. */
+export function togetherJoinedSentence(
+  site: string,
+  kite: string,
+  oldStatusPr: number | null,
+): string {
+  const joined = `"${site}" joined "${kite}", which this Forerunner works on together with another one`;
+  return oldStatusPr === null
+    ? `${joined}.`
+    : `${joined}; its old status pull request #${oldStatusPr} is closed.`;
+}
+
+/** OJ-11: chat's read-back question (Yes or No). */
+export function togetherJoinAsk(site: string, kite: string): string {
+  return `Work on "${kite}" together: move the tasks, plan and cards of "${site}" into it? Changes has its Undo.`;
+}
+
+/** OJ-11: the sentence of the together join's Undo; a closed pull request stays closed. */
+export function togetherUndoneSentence(site: string, oldStatusPr: number | null): string {
+  return oldStatusPr === null
+    ? `"${site}" is its own project again.`
+    : `"${site}" is its own project again; its old status pull request #${oldStatusPr} stays closed on GitHub.`;
+}
+
+/**
+ * OJ-11: the Undo refusal (a fragment the screens complete) while the together project has work
+ * of its own since the join: the Undo would remove it with that work inside.
+ */
+export function togetherUndoOwnWork(kite: string, task: string): string {
+  return `"${task}" was added to "${kite}" after the join: move or cancel it first`;
+}
+
+/** OJ-11: the project to join is worked on together already. */
+export function togetherAlreadySentence(name: string): string {
+  return `"${name}" is worked on together already.`;
+}
+
+/** OJ-11: one project at a time works together. */
+export const TOGETHER_ONE_PROJECT = "Choose the one project to work on together.";
+
+/**
+ * OJ-11: the name the together project gets: the repository's (`repositoryNameOf`, read from
+ * GitHub at the press) when no other project here has it, else '<name> (together)' (then
+ * '(together 2)', …): a closed project keeps its name, so the two never clash. A together row
+ * removed here and brought back may keep its own name.
+ */
+export async function togetherNameFor(
+  store: { project: { byName(name: string): Promise<Pick<ProjectRow, "id"> | null | undefined> } },
+  repositoryName: string | null,
+  closing: Pick<ProjectRow, "name">,
+  revive: Pick<ProjectRow, "id"> | null = null,
+): Promise<string> {
+  const free = async (name: string) => {
+    const row = await store.project.byName(name);
+    return !row || row.id === revive?.id;
+  };
+  if (repositoryName && (await free(repositoryName))) return repositoryName;
+  const base = repositoryName ?? closing.name;
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? `${base} (together)` : `${base} (together ${n})`;
+    if (await free(candidate)) return candidate;
+  }
+}
+
 /** OJ-11: of a pair here, the one worked on together with another Forerunner is the one kept. */
 export function keptTogetherLine(name: string): string {
   return `"${name}" is the project GitHub knows, so it is kept.`;

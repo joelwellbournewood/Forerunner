@@ -228,6 +228,33 @@ export function togetherLine(e: Pick<Elsewhere, "name" | "ids">, withBrief: bool
   );
 }
 
+/**
+ * w8-together (OJ-11, W8-join-1): Work together's consequence line on the Overview of a project
+ * already here (at most 100 characters): its work moves into the repository's project.
+ */
+export function overviewTogetherLine(e: Pick<Elsewhere, "name" | "ids">): string {
+  return withNameFitted(
+    e,
+    (name) =>
+      `This project's tasks, plan and cards move into ${name}; both Forerunners work on it.`,
+  );
+}
+
+/** OJ-11: the repository names no project that is not on this computer (nothing to join). */
+export function nothingToWorkTogetherSentence(locator: string): string {
+  return `${locator} names no other Forerunner project now, so there is nothing to work on together.`;
+}
+
+/** OJ-11: the repository names several such projects, so none is the one to work on. */
+export function severalToWorkTogetherSentence(locator: string): string {
+  return `${locator} names more than one other Forerunner project, so it cannot be worked on together.`;
+}
+
+/** OJ-11: the repository's project is on this computer: Make one project is the way. */
+export function togetherHereSentence(locator: string, name: string): string {
+  return `${locator} is already the project "${name}" on this computer: make one project of the two instead.`;
+}
+
 /** Take it over's consequence line (at most 100 characters). */
 export function takeOverLine(e: Pick<Elsewhere, "name" | "ids">): string {
   return withNameFitted(

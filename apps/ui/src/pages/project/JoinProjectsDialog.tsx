@@ -1,3 +1,4 @@
+import type { JoinPreviewView } from "@forerunner/runtime/daemon/api-types";
 import { MAKE_ONE_EXPLAIN } from "@forerunner/runtime/daemon/join-words";
 import { useState } from "react";
 import { useNavigate } from "react-router";
@@ -22,22 +23,173 @@ export function JoinProjectsDialog({
   open,
   onClose,
   projectId,
+  together = false,
 }: {
   open: boolean;
   onClose: () => void;
   projectId: string;
+  /**
+   * w8-together (OJ-11): the together form, for a project already here whose repository is
+   * another Forerunner's project: one press makes it that project (the repository's id and name,
+   * read from GitHub by the daemon) and moves its work there; nothing to choose.
+   */
+  together?: boolean;
 }) {
+  const client = useClient();
+  const preview = useAsync(
+    (signal) =>
+      open
+        ? together
+          ? client.togetherPreview(projectId, signal)
+          : client.joinPreview(projectId, [], signal)
+        : Promise.resolve(null),
+    [client, projectId, open, together],
+  );
+  if (together)
+    return (
+      <TogetherForm
+        open={open}
+        onClose={onClose}
+        projectId={projectId}
+        view={preview.data ?? null}
+        loading={preview.loading}
+        error={preview.error}
+        reload={preview.reload}
+      />
+    );
+  return (
+    <PairForm
+      open={open}
+      onClose={onClose}
+      view={preview.data ?? null}
+      loading={preview.loading}
+      error={preview.error}
+      reload={preview.reload}
+    />
+  );
+}
+
+interface FormProps {
+  open: boolean;
+  onClose: () => void;
+  view: JoinPreviewView | null;
+  loading: boolean;
+  error: string | null;
+  reload: () => void;
+}
+
+/**
+ * w8-together (OJ-11, W8-join-1, -2): Work together for a project already here. The daemon's
+ * words: the one sentence of what the press does ('"Site" becomes "Kite club", the project GitHub
+ * knows: ...'), the project's facts, the one line of what it writes on GitHub (only its own old
+ * status pull request is closed, or nothing), what stays, and what holds it now (GitHub not
+ * answering among them). The press is the yes (`project.join` with `keep: {together: true}`,
+ * source ui); Changes has its Undo. It lands on the together project.
+ */
+function TogetherForm({
+  open,
+  onClose,
+  projectId,
+  view,
+  loading,
+  error: loadError,
+  reload,
+}: FormProps & { projectId: string }) {
   const client = useClient();
   const store = useUiStore();
   const navigate = useNavigate();
-  const preview = useAsync(
-    (signal) => (open ? client.joinPreview(projectId, [], signal) : Promise.resolve(null)),
-    [client, projectId, open],
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const t = view?.together ?? null;
+  const close = () => {
+    setError(null);
+    onClose();
+  };
+  const join = async () => {
+    if (!t?.name || busy || t.refusal) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await client.executeCommands({
+        commands: [
+          { name: "project.join", params: { keep: { together: true }, close: [projectId] } },
+        ],
+        wordsUsed: "Work together (Overview)",
+        source: "ui",
+        projectId,
+        confirm: "tap",
+      });
+      if (r.status === "done" || r.status === "partial") {
+        await refreshProjects(client, store).catch(() => undefined);
+        close();
+        // The project it became (its id the daemon read from GitHub for the dialog).
+        navigate(
+          t.projectId ? `/projects/${encodeURIComponent(t.projectId)}/summary` : "/projects",
+        );
+      } else setError(r.reason ?? "The project was not joined.");
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const site = view?.projects[0] ?? null;
+  return (
+    <Dialog open={open} onClose={close} title="Work together" testId="join-together-dialog">
+      <div className="space-y-3 text-sm">
+        {loading && !view ? <Loading what="the repository's project" /> : null}
+        {loadError ? <ErrorBanner message={loadError} onRetry={reload} /> : null}
+        {t?.sentence ? <p data-testid="join-together-sentence">{t.sentence}</p> : null}
+        {site ? (
+          <div
+            className="space-y-0.5 rounded border border-neutral-200 p-2 dark:border-neutral-800"
+            data-testid={`join-project-${site.id}`}
+          >
+            <span className="block font-medium">"{site.name}"</span>
+            {site.lines.map((line) => (
+              <span key={line} className="block text-xs text-neutral-600 dark:text-neutral-400">
+                {line}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {t?.github ? <p data-testid="join-together-github">{t.github}</p> : null}
+        {t && !t.refusal ? (
+          <p className="text-xs text-neutral-600 dark:text-neutral-400">{t.stays}</p>
+        ) : null}
+        {t?.refusal ? (
+          <p className="text-amber-800 dark:text-amber-300" data-testid="join-refusal">
+            {t.refusal}
+          </p>
+        ) : null}
+        {error ? <ErrorBanner message={error} /> : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="primary"
+            onClick={() => void join()}
+            disabled={!t?.name || !!t.refusal || busy}
+            data-testid="join-together-confirm"
+          >
+            {busy ? "Working together…" : "Work together"}
+          </Button>
+          <Button variant="ghost" onClick={close}>
+            Cancel
+          </Button>
+        </div>
+        <p className="text-xs text-neutral-600 dark:text-neutral-400">Changes has its Undo.</p>
+      </div>
+    </Dialog>
   );
+}
+
+function PairForm({ open, onClose, view, loading, error: loadError, reload }: FormProps) {
+  const client = useClient();
+  const store = useUiStore();
+  const navigate = useNavigate();
+  const preview = { data: view, loading, error: loadError, reload };
   const [chosen, setChosen] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const view = preview.data;
   // A project worked on together with another Forerunner is the one kept (OJ-11).
   const keep = view?.keepOnly ?? chosen;
   const plan = keep && view ? view.ifKept[keep] : undefined;

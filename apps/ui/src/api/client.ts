@@ -703,6 +703,11 @@ export interface DaemonClient {
     withIds?: readonly string[],
     signal?: AbortSignal,
   ): Promise<JoinPreviewView>;
+  /**
+   * `GET /projects/:id/join-preview?together=1` (w8-together, OJ-11): the together form of the
+   * dialog for a project whose repository is another Forerunner's project (GitHub read now).
+   */
+  togetherPreview(projectId: string, signal?: AbortSignal): Promise<JoinPreviewView>;
   kill(body: KillBody): Promise<KillResult>;
   resume(): Promise<KillResult>;
   /** `GET /desktop/status`: desktop control's state, with what the indicator shows (S.32). */
@@ -1207,6 +1212,13 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
         routePath("joinPreview", { id: projectId }),
         JoinPreviewViewSchema,
         { with: withIds?.length ? withIds.join(",") : undefined },
+        signal,
+      ),
+    togetherPreview: (projectId, signal) =>
+      get(
+        routePath("joinPreview", { id: projectId }),
+        JoinPreviewViewSchema,
+        { together: "1" },
         signal,
       ),
     kill: (body) => post(routePath("kill"), KillResult, body),

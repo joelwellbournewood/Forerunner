@@ -265,6 +265,13 @@ export const ProjectCard = z.object({
     .object({
       kind: z.enum(["elsewhere", "together"]),
       text: z.string(),
+      /**
+       * w8-together (OJ-11): Work together on this project already here, before Take it over
+       * (the together form of the join's dialog, `?together=1`); absent on any other line.
+       */
+      canWorkTogether: z.boolean().optional(),
+      /** Work together's consequence line (at most 100 characters); absent without it. */
+      togetherLine: z.string().optional(),
       canTakeOver: z.boolean(),
       takeOverLine: z.string().nullable(),
       details: z.string().nullable(),
@@ -3711,6 +3718,24 @@ export const JoinPreviewView = z.object({
   ),
   keepOnly: z.string().nullable(),
   keepOnlyLine: z.string().nullable(),
+  /**
+   * w8-together (OJ-11): the together form (`?together=1`), for a project already here whose
+   * repository is another Forerunner's project: the name it becomes (read from GitHub now), the
+   * press's one sentence, its one line on GitHub, what stays, and what holds it (GitHub not
+   * answering among them). Null on Make one project's form; absent from an older daemon.
+   */
+  together: z
+    .object({
+      /** The project it becomes (the screen lands there after the press); never shown. */
+      projectId: z.string().nullable(),
+      name: z.string().nullable(),
+      sentence: z.string().nullable(),
+      github: z.string().nullable(),
+      stays: z.string(),
+      refusal: z.string().nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 export type JoinPreviewView = z.infer<typeof JoinPreviewView>;
 

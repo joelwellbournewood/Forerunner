@@ -440,7 +440,7 @@ import {
   installIdentitySelectors,
   pickPrincipal,
 } from "./identity.ts";
-import { type JoinDeps, joinRefusal } from "./join-preview.ts";
+import { type JoinDeps, joinRefusal, togetherJoinRefusal } from "./join-preview.ts";
 import { oversizedWarning } from "./oversize-view.ts";
 import { isIntakeSession } from "./project-status.ts";
 import { ProjectPullRequests } from "./pull-requests.ts";
@@ -4788,6 +4788,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       return kept.at ? kept.when : null;
     },
     chfPerUsd: () => chfPerUsd(),
+    // w8-together (OJ-11): Work together for a project already here reads the repository's
+    // project from GitHub (the configured host and token only) and the project's own old status
+    // pull request, the join's one write (`StatusBoard.closeOwnStatusPullRequest`).
+    togetherFacts: (projectId) => repositoryUse.togetherJoinFacts(projectId),
+    oldStatusPr: async (project) =>
+      (await statusBoard.findOwnStatusPullRequest(project))?.number ?? null,
   };
   const credentialWaits: RuntimeApp["billing"]["waits"] = {
     wake: async () => {
@@ -5375,6 +5381,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           const close = [];
           for (const id of closeIds) close.push(await store.project.mustGet(id));
           return joinRefusal(joinDeps, { keep, close });
+        },
+        // w8-together (OJ-11, W8-join-1, -2): Work together for a project already here.
+        together: {
+          refusal: async (projectId) =>
+            togetherJoinRefusal(joinDeps, await store.project.mustGet(projectId)),
+          facts: (projectId) => repositoryUse.togetherJoinFacts(projectId),
+          closeOldStatus: async (project) =>
+            (await statusBoard.closeOwnStatusPullRequest(project)).closed,
         },
       },
       // memory.record (spec O.2, ADR 0061): a lesson stated in chat or voice goes into the

@@ -12,14 +12,28 @@ import {
   joinUndoMerging,
   joinUndoneSentence,
   joinUndoRunning,
+  TOGETHER_ONE_PROJECT,
+  togetherJoinAsk,
+  togetherJoinedSentence,
+  togetherNameFor,
+  togetherUndoneSentence,
+  togetherUndoOwnWork,
   WAS_LINKED_KEY,
 } from "@forerunner/runtime/daemon/join-words";
-import { JOINED_FROM_KEY } from "@forerunner/runtime/sources/repository-words";
+import {
+  JOINED_FROM_KEY,
+  TOGETHER_KEY,
+  TOGETHER_UNREADABLE,
+  TOOK_OVER_KEY,
+} from "@forerunner/runtime/sources/repository-words";
 import type { JsonObject, JsonValue, ProjectRow, StateStore } from "@forerunner/state";
 import { z } from "zod";
 import { buildCard } from "../change-card.ts";
-import type { CommandContext, CommandDef } from "../types.ts";
+import type { CommandContext, CommandDef, ProjectTogetherFacts } from "../types.ts";
 import { asObject, authorOf, matchProjects } from "./shared.ts";
+
+/** The settings key a removed project keeps its name under (`project.create`'s Undo, W15-36). */
+const REMOVED_NAME_KEY = "removed_name";
 
 /**
  * project.join: Make one project (d1109-onerepo-join, D1, ADR 0117 amended 2026-11-16). Two or
@@ -39,17 +53,28 @@ import { asObject, authorOf, matchProjects } from "./shared.ts";
  * closed project with its link, also after a restart.
  */
 
+/**
+ * w8-together (OJ-11): `keep: {together: true}` joins the one closing project into the project
+ * the repository names that is not on this computer (another Forerunner's), read from GitHub at
+ * the press: the together project is made with the repository's id and name in the join's one
+ * transaction.
+ */
+const togetherKeep = z.object({ together: z.literal(true) }).strict();
+
 const params = z.object({
-  /** The project to keep: its id or name. */
-  keep: z.string().min(1),
+  /** The project to keep: its id or name, or `{together: true}` (Work together, OJ-11). */
+  keep: z.union([z.string().min(1), togetherKeep]),
   /** The projects whose work moves into it: ids or names, at least one. */
   close: z.array(z.string().min(1)).min(1).max(10),
 });
 export type ProjectJoinParams = z.infer<typeof params>;
+type PairParams = ProjectJoinParams & { keep: string };
 
-/** The definition the chat's model receives (OJ-08; asserted word for word). */
+const isTogetherForm = (p: ProjectJoinParams): boolean => typeof p.keep !== "string";
+
+/** The definition the chat's model receives (OJ-08, OJ-11; asserted word for word). */
 export const PROJECT_JOIN_DESCRIPTION =
-  "Make one project of projects on this computer that work in the same repository or folder: keep is the project the person chose to keep, close the others. Their tasks, plan, cards and open pull requests move into the kept project; their sessions, changes and spending stay readable where they are, and no budget changes. Only when the person asks for it and names the project to keep; never choose it yourself.";
+  'Make one project of projects on this computer that work in the same repository or folder: keep is the project the person chose to keep, close the others. Their tasks, plan, cards and open pull requests move into the kept project; their sessions, changes and spending stay readable where they are, and no budget changes. Only when the person asks for it and names the project to keep; never choose it yourself. When the person asks to work together on a project whose repository is another Forerunner\'s project, keep is {"together": true} and close names that one project.';
 
 /** At most this many rows of one table are moved in one statement (SQLite's parameter limit). */
 const CHUNK = 400;
@@ -86,7 +111,7 @@ interface Resolved {
   close: ProjectRow[];
 }
 
-async function resolve(p: ProjectJoinParams, ctx: CommandContext): Promise<Resolved> {
+async function resolve(p: PairParams, ctx: CommandContext): Promise<Resolved> {
   const keep = await projectNamed(ctx.store, p.keep);
   const close: ProjectRow[] = [];
   for (const named of p.close) {
@@ -106,6 +131,86 @@ async function assertJoinable(r: Resolved, ctx: CommandContext): Promise<void> {
   );
   if (reason)
     throw new ForerunnerError("validation", reason, { details: { cause: "join_refused" } });
+}
+
+// --- Work together for a project already here (w8-together, OJ-11) ---------------------------
+
+function togetherPort(ctx: CommandContext) {
+  const together = port(ctx).together;
+  if (!together)
+    throw new ForerunnerError(
+      "unavailable",
+      "working together needs the daemon's repository reads; this install has none wired",
+    );
+  return together;
+}
+
+/** The one project the together form closes (any status: a closed one is named in its refusal). */
+async function togetherProject(p: ProjectJoinParams, ctx: CommandContext): Promise<ProjectRow> {
+  const rows: ProjectRow[] = [];
+  for (const named of p.close) {
+    const row = await projectNamed(ctx.store, named);
+    if (!rows.some((r) => r.id === row.id)) rows.push(row);
+  }
+  if (rows.length !== 1 || !rows[0])
+    throw new ForerunnerError("validation", TOGETHER_ONE_PROJECT, {
+      details: { cause: "join_refused" },
+    });
+  return rows[0];
+}
+
+/**
+ * Refused in words while the project cannot join now; then the repository's project, read from
+ * GitHub now (`ProjectTogetherPort.facts` throws its refusal in words), and the name it takes.
+ */
+async function togetherFactsFor(
+  site: ProjectRow,
+  ctx: CommandContext,
+): Promise<{ facts: ProjectTogetherFacts; name: string }> {
+  const together = togetherPort(ctx);
+  const reason = await together.refusal(site.id);
+  if (reason)
+    throw new ForerunnerError("validation", reason, { details: { cause: "join_refused" } });
+  const facts = await together.facts(site.id);
+  return { facts, name: await togetherNameFor(ctx.store, facts.name, site, facts.revive) };
+}
+
+/** Settings that name a project's own link history; never carried into the together project. */
+const NOT_CARRIED = new Set([
+  TOGETHER_KEY,
+  TOOK_OVER_KEY,
+  JOINED_FROM_KEY,
+  JOINED_INTO_KEY,
+  WAS_LINKED_KEY,
+  REMOVED_NAME_KEY,
+]);
+
+/**
+ * The closing project's settings the together project takes ("Site" becomes "Kite club"): who
+ * merges, the budgets, research reads, the status issue's switch, members; never its link's
+ * history (took_over, joined_*, together).
+ */
+function carriedSettings(p: ProjectRow): JsonObject {
+  const out: JsonObject = {};
+  for (const [k, v] of Object.entries(settingsOf(p))) if (!NOT_CARRIED.has(k)) out[k] = v;
+  return out;
+}
+
+/** A together row removed here, as it was before the join brought it back (for the Undo). */
+interface RevivedBefore {
+  id: string;
+  name: string;
+  status: string;
+  active: boolean;
+  repos: string[];
+  settings: JsonObject;
+}
+
+async function freedName(store: StateStore, name: string): Promise<string> {
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? `${name} (removed)` : `${name} (removed ${n})`;
+    if (!(await store.project.byName(candidate))) return candidate;
+  }
 }
 
 /** What one closed project's join moved, by table, so the Undo moves exactly that back. */
@@ -360,7 +465,28 @@ export const projectJoin: CommandDef<ProjectJoinParams> = {
   undoStrategy:
     "move every moved row back to its project and reopen it with its link, while no session runs on the kept project and nothing of it waits for the moved work",
   async plan(p, ctx) {
-    const r = await resolve(p, ctx);
+    if (isTogetherForm(p)) {
+      // OJ-11: GitHub is read now (a read costs no model money); nothing is written before the
+      // yes, and the run reads it again.
+      const site = await togetherProject(p, ctx);
+      const { facts, name } = await togetherFactsFor(site, ctx);
+      return buildCard({
+        command: "project.join",
+        what: "the project this repository is",
+        oldValue: `"${site.name}"`,
+        newValue: `"${name}"`,
+        scope: "project",
+        risk: "medium",
+        sentence: togetherJoinedSentence(site.name, name, null),
+        reversible: true,
+        projectId: site.id,
+        projectName: site.name,
+        ask: togetherJoinAsk(site.name, name),
+        // The name is the repository's text: data for chat (ADR 0114).
+        ...(facts.name ? { untrusted: facts.untrusted } : {}),
+      });
+    }
+    const r = await resolve(p as PairParams, ctx);
     await assertJoinable(r, ctx);
     const names = r.close.map((c) => c.name);
     return buildCard({
@@ -378,7 +504,8 @@ export const projectJoin: CommandDef<ProjectJoinParams> = {
     });
   },
   async run(p, ctx) {
-    const r = await resolve(p, ctx);
+    if (isTogetherForm(p)) return runTogether(p, ctx);
+    const r = await resolve(p as PairParams, ctx);
     // Checked again at the run (a read-back's yes may come later), then everything in one
     // transaction: a failure moves nothing.
     await assertJoinable(r, ctx);
@@ -454,6 +581,12 @@ export const projectJoin: CommandDef<ProjectJoinParams> = {
     const closed = closedOf(asObject(before).closed);
     const tasks = await ctx.store.task.list({ project_id: keep.id } as never, { limit: 100_000 });
     const byId = new Map(tasks.map((t) => [t.id, t]));
+    // OJ-11: the together project goes with the Undo; work made in it since would go with it.
+    if (a.together === true) {
+      const movedIds = new Set(closed.flatMap((c) => movedOf(moved[c.id]).tasks));
+      const own = tasks.find((t) => !movedIds.has(t.id));
+      if (own) return togetherUndoOwnWork(keep.name, own.title);
+    }
     for (const c of closed) {
       const ids = new Set(movedOf(moved[c.id]).tasks);
       for (const id of ids) {
@@ -577,14 +710,168 @@ export const projectJoin: CommandDef<ProjectJoinParams> = {
         const settings = settingsOf(keep);
         if (left.length) settings[JOINED_FROM_KEY] = left;
         else delete settings[JOINED_FROM_KEY];
-        await tx.project.update(keep.id, keep.version, { settings, ...author });
+        const together = asObject(asObject(before).together ?? null);
+        if (a.together === true && together.revived && typeof together.revived === "object") {
+          // A together row removed here that the join brought back is removed again, as it was.
+          const was = asObject(together.revived as JsonValue);
+          await tx.project.update(keep.id, keep.version, {
+            status: (typeof was.status === "string"
+              ? was.status
+              : "archived") as ProjectRow["status"],
+            active: was.active === true,
+            name: typeof was.name === "string" ? was.name : keep.name,
+            repos: Array.isArray(was.repos)
+              ? was.repos.filter((s): s is string => typeof s === "string")
+              : keep.repos,
+            settings: asObject((was.settings ?? null) as JsonValue),
+            ...author,
+          });
+        } else if (a.together === true) {
+          // OJ-11: the together project the join made goes as a removed one: its name is freed,
+          // it never frees the repository (ADR 0117), and Work together brings the same row back.
+          await tx.project.update(keep.id, keep.version, {
+            status: "archived",
+            active: false,
+            name: await freedName(tx, keep.name),
+            settings: { ...settings, [REMOVED_NAME_KEY]: keep.name },
+            ...author,
+          });
+        } else await tx.project.update(keep.id, keep.version, { settings, ...author });
       }
     });
   },
-  undoSentence(_p, before) {
-    return joinUndoneSentence(closedOf(asObject(before).closed).map((c) => c.name));
+  undoSentence(_p, before, after) {
+    const names = closedOf(asObject(before).closed).map((c) => c.name);
+    const a = asObject(after ?? null);
+    if (a.together === true && names[0])
+      return togetherUndoneSentence(
+        names[0],
+        typeof a.oldStatusPr === "number" ? a.oldStatusPr : null,
+      );
+    return joinUndoneSentence(names);
   },
 };
+
+/**
+ * OJ-11 (W8-join-1, -2): Work together for a project already here, in one store transaction
+ * after the one GitHub write. GitHub is read again first (refused in words when it does not
+ * answer: nothing moves); then the project's own old status pull request is closed, if an
+ * earlier version of this install opened one (the join's only write on GitHub: nothing of the
+ * other Forerunner is touched); then the together project is made with the repository's id and
+ * name (or the removed together row comes back) with the closing project's settings, the
+ * closing project's work moves into it as Make one project moves it, and the closing project is
+ * closed into it. Undo (also after a restart) moves the work back and removes the together
+ * project again; the closed pull request stays closed.
+ */
+async function runTogether(p: ProjectJoinParams, ctx: CommandContext) {
+  const together = togetherPort(ctx);
+  const site = await togetherProject(p, ctx);
+  const { facts } = await togetherFactsFor(site, ctx);
+  let oldStatusPr: number | null;
+  try {
+    oldStatusPr = await together.closeOldStatus(site);
+  } catch {
+    throw new ForerunnerError("validation", TOGETHER_UNREADABLE, {
+      details: { cause: "github_unreadable" },
+    });
+  }
+  const author = authorOf(ctx);
+  const at = ctx.clock.nowIso();
+  const moved: Record<string, Moved> = {};
+  const closed: ClosedBefore[] = [];
+  let revived: RevivedBefore | null = null;
+  let made: ProjectRow | null = null;
+  await ctx.store.transaction(async (tx) => {
+    const from = await tx.project.mustGet(site.id);
+    const name = await togetherNameFor(tx, facts.name, from, facts.revive);
+    const settings: JsonObject = {
+      ...carriedSettings(from),
+      [TOGETHER_KEY]: {
+        name: facts.name ?? name,
+        at,
+        activeOn: facts.activeOn,
+        login: facts.login,
+      },
+      [JOINED_FROM_KEY]: [from.id],
+    };
+    if (facts.revive) {
+      const row = await tx.project.mustGet(facts.revive.id);
+      revived = {
+        id: row.id,
+        name: row.name,
+        status: row.status,
+        active: row.active,
+        repos: row.repos,
+        settings: settingsOf(row),
+      };
+      made = await tx.project.update(row.id, row.version, {
+        status: "active",
+        active: true,
+        name,
+        goal: from.goal,
+        repos: from.repos,
+        settings,
+        ...author,
+      });
+    } else {
+      made = await tx.project.insert({
+        id: facts.id,
+        name,
+        goal: from.goal,
+        repos: from.repos,
+        stage: from.stage,
+        status: "active",
+        budget_usd_micro: from.budget_usd_micro,
+        autonomy_level: from.autonomy_level,
+        summary_cache: {},
+        data_assets: [],
+        settings,
+        small_project_mode: from.small_project_mode,
+        active: true,
+        author_human: ctx.humanId,
+      });
+    }
+    moved[from.id] = await moveWork(tx, from, made, author);
+    const row = await tx.project.mustGet(from.id);
+    closed.push({
+      id: row.id,
+      name: row.name,
+      status: row.status,
+      active: row.active,
+      repos: row.repos,
+    });
+    await tx.project.update(row.id, row.version, {
+      status: "archived",
+      active: false,
+      repos: [],
+      settings: {
+        ...settingsOf(row),
+        [JOINED_INTO_KEY]: { project: made.id, name: made.name, at },
+        [WAS_LINKED_KEY]: row.repos,
+      },
+      ...author,
+    });
+  });
+  const kept = made as ProjectRow | null;
+  if (!kept) throw new ForerunnerError("internal", "the together project was not made");
+  return {
+    before: {
+      closed: closed as unknown as JsonValue,
+      together: { revived: revived as unknown as JsonValue },
+    },
+    after: {
+      keep: { id: kept.id, name: kept.name },
+      closed: closed.map((c) => c.id),
+      moved: moved as unknown as JsonValue,
+      at,
+      together: true,
+      oldStatusPr,
+    },
+    sentence: togetherJoinedSentence(site.name, kept.name, oldStatusPr),
+    projectId: kept.id,
+    ...(facts.name ? { untrusted: facts.untrusted } : {}),
+  };
+}
 
 /**
  * OJ-06: why the kept project's creation cannot be undone while it includes another project's

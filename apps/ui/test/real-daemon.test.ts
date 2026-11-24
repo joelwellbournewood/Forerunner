@@ -30509,3 +30509,147 @@ describe("w8-repo-guide, wave 8: Try again names the repository as its line does
     }
   }, 180_000);
 });
+
+describe("w8-together, wave 8: Work together for a project already here (OJ-11)", () => {
+  const KITE_ID = "01a1a000-0000-7000-8000-00000000c2ab";
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  it("GET /projects/:id/join-preview?together=1 and POST /commands project.join {keep: {together: true}}: the dialog's facts read from GitHub, the press makes the repository's project with its id and name, moves Site's tasks and closes only Site's own old status pull request; after the daemon starts again Undo puts Site back", async () => {
+    const work = mkdtempSync(join(tmpdir(), "fr-ui-real-w8-together-"));
+    homes.push(work);
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const env = { FORERUNNER_HOME: home };
+    const host = new MemoryGitHost("alice");
+    const repo = { owner: "o", name: "kite" };
+    await host.createRepo({ ...repo, private: true });
+    await host.putFile(repo, {
+      path: ".forerunner/project.json",
+      content: `${JSON.stringify({ schema: 1, project: KITE_ID, name: "Kite club" })}\n`,
+      message: "marker",
+      branch: "main",
+    });
+    // Another account worked on "Kite club" (its docs pull request, merged).
+    const theirs = await host.openPullRequestAs(repo, "bob", {
+      title: "docs: the doc set",
+      body: `Docs.\n\n${forerunnerMarker({ project: KITE_ID })}`,
+      head: "fr/docs-scaffold",
+    });
+    const compose = () =>
+      composeWithRolePlayer(
+        {},
+        {
+          gitHost: host,
+          tryIt: false,
+          env,
+          dirs: appDirs({ env }),
+          stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        },
+      );
+    let { rt, client } = await compose();
+    try {
+      // "Site" on o/kite, made before the one-repository rule, with two tasks and the status pull
+      // request an earlier version of this install opened for it (its mark, its session's record).
+      const site = await rt.store.project.insert({
+        name: "Site",
+        goal: "Another site",
+        repos: ["o/kite"],
+        settings: { members: [rt.agent.id], merge_mode: "after_review" },
+        author_human: rt.human.id,
+      });
+      const a = await rt.store.task.insert({
+        project_id: site.id,
+        title: "Home page",
+        status: "ready",
+      });
+      const b = await rt.store.task.insert({
+        project_id: site.id,
+        title: "Contact page",
+        status: "ready",
+      });
+      const old = await host.openPullRequestAs(repo, "alice", {
+        title: "docs: project status",
+        body: `Status.\n\n${forerunnerMarker({ project: site.id })}`,
+        head: "fr/status",
+      });
+      const session = await rt.store.session.insert({
+        agent_id: rt.agent.id,
+        project_id: site.id,
+        trigger: "manual",
+        plan: {},
+        budget_cap_usd_micro: 1,
+        step_cap: 1,
+        spent_usd_micro: 0,
+        steps: 0,
+        status: "completed",
+        summary: "",
+        handoff: {},
+        runner: "pc",
+      });
+      await rt.store.event.append(session.id, "docs.status_written", {
+        location: "repo",
+        branch: "fr/status",
+        prUrl: old.htmlUrl,
+      } as never);
+      const preview = await client.togetherPreview(site.id);
+      expect(preview.projects.map((p) => p.name)).toEqual(["Site"]);
+      expect(preview.together).toEqual({
+        projectId: KITE_ID,
+        name: "Kite club",
+        sentence:
+          '"Site" becomes "Kite club", the project GitHub knows: its tasks, plan and cards move into it, and this Forerunner works on it together with the other one.',
+        github: `On GitHub only the old status pull request #${old.number} of "Site" is closed; nothing of the other Forerunner is touched.`,
+        stays: '"Site" keeps its sessions, changes and spending to read; no budget changes.',
+        refusal: null,
+      });
+      const setup = host.writesBy("alice").length;
+      const done = await client.executeCommands({
+        commands: [
+          { name: "project.join", params: { keep: { together: true }, close: [site.id] } },
+        ],
+        wordsUsed: "Work together (Overview)",
+        source: "ui",
+        projectId: site.id,
+        confirm: "tap",
+      });
+      expect(done.status, done.reason).toBe("done");
+      expect(done.sentence).toBe(
+        `"Site" joined "Kite club", which this Forerunner works on together with another one; its old status pull request #${old.number} is closed.`,
+      );
+      const made = await client.project(KITE_ID);
+      expect(made.name).toBe("Kite club");
+      expect(made.repositoryElsewhere?.kind).toBe("together");
+      // "Site" becomes "Kite club": its settings come along; its id is the repository's.
+      expect((await rt.store.project.mustGet(KITE_ID)).settings.merge_mode).toBe("after_review");
+      expect((await client.tasks(KITE_ID)).map((t) => t.id).sort()).toEqual([a.id, b.id].sort());
+      expect(
+        host
+          .writesBy("alice")
+          .slice(setup)
+          .map((w) => [w.op, w.number]),
+      ).toEqual([
+        ["commentOnPullRequest", old.number],
+        ["updatePullRequest", old.number],
+      ]);
+      expect(host.writesBy("alice").some((w) => w.number === theirs.number)).toBe(false);
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await compose());
+      const change = (await client.changes({ limit: 10 })).find(
+        (c) => (c.commands[0] as { name?: string } | undefined)?.name === "project.join",
+      );
+      const undone = await client.undoChange(change?.id ?? "");
+      expect(undone.status, undone.reason).toBe("done");
+      expect(undone.sentence).toBe(
+        `"Site" is its own project again; its old status pull request #${old.number} stays closed on GitHub.`,
+      );
+      expect((await client.tasks(site.id)).map((t) => t.id).sort()).toEqual([a.id, b.id].sort());
+      expect((await client.project(site.id)).repos).toEqual(["o/kite"]);
+      expect((await client.projects()).some((p) => p.id === KITE_ID)).toBe(false);
+      await settleSessions(rt);
+    } finally {
+      await rt.close();
+    }
+  }, 180_000);
+});

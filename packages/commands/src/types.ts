@@ -464,6 +464,41 @@ export interface ProjectJoinPort {
    * project that is not the person's own); null when nothing holds the join.
    */
   refusal(keepId: string, closeIds: readonly string[]): Promise<string | null>;
+  /**
+   * w8-together (OJ-11, W8-join-1, -2): Work together for a project already here, whose
+   * repository is another Forerunner's project. Absent: the together form is refused.
+   */
+  together?: ProjectTogetherPort;
+}
+
+/** What `project.join`'s together form asks the daemon (`join-preview.ts`, `RepositoryUse`). */
+export interface ProjectTogetherPort {
+  /** Why it cannot be made now (gone, not the person's, running or waiting work), or null. */
+  refusal(projectId: string): Promise<string | null>;
+  /**
+   * The repository's project, read from GitHub now (never from the page or the model); throws a
+   * refusal in words when GitHub does not answer or the repository names no such project.
+   */
+  facts(projectId: string): Promise<ProjectTogetherFacts>;
+  /**
+   * W8-join-2 (D-W8-45): the join's one GitHub write: the project's own old status pull request,
+   * if an earlier version of this install opened one, is closed; its number, or null when there
+   * is none. Throws when GitHub does not answer (then nothing moves).
+   */
+  closeOldStatus(project: ProjectRow): Promise<number | null>;
+}
+
+/** The repository's project as `ProjectTogetherPort.facts` read it. */
+export interface ProjectTogetherFacts {
+  id: string;
+  /** Its name in the repository (cleaned and scanned), or null. */
+  name: string | null;
+  activeOn: string | null;
+  login: string | null;
+  /** A together project with that id removed here: the row that comes back. */
+  revive: ProjectRow | null;
+  /** The name is repository text: the card and the outcome carry it as data. */
+  untrusted: { source: "repo_file"; origin: string };
 }
 
 /** What `repo.take_over` takes, read from GitHub at the press (never from the model). */

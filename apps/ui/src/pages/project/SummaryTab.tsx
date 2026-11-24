@@ -319,6 +319,8 @@ function RepositoryElsewhere({ projectId, project }: { projectId: string; projec
   const [error, setError] = useState<string | null>(null);
   // L4e-left-1: what Try again opened, kept once the line it stood beside is gone.
   const [reopened, setReopened] = useState<string | null>(null);
+  // w8-together (OJ-11): Work together opens the join's dialog in its together form.
+  const [together, setTogether] = useState(false);
   const line = project?.repositoryElsewhere ?? null;
   if (!line && !done && !reopened) return null;
   const takeOver = async () => {
@@ -347,6 +349,17 @@ function RepositoryElsewhere({ projectId, project }: { projectId: string; projec
       {line ? (
         <p className="flex flex-wrap items-center gap-2">
           <span data-testid="repository-elsewhere-line">{line.text}</span>
+          {line.kind === "elsewhere" && line.canWorkTogether ? (
+            <Button
+              variant="primary"
+              onClick={() => setTogether(true)}
+              disabled={busy}
+              data-testid="repository-work-together"
+              title={line.togetherLine}
+            >
+              Work together
+            </Button>
+          ) : null}
           {line.kind === "elsewhere" && line.canTakeOver ? (
             <Button
               variant="secondary"
@@ -383,6 +396,14 @@ function RepositoryElsewhere({ projectId, project }: { projectId: string; projec
           {reopened}
         </p>
       ) : null}
+      {line?.togetherLine && line.canWorkTogether ? (
+        <p
+          className="text-xs text-neutral-600 dark:text-neutral-400"
+          data-testid="repository-work-together-line"
+        >
+          {line.togetherLine}
+        </p>
+      ) : null}
       {line?.takeOverLine && line.canTakeOver ? (
         <p
           className="text-xs text-neutral-600 dark:text-neutral-400"
@@ -390,6 +411,14 @@ function RepositoryElsewhere({ projectId, project }: { projectId: string; projec
         >
           {line.takeOverLine}
         </p>
+      ) : null}
+      {together ? (
+        <JoinProjectsDialog
+          open={together}
+          onClose={() => setTogether(false)}
+          projectId={projectId}
+          together
+        />
       ) : null}
       {details && line?.details ? (
         <p
