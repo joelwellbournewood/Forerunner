@@ -7864,14 +7864,21 @@ describe("the UI client against the real daemon: a task that waits for unmerged 
       expect(m).not.toContain("diff --git a/notes.md");
     }
 
-    // C-57: no status pull request by default; the session's status is in the app, where the
-    // Docs tab reads it, and Settings lists the switch for this repository project.
+    // w8-status-write (ADR 0122): no status pull request; the session's status is in the app,
+    // where the Docs tab reads it, and on GitHub this install's comment on the project's pinned
+    // status issue. The Docs row and Settings' switch say where it is.
     expect(open.some((p) => p.head.ref === "fr/status")).toBe(false);
     expect(waiting.waiting.some((w) => w.branch === "fr/status")).toBe(false);
+    await rt.statusBoard.settled();
+    const issues = await host.listIssues(repo, { state: "all" });
+    expect(issues.map((i) => [i.title, i.state])).toEqual([
+      [`Forerunner status: ${project.name}`, "open"],
+    ]);
+    const issueNumber = issues[0]?.number ?? 0;
     const status = (await client.docs(project.id)).find((d) => d.path === "docs/status.md");
     expect(status).toMatchObject({
       exists: true,
-      note: "kept in the app: no status pull request (Settings turns it on)",
+      note: `In the app; also on GitHub: issue #${issueNumber}`,
     });
     // The session's entry is named by when it started, never by its id (l3-small, run L3,
     // L3-github-6).
@@ -7881,25 +7888,34 @@ describe("the UI client against the real daemon: a task that waits for unmerged 
       `### Session started ${startedAt.slice(0, 10)} ${startedAt.slice(11, 16)} UTC`,
     );
     expect(statusText).not.toContain(sessionId);
-    const row = (await client.settings()).find(
-      (s) => s.key === "project.status_pull_request" && s.scopeId === project.id,
+    const statusRow = async () =>
+      (await client.settings()).find(
+        (s) => s.key === "project.status_issue" && s.scopeId === project.id,
+      );
+    expect(await statusRow()).toMatchObject({ label: "Status issue on GitHub", value: true });
+    expect((await statusRow())?.description).toContain(
+      `Status on GitHub: issue #${issueNumber} (pinned)`,
     );
-    expect(row).toMatchObject({ label: "Status pull request", value: false });
-    const turnedOn = await client.executeCommands({
+    expect((await client.settings()).some((s) => s.key === "project.status_pull_request")).toBe(
+      false,
+    );
+    const turnedOff = await client.executeCommands({
       commands: [
         {
           name: "settings.set",
-          params: { key: "status_pull_request", value: true, project: project.id },
+          params: { key: "status_issue", value: false, project: project.id },
         },
       ],
       source: "ui",
     });
-    expect(turnedOn.status).toBe("done");
-    expect(
-      (await client.settings()).find(
-        (s) => s.key === "project.status_pull_request" && s.scopeId === project.id,
-      )?.value,
-    ).toBe(true);
+    expect(turnedOff.status).toBe("done");
+    expect((await statusRow())?.value).toBe(false);
+    expect((await statusRow())?.description).toContain(
+      `Status stays in the app: the status issue is turned off for "${project.name}" in Settings.`,
+    );
+    expect((await client.docs(project.id)).find((d) => d.path === "docs/status.md")?.note).toBe(
+      `Status stays in the app: the status issue is turned off for "${project.name}" in Settings.`,
+    );
   }, 120_000);
 
   it("a project made from a brief: after its session the Docs and Files tabs read the repository as merged, and a merge on the host shows after the next session (C-57)", async () => {
@@ -7954,7 +7970,10 @@ describe("the UI client against the real daemon: a task that waits for unmerged 
       /^fr\/intake-.+-docs$/.test(p.head.ref),
     );
     expect(intakePr, "the intake's docs pull request").toBeDefined();
-    // README.md is on main; the intake's docs wait in its pull request; Status is in the app.
+    // README.md is on main; the intake's docs wait in its pull request; Status is in the app,
+    // and on GitHub in the status issue (w8-status-write).
+    await rt.statusBoard.settled();
+    const briefIssue = (await host.listIssues(briefRepo, { state: "open" }))[0];
     const docs = await client.docs(project.id);
     expect(docs.find((d) => d.path === "README.md")).toMatchObject({
       exists: true,
@@ -7966,7 +7985,7 @@ describe("the UI client against the real daemon: a task that waits for unmerged 
     });
     expect(docs.find((d) => d.path === "docs/status.md")).toMatchObject({
       exists: true,
-      note: "kept in the app: no status pull request (Settings turns it on)",
+      note: `In the app; also on GitHub: issue #${briefIssue?.number}`,
     });
     const files = await client.projectFiles(project.id);
     expect(files.folder).not.toBeNull();
@@ -12633,7 +12652,7 @@ describe("polish-screens, wave 13", () => {
 });
 
 describe("w15-merge, wave 15", () => {
-  it("two projects on one repository with Status pull request on: the second never writes into, comments on or lists the first one's status or scaffold pull request; each Overview lists only its own; the same after the daemon starts again (W15-01)", async () => {
+  it("two projects on one repository (a pair made before the rule): the second never writes into, comments on or lists the first one's scaffold pull request; neither opens a status pull request (w8-status-write); each Overview lists only its own; the same after the daemon starts again (W15-01)", async () => {
     // Live check 2 (forerunner-sandbox, 2026-11-09): a second project's session pushed its
     // status onto `fr/status`, into the first project's open status pull request #5, commented
     // on it, and its Overview listed #5 with Merge.
@@ -12665,8 +12684,6 @@ describe("w15-merge, wave 15", () => {
           stateUrl: `sqlite:${join(home, "state.sqlite")}`,
         },
       );
-    const statusHead = async () =>
-      (await run(["git", "--git-dir", bare, "rev-parse", "fr/status"])).stdout.trim();
     const docsRows = async (c: DaemonClient, projectId: string) =>
       (await c.projectPullRequests(projectId)).waiting
         .filter((w) => w.kind === "docs")
@@ -12685,16 +12702,6 @@ describe("w15-merge, wave 15", () => {
           goal: `${name}'s notes`,
           repos: ["o/w15shared"],
         });
-        const on = await client.executeCommands({
-          commands: [
-            {
-              name: "settings.set",
-              params: { key: "status_pull_request", value: true, project: p.id },
-            },
-          ],
-          source: "ui",
-        });
-        expect(on.status).toBe("done");
         return p;
       };
       const session = async (projectId: string, title: string) => {
@@ -12721,22 +12728,18 @@ describe("w15-merge, wave 15", () => {
       const a = await project("Shared A");
       const b = await project("Shared B");
       await session(a.id, "Write the notes in a-notes.md");
-      const [prA] = await host.listPullRequests(repo, { state: "open", head: "fr/status" });
-      expect(prA?.body).toContain(`<!-- forerunner:pr project=${a.id} -->`);
+      // w8-status-write: no status pull request, whatever an earlier version's setting said.
+      expect(await host.listPullRequests(repo, { state: "open", head: "fr/status" })).toEqual([]);
       const [scaffold] = await host.listPullRequests(repo, {
         state: "open",
         head: "fr/docs-scaffold",
       });
       expect(scaffold?.body).toContain(`<!-- forerunner:pr project=${a.id} -->`);
-      const headA = await statusHead();
-      const commentsA = (await host.listPullRequestComments(repo, prA?.number ?? 0)).length;
       const scaffoldComments = (await host.listPullRequestComments(repo, scaffold?.number ?? 0))
         .length;
 
       await session(b.id, "Write the notes in b-notes.md");
-      // B wrote no commit onto fr/status, no comment on A's pull request and opened none.
-      expect(await statusHead()).toBe(headA);
-      expect((await host.listPullRequestComments(repo, prA?.number ?? 0)).length).toBe(commentsA);
+      // B wrote no comment on A's pull request and opened no docs or status one.
       expect((await host.listPullRequestComments(repo, scaffold?.number ?? 0)).length).toBe(
         scaffoldComments,
       );
@@ -12744,11 +12747,9 @@ describe("w15-merge, wave 15", () => {
         (await host.listPullRequests(repo, { state: "open" }))
           .filter((p) => p.head.ref.startsWith("fr/status") || p.head.ref === "fr/docs-scaffold")
           .map((p) => p.number),
-      ).toEqual([scaffold?.number, prA?.number].sort((x, y) => (x ?? 0) - (y ?? 0)));
+      ).toEqual([scaffold?.number]);
       // Each Overview lists only its own docs pull requests.
-      expect((await docsRows(client, a.id)).sort()).toEqual(
-        [`fr/docs-scaffold #${scaffold?.number}`, `fr/status #${prA?.number}`].sort(),
-      );
+      expect(await docsRows(client, a.id)).toEqual([`fr/docs-scaffold #${scaffold?.number}`]);
       expect(await docsRows(client, b.id)).toEqual([]);
       // B's Docs tab does not say its docs wait in A's pull requests.
       for (const d of await client.docs(b.id))
@@ -12758,23 +12759,21 @@ describe("w15-merge, wave 15", () => {
       const statusOfB = async () => {
         const row = (await client.docs(b.id)).find((d) => d.path === "docs/status.md");
         expect(row?.exists, row?.note ?? "no status row").toBe(true);
-        // d1109-onerepo-link (OR-09, L3-github-5): why, in words; never "(Settings turns it on)",
-        // which was untrue while the setting is on.
-        expect(row?.note).toBe(
-          `Kept in the app while the status pull request of "Shared A" is open on GitHub.`,
-        );
+        // w8-status-write: where it is on GitHub, in words (its status issue; a pair made before
+        // the one-repository rule writes one each while the repository names neither, the cut
+        // line of W8-write-9).
+        expect(row?.note).toMatch(/^In the app; also on GitHub: issue #\d+$/);
         const text = (await client.doc(b.id, "docs/status.md")).content;
         expect(text).toContain("Write the notes in b-notes.md");
         expect(text).not.toContain("Write the notes in a-notes.md");
       };
+      await rt.statusBoard.settled();
       await statusOfB();
 
       // The daemon starts again on the same home: the ownership is read from the bodies.
       await rt.close();
       ({ rt, client } = await compose());
-      expect((await docsRows(client, a.id)).sort()).toEqual(
-        [`fr/docs-scaffold #${scaffold?.number}`, `fr/status #${prA?.number}`].sort(),
-      );
+      expect(await docsRows(client, a.id)).toEqual([`fr/docs-scaffold #${scaffold?.number}`]);
       expect(await docsRows(client, b.id)).toEqual([]);
       await statusOfB();
     } finally {
@@ -19876,8 +19875,8 @@ describe("d1109-onerepo-join, run C", () => {
             "Budget per session: CHF 5.00",
             "Project budget: no project budget",
             "Who merges: Merge automatically after review",
-            // L4-github-113: the status pull request's setting moves with the work too.
-            "Status pull request: Off",
+            // w8-status-write: the status issue's switch is named (the status pull request went).
+            "Status issue: On",
             "Research reads: any public website",
           ],
         },
@@ -19892,7 +19891,7 @@ describe("d1109-onerepo-join, run C", () => {
             "Budget per session: CHF 5.00",
             "Project budget: no project budget",
             "Who merges: You press Merge",
-            "Status pull request: Off",
+            "Status issue: On",
             "Research reads: any public website",
           ],
         },
@@ -20098,9 +20097,10 @@ describe("d1109-onerepo-join, run C", () => {
     }
   }, 120_000);
 
-  it("OJ-03: after Make one project Site's Overview lists Kite club's status and scaffold pull requests as its own, and Site's next session writes its status into Kite club's open status pull request (one status pull request, no new one); the same after the daemon starts again", async () => {
-    // Before the join (W15-01) Site never wrote into, commented on or listed Kite club's status
-    // pull request; joined, the kept project reads Kite club's id as its own (`projectIdsOf`).
+  it("OJ-03 (w8-status-write): after Make one project Site's Overview lists Kite club's scaffold pull request as its own; neither project opens a status pull request, before or after the join, whatever an earlier version's setting said; the same after the daemon starts again", async () => {
+    // Before the join (W15-01) Site never wrote into, commented on or listed Kite club's pull
+    // requests; joined, the kept project reads Kite club's id as its own (`projectIdsOf`). The
+    // status pull request went (amendment 2): the status is the app's and the status issue's.
     const work = mkdtempSync(join(tmpdir(), "fr-ui-real-join-status-"));
     const bare = join(work, "shared.git");
     await run(["git", "init", "--bare", "-b", "main", bare]);
@@ -20129,8 +20129,6 @@ describe("d1109-onerepo-join, run C", () => {
           stateUrl: `sqlite:${join(home, "state.sqlite")}`,
         },
       );
-    const statusHead = async () =>
-      (await run(["git", "--git-dir", bare, "rev-parse", "fr/status"])).stdout.trim();
     const docsRows = async (c: DaemonClient, projectId: string) =>
       (await c.projectPullRequests(projectId)).waiting
         .filter((w) => w.kind === "docs")
@@ -20139,18 +20137,6 @@ describe("d1109-onerepo-join, run C", () => {
     let { rt, client } = await compose();
     try {
       const agentId = (await client.agents())[0]?.id ?? "";
-      const statusOn = async (projectId: string) => {
-        const on = await client.executeCommands({
-          commands: [
-            {
-              name: "settings.set",
-              params: { key: "status_pull_request", value: true, project: projectId },
-            },
-          ],
-          source: "ui",
-        });
-        expect(on.status).toBe("done");
-      };
       const session = async (projectId: string, title: string) => {
         await client.createTask(projectId, {
           title,
@@ -20177,16 +20163,20 @@ describe("d1109-onerepo-join, run C", () => {
         goal: "Kites",
         repos: ["o/joinshared"],
       });
-      await statusOn(kite.id);
       const site = await pairBeforeTheRule(rt, client, {
         name: "Site",
         goal: "A site",
         repos: ["o/joinshared"],
       });
-      await statusOn(site.id);
+      // An earlier version's setting, as it may be stored: it changes nothing.
+      for (const p of [kite, site]) {
+        const row = await rt.store.project.mustGet(p.id);
+        await rt.store.project.patch(p.id, {
+          settings: { ...row.settings, status_pull_request: true },
+        });
+      }
       await session(kite.id, "Write the notes in kite-notes.md");
-      const [status] = await host.listPullRequests(repo, { state: "open", head: "fr/status" });
-      expect(status?.body).toContain(`<!-- forerunner:pr project=${kite.id} -->`);
+      expect(await host.listPullRequests(repo, { state: "all", head: "fr/status" })).toEqual([]);
       const [scaffold] = await host.listPullRequests(repo, {
         state: "open",
         head: "fr/docs-scaffold",
@@ -20200,20 +20190,14 @@ describe("d1109-onerepo-join, run C", () => {
         confirm: "tap",
       });
       expect(joined.status).toBe("done");
-      const kiteRows = [`fr/docs-scaffold #${scaffold?.number}`, `fr/status #${status?.number}`];
-      expect(await docsRows(client, site.id)).toEqual(kiteRows.sort());
-      const head = await statusHead();
+      const kiteRows = [`fr/docs-scaffold #${scaffold?.number}`];
+      expect(await docsRows(client, site.id)).toEqual(kiteRows);
       await rt.close();
       ({ rt, client } = await compose());
-      expect(await docsRows(client, site.id)).toEqual(kiteRows.sort());
+      expect(await docsRows(client, site.id)).toEqual(kiteRows);
       await session(site.id, "Write the notes in site-notes.md");
-      // Site's status went into Kite club's open status pull request: a new commit there, no
-      // second status pull request.
-      expect(await statusHead()).not.toBe(head);
-      const open = await host.listPullRequests(repo, { state: "open", head: "fr/status" });
-      expect(open.map((p) => p.number)).toEqual([status?.number]);
-      const text = (await run(["git", "--git-dir", bare, "show", "fr/status:docs/status.md"]))
-        .stdout;
+      expect(await host.listPullRequests(repo, { state: "all", head: "fr/status" })).toEqual([]);
+      const text = (await client.doc(site.id, "docs/status.md")).content;
       expect(text).toContain("Write the notes in site-notes.md");
     } finally {
       await rt.close();
@@ -20500,10 +20484,10 @@ describe("d1109-onerepo-join, run C", () => {
           commands: [
             {
               name: "settings.set",
-              params: { key: "status_pull_request", value: true, project: kite.id },
+              params: { key: "status_issue", value: false, project: kite.id },
             },
           ],
-          wordsUsed: "Status pull request (Settings)",
+          wordsUsed: "Status issue on GitHub (Settings)",
           source: "ui",
           projectId: kite.id,
           confirm: "tap",
@@ -20511,9 +20495,7 @@ describe("d1109-onerepo-join, run C", () => {
         expect(setting).toMatchObject({ status: "refused", reason: REFUSED });
         expect(await c.tasks(kite.id)).toEqual([]);
         expect(await c.queue(kite.id)).toEqual([]);
-        expect((await rt.store.project.mustGet(kite.id)).settings.status_pull_request).toBe(
-          undefined,
-        );
+        expect((await rt.store.project.mustGet(kite.id)).settings.status_issue).toBe(undefined);
         // Site, which has the work now, takes a new task.
         const onSite = await c.createTask(site.id, {
           title: "Probe task on Site",
@@ -26381,7 +26363,7 @@ describe("l4-github-link, run L4", () => {
     }
   }, 120_000);
 
-  it("L4-github-103: after Work together on o/kite, GET /settings has no Status pull request row for the project and settings.set status_pull_request=true answers the one refusal sentence and writes nothing; the same after the daemon starts again", async () => {
+  it("w8-status-write (W8-write-6, -10): after Work together on o/kite, GET /settings has the Status issue on GitHub row for the project (on; no Status pull request row); settings.set status_issue=false acts with its sentence and its change row, and the row and the Docs Status row say the status stays in the app; the setting survives the daemon starting again; status_pull_request is no setting any more", async () => {
     const w = world();
     await w.seeded("kite", { "README.md": "# kite\n", ".forerunner/project.json": kiteMarker });
     let { rt, client } = await w.compose();
@@ -26394,38 +26376,56 @@ describe("l4-github-link, run L4", () => {
         together: { project: KITE_ID },
       });
       expect(made.id).toBe(KITE_ID);
-      const sentence =
-        'You work on "Kite club" together with another Forerunner, so its status stays in the app (Docs, Status); no status pull request is opened.';
+      const row = async (c: DaemonClient) =>
+        (await c.settings()).find((r) => r.key === "project.status_issue" && r.scopeId === KITE_ID);
+      const rows = await client.settings();
+      expect(rows.some((r) => r.key === "project.status_pull_request")).toBe(false);
+      expect(rows.some((r) => r.key === "project.merge_mode" && r.scopeId === KITE_ID)).toBe(true);
+      expect(await row(client)).toMatchObject({ label: "Status issue on GitHub", value: true });
+      // Nothing is on GitHub yet (Work together writes nothing, OR-15).
+      expect((await row(client))?.description).toContain(
+        "Status on GitHub: the status issue is written when a task starts or a session ends.",
+      );
+      const changesBefore = (await client.changes({ projectId: KITE_ID })).length;
+      const off = await client.executeCommands({
+        commands: [
+          { name: "settings.set", params: { key: "status_issue", value: false, project: KITE_ID } },
+        ],
+        wordsUsed: "turn the status issue off",
+        source: "ui",
+        projectId: KITE_ID,
+        confirm: "tap",
+      });
+      expect(off.status).toBe("done");
+      expect(off.sentence).toContain(
+        "this Forerunner writes no status issue or comment for the project; its status stays in the app (Docs, Status)",
+      );
+      expect((await client.changes({ projectId: KITE_ID })).length).toBe(changesBefore + 1);
+      const offWords = `Status stays in the app: the status issue is turned off for "${made.name}" in Settings.`;
       const check = async (c: DaemonClient) => {
-        const rows = await c.settings();
-        expect(
-          rows.filter((r) => r.key === "project.status_pull_request" && r.scopeId === KITE_ID),
-        ).toEqual([]);
-        // Who merges and the other GitHub rows stay: the project's own task pull requests are its.
-        expect(rows.some((r) => r.key === "project.merge_mode" && r.scopeId === KITE_ID)).toBe(
-          true,
-        );
-        const changesBefore = (await c.changes({ projectId: KITE_ID })).length;
-        const r = await c.executeCommands({
-          commands: [
-            {
-              name: "settings.set",
-              params: { key: "status_pull_request", value: true, project: KITE_ID },
-            },
-          ],
-          wordsUsed: "turn on the status pull request",
-          source: "ui",
-          projectId: KITE_ID,
-          confirm: "tap",
-        });
-        expect(r.status).toBe("refused");
-        expect(r.reason).toBe(sentence);
-        expect((await c.changes({ projectId: KITE_ID })).length).toBe(changesBefore);
-        expect(
-          (await rt.store.project.mustGet(KITE_ID)).settings.status_pull_request,
-        ).toBeUndefined();
+        expect(await row(c)).toMatchObject({ value: false });
+        expect((await row(c))?.description).toContain(offWords);
+        const status = (await c.docs(KITE_ID)).find((d) => d.path === "docs/status.md");
+        expect(status?.note).toBe(offWords);
+        expect(status?.notWrittenHere).toBeUndefined();
       };
       await check(client);
+      const old = await client.executeCommands({
+        commands: [
+          {
+            name: "settings.set",
+            params: { key: "status_pull_request", value: true, project: KITE_ID },
+          },
+        ],
+        wordsUsed: "turn on the status pull request",
+        source: "ui",
+        projectId: KITE_ID,
+        confirm: "tap",
+      });
+      expect(old.status).toBe("refused");
+      expect(
+        (await rt.store.project.mustGet(KITE_ID)).settings.status_pull_request,
+      ).toBeUndefined();
       await settleSessions(rt);
       await rt.close();
       ({ rt, client } = await w.compose());
@@ -26780,28 +26780,27 @@ describe("l4-github-merge, run L4", () => {
     }
   }, 240_000);
 
-  it("L4-github-113, -114, -115, -116, -125, L4-creds-28: Make one project of two on one repository: the dialog names the status setting and counts a pull request closed on GitHub as not open; after the join the kept project lists the closed one's status pull request with Merge (its own setting off), Costs reads the moved task's own run, and the closed project's page has no docs-clone folder and says where its tasks went; the same after the daemon starts again", async () => {
+  it("L4-github-113, -114, -115, -116, -125, L4-creds-28: Make one project of two on one repository: the dialog names the status issue's switch and counts a pull request closed on GitHub as not open; after the join no status pull request is listed (w8-status-write: none is opened), Costs reads the moved task's own run, and the closed project's page has no docs-clone folder and says where its tasks went; the same after the daemon starts again", async () => {
     const w = await repoWorld("l4join");
     let { rt, client } = await w.compose();
     try {
-      const statusOn = async (projectId: string) => {
-        const on = await client.executeCommands({
+      const statusOff = async (projectId: string) => {
+        const off = await client.executeCommands({
           commands: [
             {
               name: "settings.set",
-              params: { key: "status_pull_request", value: true, project: projectId },
+              params: { key: "status_issue", value: false, project: projectId },
             },
           ],
           source: "ui",
         });
-        expect(on.status).toBe("done");
+        expect(off.status).toBe("done");
       };
       const kite = await client.createProject({
         name: "Kite club",
         goal: "Kites",
         repos: ["alice/l4join"],
       });
-      await statusOn(kite.id);
       const first = await client.createTask(kite.id, {
         title: "Write kite/club.txt with one line",
         outcome: "kite/club.txt holds one line",
@@ -26820,12 +26819,12 @@ describe("l4-github-merge, run L4", () => {
         goal: "A site",
         repos: ["alice/l4join"],
       });
-      // Kite club's status pull request is open on fr/status, marked with its id.
-      const [status] = await w.github.listPullRequests(w.REPO, {
-        state: "open",
-        head: "fr/status",
-      });
-      expect(status?.body).toContain(`<!-- forerunner:pr project=${kite.id} -->`);
+      // w8-status-write: no status pull request was opened; Kite club's switch is turned off,
+      // so the two projects' settings differ.
+      expect(await w.github.listPullRequests(w.REPO, { state: "all", head: "fr/status" })).toEqual(
+        [],
+      );
+      await statusOff(kite.id);
       // One of Kite club's pull requests is closed on GitHub without a merge; one poll.
       const closedPr = prOf((await rt.store.task.mustGet(first.id)).pr_url);
       await w.github.updatePullRequest(w.REPO, closedPr, { state: "closed" });
@@ -26851,13 +26850,11 @@ describe("l4-github-merge, run L4", () => {
       // Before: "2 open pull requests" (the closed one counted).
       expect(kiteLines).toContain("2 tasks done");
       expect(kiteLines).toContain("1 open pull request");
-      expect(kiteLines).toContain("Status pull request: On");
-      expect(preview.projects.find((p) => p.id === site.id)?.lines).toContain(
-        "Status pull request: Off",
-      );
+      expect(kiteLines).toContain("Status issue: Off");
+      expect(preview.projects.find((p) => p.id === site.id)?.lines).toContain("Status issue: On");
       // Before: [] (four settings only).
       expect(preview.ifKept[site.id]?.settings).toContain(
-        'Status pull request: the setting of "Site" applies to the moved work: off.',
+        'Status issue: the setting of "Site" applies to the moved work: on.',
       );
       const joined = await client.executeCommands({
         commands: [{ name: "project.join", params: { keep: site.id, close: [kite.id] } }],
@@ -26868,12 +26865,10 @@ describe("l4-github-merge, run L4", () => {
       });
       expect(joined.status).toBe("done");
       const check = async (c: DaemonClient) => {
-        // L4-github-113: Kite club's status pull request is Site's docs row, with Merge.
-        const docsRow = (await c.projectPullRequests(site.id)).waiting.find(
-          (r) => r.kind === "docs" && r.branch === "fr/status",
-        );
-        expect(docsRow?.number).toBe(status?.number);
-        expect(docsRow?.merge?.canMerge).toBe(true);
+        // w8-status-write: no status pull request is listed (none was opened).
+        expect(
+          (await c.projectPullRequests(site.id)).waiting.filter((r) => r.branch === "fr/status"),
+        ).toEqual([]);
         // L4-github-116: the moved task's own run and its accept (before: the ledger rows).
         const costs = await c.costs({ projectId: site.id });
         const moved = costs.byTask.find((b) => b.key === second.id);

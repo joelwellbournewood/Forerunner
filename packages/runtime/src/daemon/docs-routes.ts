@@ -256,7 +256,8 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
     // w8-status-write (amendment 1): the status is the app's, and GitHub's copy is the status
     // issue, for a together project too; the note says where it is, in one sentence.
     const together = togetherOf(project);
-    const keptNote = deps.statusNote?.(project) ?? "In the app";
+    // Null for a project kept in a folder (its status is in the folder, as before).
+    const keptNote = deps.statusNote?.(project) ?? null;
     const reviews = await reviewsView(deps.store, { projectId: project.id, limit: 50 });
     // Before (GitHub walk, 2026-11-02) the docs read "missing · not written yet" while they
     // waited in the scaffold's pull request #1, which nothing showed.
@@ -276,6 +277,18 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
       const rel = rowFile(doc);
       const found = locate(rootsFor(project, rel), rel);
       const finding = drift.find((f) => f.description.includes(doc) || f.description.includes(rel));
+      // w8-status-write (amendment 1): the Status row is the project's own, together or not,
+      // and says where the status is on GitHub, also before the first session wrote it.
+      if (doc === STATUS_DOC && keptNote && !finding && (!found || found.root === statusRoot))
+        return {
+          path: rel,
+          title: TITLES[doc],
+          exists: found !== null,
+          sizeBytes: found?.sizeBytes ?? 0,
+          updatedAt: found?.updatedAt ?? null,
+          drift: false,
+          note: keptNote,
+        };
       const pr = found
         ? undefined
         : waiting.find((w) => w.path === rel || (rel.endsWith("/") && w.path.startsWith(rel)));
@@ -325,7 +338,7 @@ export function createDocsRoutes(deps: DocsRoutesDeps): Hono {
         note: finding
           ? finding.description
           : found
-            ? found.root === statusRoot
+            ? found.root === statusRoot && keptNote
               ? keptNote
               : rootLabel(project, found.root)
             : "not written yet",

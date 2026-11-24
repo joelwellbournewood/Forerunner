@@ -244,7 +244,7 @@ describe("Settings: models per agent and specialist", () => {
     await waitFor(() => expect(section).toHaveTextContent("/settings/models"));
     // Every row of the settings is still there (the fixture's, the D.16 slider row included).
     // Beacon's autonomy too: the daemon lists every project's rows (settings-view.ts), and
-    // Atlas's Status pull request and Who merges accepted work (a project on a host repository,
+    // Atlas's Status issue on GitHub and Who merges accepted work (a project on a host repository,
     // C-57, merge-in-app), and "Web pages research may read" for Atlas and Beacon ('sites'). Rows
     // that change nothing are not listed (design §6, validation rule 7).
     expect(await screen.findAllByTestId("setting-row")).toHaveLength(

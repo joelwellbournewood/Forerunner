@@ -17,9 +17,9 @@ import type { z } from "zod";
 import { parseRepoRef } from "../loop/docs.ts";
 import { MERGE_MODE_SETTING, MERGE_MODE_WORDS, mergeModeOf } from "../loop/merge-mode.ts";
 import {
-  PUBLIC_REPOSITORY_SENTENCE,
   STATUS_ISSUE_SETTING,
   statusIssuePolicy,
+  statusIssueRowWords,
 } from "../loop/status-board-words.ts";
 import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
 import { DEFAULT_CEILING, speedQualityOffsetOf } from "../models/ladder.ts";
@@ -49,21 +49,6 @@ export interface SettingsViewInput {
    * and whether the repository is public (then Settings says who can read the issue).
    */
   statusIssue?: (project: ProjectRow) => { sentence: string | null; public: boolean | null } | null;
-}
-
-/**
- * The status issue row's words (w8-status-write, W8-write-7, -10): what the switch does, then
- * where the status is now in one sentence, and on a public repository who can read the issue.
- */
-export function statusIssueRowWords(
-  p: ProjectRow,
-  now: { sentence: string | null; public: boolean | null } | null,
-): string {
-  const what = `The status of ${p.name} on GitHub: this Forerunner's own comment on the project's pinned status issue, with no costs (off: it stays in the app, under Docs, Status).`;
-  const parts = [what];
-  if (now?.sentence) parts.push(now.sentence);
-  if (now?.public === true && statusIssuePolicy(p).on) parts.push(PUBLIC_REPOSITORY_SENTENCE);
-  return parts.join(" ");
 }
 
 /** The page reader on a computer that reaches the internet only through a proxy ('sites'). */

@@ -269,12 +269,10 @@ describe("Docs tab", () => {
     expect(arch).toHaveTextContent("src/search changed after this doc");
     const runbook = rows.find((r) => r.dataset.path === "docs/runbook.md");
     expect(runbook).toHaveTextContent("missing");
-    // A repository project's status stays in the app unless its status pull request is on
-    // (C-57): the row says so, in the daemon's words.
+    // A repository project's status is the app's; GitHub's copy is the status issue
+    // (w8-status-write): the row says where, in the daemon's words.
     const status = rows.find((r) => r.dataset.path === "docs/status.md");
-    expect(status).toHaveTextContent(
-      "kept in the app: no status pull request (Settings turns it on)",
-    );
+    expect(status).toHaveTextContent("In the app; also on GitHub: issue #12");
     await user.click(within(arch).getByTestId("doc-open"));
     const content = await screen.findByTestId("doc-content");
     await waitFor(() => expect(content).toHaveTextContent("search index built at deploy time"));

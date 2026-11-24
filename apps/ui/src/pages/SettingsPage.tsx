@@ -92,7 +92,7 @@ export const SETTING_KEYS = [
   "session_reserve_share",
   "small_project_mode",
   "fast_mode",
-  "status_pull_request",
+  "status_issue",
   "merge_mode",
   "push_unfinished_work",
   "start_by_itself",

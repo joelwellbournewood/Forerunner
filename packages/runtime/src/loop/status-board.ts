@@ -366,9 +366,10 @@ export class StatusBoard implements StatusBoardPort {
   words(
     project: ProjectRow,
     timezone: string | undefined,
-  ): { sentence: string | null; docsNote: string; public: boolean | null } {
-    this.resume(project.id);
+  ): { sentence: string | null; docsNote: string | null; public: boolean | null } {
     const place = this.place(project);
+    if (place.kind === "none") return { sentence: null, docsNote: null, public: null };
+    this.resume(project.id);
     const last =
       (place.kind === "waiting" || place.kind === "on") && place.lastAt
         ? clockTime(place.lastAt, timezone, this.deps.clock.now())

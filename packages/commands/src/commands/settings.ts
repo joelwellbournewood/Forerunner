@@ -18,7 +18,10 @@ import {
   MERGE_MODES,
   mergeModeEffect,
 } from "@forerunner/runtime/loop/merge-mode";
-import { STATUS_ISSUE_SETTING } from "@forerunner/runtime/loop/status-board-words";
+import {
+  STATUS_ISSUE_EFFECT,
+  STATUS_ISSUE_SETTING,
+} from "@forerunner/runtime/loop/status-board-words";
 import { FAST_MODE_SETTING, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
 import { DEFAULT_CEILING, TIERS } from "@forerunner/runtime/models/ladder";
 import { PUSH_UNFINISHED_SETTING } from "@forerunner/runtime/session/push-unfinished";
@@ -421,10 +424,7 @@ export const SETTING_SPECS: Record<string, SettingSpec> = {
     narrows: (to) => to === false,
     description:
       "A repository project's status on GitHub: this Forerunner's own comment on the project's pinned status issue (what it works on, what waits for Merge, its last session; no costs); off, it stays in the app.",
-    effect: (value) =>
-      value === false
-        ? "this Forerunner writes no status issue or comment for the project; its status stays in the app (Docs, Status)"
-        : "this Forerunner keeps its own comment on the project's pinned status issue on GitHub, with no costs",
+    effect: (value) => (value === false ? STATUS_ISSUE_EFFECT.off : STATUS_ISSUE_EFFECT.on),
     display: (value) => (value === false ? "off" : "on"),
   },
   // merge-in-app (the owner's decision of 2026-11-02, ADR 0111 amended): who merges a

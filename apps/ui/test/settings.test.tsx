@@ -219,7 +219,7 @@ describe("Settings", () => {
     const rows = await screen.findAllByTestId("setting-row");
     // The fixture's 18 (U-078 added "When my first choice runs out mid-session" and "Code tasks
     // that need commands"), Beacon's autonomy (the daemon lists every project's rows), Atlas's
-    // Status pull request and Who merges accepted work (a project on a host repository, C-57,
+    // Status issue on GitHub and Who merges accepted work (a project on a host repository, C-57,
     // merge-in-app), "Web pages research may read" for Atlas and Beacon ('sites'), less the three
     // that change nothing (language, the model provider, chat.model): design §6 hides them.
     // polish-screens: each project's budget row too (Atlas and Beacon), as the daemon lists it.

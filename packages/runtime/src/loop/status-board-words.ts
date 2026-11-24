@@ -38,6 +38,12 @@ export function statusIssuePolicy(project: { settings?: Record<string, unknown> 
   return { on: project.settings?.[STATUS_ISSUE_SETTING] !== false };
 }
 
+/** What `settings.set status_issue` says each value does (its card, the sentence, the fake's). */
+export const STATUS_ISSUE_EFFECT = {
+  on: "this Forerunner keeps its own comment on the project's pinned status issue on GitHub, with no costs",
+  off: "this Forerunner writes no status issue or comment for the project; its status stays in the app (Docs, Status)",
+} as const;
+
 /** How long a Working on now line says the task holds its files (the decision: now + 90 min). */
 export const WORKING_HOLD_MS = 90 * 60_000;
 
@@ -587,3 +593,18 @@ export function issueDeletedUpdate(issue: number): string {
  */
 export const OLD_STATUS_PR_LINE =
   "Closed by Forerunner: the project's status is kept in its status issue now, not in a pull request.";
+
+/**
+ * The status issue row's words (w8-status-write, W8-write-7, -10): what the switch does, then
+ * where the status is now in one sentence, and on a public repository who can read the issue.
+ */
+export function statusIssueRowWords(
+  p: { name: string; settings?: Record<string, unknown> | null },
+  now: { sentence: string | null; public: boolean | null } | null,
+): string {
+  const what = `The status of ${p.name} on GitHub: this Forerunner's own comment on the project's pinned status issue, with no costs (off: it stays in the app, under Docs, Status).`;
+  const parts = [what];
+  if (now?.sentence) parts.push(now.sentence);
+  if (now?.public === true && statusIssuePolicy(p).on) parts.push(PUBLIC_REPOSITORY_SENTENCE);
+  return parts.join(" ");
+}
