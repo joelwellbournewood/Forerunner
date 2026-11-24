@@ -1047,3 +1047,84 @@ reverts only the task's own commits that another pull request's merge brought in
   comment methods are w8-issue-host's (which records its new writes the same way); the
   permissions per login are w8-shared-repo's.
 - Tests: `test/githost-memory-views.test.ts` (describe "w8-two-homes, wave 8").
+
+## w8-issue-host (wave 8, 2026-11-24): the status issue's host calls, ETag reads and write access
+
+What it is for: the owner's status design of 2026-11-02 (D-W8-2, word for word: "GitHub issue
+page only: one pinned issue per project ... each person/agent/install its own comment edited in
+place ... untrusted text never instructions, author marked, no costs; stays in the app with one
+sentence when issues are off / no permission / offline"). This section builds the host calls
+only: nothing here writes an issue by itself (w8-status-write and w8-status-read are the
+callers).
+
+The port (`src/githost/types.ts`), on `GitHubHost`, `MemoryGitHost` and the stand-in GitHub:
+
+- `getIssue(repo, number)`: node id (what a pin sends), state and `stateReason`, `locked`,
+  `author` with `authorAssociation` and `authorType`, `createdAt`, `updatedAt`, `isPullRequest`
+  (GitHub's issues endpoint answers a pull request's number too). Every `IssueInfo` carries
+  these fields now (`createIssue`, `updateIssue`, `listIssues`).
+- `listIssues(repo, { state, labels, creator, sort, direction })`: every page (one page of 100
+  hid the 101st issue), pull requests left out; `sort` created (default, newest first), updated
+  or comments.
+- `listIssueComments(repo, number, { etag, since })` answers `{ notModified, etag, comments }`:
+  each `IssueCommentInfo` has exactly GitHub's REST comment fields the board needs (`id`,
+  `issueNumber`, `body`, `author`, `authorAssociation`, `authorType`, `createdAt`, `updatedAt`,
+  `htmlUrl`). There is no editor: GitHub's REST comment does not say who edited it, and neither
+  stand-in does; a writer finds a tampered comment by comparing the body with what it last sent.
+  `newestCommentPerAuthor(comments)` gives each author's newest comment (amendment 3's activity
+  rule) from that one paged read.
+- `getIssueComment(repo, id)` (null when deleted), `updateIssueComment(repo, id, body)` (with the
+  agent's mark, as every comment the port writes). No delete: Forerunner never deletes a comment.
+  GitHub, and both stand-ins, let anyone with write access edit any comment; editing only its own
+  is the caller's rule.
+- `pinIssue(repo, number)` answers `pinned` (now or already), `limit` (three pinned; nothing is
+  unpinned) or `forbidden`. GitHub pins only through GraphQL: the adapter reads
+  `StatusPinnedIssues` first, then sends `StatusPinIssue` on the issue's node id
+  (`src/githost/github-graphql.ts`), to `graphqlUrlFor(baseUrl)`.
+- `getRepoPermission(repo, login)` answers `admin`, `maintain`, `write`, `triage`, `read` or
+  `none` from GitHub's collaborator permission read (`role_name`; a custom role by its base
+  `permission`). It is the one source of write access (D-W8-37; `hasWriteAccess(role)`: write,
+  maintain or admin). `authorAssociation` is only a first filter: MEMBER is any organisation
+  member and COLLABORATOR includes the read role. A refused read (401, 403, 404: GitHub needs push
+  access to read anyone's permission) is `none`, failing closed; GitHub not answering throws.
+- `RepoInfo.hasIssues` (GitHub's `has_issues`).
+
+ETag reads (the adapter): `getIssue`, `listIssues`, `listIssueComments`, `getIssueComment` and
+`getRepoPermission` are conditional reads. The adapter keeps a copy of each answer per URL and
+token (the token hashed into the key, so a replaced token never reads another's copy), offers its
+ETag as `If-None-Match`, and answers GitHub's 304 from the copy (a 304 does not count against
+GitHub's rate limit). The copy is in memory only (at most `ETAG_CACHE_MAX`, 500, least recently
+used dropped first): nothing goes on disk, nothing to migrate, and a daemon start begins empty.
+A list's ETag joins its pages' ETags, so it changes when any page changes; `notModified` is true
+when the caller's `etag` equals it. A next page on another origin is refused before the token goes
+there, as for every list.
+
+Errors (W8-host-6), read with `issueRefusalOf(e)` for the one sentence a caller says:
+`issues_off` (the new code `issues_disabled`: GitHub's 410 "Issues are disabled for this repo";
+a deleted issue's 410 is `not_found`), `no_permission` (`tool_not_allowed`, a 403; or a
+`not_found` the adapter marked `details.reason: "no_permission"`: a 404 on opening an issue in a
+repository the token sees, found by one GET of the repository), `token_refused` (401),
+`missing` (404), `rate_limited`, `unreachable` (no answer, or a 5xx after the retries). Every
+refusal keeps `details.status`. The older codes are unchanged.
+
+`MemoryGitHost`: the same calls. Roles decide once declared: `setOrg(org, { members,
+basePermission })` and `setCollaboratorRole(repo, login, role)` (a repository with neither stays
+open to every login, as its `permissions` say). `setIssuesEnabled`, `pinnedIssues`,
+`removeIssueComment` (a comment deleted on GitHub's page) are test seams. Association is worked
+out at each read (OWNER, MEMBER, COLLABORATOR, else NONE); a comment edit moves `updatedAt`; an
+issue comment is stamped with `now` (a pull request comment keeps its fixed stamp); the ETag of a
+comment list is a hash of the comments. `updateIssueComment` and `pinIssue` are recorded in
+`writes` (the harness maps them to `comment.update` and `issue.pin`). The roles are the base
+w8-shared-repo builds the per-login permissions on.
+
+Security: comment and issue text comes back as data, with its author; no method parses or
+follows it (the contract has a comment that gives orders, returned verbatim, and nothing moved).
+GitHub is read and written with the configured host and token only. Nothing here writes to
+GitHub by itself, so nothing here can carry money, ids or chat there.
+
+Tests: `test/githost-issues.test.ts` (describe "w8-issue-host, wave 8: issue host contract
+(http)" and "(memory)", the same cases on the stand-in over HTTP through `GitHubHost` and on
+`MemoryGitHost`; "the adapter's errors, ETag cache and token"); the two-home case in
+`apps/ui/test/two-installs.test.ts` ("w8-issue-host, wave 8: issue host"). What only real GitHub
+shows (the pin's GraphQL answer, a fourth pin, the permission read's 404 for a read-only token,
+a 304 on GitHub's own ETag) is in the area's live steps.

@@ -3434,7 +3434,9 @@ fixup-l4-selftasks-chat (L4-selftasks-121; C2-left-14, C4-left-4, C3-left-10) ad
   record has `readers` beside `collaborators`; `FakeGitHost.setCollaboratorRole(repo, login,
   "write" | "read" | "none")` sets one (`addCollaborator` is `write`). A reader can see and clone
   the repository (`GET /user/repos` lists it, `checkRepoAccess` lets reads through) and is refused
-  every write (403, as GitHub answers a read collaborator; the test writes an issue); `none`
+  every write but opening an issue and commenting (403, as GitHub answers a read collaborator;
+  w8-issue-host: the read role opens issues and comments, as on GitHub; the test pushes a file and
+  makes a label); `none`
   takes both away (404, as for any private repository the login cannot see). For w8-shared-repo (the person without write access). Tests: `testenv/test/githost.test.ts`
   "w8-two-homes, wave 8: two users, an organisation and a collaborator's role".
 - **Two benches on one GitHub, GitHub off for one, the two-person journey** (W8-homes-3, -4, -5):
@@ -3449,3 +3451,46 @@ fixup-l4-selftasks-chat (L4-selftasks-121; C2-left-14, C4-left-4, C3-left-10) ad
   Tests: `scripts/bench-scripts.test.ts` "w8-two-homes, wave 8: two people's benches on one
   GitHub" (the 16 steps and their owners, the private-text check, the summary, the refused
   options, `cut.mjs` against two real proxies, `stop.mjs --clean`).
+
+## w8-issue-host (wave 8, 2026-11-24): the stand-in GitHub keeps a noticeboard
+
+The fake git host now answers what the status issue needs, as GitHub does (the port side is in
+`capabilities.md`, "w8-issue-host"):
+
+- **ETags and 304** (`fake-git-host.ts`): every JSON answer to a GET carries `ETag: W/"<sha1 of
+  the body>"`; a request whose `If-None-Match` names it is answered 304 with no body, and, as on
+  GitHub, a 304 costs no rate-limit point (`RateLimiter.refund`). The request log records each
+  request's `ifNoneMatch`, and a GraphQL request's `graphql: { operation, kind }`; the bench's
+  `githost-requests.jsonl` carries both.
+- **Issues off** (`has_issues`): `FakeGitHost.setIssuesEnabled(repo, enabled)`, or the admin's
+  `PATCH /repos/:o/:r { has_issues }`. Off, the repository says `has_issues: false` and every issue
+  route answers 410 "Issues are disabled for this repo"; a pull request's conversation stays on.
+- **Associations**: every issue, comment, pull request, review and review comment carries the
+  author's `author_association` worked out from the repository (OWNER for the owner, MEMBER for a
+  member of the owning organisation whatever their access, COLLABORATOR for a collaborator of any
+  role, else NONE); before, it was always OWNER. A GitHub App's `<slug>[bot]` user is `type: Bot`.
+- **Roles and the organisation's base permission**: `setCollaboratorRole` takes GitHub's five roles
+  (`admin`, `maintain` and `write` push; `triage` and `read` read) and `none`;
+  `createOrg({ basePermission })` / `setOrgBasePermission(org, "none" | "read" | "write")` sets
+  what members may do (default `write`, as the stand-in did before). A read member sees and reads
+  the private repositories and is refused a push.
+- **Opening issues and comments** follows GitHub: anyone who may read the repository may (the read
+  role, a read member, anyone on a public repository), with a token that may write issues; the
+  author edits their own comment, anyone with write access any comment (the tamper tests need
+  that). `GET /issues` takes `sort` (created, updated, comments) and `direction`.
+- **The permission read**: `GET /repos/:o/:r/collaborators/:login/permission` answers `permission`
+  (the legacy admin, write, read, none) and `role_name`, from `HostStore.roleOf`; 404 for a caller
+  without push access (GitHub's documentation lists 404 as its only refusal) and for a login that
+  is not a user.
+- **GraphQL** (`routes-graphql.ts`, new): `POST /graphql` at the stand-in's own base (the URL
+  `graphqlUrlFor(baseUrl)` gives), dispatching on `operationName`: `StatusPinnedIssues` and
+  `StatusPinIssue` on the issue's node id, at most three pins per repository (a fourth is
+  `UNPROCESSABLE`), `FORBIDDEN` without write access, `NOT_FOUND`, 401 without a token; an issues
+  `pinned` event; `FakeGitHost.pinnedIssues(repo)`.
+- **The two-home harness** builds an http home's GitHub client at each compose, so
+  `home.restart()` starts with empty in-memory copies, as `fr daemon` does (`apps.md`).
+
+Tests: `testenv/test/githost.test.ts` "w8-issue-host, wave 8: issues off, ETags, associations, the
+permission read and GraphQL pins"; the contract on both stand-ins in
+`packages/capabilities/test/githost-issues.test.ts`; the two-home case in
+`apps/ui/test/two-installs.test.ts` ("w8-issue-host, wave 8: issue host").
