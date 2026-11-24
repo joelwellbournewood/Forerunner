@@ -1,0 +1,73 @@
+{
+ "why": "Session-lead items for phase G (UPDATE-LOG, CHANGELOG, requirements, live checks).",
+ "items": [
+  {
+   "id": "W8a-left-28",
+   "target": "session-lead",
+   "severity": "docs",
+   "never_cut": false,
+   "text": "The areas suggested lines but could not write them, because the files are the session lead's. (1) w8-two-homes: three CHANGELOG [Unreleased] lines (the model watch answered in your name; a new time zone shows on every open page; two people's Forerunners in the tests and on the bench) and an UPDATE-LOG line. That line's Check in the app step must read 'Settings, Open the setup assistant, Back to the first step, Time zone', not 'In Settings' (see W8a-left-25). (2) w8-issue-host: a CHANGELOG 'Internal:' line and an UPDATE-LOG line, plus the fix-up's additions: a repeated read notices a comment after an exactly full page; the pin refusal and stand-in fixes; head cfbd69f. (3) w8-repo-guide: an UPDATE-LOG/CHANGELOG line (AGENTS.md and a one-line CLAUDE.md, no docs/status.md, decisions named by the day, another person's docs pull request only listed, ADR 0121). Also the requirements G.5 wording: the doc set is AGENTS.md, CLAUDE.md, README.md, docs/overview.md, docs/architecture.md, docs/decisions/, docs/runbook.md, docs/data.md and docs/testing.md, and the status is the app's. (4) fixup-w8-repo-guide: a line saying a docs pull request your Forerunner did not open is listed apart under 'Also open on GitHub' with no Merge, and that Inbox answers go to the record the card names on whatever day they come. Done: CHANGELOG [Unreleased], docs/status/UPDATE-LOG.md and requirements G.5 carry W8a's entries, with Check in the app steps the owner can walk.",
+   "sources": [
+    "runW8-W8a-fix-w8-two-homes.json not_done[2]",
+    "runW8-W8a-fix-w8-two-homes.json notes_for_other_areas[8]",
+    "runW8-W8a-fix-w8-two-homes.json notes_for_other_areas[9]",
+    "runW8-W8a-fix-w8-issue-host.json not_done[2]",
+    "runW8-W8a-fix-w8-issue-host.json notes_for_other_areas[8]",
+    "runW8-W8a-fix-w8-issue-host.json notes_for_other_areas[9]",
+    "runW8-W8a-fixup-w8-issue-host.json not_done[4]",
+    "runW8-W8a-fixup-w8-issue-host.json notes_for_other_areas[4]",
+    "runW8-W8a-fixup-w8-issue-host.json notes_for_other_areas[5]",
+    "runW8-W8a-fix-w8-repo-guide.json notes_for_other_areas[8]",
+    "runW8-W8a-fixup-w8-repo-guide.json notes_for_other_areas[3]",
+    "runW8-W8a-review-w8-two-homes.json non_blocking[1]"
+   ],
+   "still_open_evidence": "The areas were forbidden to edit CHANGELOG.md, docs/status/UPDATE-LOG.md and docs/requirements.md. The merge added only the live-test fix commit (8299aa3)."
+  },
+  {
+   "id": "W8a-left-29",
+   "target": "session-lead",
+   "severity": "tests",
+   "never_cut": false,
+   "text": "Five answers can only come from real GitHub. The stand-in copies GitHub where its behaviour is documented, but these behaviours are not. They should be added to final_check_additions F-W8-1, which does not hold them now; run them on the sandbox repository only. (a) A fourth pinIssue answers 'limit' and unpins nothing. The GraphQL error text is unknown; the adapter reads the pinned count first. (b) The permission read (GET /collaborators/{user}/permission) with a read-only token answers 403 or 404. The adapter reads both as none. (c) A repeated listIssueComments answers 304, and rateLimit().remaining stays unchanged. (d) The 100/101-comment boundary. Post exactly 100 comments and read them. Read again with the etag (page=2 is read once). Add a 101st comment, then read with the first etag: expect notModified false and 101 comments. Record whether page 1 answered 304. (e) pinIssue with a token that cannot read the sandbox repository. fixup-w8-issue-host fixed[1] promises 'forbidden', not an error, but pinIssue first reads the issue (getIssue inside its try, packages/capabilities/src/githost/github.ts:960-961) and maps only tool_not_allowed and provider_auth (401, 403) to 'forbidden'; 'a missing issue still throws not_found'. GitHub probably answers a read the token cannot see with 404, so the adapter may throw not_found instead. Record which status GitHub answers and whether the adapter answers 'forbidden' or throws. (a) to (d) are the steps in fixup-w8-issue-host's first check_in_the_app; (e) is its fixed[1] live step. Done: F-W8-1's step lists (a) to (e), and the report gives each one's answer as evidence; if (e) throws, that is a finding (the port's 'forbidden' promise or the adapter's mapping).",
+   "sources": [
+    "runW8-W8a-fix-w8-issue-host.json new_problems[2]",
+    "runW8-W8a-fix-w8-issue-host.json new_problems[3]",
+    "runW8-W8a-fix-w8-issue-host.json notes_for_other_areas[10]",
+    "runW8-W8a-review-w8-issue-host.json non_blocking[6]",
+    "runW8-W8a-fixup-w8-issue-host.json notes_for_other_areas[6]",
+    "runW8-W8a-fixup-w8-issue-host.json fixed[1] (check_in_the_app: the live pinIssue step)"
+   ],
+   "still_open_evidence": "wave8-plan.json final_check_additions.steps[0] ('F-W8-1') names none of the pin limit, the permission read, the 304, the 100/101 boundary or the unreadable-repository pin. github.ts:977-982 returns 'forbidden' only for tool_not_allowed and provider_auth; not_found is rethrown."
+  },
+  {
+   "id": "W8a-left-30",
+   "target": "session-lead",
+   "severity": "tests",
+   "never_cut": false,
+   "text": "In 8299aa3 the merge changed the live-only tests without running them, because they need the real model or GitHub. live-1-phase1 and live-4-subscription now count task pull requests without the guide's docs pull request, and live-6's live half reads answer.md from the task's own branch. Done: the next live run passes them, or each failure becomes a finding.",
+   "sources": [
+    "runW8-W8a-merge.json problems_left[1]"
+   ],
+   "still_open_evidence": "The merge report says 'Not re-run here: the live-only tests (live-1-phase1, live-4-subscription, live-6 live half)'. No live run has happened since 8299aa3."
+  },
+  {
+   "id": "W8a-left-31",
+   "target": "session-lead",
+   "severity": "tests",
+   "never_cut": false,
+   "text": "After the merge, the live harness dry runs failed 3 cases (the guide's docs pull request counted as a task's). None of the three areas had run them, and pnpm check does not include them. The later areas' 'Full suite before reporting' list names pnpm check, test:integration, test:e2e, the UI suite and Playwright, but not `pnpm --filter @forerunner/live test` without keys. w8-status-write changes what a session writes on GitHub at task start and end, so it can break these dry runs again. Done: the session lead adds the live harness dry run (keys unset, as the merge ran it) to each W8b to W8e area's full-suite list, or to docs/maintainers/validation.md's before-push list. w8-status-write's fixer has already read a 'Full suite before reporting' line (acceptance [16]) without these runs, so its reviewer runs them (also[0]).",
+   "sources": [
+    "runW8-W8a-merge.json integration_fixes[0]",
+    "runW8-W8a-merge.json validation (live harness dry runs: 3 failed after the merge, green after 8299aa3)"
+   ],
+   "still_open_evidence": "In wave8-plan.json, each later area's acceptance has the 'Full suite before reporting' line without the live harness dry runs.",
+   "also": [
+    {
+     "target": "w8-status-write",
+     "for_reviewer": true,
+     "text": "Before w8-status-write passes, its reviewer runs the live harness dry runs with the keys unset, as the W8a merge did: env -u FORERUNNER_ANTHROPIC_API_KEY -u FORERUNNER_TEST_GITHUB_TOKEN -u FORERUNNER_LIVE pnpm --filter @forerunner/live test (at 8299aa3: 11 files passed, 4 skipped; 63 passed, 17 skipped; no keys used). The area changes what a session writes on GitHub at task start and end, and its acceptance [16] does not name these runs. A failure is blocking."
+    }
+   ]
+  }
+ ]
+}

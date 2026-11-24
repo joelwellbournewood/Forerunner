@@ -213,3 +213,5 @@
 17:32 W8a: fix:w8-repo-guide DONE head 7e5009b; review running in -7; -6 removed.
 18:14 W8a: review:w8-repo-guide fix-needed 3 blocking (unmarked docs PR listing; answers to the file the card named; exact-text assertions for model-facing lines); fixup running in -8 (d6e1950). -7 removed.
 18:56 W8a: fixup:w8-repo-guide DONE head 500b564 (3 blocking: d6e1950, e788fdd, 500b564); fix/w8-repo-guide=500b564; -8 removed. merge:wave34 running: 3 merges to ebc82fe, ahead 28. Usage 68% at 18:36.
+19:24 W8a MERGED+PUSHED 8299aa3 (29 commits signed; check 570 files, UI 1566, PW 40, e2e 25, live 63 after merge fix 8299aa3, injection 92, smoke 25/25). W8a-left-1/2 placed in w8-status-write. W8b launched: task whglup6ef run wf_9ce7980a-103 base 8299aa3. Leftover routing workflow w97pa0dpd.
+20:06 Desktop 94 green 8299aa3; CI 339 running. W8b fix:w8-status-write 3 commits (b710320 stand-in W8a-left-2; e8ec8f0 status-board core; e0d3147 status PR goes). Routing workflow at revise.

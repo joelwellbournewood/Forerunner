@@ -1,0 +1,18 @@
+{
+ "why": "Phone-round (phase H) leftovers collected during the desktop round.",
+ "items": [
+  {
+   "id": "W8a-left-26",
+   "target": "phase-H",
+   "severity": "minor",
+   "never_cut": false,
+   "text": "The phone's personZone is never set. The state service's GET /me (services/state-api/src/routes/devices.ts:81-103) sends humanName but no timezone. apps/ui/src/mobile/store.tsx:872-874 therefore sets personZone to null, and setPersonZone never runs with a real zone on the phone. L4i-left-62's mobile half (MobileRoutes redraws on a zone change) has no end-to-end check. Done: /me carries the human's timezone, and the phone's times follow it. A phone-row case changes the zone on the desktop and sees the phone follow; the desktop side needs W8a-left-14's event.",
+   "sources": [
+    "runW8-W8a-fix-w8-two-homes.json not_done[1]",
+    "runW8-W8a-fix-w8-two-homes.json new_problems[4]",
+    "runW8-W8a-merge.json problems_left[2] (5)"
+   ],
+   "still_open_evidence": "devices.ts:92-102 returns principal, deviceId, humanId, humanName, kind, scopes, expiresAt, signed and schemaVersion, with no timezone. grep timezone services/state-api/src finds only push/fanout.ts."
+  }
+ ]
+}
