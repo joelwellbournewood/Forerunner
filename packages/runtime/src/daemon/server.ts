@@ -214,7 +214,12 @@ import {
 } from "./session-list.ts";
 import { settingsView } from "./settings-view.ts";
 import { CLIENT_HEADER, isShellStream, isSpeechPlayerStream } from "./shells.ts";
-import { busyHere, runsWork, startBlocked as startBlockedReason } from "./start-blocked.ts";
+import {
+  busyHere,
+  heldFacts,
+  runsWork,
+  startBlocked as startBlockedReason,
+} from "./start-blocked.ts";
 import {
   ACTION_FROM,
   ACTION_WORDS,
@@ -1695,6 +1700,12 @@ export function createDaemonApp(
     // No task yet because the plan from the brief waits for approval (or is being drafted):
     // the button is the plan card, not the Tasks tab (design §3.3, §3.6).
     const intake = r.ready === 0 ? await rt.intake.status(projectId).catch(() => null) : null;
+    // C2-left-2, L4g-left-1: what holds the project's tasks that wait on the person (an open
+    // card, a limit only Settings changes, their own pause), read only when nothing would run.
+    const held =
+      r.ready === 0 || r.waiting.length > 0
+        ? await heldFacts(rt.store, projectId).catch(() => null)
+        : null;
     return startBlockedReason(r, {
       stopped: rt.kill.isFrozen({ agentId: rt.agent.id }),
       hasModel: !!rt.provider,
@@ -1706,25 +1717,10 @@ export function createDaemonApp(
           ? intake.state
           : null,
       planWait: intake?.wait ?? null,
-      // C2-left-2: with nothing ready, a task that waits on the person's open card.
-      needsYou:
-        r.ready === 0
-          ? await (async () => {
-              const held = await rt.store.task.forProject(
-                projectId,
-                { status: ["needs_human"] },
-                { limit: 50 },
-              );
-              for (const t of held) {
-                const open = await rt.store.humanRequest.list(
-                  { task_id: t.id, status: "open" } as never,
-                  { limit: 1 },
-                );
-                if (open.length > 0) return t.title;
-              }
-              return null;
-            })().catch(() => null)
-          : null,
+      // C2-left-2: with nothing ready, a task that waits on the person's open card (or, L4g-left-1,
+      // on a limit only Settings changes).
+      needsYou: r.ready === 0 ? (held?.needsYou ?? null) : null,
+      held: held?.held ?? null,
       // R-startcred: only asked while tasks would run (the pick is read-only); a task larger
       // than the work budget runs too (D4).
       credentialWait:

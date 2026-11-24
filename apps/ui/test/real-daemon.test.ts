@@ -27975,8 +27975,10 @@ describe("l4-starts-sessions, run L4", () => {
         handoff: { stopped: "Half of it.", leftToDo: ["The rest"], stoppedBy: "budget" },
         now: rt.clock.nowIso(),
       });
+      // l4-starts-carried (L4g-left-1): before the raise the check says the limit and what
+      // changes it (it said "needs your answer" though the card asks nothing).
       expect((await client.startCheck(project.id)).blocked?.sentence).toBe(
-        'Nothing can run: "Write the club motto in motto.txt" needs your answer.',
+        'Nothing can run: "Write the club motto in motto.txt" paused at the project\'s budget of CHF 0.06; raise it in Settings.',
       );
       // Settings: Project budget to CHF 0.50, with its yes.
       const asked = await client.executeCommands({
@@ -29055,4 +29057,101 @@ describe("l4-selftasks-carried, run L4", () => {
       await a.rt.close();
     }
   }, 60_000);
+});
+
+describe("l4-starts-carried, run L4", () => {
+  const readyTask = (
+    client: DaemonClient,
+    projectId: string,
+    title: string,
+    dependsOn: string[] = [],
+  ) =>
+    client.createTask(projectId, {
+      title,
+      outcome: `${title} is written`,
+      acceptanceCriteria: ["it is written"],
+      priority: "medium",
+      status: "ready",
+      dependsOn,
+      budgetUsdMicro: 0,
+      specialist: "coder",
+      riskTier: 0,
+    });
+
+  /** A task paused at the project's budget with its card, as a run leaves it (no room). */
+  async function pausedAtProjectBudget(rt: RuntimeApp, taskId: string) {
+    await rt.store.task.patch(taskId, { status: "needs_human", reason: "paused" });
+    await fileBudgetStopCard({
+      store: rt.store,
+      task: await rt.store.task.mustGet(taskId),
+      session: null,
+      humanId: rt.human.id,
+      agentId: rt.agent.id,
+      runId: null,
+      stop: { capUsdMicro: 75_000, spentUsdMicro: 75_000, source: "project", specialist: "coder" },
+      handoff: { stopped: "Half of it.", leftToDo: ["The rest"], stoppedBy: "budget" },
+      now: rt.clock.nowIso(),
+    });
+  }
+
+  // L4g-left-1 (sibling of L4-money-204): a task paused at an outer limit that has no room
+  // (nobody raised it) made the Start dialog and chat's start say 'Nothing can run: "X" needs
+  // your answer.' with Open it, though the card asks nothing: only a raised limit helps.
+  it("L4g-left-1: with a task paused at the project's budget and no room, the Start check and chat's start say the limit and that Settings changes it", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Club motto", goal: "A motto" });
+      const motto = await readyTask(client, project.id, "Write the club motto");
+      await rt.store.project.patch(project.id, { budget_usd_micro: 75_000 });
+      await pausedAtProjectBudget(rt, motto.id);
+      const said =
+        'Nothing can run: "Write the club motto" paused at the project\'s budget of CHF 0.06; raise it in Settings.';
+      const check = await client.startCheck(project.id);
+      expect(check.blocked).toEqual({
+        kind: "nothing_runnable",
+        sentence: said,
+        action: { kind: "link", label: "Open Settings", to: "/settings#other-settings" },
+      });
+      // Chat's start says the same sentence (it read "no task is ready" before: no card fact).
+      const asked = await client.executeCommands({
+        commands: [{ name: "session.start", params: { project: project.id } }],
+        wordsUsed: "start a session",
+        source: "text",
+        projectId: project.id,
+      });
+      expect(asked.status).toBe("refused");
+      expect((asked as { reason?: string }).reason).toBe(said);
+      // A task that waits on it names the limit too, never "needs your answer".
+      const rules = await readyTask(client, project.id, "Write the club rules", [motto.id]);
+      const waiting = await client.startCheck(project.id);
+      expect(waiting.blocked?.sentence).toBe(
+        'Nothing can run: "Write the club rules" waits on "Write the club motto", paused at the project\'s budget of CHF 0.06; raise it in Settings.',
+      );
+      expect(waiting.blocked?.action).toEqual({
+        kind: "link",
+        label: "Open Settings",
+        to: "/settings#other-settings",
+      });
+      // A dependency the person paused (no card) is said as theirs, never "needs your answer".
+      await rt.store.task.patch(rules.id, { status: "cancelled" });
+      const mine = await readyTask(client, project.id, "Write the club song");
+      const after = await readyTask(client, project.id, "Sing the club song", [mine.id]);
+      await client.taskAction(mine.id, { version: mine.version, action: "pause" });
+      const paused = await client.startCheck(project.id);
+      expect(paused.blocked?.sentence).toBe(
+        'Nothing can run: "Sing the club song" waits on "Write the club song", which you paused.',
+      );
+      expect(paused.blocked?.action).toEqual({
+        kind: "link",
+        label: "Open Tasks",
+        to: `/projects/${project.id}/tasks`,
+      });
+      expect(after.status).toBe("ready");
+      // Nothing started or was spent.
+      expect(await client.sessions({ projectId: project.id })).toEqual([]);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
 });

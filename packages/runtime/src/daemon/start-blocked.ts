@@ -1,6 +1,12 @@
+import type { JsonObject, StateStore } from "@forerunner/state";
 import { nothingRunsYetSentence } from "../session/credential-wait.ts";
 import type { StartCheck } from "../session/start-check.ts";
 import type { StartCheckView } from "./api-types.ts";
+import { type HeldTask, heldBlocker, outerLimitHold } from "./held-words.ts";
+import { resetDay } from "./request-words.ts";
+import { isPausedByPerson } from "./task-words.ts";
+
+export type { HeldTask } from "./held-words.ts";
 
 /** What else decides whether a Start would do anything. */
 export interface StartBlockedFacts {
@@ -59,7 +65,46 @@ export interface StartBlockedFacts {
    * person's card (a pause that got no further, a question): the sentence names it with Open it
    * (design §3.6: 'Nothing can run: "Step 3" needs your answer [Open it]'). Null or absent: none.
    */
-  needsYou?: string | null;
+  needsYou?: string | HeldTask | null;
+  /**
+   * L4g-left-1: why each `needs_human` task of the project holds (by task id), so a task that
+   * waits on one names what holds it (`heldFacts`). Absent: every such task needs an answer.
+   */
+  held?: Readonly<Record<string, HeldTask>> | null;
+}
+
+/**
+ * The project's `needs_human` tasks and why each holds (`HeldTask`), read-only, and the first
+ * one an open card or a limit holds (the `needsYou` fact): one reading for the Start dialog's
+ * check (`GET /projects/:id/start-check`) and chat's start (`CommandPorts.startBlocked`), so
+ * both say the same sentence.
+ */
+export async function heldFacts(
+  store: Pick<StateStore, "task" | "humanRequest">,
+  projectId: string,
+): Promise<{ needsYou: HeldTask | null; held: Record<string, HeldTask> }> {
+  const tasks = await store.task.forProject(projectId, { status: ["needs_human"] }, { limit: 50 });
+  const held: Record<string, HeldTask> = {};
+  let needsYou: HeldTask | null = null;
+  for (const t of tasks) {
+    const open = await store.humanRequest.list({ task_id: t.id, status: "open" } as never, {
+      limit: 5,
+    });
+    const limit = open
+      .map((r) => outerLimitHold(r.change_card as JsonObject | null, resetDay))
+      .find((h) => h !== null);
+    const one: HeldTask | null = limit
+      ? { title: t.title, why: "limit", clause: limit.clause, to: limit.to }
+      : open.length > 0
+        ? { title: t.title, why: "answer" }
+        : isPausedByPerson(t, false)
+          ? { title: t.title, why: "paused" }
+          : null;
+    if (!one) continue;
+    held[t.id] = one;
+    if (!needsYou && one.why !== "paused") needsYou = one;
+  }
+  return { needsYou, held };
 }
 
 /**
@@ -170,12 +215,16 @@ function firstBlocker(r: StartCheck, f: StartBlockedFacts): StartCheckView["bloc
   if (stuck) {
     const dep = stuck.waitsOn.find((d) => d.status !== "done") ?? stuck.waitsOn[0];
     const name = dep?.title ? `"${dep.title}"` : "a task that does not exist";
-    if (dep?.status === "needs_human")
+    if (dep?.status === "needs_human") {
+      // L4g-left-1: what holds it, as the Tasks row says it (a limit, the person's own pause).
+      const h = f.held?.[dep.id];
+      if (h && h.why !== "answer") return heldBlocker(h, stuck.title, tasksTab);
       return {
         kind: "nothing_runnable",
         sentence: `Nothing can run: ${name} needs your answer.`,
         action: { kind: "link", label: "Open it", to: "/inbox" },
       };
+    }
     return {
       kind: "nothing_runnable",
       sentence: `Nothing can run: "${stuck.title}" waits on ${name}, which ${dep?.status === "cancelled" ? "was cancelled" : dep?.status === "failed" ? "failed" : "does not exist"}.`,
@@ -191,11 +240,11 @@ function firstBlocker(r: StartCheck, f: StartBlockedFacts): StartCheckView["bloc
     };
   // C2-left-2: nothing is ready because a task waits on the person's card: name it.
   if (r.ready === 0 && f.needsYou)
-    return {
-      kind: "nothing_runnable",
-      sentence: `Nothing can run: "${f.needsYou}" needs your answer.`,
-      action: { kind: "link", label: "Open it", to: "/inbox" },
-    };
+    return heldBlocker(
+      typeof f.needsYou === "string" ? { title: f.needsYou, why: "answer" } : f.needsYou,
+      null,
+      tasksTab,
+    );
   // D4 (d1109-oversize-start): a task larger than the work budget is no blocker any more: the
   // session takes it with the whole work budget (`runsWork`), and the Start check's `oversized`
   // warns. Before: "Nothing can run within this budget: "X" needs about CHF 6.00." with Start

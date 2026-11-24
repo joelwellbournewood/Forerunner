@@ -148,6 +148,7 @@ import {
   policyChangeWords,
 } from "@forerunner/runtime/daemon/credential-policy-view";
 import { eventAudience } from "@forerunner/runtime/daemon/event-audience";
+import { type HeldTask, heldBlocker, outerLimitHold } from "@forerunner/runtime/daemon/held-words";
 import { NO_WEB_LIMITATION } from "@forerunner/runtime/daemon/model-settings-view";
 import {
   comesAfterSentence,
@@ -165,7 +166,7 @@ import {
   projectStatusLine,
   sinceLines,
 } from "@forerunner/runtime/daemon/project-status";
-import { requestWords } from "@forerunner/runtime/daemon/request-words";
+import { requestWords, resetDay } from "@forerunner/runtime/daemon/request-words";
 import { runText, startOfferOf, stopChoices } from "@forerunner/runtime/daemon/run-words";
 import {
   quoted,
@@ -1139,6 +1140,39 @@ function fakeContinuing(requests: readonly HumanRequestView[]): Set<string> {
   return ids;
 }
 
+/**
+ * As the daemon's `heldFacts` (l4-starts-carried, L4g-left-1): why each of the project's
+ * `needs_human` tasks holds (an open card asks, a limit only Settings changes, the person's own
+ * pause) and the first one a card or a limit holds.
+ */
+function fakeHeld(
+  tasks: readonly TaskView[],
+  requests: readonly HumanRequestView[],
+  pausedByPerson: ReadonlySet<string>,
+  projectId: string,
+): { needsYou: HeldTask | null; held: Record<string, HeldTask> } {
+  const held: Record<string, HeldTask> = {};
+  let needsYou: HeldTask | null = null;
+  for (const t of tasks) {
+    if (t.projectId !== projectId || t.status !== "needs_human") continue;
+    const open = requests.filter((r) => r.taskId === t.id && r.status === "open");
+    const limit = open
+      .map((r) => outerLimitHold((r.changeCard ?? null) as never, resetDay))
+      .find((h) => h !== null);
+    const one: HeldTask | null = limit
+      ? { title: t.title, why: "limit", clause: limit.clause, to: limit.to }
+      : open.length > 0
+        ? { title: t.title, why: "answer" }
+        : pausedByPerson.has(t.id)
+          ? { title: t.title, why: "paused" }
+          : null;
+    if (!one) continue;
+    held[t.id] = one;
+    if (!needsYou && one.why !== "paused") needsYou = one;
+  }
+  return { needsYou, held };
+}
+
 function fakeStartCheck(
   tasks: readonly TaskView[],
   projectId: string,
@@ -1156,6 +1190,8 @@ function fakeStartCheck(
     busyHere?: boolean;
     /** OP-0: paused tasks the start takes in their turn (`fakeContinuing`). */
     continuing?: ReadonlySet<string>;
+    /** L4g-left-1: what holds the tasks that wait on the person (`fakeHeld`). */
+    held?: { needsYou: HeldTask | null; held: Record<string, HeldTask> };
   } = {},
 ): StartCheckView {
   const byId = new Map(tasks.map((t) => [t.id, t]));
@@ -1306,11 +1342,19 @@ function fakeStartCheck(
       ? null
       : stuckOn
         ? stuckOn.d.status === "needs_human"
-          ? {
-              kind: "nothing_runnable",
-              sentence: `Nothing can run: "${stuckOn.d.title}" needs your answer.`,
-              action: { kind: "link", label: "Open it", to: "/inbox" },
-            }
+          ? // L4g-left-1, as the daemon: a limit only Settings changes, or the person's pause.
+            opts.held?.held[stuckOn.d.taskId ?? ""] &&
+            opts.held.held[stuckOn.d.taskId ?? ""]?.why !== "answer"
+            ? heldBlocker(
+                opts.held.held[stuckOn.d.taskId ?? ""] as HeldTask,
+                stuckOn.w.title,
+                `/projects/${projectId}/tasks`,
+              )
+            : {
+                kind: "nothing_runnable",
+                sentence: `Nothing can run: "${stuckOn.d.title}" needs your answer.`,
+                action: { kind: "link", label: "Open it", to: "/inbox" },
+              }
           : {
               kind: "nothing_runnable",
               sentence: `Nothing can run: "${stuckOn.w.title}" waits on ${stuckOn.d.title ? `"${stuckOn.d.title}"` : "a task that does not exist"}, which ${stuckOn.d.status === "cancelled" ? "was cancelled" : stuckOn.d.status === "failed" ? "failed" : "does not exist"}.`,
@@ -1322,15 +1366,19 @@ function fakeStartCheck(
               sentence: `Nothing can run: "${sandboxTasks[0].title}" is waiting for Docker.`,
               action: { kind: "link", label: "Set up Docker", to: "/settings#sandbox" },
             }
-          : // D4: a task larger than the work budget is no blocker: the session takes it.
-            {
-              kind: "nothing_runnable",
-              sentence:
-                ready.length === 0
-                  ? "Nothing can run: no task is ready."
-                  : "Nothing can run: every ready task waits on another one.",
-              action: { kind: "link", label: "Open Tasks", to: `/projects/${projectId}/tasks` },
-            };
+          : // C2-left-2, L4g-left-1, as the daemon: nothing is ready because a task waits on
+            // the person's card, or on a limit only Settings changes: name it.
+            ready.length === 0 && opts.held?.needsYou
+            ? heldBlocker(opts.held.needsYou, null, `/projects/${projectId}/tasks`)
+            : // D4: a task larger than the work budget is no blocker: the session takes it.
+              {
+                kind: "nothing_runnable",
+                sentence:
+                  ready.length === 0
+                    ? "Nothing can run: no task is ready."
+                    : "Nothing can run: every ready task waits on another one.",
+                action: { kind: "link", label: "Open Tasks", to: `/projects/${projectId}/tasks` },
+              };
   return {
     projectId,
     sessionBudget: money(cap),
@@ -3380,6 +3428,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         busy: (options.startOutcome ?? "started") === "queued",
         busyHere: options.busyProjectId === id,
         continuing: fakeContinuing(state.requests),
+        held: fakeHeld(state.tasks, state.requests, state.taskMeta.pausedByPerson, id),
       },
     );
     // leftovers7-tailrun TR-12: a planning call holds the agent, as the daemon says it.
@@ -3450,21 +3499,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (goesOn && view.blocked) view.blocked = { ...view.blocked, sentence: goesOn };
     else if (stoppedLine && view.blocked?.startable)
       view.blocked = { ...view.blocked, sentence: stoppedLine };
-    // C2-left-2, as the daemon: nothing is ready because a task waits on the person's card.
-    if (view.blocked?.sentence === "Nothing can run: no task is ready.") {
-      const held = state.tasks.find(
-        (t) =>
-          t.projectId === id &&
-          t.status === "needs_human" &&
-          state.requests.some((r) => r.taskId === t.id && r.status === "open"),
-      );
-      if (held)
-        view.blocked = {
-          kind: "nothing_runnable",
-          sentence: `Nothing can run: "${held.title}" needs your answer.`,
-          action: { kind: "link", label: "Open it", to: "/inbox" },
-        };
-    }
+    // C2-left-2 and L4g-left-1 are the start check's own (`fakeHeld`), as in the daemon.
     return c.json(view);
   });
   app.get("/projects/:id/runs", (c) => {
@@ -3652,6 +3687,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           busy: (options.startOutcome ?? "started") === "queued",
           busyHere: options.busyProjectId === parsed.data.projectId,
           continuing: fakeContinuing(state.requests),
+          held: fakeHeld(
+            state.tasks,
+            state.requests,
+            state.taskMeta.pausedByPerson,
+            parsed.data.projectId,
+          ),
         },
       );
       if (
@@ -3741,6 +3782,12 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           busy: (options.startOutcome ?? "started") === "queued",
           busyHere: options.busyProjectId === parsed.data.projectId,
           continuing: fakeContinuing(state.requests),
+          held: fakeHeld(
+            state.tasks,
+            state.requests,
+            state.taskMeta.pausedByPerson,
+            parsed.data.projectId,
+          ),
         },
       );
       // l4-cred-screens (L4-creds-21), as the daemon: a refusal in words is a 400 "validation".

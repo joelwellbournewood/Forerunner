@@ -455,7 +455,7 @@ import {
 } from "./run-indicator.ts";
 import { type ComposedSandbox, composeSandbox } from "./sandbox-wiring.ts";
 import { ShellPresence } from "./shells.ts";
-import { busyHere, startBlocked as startBlockedReason } from "./start-blocked.ts";
+import { busyHere, heldFacts, startBlocked as startBlockedReason } from "./start-blocked.ts";
 import { credentialWaitRow, monthStopOf } from "./task-display.ts";
 import { fileTools } from "./tools.ts";
 import { requestContexts, requestViews } from "./views.ts";
@@ -5069,6 +5069,12 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         const planNow =
           check.ready === 0 ? await intake.status(project.id).catch(() => null) : null;
         const plan = planNow?.state;
+        // L4g-left-1: what holds the tasks that wait on the person, as the Start dialog reads it
+        // (before, chat's start had no such fact and said "Nothing can run: no task is ready.").
+        const held =
+          check.ready === 0 || check.waiting.length > 0
+            ? await heldFacts(store, project.id).catch(() => null)
+            : null;
         const blocked = startBlockedReason(check, {
           stopped: kill.isFrozen({ agentId: agent.id }),
           hasModel: !!provider,
@@ -5077,6 +5083,8 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
           chfPerUsd: chfPerUsd(),
           plan: plan === "pending" || plan === "drafting" || plan === "waiting" ? plan : null,
           planWait: planNow?.wait ?? null,
+          needsYou: check.ready === 0 ? (held?.needsYou ?? null) : null,
+          held: held?.held ?? null,
           // l4-cred-engine L4-creds-8: a refused credential refuses chat's start as it refuses
           // the dialog's (its sentence, no read-back); before, chat read the start back and
           // "started" it while Start was off. A resting credential keeps the dialog's Start
