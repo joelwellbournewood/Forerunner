@@ -18,7 +18,7 @@
 const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
-const { openTwo, step, api, apiRaw, bench, until } = require("../recorder.cjs");
+const { openTwo, step, api, apiRaw, bench, until, skipSetup } = require("../recorder.cjs");
 const { STEPS, allChecks, privateOnGithub, summarize } = require("./two-people-checks.cjs");
 
 const [A, B] = process.argv.slice(2).filter((x) => !x.startsWith("--"));
@@ -84,6 +84,10 @@ async function screens(two, label, paths = {}) {
   ]) {
     const p = paths[who];
     if (p) await side.page.goto(`${b.uiUrl}${p}`, { waitUntil: "domcontentloaded" });
+    // The benches store no Claude key, so the app shows the setup assistant over every page
+    // until the person presses "Set up later", as a person without keys does.
+    await side.page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
+    await skipSetup(side.page).catch(() => undefined);
     await step(side.page, `${label}-${who}`, { settleMs: 4000 });
     shots.push(`${who}: ${label}`);
   }
