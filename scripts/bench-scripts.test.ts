@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { join } from "@forerunner/platform";
@@ -566,5 +567,64 @@ describe("bench: the smoke journey's checks on structure and states", () => {
         ["index.html"],
       ),
     ).toEqual({ css: [], js: [], missing: ["css/main.css", "main.js"] });
+  });
+});
+
+describe("w8-two-homes, wave 8: the bench recorder writes no daemon token (L4i-left-54)", () => {
+  // The UI puts the daemon token in the query of its streams (apps/ui/src/api/client.ts), so a
+  // "Failed to load resource" after a daemon restart carries the old token in its text and its
+  // location's URL; the recorder wrote console lines raw into steps/problems.jsonl.
+  const recorder = createRequire(import.meta.url)("./bench/recorder.cjs") as {
+    redactRecord: (rec: unknown, tokens: string[]) => unknown;
+    recordProblem: (name: string, rec: unknown, afterStep?: string | null) => void;
+  };
+  const OLD = "fr-bench-token-old-0123456789";
+  const NEW = "fr-bench-token-new-9876543210";
+
+  it("a console line's text and location, a page error's stack and a body lose ?token= and every known token", () => {
+    const out = JSON.stringify(
+      recorder.redactRecord(
+        {
+          kind: "console",
+          text: `Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:49260/events?token=${OLD}`,
+          location: { url: `http://127.0.0.1:49260/events?token=${OLD}&x=1`, lineNumber: 0 },
+          stack: [`at http://127.0.0.1:2860/assets/index.js (token ${NEW})`],
+          body: `{"message":"bad token ${NEW}"}`,
+        },
+        [OLD, NEW],
+      ),
+    );
+    expect(out).not.toContain(OLD);
+    expect(out).not.toContain(NEW);
+    expect(out).toContain("/events?token=[REDACTED]&x=1");
+  });
+
+  it("across a daemon restart: an old page's line with the old token is written without it", () => {
+    const root = mkdtempSync(join(tmpdir(), "fr-bench-redact-"));
+    const prev = process.env.FRBENCH_ROOT;
+    process.env.FRBENCH_ROOT = root;
+    try {
+      const benchDir = join(root, "ada");
+      mkdirSync(benchDir, { recursive: true });
+      const benchFile = join(benchDir, "bench.json");
+      writeFileSync(benchFile, JSON.stringify({ name: "ada", token: OLD }));
+      recorder.recordProblem("ada", { kind: "http", status: 500, url: "/projects" });
+      // The daemon restarted: bench.json names the new token; the old page still says the old.
+      writeFileSync(benchFile, JSON.stringify({ name: "ada", token: NEW }));
+      recorder.recordProblem("ada", {
+        kind: "console",
+        text: `Failed to load resource: the server responded with a status of 401 (${OLD})`,
+        location: { url: `http://127.0.0.1:49260/events?token=${OLD}` },
+      });
+      recorder.recordProblem("ada", { kind: "console", text: `stream with token ${NEW}` });
+      const written = readFileSync(join(benchDir, "steps", "problems.jsonl"), "utf8");
+      expect(written.trim().split("\n")).toHaveLength(3);
+      expect(written).not.toContain(OLD);
+      expect(written).not.toContain(NEW);
+    } finally {
+      if (prev === undefined) delete process.env.FRBENCH_ROOT;
+      else process.env.FRBENCH_ROOT = prev;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

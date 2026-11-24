@@ -3412,3 +3412,14 @@ fixup-l4-selftasks-chat (L4-selftasks-121; C2-left-14, C4-left-4, C3-left-10) ad
   that refuses the push; another project's open docs pull request is marked with
   `forerunnerMarker({ project })`, since an unmarked one reads as this project's own when it is
   the only one linked (W15-01).
+
+## w8-two-homes (wave 8, 2026-11-24): two homes, one GitHub; the recorder's redaction
+
+- **The recorder writes no daemon token** (L4i-left-54). `scripts/bench/recorder.cjs` passes every
+  record it writes to `steps/problems.jsonl` through `redactRecord`: every string, nested ones
+  included (a console line's `text` and `location.url`, a page error's message and stack, a URL,
+  a body), loses `?token=` (`stripToken`) and every daemon token the bench has had in this
+  process (`bench.json`'s token at `openApp`, at each `followDaemon` reconnect and at each write).
+  Before, console lines were written raw, and a "Failed to load resource" after a daemon restart
+  carried the old token. Tests: `scripts/bench-scripts.test.ts` "w8-two-homes, wave 8: the bench
+  recorder writes no daemon token".

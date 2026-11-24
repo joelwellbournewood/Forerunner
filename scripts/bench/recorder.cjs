@@ -59,13 +59,59 @@ function loadPlaywright() {
 const state = new WeakMap(); // page -> { name, lastStep }
 
 function stripToken(url) {
-  return String(url).replace(/([?&]token=)[^&]+/g, "$1[REDACTED]");
+  return String(url).replace(/([?&]token=)[^&\s"')]+/g, "$1[REDACTED]");
+}
+
+/** Every daemon token a bench has had in this process (a restart gives a new one). */
+const seenTokens = new Map(); // bench name -> Set<string>
+
+function rememberToken(name, token) {
+  if (typeof token !== "string" || token.length < 8) return;
+  if (!seenTokens.has(name)) seenTokens.set(name, new Set());
+  seenTokens.get(name).add(token);
+}
+
+/**
+ * w8-two-homes (L4i-left-54): what the recorder writes never carries a daemon token. Every
+ * string in the record, nested ones included (a console line's text and its location's URL, a
+ * page error's message and stack, a URL, a body), goes through `stripToken` (`?token=` in a
+ * URL: the UI puts the token in the query of its streams) and has each known token value cut.
+ * Before, console lines were written raw, and a "Failed to load resource" after a daemon
+ * restart carried the old token in its URL.
+ */
+function redactRecord(rec, tokens = []) {
+  const known = [...tokens].filter((t) => typeof t === "string" && t.length >= 8);
+  const clean = (v) => {
+    if (typeof v === "string") {
+      let s = stripToken(v);
+      for (const t of known) s = s.split(t).join("[REDACTED]");
+      return s;
+    }
+    if (Array.isArray(v)) return v.map(clean);
+    if (v && typeof v === "object")
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, clean(x)]));
+    return v;
+  };
+  return clean(rec);
+}
+
+/** Appends one problem to <bench>/steps/problems.jsonl, redacted (exported for its test). */
+function recordProblem(name, rec, afterStep = null) {
+  try {
+    rememberToken(name, bench(name).token);
+  } catch {
+    // no bench.json (yet): the tokens seen so far are still cut
+  }
+  const line = redactRecord(
+    { time: new Date().toISOString(), afterStep, ...rec },
+    seenTokens.get(name) ?? [],
+  );
+  fs.appendFileSync(path.join(stepsDir(name), "problems.jsonl"), `${JSON.stringify(line)}\n`);
 }
 
 function problem(name, page, rec) {
   const s = state.get(page);
-  const line = { time: new Date().toISOString(), afterStep: s ? s.lastStep : null, ...rec };
-  fs.appendFileSync(path.join(stepsDir(name), "problems.jsonl"), `${JSON.stringify(line)}\n`);
+  recordProblem(name, rec, s ? s.lastStep : null);
 }
 
 function injection(b) {
@@ -97,10 +143,12 @@ async function openApp(name, opts = {}) {
     browser = context;
   }
   await context.addInitScript(injection(b));
+  rememberToken(name, b.token);
   if (opts.reconnect !== false) followDaemon(name, context, b.token);
   const page = context.pages()[0] || (await context.newPage());
   state.set(page, { name, lastStep: null });
   page.on("console", (msg) => {
+    // Redacted in recordProblem: the text and the location's URL can carry ?token=.
     if (msg.type() === "error")
       problem(name, page, {
         kind: "console",
@@ -184,6 +232,7 @@ function followDaemon(name, context, token) {
     if (!b.token || b.token === known) return;
     busy = true;
     known = b.token;
+    rememberToken(name, b.token);
     try {
       await context.addInitScript(injection(b));
       for (const p of context.pages())
@@ -489,4 +538,7 @@ module.exports = {
   problems,
   until,
   BenchApiError,
+  stripToken,
+  redactRecord,
+  recordProblem,
 };
