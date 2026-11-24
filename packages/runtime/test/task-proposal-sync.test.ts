@@ -170,7 +170,7 @@ describe("l4-chat-final, run L4: a suggestion card is settled once (L4h-left-5)"
       humanId: seeded.human,
       // Why the second change does not apply now (the commands' own check).
       check: async (calls) =>
-        (calls[0]?.params as { task?: string }).task === "Publish the page"
+        (calls[0]?.params as { task?: string } | undefined)?.task === "Publish the page"
           ? 'no task "Publish the page"'
           : null,
       apply: async () => {
