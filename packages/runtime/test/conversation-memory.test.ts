@@ -2079,7 +2079,8 @@ describe("l4-chat-carried, run L4: a Stop during the claim guard's nudge (C3-lef
     // Nothing of the held nudge call had streamed, so the reply is empty (review of 2026-11-23:
     // the exact reply, not only what it is not).
     expect(res.reply).toBe("");
-    expect(res.footer).toMatch(/^You stopped this answer: (?:under )?CHF \d+\.\d{2} spent\.$/);
+    // l4-chat-final (L4h-left-2): the stopped line exactly, its amount as the turn booked it.
+    expect(res.footer).toBe("You stopped this answer: under CHF 0.01 spent.");
     const sessionId = await w.agent.conversationSessionId(w.alice, w.quote);
     const row = (await w.store.event.list(sessionId, 0, 500))
       .filter((e) => e.type === "chat.reply")
