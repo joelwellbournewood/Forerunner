@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { saidByName } from "@forerunner/critic";
-import { type Clock, errorMessage, log } from "@forerunner/platform";
+import { type Clock, errorMessage, isForerunnerError, log } from "@forerunner/platform";
 import type {
   ChangeLogRow,
   HumanRequestRow,
@@ -365,7 +365,7 @@ export async function syncTaskProposals(
     applyingNow.add(row.id);
     try {
       const settled = await settleProposal(deps, row, stored, leftApplying);
-      out[settled]++;
+      if (settled !== "skipped") out[settled]++;
     } catch (e) {
       logger.warn("a suggestion card was not settled", { id: row.id, error: errorMessage(e) });
     } finally {
@@ -381,17 +381,27 @@ async function settleProposal(
   row: HumanRequestRow,
   stored: JsonObject,
   leftApplying: boolean,
-): Promise<"applied" | "kept" | "failed"> {
+): Promise<"applied" | "kept" | "failed" | "skipped"> {
   const { store } = deps;
   const { outcome: _left, applying_at: _at, ...card } = stored;
   const projectId = typeof card.project_id === "string" ? card.project_id : row.project_id;
   // Marked first, so a second sync never applies the set twice; the mark's time tells a later
-  // start which change the apply made, when a crash comes between the two.
-  let marked: HumanRequestRow = row;
-  if (!leftApplying) {
-    marked = await store.humanRequest.patch(row.id, {
-      change_card: { ...card, outcome: "applying", applying_at: deps.clock.nowIso() },
+  // start which change the apply made, when a crash comes between the two. l4-chat-final
+  // (L4h-left-5): the mark is a compare-and-set on the card as this sync read it (its version); a
+  // card a crash left at 'applying' is marked again unchanged, the same way. A card another sync
+  // settled or marked since is left to it. Before, a second sync that read the card as 'applying'
+  // while the first applied it took it for a crash's leftover and settled it again: a set the
+  // first could not make was tried a second time.
+  let marked: HumanRequestRow;
+  try {
+    marked = await store.humanRequest.update(row.id, row.version, {
+      change_card: leftApplying
+        ? stored
+        : { ...card, outcome: "applying", applying_at: deps.clock.nowIso() },
     });
+  } catch (e) {
+    if (isForerunnerError(e, "version_conflict")) return "skipped";
+    throw e;
   }
   const answer = answerOf(row);
   if (leftApplying && answer === TASK_PROPOSAL_OPTIONS[0] && projectId) {
@@ -400,19 +410,33 @@ async function settleProposal(
       const changes = Array.isArray(card.changes)
         ? (card.changes as unknown as ProposedChange[])
         : [];
-      const applies = changes.filter((c) =>
-        (c.calls ?? []).every((call) => made.commands.some((cmd) => sameCall(cmd, call))),
-      ).length;
+      const madeIt = (c: ProposedChange) =>
+        (c.calls ?? []).every((call) => made.commands.some((cmd) => sameCall(cmd, call)));
+      const applies = changes.filter(madeIt);
+      // l4-chat-final (L4h-left-5): the changes the apply left out are named as the first apply
+      // names them, with why they do not apply now; and the tasks the made changes touched join
+      // a running session by the admit rule, as after the first apply (before: only the tasks
+      // the change made, and the left-out changes went unsaid).
+      const leftOut: string[] = [];
+      for (const c of changes.filter((x) => !madeIt(x))) {
+        const why = await deps.check(c.calls).catch((e: unknown) => errorMessage(e));
+        leftOut.push(`${c.line.replace(/\.$/, "")}: ${why ?? "it was left out of the changes"}`);
+      }
       const ids = madeBy(made);
-      const running = await deps.admit(projectId, ids).catch(() => false);
+      const touched = applies
+        .flatMap((c) => c.calls)
+        .map((c) => (c.params as { task?: unknown } | null)?.task)
+        .filter((t): t is string => typeof t === "string");
+      const running = await deps.admit(projectId, [...ids, ...touched]).catch(() => false);
       await store.humanRequest.patch(marked.id, {
         change_card: {
           ...card,
           outcome: "applied",
-          changed: applies,
+          changed: applies.length,
           change_log_id: made.id,
           approved_task_ids: ids,
           running,
+          ...(leftOut.length ? { left_out: leftOut } : {}),
         },
       });
       return "applied";
