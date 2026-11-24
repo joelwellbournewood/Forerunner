@@ -10,6 +10,7 @@ import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import {
   DOCS_SCAFFOLD_BRANCH,
+  docsPrMarker,
   gitAuthFor,
   parseRepoRef,
   STATUS_BRANCH,
@@ -188,11 +189,30 @@ describe("standard doc set at project creation (G.5)", () => {
       { owner: "o", name: "delta" },
       { title: "docs: intake", body: "", head: DOCS_SCAFFOLD_BRANCH, base: "main" },
     );
+    const branchBefore = await run(["git", "--git-dir", bare, "rev-parse", DOCS_SCAFFOLD_BRANCH]);
     const res = await req("/projects", {
       method: "POST",
       body: JSON.stringify({ name: "Delta", goal: "Keep drafts", repos: ["o/delta"] }),
     });
     expect(res.status).toBe(201);
+    const row0 = await rt.store.project.mustGet(String((await json(res)).id));
+    // w8-repo-guide (L4i-left-2, ADR 0121): the open pull request names no project and its
+    // branch carries no marker of Delta's, so it is nobody's: Delta's scaffold writes nothing to
+    // it and comments nothing on it, though Delta is the only project here on o/delta (before,
+    // that made it Delta's, and another Forerunner's pull request was written onto).
+    expect((await run(["git", "--git-dir", bare, "rev-parse", DOCS_SCAFFOLD_BRANCH])).stdout).toBe(
+      branchBefore.stdout,
+    );
+    expect(
+      await host.listPullRequestComments({ owner: "o", name: "delta" }, existingPr.number),
+    ).toEqual([]);
+    expect(row0.summary_cache.docs).toMatchObject({ location: "repo", pr_url: null, created: [] });
+    // Once the pull request names Delta (this install's mark), it is Delta's: the files
+    // already on its branch are kept and no second pull request is opened.
+    await host.updatePullRequest({ owner: "o", name: "delta" }, existingPr.number, {
+      body: `The intake's docs.\n\n${docsPrMarker(row0)}`,
+    });
+    await rt.docs.scaffoldProject(row0);
     const prs = await host.listPullRequests({ owner: "o", name: "delta" }, { state: "open" });
     expect(prs.map((p) => p.number)).toEqual([existingPr.number]);
     expect(await show(bare, DOCS_SCAFFOLD_BRANCH, "docs/overview.md")).toBe(
@@ -200,7 +220,7 @@ describe("standard doc set at project creation (G.5)", () => {
     );
     expect(await show(bare, DOCS_SCAFFOLD_BRANCH, "docs/status.md")).toContain("# Status");
     expect(await tree(bare, "main")).toEqual(["README.md"]);
-    const row = await rt.store.project.mustGet(String((await json(res)).id));
+    const row = await rt.store.project.mustGet(row0.id);
     expect(row.summary_cache.docs).toMatchObject({
       location: "repo",
       pr_url: existingPr.htmlUrl,
@@ -208,8 +228,8 @@ describe("standard doc set at project creation (G.5)", () => {
     });
     expect(row.summary_cache.docs).toMatchObject({ marker: { status: "created" } });
     // A second creation against the same repository writes nothing: the open scaffold PR names
-    // no project and two projects are now linked to the repository, so it is neither's to
-    // write into (W15-01); the first project's marker is never overwritten.
+    // Delta, so it is never another project's to write into (W15-01); the first project's
+    // marker is never overwritten.
     // d1109-onerepo-link (OR-13): POST /projects refuses a second project on the repository now;
     // the pair is one made before that rule (through the store), scaffolded as creation did.
     const again = await req("/projects", {

@@ -502,6 +502,13 @@ export interface DocsScaffoldOutcome {
    * branch (ADR 0106): no pull request then.
    */
   firstCommit?: boolean;
+  /**
+   * L4i-left-6: why nothing was written to the repository, when that is the reason no docs pull
+   * request names the project: `pull_request_open`, a docs pull request that is not this
+   * project's is open on the scaffold's branch (W15-01, L4i-left-2: it is never written to);
+   * `branches_taken`, every scaffold branch on GitHub holds another project's docs (D-L4-24).
+   */
+  stopped?: "pull_request_open" | "branches_taken";
 }
 
 export interface SessionStatusOutcome {

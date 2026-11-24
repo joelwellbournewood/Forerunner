@@ -7,6 +7,7 @@ import { fromPosix, join, run } from "@forerunner/platform";
 import type { ProjectRow, SessionRow } from "@forerunner/state";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  docsPrListing,
   isProjectDocsPr,
   isProjectStatusPr,
   ownsUnmarkedDocs,
@@ -1385,10 +1386,38 @@ describe("d1109-onerepo-link, run C: W15-01's ownership through the one index; a
       { head: { ref: "fr/status" }, body: "an unmarked status pull request" },
     ];
     for (const pr of cases) {
-      expect(isProjectDocsPr(together, pr, { soleLinked: true }), pr.head.ref).toBe(false);
-      expect(isProjectDocsPr(project(), pr, { soleLinked: true }), pr.head.ref).toBe(true);
+      expect(isProjectDocsPr(together, pr), pr.head.ref).toBe(false);
+      expect(docsPrListing(together, pr, { soleLinked: true }), pr.head.ref).toBeNull();
     }
+    // w8-repo-guide (L4i-left-2): for any other project, what names it is its own; an unmarked
+    // status pull request is never its own for a write, only listed while it is the one
+    // project here (before, `soleLinked` made it its own, with Merge and the status written in).
+    for (const pr of cases.slice(0, 4))
+      expect(isProjectDocsPr(project(), pr), pr.head.ref).toBe(true);
+    const unmarked = cases[4] as (typeof cases)[number];
+    expect(isProjectDocsPr(project(), unmarked)).toBe(false);
+    expect(docsPrListing(project(), unmarked, { soleLinked: true })).toBe("listed");
+    expect(docsPrListing(project(), unmarked, { soleLinked: false })).toBeNull();
     expect(isProjectStatusPr(together, { body: marker(A) }, { soleLinked: true })).toBe(false);
+  });
+
+  it("w8-repo-guide (L4i-left-2): an unmarked scaffold pull request is this project's only by its record or its branch's own marker naming the project itself; a taken-over id does not count; with only `soleLinked` it is listed without being its own", () => {
+    const unmarked = { head: { ref: "fr/docs-scaffold" }, body: "Notes by hand." };
+    expect(isProjectDocsPr(project(), unmarked)).toBe(false);
+    expect(isProjectDocsPr(project(), unmarked, { branchMarker: A })).toBe(true);
+    expect(isProjectDocsPr(project(), unmarked, { branchMarker: A.toUpperCase() })).toBe(true);
+    expect(isProjectDocsPr(project(), unmarked, { branchMarker: B })).toBe(false);
+    const took = project({
+      settings: { took_over: { projects: [B], name: "Kite club", at: "x" } },
+    });
+    expect(isProjectDocsPr(took, unmarked, { branchMarker: B })).toBe(false);
+    const recorded = project({ summary_cache: { docs: { pr_url: "https://x/pull/3" } } as never });
+    expect(isProjectDocsPr(recorded, { ...unmarked, htmlUrl: "https://x/pull/3" })).toBe(true);
+    expect(docsPrListing(project(), unmarked, { soleLinked: true })).toBe("listed");
+    expect(docsPrListing(project(), unmarked, { soleLinked: false })).toBeNull();
+    // One that names another project is never listed, whatever `soleLinked` says.
+    const other = { head: { ref: "fr/docs-scaffold" }, body: `docs\n\n${marker(B)}` };
+    expect(docsPrListing(project(), other, { soleLinked: true })).toBeNull();
   });
 
   it("a project joined into another (joined_from) counts as the kept one: its marks and intake branch are the kept project's", () => {

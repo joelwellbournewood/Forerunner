@@ -8,8 +8,8 @@ import { ACCEPTED_WITHOUT_REVIEW } from "@forerunner/critic";
 import { errorMessage, ForerunnerError, isAbsolute, log, redact } from "@forerunner/platform";
 import type { MergeRecordRow, ProjectRow, StateStore, TaskRow } from "@forerunner/state";
 import {
+  docsPrListing,
   isDocsBranch,
-  isProjectDocsPr,
   isScaffoldBranch,
   ownsUnmarkedDocs,
   parseRepoRef,
@@ -228,6 +228,15 @@ const prName = (n: number) => `#${n}`;
  */
 export function cancelledOpenSentence(n: number): string {
   return `Its task was cancelled; ${prName(n)} stays open on GitHub: close it there, or reopen the task.`;
+}
+
+/**
+ * L4i-left-2 (wave 8): a docs pull request that names no project, listed on the one project here
+ * linked to the repository as information only: it may be another Forerunner's or a person's,
+ * so it has no Merge, and Forerunner never writes to it.
+ */
+export function unmarkedDocsSentence(n: number): string {
+  return `${prName(n)} names no project, so it is only listed here: open it on GitHub to see whose it is.`;
 }
 
 /**
@@ -509,13 +518,34 @@ export class ProjectPullRequests {
           // review read work that is gone, so it is not listed as reviewed by the critic.
           ...(ofThisPr?.last_outcome === "rebuilt_without" ? { rebuilt: true } : {}),
         });
-      } else if (
-        isDocsBranch(pr.head.ref) &&
-        (isProjectDocsPr(project, pr, { soleLinked }) || isJoinedStatusPr(project, pr))
-      ) {
+      } else if (isDocsBranch(pr.head.ref)) {
         // Only this project's docs PRs (L-16, W15-01): live, another project's stale scaffold PR
         // on the same repository was listed as "The project's standard docs", and another
-        // project's open status PR as this one's, with Merge (live check 2).
+        // project's open status PR as this one's, with Merge (live check 2). L4i-left-2: one that
+        // names no project while this is the one project here linked to the repository is
+        // listed as information only, never with Merge (it may be another Forerunner's).
+        const listing = isJoinedStatusPr(project, pr)
+          ? "own"
+          : docsPrListing(project, pr, { soleLinked });
+        if (!listing) continue;
+        if (listing === "listed") {
+          rows.push({
+            kind: "docs",
+            taskId: null,
+            title: docsTitle(pr.head.ref),
+            number: pr.number,
+            url: pr.htmlUrl,
+            branch: pr.head.ref,
+            review: null,
+            merge: {
+              state: "blocked",
+              canMerge: false,
+              sentence: unmarkedDocsSentence(pr.number),
+              first: [],
+            },
+          });
+          continue;
+        }
         const clicked = this.docs.get(pr.htmlUrl);
         rows.push({
           kind: "docs",

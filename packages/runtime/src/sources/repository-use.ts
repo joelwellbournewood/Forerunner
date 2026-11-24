@@ -969,6 +969,14 @@ export class RepositoryUse {
   }
 
   /** The project's GitHub repository, as the index keys it; null for a folder or none. */
+  /**
+   * L4i-left-5 (wave 8): the project's repository as the Overview's lines name it (`owner/name`,
+   * however the person typed it), or null when it has none on GitHub.
+   */
+  locatorOf(project: Pick<ProjectRow, "repos">): string | null {
+    return this.repositoryOf(project)?.locator ?? null;
+  }
+
   private repositoryOf(
     project: Pick<ProjectRow, "repos">,
   ): { ref: RepoRef; locator: string; key: string } | null {

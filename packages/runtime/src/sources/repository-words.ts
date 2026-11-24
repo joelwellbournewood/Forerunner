@@ -415,19 +415,44 @@ export function takeOverRetryOpenedSentence(n: number | null): string {
 }
 
 /**
- * L4e-left-1: Try again could not open it either, in one sentence with what to do: GitHub
- * refused the push or did not answer (`refused`), or another project's docs pull request or
- * branch is in its way (`blocked`: Forerunner never writes over another project's).
+ * Why Try again could not open the take-over's docs pull request (L4i-left-6, design section 5
+ * rule 8: what actually went wrong): `blocked`, a docs pull request that is not this project's
+ * is open on the scaffold's branch (another project's, or one that names no project: Forerunner
+ * never writes to it, L4i-left-2); `branches`, every scaffold branch on GitHub holds another
+ * project's docs; `refused`, GitHub refused the push (the token cannot push, a branch rule);
+ * `unreachable`, GitHub did not answer.
  */
-export function takeOverRetryFailedSentence(locator: string, why: "refused" | "blocked"): string {
-  return why === "blocked"
-    ? `The docs pull request still could not be opened: another project's docs pull request is open on ${locator}; close it on GitHub, then try again.`
-    : `The docs pull request still could not be opened: check that the saved GitHub token can push to ${locator}, then try again.`;
+export type TakeOverRetryFailure = "blocked" | "branches" | "refused" | "unreachable";
+
+/**
+ * L4e-left-1: Try again could not open it either, in one sentence with what to do, named by the
+ * repository as the line above it names it (`owner/name`, L4i-left-5) and by what stopped it
+ * (L4i-left-6).
+ */
+export function takeOverRetryFailedSentence(locator: string, why: TakeOverRetryFailure): string {
+  switch (why) {
+    case "blocked":
+      return `The docs pull request still could not be opened: another docs pull request is open on ${locator}; close it on GitHub, then try again.`;
+    case "branches":
+      return `The docs pull request still could not be opened: its branches on ${locator} hold another project's docs; delete fr/docs-scaffold on GitHub, then try again.`;
+    case "unreachable":
+      return "The docs pull request still could not be opened: GitHub did not answer. Try again in a moment.";
+    case "refused":
+      return `The docs pull request still could not be opened: check that the saved GitHub token can push to ${locator}, then try again.`;
+  }
 }
 
 /** L4e-left-1: a Try again with nothing to try (a pull request already names this project). */
 export const TAKE_OVER_NOTHING_TO_RETRY =
   "There is nothing to try again: a docs pull request already names this project.";
+
+/** L4i-left-7: Try again on a project with no repository on GitHub. */
+export const TAKE_OVER_NO_REPOSITORY =
+  "There is nothing to try again: this project has no repository on GitHub.";
+
+/** L4i-left-7: Try again on a project that took no repository over (or whose take-over was undone). */
+export const TAKE_OVER_NOT_TAKEN =
+  "There is nothing to try again: this project took no repository over.";
 
 /** OR-07: repo.take_over's read-back question. */
 export function takeOverAsk(locator: string, e: Pick<Elsewhere, "ids" | "name">): string {

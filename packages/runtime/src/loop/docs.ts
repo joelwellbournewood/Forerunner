@@ -199,24 +199,34 @@ export function docsPrMarker(project: Pick<ProjectRow, "id">): string {
 }
 
 /**
- * Whether one of Forerunner's docs pull requests on the repository is this project's (L-16,
- * W15-01). Live, the Overview listed another project's stale scaffold PR ("The project's
- * standard docs · pull request #1"); and a second project with its status pull request on wrote
- * its status into the first project's open status PR on the shared `fr/status` branch and listed
- * it with Merge (live check 2). The intake's set is on a branch named for the project; a status
- * or scaffold PR names its project in its hidden mark (`docsPrMarker`, wave 15); a scaffold PR an
- * earlier version opened names it in a visible line (`scaffoldProjectLine`, L-16) or was recorded
- * at creation. A status or scaffold PR that names no project (an earlier version's, or one a
- * person opened on that branch) is a project's only while it is the one project on this install
- * linked to the repository (`soleLinked`, `soleLinkedProject`); with two linked it is neither's
- * (fails closed). The status PR is listed only while the project's status pull request is on
- * (C-57).
+ * Whether one of Forerunner's docs pull requests on the repository is this project's, so that a
+ * write may go onto it (L-16, W15-01, L4i-left-2). Live, the Overview listed another project's
+ * stale scaffold PR ("The project's standard docs · pull request #1"); and a second project with
+ * its status pull request on wrote its status into the first project's open status PR on the
+ * shared `fr/status` branch and listed it with Merge (live check 2). The intake's set is on a
+ * branch named for the project; a status or scaffold PR names its project in its hidden mark
+ * (`docsPrMarker`, wave 15); a scaffold PR an earlier version opened names it in a visible line
+ * (`scaffoldProjectLine`, L-16) or was recorded at creation (its address in the project's
+ * record: this install opened it).
+ *
+ * L4i-left-2 (wave 8, the brief's "Never" rule: never write to another Forerunner's pull
+ * request): a scaffold PR that names no project is this project's only when its branch's own
+ * `.forerunner/project.json` names this project itself (`branchMarker`, read from GitHub's copy
+ * of the branch; a project it took over does not count: the take-over writes only its own
+ * branch). Otherwise it is nobody's: nothing is pushed to it or commented on it (fails closed).
+ * Before, "this project is the only one on this install linked to the repository" made it this
+ * project's, and another Forerunner's project is never on this install, so any unmarked scaffold
+ * pull request (another Forerunner's, a person's, an older version's) was written onto. That
+ * fallback now only lists such a pull request, without Merge (`docsPrListing`). A status PR is
+ * this project's only by its mark here (the status writer keeps its own rule until wave 8's
+ * status issue replaces it). The status PR counts only while the project's status pull request
+ * is on (C-57).
  */
 export function isProjectDocsPr(
   project: Pick<ProjectRow, "id" | "name" | "settings"> &
     Partial<Pick<ProjectRow, "summary_cache">>,
   pr: { head: { ref: string }; body: string; htmlUrl?: string },
-  opts: { soleLinked?: boolean } = {},
+  opts: { branchMarker?: string | null } = {},
 ): boolean {
   // D9 (d1109-onerepo-link): a project worked on together with another Forerunner shares the
   // other's project id; every docs pull request that names it is the other Forerunner's.
@@ -224,8 +234,7 @@ export function isProjectDocsPr(
   // A project joined into this one (d1109-onerepo-join) counts as this one.
   const ids = projectIdsOf(project);
   const ref = pr.head.ref;
-  if (ref === STATUS_BRANCH)
-    return statusPullRequestOn(project) && isProjectStatusPr(project, pr, opts);
+  if (ref === STATUS_BRANCH) return statusPullRequestOn(project) && isProjectStatusPr(project, pr);
   const intake = /^fr\/intake-(.+)-docs$/.exec(ref);
   if (intake) {
     // L4-github-111: the intake's pull request names its project in its hidden mark (its branch
@@ -244,9 +253,40 @@ export function isProjectDocsPr(
     if (marked) return ids.includes(marked);
     if (ids.some((id) => body.includes(scaffoldProjectLine({ id })))) return true;
     if (/Forerunner project \S+\./.test(body)) return false;
-    return opts.soleLinked === true;
+    const named = opts.branchMarker?.toLowerCase();
+    return !!named && ids.some((id) => id.toLowerCase() === named);
   }
   return false;
+}
+
+/**
+ * Whether a docs pull request names a project at all: its hidden mark, or the visible line an
+ * earlier version wrote (L-16). One that names none is a person's, an older version's or
+ * another Forerunner's whose body was edited: nobody's for a write (`isProjectDocsPr`).
+ */
+function namesAProject(pr: { body: string }): boolean {
+  return !!readForerunnerMarker(pr.body ?? "")?.project || /Forerunner project \S+\./.test(pr.body);
+}
+
+/**
+ * L4i-left-2: how the project's Pull requests list shows one of the repository's docs pull
+ * requests: `own` with Merge (`isProjectDocsPr`, or a status PR of a project joined into this
+ * one is decided by the caller), `listed` as information only, without Merge (a scaffold or
+ * status pull request that names no project while this project is the one on this install
+ * linked to the repository, `soleLinked`: before, the list offered Merge on it), or null (not
+ * listed: another project's, or with two projects linked here neither's).
+ */
+export function docsPrListing(
+  project: Pick<ProjectRow, "id" | "name" | "settings"> &
+    Partial<Pick<ProjectRow, "summary_cache">>,
+  pr: { head: { ref: string }; body: string; htmlUrl?: string },
+  opts: { soleLinked?: boolean } = {},
+): "own" | "listed" | null {
+  if (isProjectDocsPr(project, pr)) return "own";
+  if (isTogether(project) || !opts.soleLinked || namesAProject(pr)) return null;
+  const ref = pr.head.ref;
+  if (ref === STATUS_BRANCH) return statusPullRequestOn(project) ? "listed" : null;
+  return isScaffoldBranch(ref) ? "listed" : null;
 }
 
 /**
@@ -276,6 +316,12 @@ export function isProjectStatusPr(
  * from does not count), it is no together project (D9: the repository is the other Forerunner's
  * project too), and this computer's copy's marker (`copyMarker`, read as a file) names no other
  * project. Fails closed: an index that cannot be read owns nothing.
+ *
+ * L4i-left-2 (wave 8): read only to list such a pull request as information (`docsPrListing`)
+ * and by the status writer until the status issue replaces it (w8-status-write); the scaffold,
+ * Try again, the take-over's rebuild and the Docs tab never take an unmarked pull request as
+ * this project's by it (another Forerunner's project is never on this install, so every project
+ * here was "the only one").
  */
 export async function ownsUnmarkedDocs(
   store: Pick<StateStore, "project">,
@@ -922,13 +968,17 @@ export class ProjectDocs implements ProjectDocsPort {
     project: ProjectRow,
     target: ProjectRepoTarget,
   ): Promise<DocsScaffoldOutcome> {
-    const soleLinked = await this.ownsUnmarked(project, target.repo);
-    // W15-01: another project's open scaffold PR is never written to or commented on.
-    const ours = (pr: PullRequestInfo) => isProjectDocsPr(project, pr, { soleLinked });
+    // W15-01, L4i-left-2: an open scaffold PR that is not this project's (another project's, or
+    // one that names no project and whose branch's marker does not name this one) is never
+    // written to or commented on. The branch's marker is read from GitHub's copy of the branch
+    // once the copy is fetched (`scaffoldBranchFor`), before `checkout` asks.
+    const branchMarkers = new Map<string, string | null>();
+    const ours = (pr: PullRequestInfo) =>
+      isProjectDocsPr(project, pr, { branchMarker: branchMarkers.get(pr.head.ref) ?? null });
     const out = await this.checkout(
       project,
       target,
-      (git) => this.scaffoldBranchFor(project, target, git, ours),
+      (git) => this.scaffoldBranchFor(project, target, git, ours, branchMarkers),
       { ours, fresh: async (open) => !open },
     );
     const { git, dir } = out;
@@ -960,6 +1010,7 @@ export class ProjectDocs implements ProjectDocsPort {
     target: ProjectRepoTarget,
     git: GitOps,
     ours: (pr: PullRequestInfo) => boolean,
+    branchMarkers: Map<string, string | null>,
   ): Promise<string | null> {
     const ids = projectIdsOf(project).map((id) => id.toLowerCase());
     for (const branch of scaffoldBranchesOf(project)) {
@@ -967,14 +1018,17 @@ export class ProjectDocs implements ProjectDocsPort {
         state: "open",
         head: branch,
       });
+      // L4i-left-2: the branch's own marker, the evidence for an open pull request that names
+      // no project (read before `ours` is asked about it).
+      const marker = (await git.hasRef(`origin/${branch}`))
+        ? parseInstallMarker((await git.fileAt(`origin/${branch}`, INSTALL_MARKER_FILE)) ?? "")
+        : null;
+      branchMarkers.set(branch, marker?.project ?? null);
       if (open.length) {
         if (branch === DOCS_SCAFFOLD_BRANCH || open.every(ours)) return branch;
         continue;
       }
       if (!(await git.hasRef(`origin/${branch}`))) return branch;
-      const marker = parseInstallMarker(
-        (await git.fileAt(`origin/${branch}`, INSTALL_MARKER_FILE)) ?? "",
-      );
       if (marker && ids.includes(marker.project.toLowerCase())) return branch;
       this.logger.info("a scaffold branch on the repository is not this project's: left as it is", {
         projectId: project.id,
@@ -997,18 +1051,31 @@ export class ProjectDocs implements ProjectDocsPort {
         "standard docs not scaffolded: every scaffold branch on the repository is another's",
         { projectId: project.id },
       );
-      return { location: "repo", prUrl: null, created: [], existing: [] };
+      return {
+        location: "repo",
+        prUrl: null,
+        created: [],
+        existing: [],
+        stopped: "branches_taken",
+      };
     }
     if (foreign) {
       this.logger.info(
-        "standard docs not scaffolded: another project's docs pull request is open",
+        "standard docs not scaffolded: a docs pull request that is not this project's is open",
         {
           projectId: project.id,
           branch,
           prUrl: foreign.htmlUrl,
         },
       );
-      return { location: "repo", branch, prUrl: null, created: [], existing: [] };
+      return {
+        location: "repo",
+        branch,
+        prUrl: null,
+        created: [],
+        existing: [],
+        stopped: "pull_request_open",
+      };
     }
     if (first) {
       // An empty repository: the set went in as its first commit on the default branch.
@@ -1319,10 +1386,10 @@ export class ProjectDocs implements ProjectDocsPort {
     if (!target) return [];
     if (!existsSync(join(this.copyDir(project.id), ".git"))) return [];
     // Only this project's docs PRs (L-16, W15-01): another project's on the same repository is
-    // not where this project's docs wait.
-    const soleLinked = await this.ownsUnmarked(project, target.repo);
+    // not where this project's docs wait. L4i-left-2: one that names no project is this
+    // project's only when its branch's own marker names it (read once the copy is fetched).
     const prs = (await this.deps.host.listPullRequests(target.repo, { state: "open" })).filter(
-      (p) => isDocsBranch(p.head.ref) && isProjectDocsPr(project, p, { soleLinked }),
+      (p) => isDocsBranch(p.head.ref),
     );
     // The fetch under the copy's lock (merged-copy): never beside a refresh or a docs write.
     return this.withCopy(project.id, async (dir) => {
@@ -1331,6 +1398,10 @@ export class ProjectDocs implements ProjectDocsPort {
       const out: DocInPullRequest[] = [];
       for (const pr of prs) {
         if (!(await git.hasRef(`origin/${pr.head.ref}`))) continue;
+        const branchMarker =
+          parseInstallMarker((await git.fileAt(`origin/${pr.head.ref}`, INSTALL_MARKER_FILE)) ?? "")
+            ?.project ?? null;
+        if (!isProjectDocsPr(project, pr, { branchMarker })) continue;
         for (const path of await git.changedFiles(`origin/${target.base}`, `origin/${pr.head.ref}`))
           if (!out.some((d) => d.path === path))
             out.push({ path, number: pr.number, url: pr.htmlUrl });

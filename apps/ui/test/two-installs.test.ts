@@ -1,9 +1,13 @@
 // @vitest-environment node
 
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "@forerunner/platform";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, run } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
-import type { PullRequestInfo } from "../../../packages/capabilities/src/githost/types.ts";
+import { GitOps } from "../../../packages/capabilities/src/githost/git.ts";
+import type { MemoryGitHost } from "../../../packages/capabilities/src/githost/memory.ts";
+import type { PullRequestInfo, RepoRef } from "../../../packages/capabilities/src/githost/types.ts";
+import { removeHomes } from "../../../packages/runtime/test/helpers.ts";
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
 import { ApiError, type DaemonClient } from "../src/api/client.ts";
 import { composeTwo, type Home, type TwoHomes } from "./two-installs.ts";
@@ -334,4 +338,174 @@ describe("w8-issue-host, wave 8: issue host", () => {
       }
     }, 120_000);
   }
+});
+
+describe("w8-repo-guide, wave 8: a docs pull request this install did not open is nobody's (L4i-left-2)", () => {
+  /** Bob's other project (on Bob's computer only) and a project no computer here has. */
+  const BOB_OTHER = "01a1b000-0000-7000-8000-00000000b0b0";
+  const OLD = "01a1b000-0000-7000-8000-0000000001d0";
+  const markerOf = (project: string, name: string) =>
+    `${JSON.stringify({ schema: 1, project, name }, null, 2)}\n`;
+  const identity = { name: "Seed", email: "seed@example.test" };
+
+  /** A repository of the organisation, made before either person: its files on main. */
+  async function seedRepo(
+    two: TwoHomes,
+    work: string,
+    name: string,
+    files: Record<string, string>,
+  ): Promise<string> {
+    const bare = join(work, `${name}.git`);
+    await run(["git", "init", "--bare", "-b", "main", bare]);
+    const seedDir = join(work, `${name}-seed`);
+    const seed = new GitOps({ cwd: seedDir, identity });
+    await seed.clone(bare);
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(join(seedDir, ...path.split("/").slice(0, -1)), { recursive: true });
+      writeFileSync(join(seedDir, ...path.split("/")), text);
+    }
+    await seed.commitAll("seed");
+    await seed.push("main");
+    const memory = two.memory as MemoryGitHost;
+    await memory.createRepo({ owner: "team", name, private: true, cloneUrl: bare });
+    for (const [path, text] of Object.entries(files))
+      await memory.putFile(
+        { owner: "team", name },
+        { path, content: text, message: "seed", branch: "main" },
+      );
+    return bare;
+  }
+
+  /**
+   * Bob's `fr/docs-scaffold` on the repository (as Bob's Forerunner, a person or an older
+   * version leaves it): its own `.forerunner/project.json` names `onBranch`, or it has none; and
+   * an open pull request on it whose body names no project.
+   */
+  async function bobsScaffoldPr(
+    two: TwoHomes,
+    work: string,
+    repo: RepoRef,
+    bare: string,
+    onBranch: string | null,
+  ) {
+    const dir = join(work, `${repo.name}-bob`);
+    const clone = new GitOps({ cwd: dir, identity: { name: "Bob", email: "bob@example.test" } });
+    await clone.clone(bare);
+    await run(["git", "-C", dir, "checkout", "-q", "-b", "fr/docs-scaffold"]);
+    mkdirSync(join(dir, "docs"), { recursive: true });
+    writeFileSync(join(dir, "docs", "notes.md"), "# Notes\n\nBob's notes.\n");
+    if (onBranch) {
+      mkdirSync(join(dir, ".forerunner"), { recursive: true });
+      writeFileSync(join(dir, ".forerunner", "project.json"), markerOf(onBranch, "Bob's notes"));
+    }
+    await clone.commitAll("docs: notes");
+    await clone.push("fr/docs-scaffold", { defaultBranch: "main" });
+    const pr = await (two.memory as MemoryGitHost).openPullRequestAs(repo, "bob", {
+      title: "docs: notes",
+      body: "Bob's notes for the repository.",
+      head: "fr/docs-scaffold",
+    });
+    return { pr, sha: await branchSha(bare) };
+  }
+
+  const branchSha = async (bare: string) =>
+    (await run(["git", "--git-dir", bare, "rev-parse", "fr/docs-scaffold"])).stdout.trim();
+
+  const LISTED_ONLY = (n: number) =>
+    `#${n} names no project, so it is only listed here: open it on GitHub to see whose it is.`;
+
+  for (const [label, onBranch] of [
+    ["names Bob's other project", BOB_OTHER],
+    ["has no marker file", null],
+    ["names the project Ada takes over", OLD],
+  ] as const) {
+    it(`Bob's unmarked fr/docs-scaffold pull request whose branch ${label}: Ada's scaffold, her take-over and its rebuild, and her Try again push nothing to it and comment nothing on it; her Overview lists it without Merge`, async () => {
+      const two = await composeTwo({ host: "memory" });
+      const work = mkdtempSync(join(tmpdir(), "fr-repo-guide-"));
+      try {
+        const { ada } = two;
+        // 1. A plain project: Ada's "Team site" is the only project on her computer linked to
+        // team/shared; Bob's open docs pull request is there first.
+        const shared = (await (two.memory as MemoryGitHost).getRepo(two.repo)).cloneUrl;
+        const bobs = await bobsScaffoldPr(two, work, two.repo, shared, onBranch);
+        const made = await ada.client.createProject({
+          name: "Team site",
+          goal: "A small site for the team",
+          repos: ["team/shared"],
+        });
+        expect(await branchSha(shared)).toBe(bobs.sha);
+        expect(two.writesBy("ada").filter((w) => w.number === bobs.pr.number)).toEqual([]);
+        const listed = (await ada.client.projectPullRequests(made.id)).waiting;
+        expect(listed.map((r) => [r.number, r.kind, r.merge?.canMerge, r.merge?.sentence])).toEqual(
+          [[bobs.pr.number, "docs", false, LISTED_ONLY(bobs.pr.number)]],
+        );
+
+        // 2. A take-over: team/old's main names "Old site", which no computer here has; Bob's
+        // unmarked pull request is open on its fr/docs-scaffold. Ada takes it over.
+        const old = await seedRepo(two, work, "old", {
+          "README.md": "# old\n",
+          ".forerunner/project.json": markerOf(OLD, "Old site"),
+        });
+        const oldRepo = { owner: "team", name: "old" };
+        const bobsOld = await bobsScaffoldPr(two, work, oldRepo, old, onBranch);
+        const took = await ada.client.createProject({
+          name: "Old site again",
+          goal: "The old site, kept going",
+          repos: ["team/old"],
+          switch: true,
+          takeOver: { projects: [OLD] },
+        });
+        expect(await branchSha(old)).toBe(bobsOld.sha);
+        expect(two.writesBy("ada").filter((w) => w.number === bobsOld.pr.number)).toEqual([]);
+        expect((await ada.client.project(took.id)).repositoryElsewhere).toMatchObject({
+          outcome: "took_over_no_pull_request",
+          tryAgainLine: "Tries again to open the docs pull request that names this project.",
+        });
+        // Try again through the client: refused in one sentence, and still nothing on Bob's.
+        expect(await ada.client.retryTakeOver(took.id)).toEqual({
+          state: "refused",
+          sentence:
+            "The docs pull request still could not be opened: another docs pull request is open on team/old; close it on GitHub, then try again.",
+          prUrl: null,
+        });
+        expect(await branchSha(old)).toBe(bobsOld.sha);
+        expect(two.writesBy("ada").filter((w) => w.number === bobsOld.pr.number)).toEqual([]);
+        expect(
+          (await two.pullRequests(oldRepo)).map((p) => [p.number, p.head.ref, p.authorLogin]),
+        ).toEqual([[bobsOld.pr.number, "fr/docs-scaffold", "bob"]]);
+        const oldListed = (await ada.client.projectPullRequests(took.id)).waiting;
+        expect(oldListed.map((r) => [r.number, r.merge?.canMerge])).toEqual([
+          [bobsOld.pr.number, false],
+        ]);
+      } finally {
+        removeHomes([work]);
+        await two.close();
+      }
+    }, 120_000);
+  }
+
+  it("a docs pull request Ada's install opened stays hers by its recorded address after its body lost the mark, also after her daemon starts again", async () => {
+    const two = await composeTwo({ host: "memory" });
+    try {
+      const { ada } = two;
+      const made = await ada.client.createProject({
+        name: "Team site",
+        goal: "A small site for the team",
+        repos: ["team/shared"],
+      });
+      const [own] = await two.pullRequests();
+      expect(own?.authorLogin).toBe("ada");
+      // Someone edits the body on GitHub: the hidden mark is gone.
+      await (two.memory as MemoryGitHost).updatePullRequest(two.repo, own?.number ?? 0, {
+        body: "Our docs.",
+      });
+      await ada.restart();
+      const listed = (await ada.client.projectPullRequests(made.id)).waiting;
+      expect(listed.map((r) => [r.number, r.kind, r.merge?.canMerge])).toEqual([
+        [own?.number, "docs", true],
+      ]);
+    } finally {
+      await two.close();
+    }
+  }, 120_000);
 });
