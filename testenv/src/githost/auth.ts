@@ -28,6 +28,11 @@ export interface RepoAccessView {
   private: boolean;
   /** Logins (lowercase) with direct push access besides the owner. */
   collaborators: Set<string>;
+  /**
+   * Logins (lowercase) invited with the read role only (w8-two-homes): they see a private
+   * repository and read it, and every write is 403, as GitHub answers a read collaborator.
+   */
+  readers?: Set<string>;
 }
 
 export interface AccessSubject {
@@ -67,18 +72,24 @@ export function isAffiliated(subject: AccessSubject, repo: RepoAccessView): bool
   return subject.affiliations.has(repo.owner.toLowerCase()) || repo.collaborators.has(login);
 }
 
+/** True when the subject is a read-only collaborator of the repo (w8-two-homes). */
+export function isReader(subject: AccessSubject, repo: RepoAccessView): boolean {
+  if (!subject.token) return false;
+  return repo.readers?.has(subject.token.owner.toLowerCase()) ?? false;
+}
+
 /** Visibility: false means "404 Not Found", exactly like GitHub hides private repos. */
 export function canSeeRepo(subject: AccessSubject, repo: RepoAccessView): boolean {
   const t = subject.token;
   if (!t) return !repo.private;
   if (t.kind === "classic") {
     if (!repo.private) return true;
-    return t.scopes.includes("repo") && isAffiliated(subject, repo);
+    return t.scopes.includes("repo") && (isAffiliated(subject, repo) || isReader(subject, repo));
   }
   // fine-grained and installation tokens: the allowlist decides; public repos are readable
   if (
     matchesAllowlist(t.repos, repo) &&
-    (t.kind === "app_installation" || isAffiliated(subject, repo))
+    (t.kind === "app_installation" || isAffiliated(subject, repo) || isReader(subject, repo))
   )
     return true;
   return !repo.private;
@@ -139,8 +150,11 @@ export function checkRepoAccess(
       ? "ok"
       : "unauthenticated";
   }
+  // A read collaborator reads a private repository; any write is refused (w8-two-homes).
+  const readsOnly = isReader(subject, repo) && level === "read";
   if (t.kind === "classic") {
-    if (!isAffiliated(subject, repo) && (level === "write" || repo.private)) return "forbidden";
+    if (!isAffiliated(subject, repo) && !readsOnly && (level === "write" || repo.private))
+      return "forbidden";
     return classicAllows(t.scopes, repo, perm, level) ? "ok" : "forbidden";
   }
   const inList = matchesAllowlist(t.repos, repo);
@@ -151,6 +165,7 @@ export function checkRepoAccess(
   if (
     t.kind === "fine_grained" &&
     !isAffiliated(subject, repo) &&
+    !readsOnly &&
     (level === "write" || repo.private)
   )
     return "forbidden";

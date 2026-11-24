@@ -259,6 +259,8 @@ export interface RepoRecord {
   projects: ProjectRecord[];
   /** Lowercase logins with push access besides the owner (and org members). */
   collaborators: Set<string>;
+  /** Lowercase logins with the read role only (`setCollaboratorRole(..., "read")`). */
+  readers: Set<string>;
   /** "Allow merge commits", "Allow squash merging", "Allow rebase merging" (repository settings). */
   allowMergeCommit: boolean;
   allowSquashMerge: boolean;
