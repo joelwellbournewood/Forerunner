@@ -130,3 +130,23 @@ request, and with it on, the session's note ("Ended. Spent CHF 0.09.") reached G
 
 Supersedes ADR 0106's status part (point 3, C-57's status pull request) and C-57's setting;
 amends 0117 (the status issue across Forerunners).
+
+## Amendment 2026-11-24: the start sends what waited; a 404 is read again (fixup-w8-status-write)
+
+Point 5's "sent once when GitHub answers" held only while the daemon ran: a text Quit or a lost
+connection left waiting was sent at a restart only when a screen asked. The daemon's start now
+sends it (`StatusBoard.resumeAll`, called by compose once the device row is registered; GitHub
+still out, the minute's retry sends it later). The start and Quit's clear belong to the install's
+daemon only (`ComposeOptions.statusDaemon`, default the daemon): an `fr` one-shot composed beside a
+running daemon neither sends nor clears, so it never takes the daemon's live Working on now lines
+off GitHub.
+
+GitHub answers 404 for a deleted comment or issue and for a private repository the token no longer
+sees alike. The writer reads again with the same host before it writes again: the repository not
+readable, or everything readable while the write was refused, says the no-permission sentence and
+sets no timer (the next task, session or screen tries again); the stored issue or this writer's
+comment gone means one more write at once (the comment written again, a deleted issue by point 8's
+rule); it never opens a second issue or comment because an edit answered 404.
+
+A project whose docs the other Forerunner keeps (together) shows "The other Forerunner keeps these
+docs on GitHub; this project keeps only its status." above its Docs rows (W8a-left-4).

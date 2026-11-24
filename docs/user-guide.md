@@ -1953,8 +1953,9 @@ the next time it starts.
   (Docs, Status). An untouched status file Forerunner wrote earlier is taken out in its next docs
   pull request; one you wrote yourself stays.
 - If you work on a project **together** with another Forerunner, its guide and docs are that
-  Forerunner's: your Docs tab says "The other Forerunner of "<name>" writes this doc on GitHub;
-  this project does not write docs.", and your Forerunner never writes them.
+  Forerunner's: your Docs tab says "The other Forerunner keeps these docs on GitHub; this project
+  keeps only its status." above the docs, each row says "The other Forerunner of "<name>" writes
+  this doc on GitHub; this project does not write docs.", and your Forerunner never writes them.
 - New decisions are files named by the day, such as `docs/decisions/2026-11-24-hosting.md`, so
   two people's decisions never clash. Your answers to the plan's questions in the Inbox go to the
   project's decision record, and the card names the file.
@@ -1980,13 +1981,16 @@ summary at the top is rebuilt from the comments. Nothing about money, no email a
 @mention is ever written there. The issue is opened by the first Forerunner that starts a task or
 ends a session on the repository, never when you link it or press Work together. Settings,
 Advanced, Other settings, **Status issue on GitHub** shows where it is ("Status on GitHub: issue
-#12 (pinned)") and turns it off for the project ("Status stays in the app: the status issue is
+#12 (pinned).") and turns it off for the project ("Status stays in the app: the status issue is
 turned off for "Team site" in Settings."); on a public repository the row says "Everyone who can
 see this repository can read it." The Docs tab's Status row says "In the app; also on GitHub:
 issue #12". When GitHub cannot take it, the status stays in the app with one sentence: "Status
 stays in the app: issues are turned off on owner/repo.", "Status stays in the app: Forerunner may
 not write issues on owner/repo (the GitHub key needs Issues: read and write).", or "Status on
-GitHub: last updated 14:05; it updates when GitHub answers." A repository whose
+GitHub: last updated 14:05; it updates when GitHub answers." What waited goes out when GitHub
+answers, also after you quit and start Forerunner again, without opening a screen; quitting while
+a task runs takes its line off your comment. A key that can no longer see the repository reads as
+the second of these sentences, and Forerunner tries again at your next task or session. A repository whose
 `.forerunner/project.json` names another Forerunner project gets no status from a project of
 yours that is not worked on together with it ("Status stays in the app: o/kite is the Forerunner
 project "Kite club"; Work together on the Overview shares its status issue."). If someone edits

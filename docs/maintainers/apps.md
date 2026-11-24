@@ -3285,6 +3285,16 @@ L4 (fixup)").
   `push`, ...); `two.close()` settles, closes, stops and removes everything. Tests:
   `test/two-installs.test.ts` (describe "w8-two-homes, wave 8: harness"; later wave 8 areas
   append their own describe blocks and helpers, never change these).
+  fixup-w8-status-write appended `home.quit()` (the desktop shell's Quit: `POST /shutdown` as the
+  shell sends it, the route stops every run, then the runtime closes as `fr daemon` closes it; the
+  home stays stopped) and `home.start()` (compose it again), so a test can change GitHub between
+  Quit and the next start; the homes compose with `statusDaemon: true` (a daemon, not a one-shot
+  beside one).
+- **The Docs tab's line** (W8a-left-4 (c), fixup-w8-status-write): `DocsTab` shows
+  `TOGETHER_DOCS_KEPT_BY` (`sources/repository-words.ts`, "The other Forerunner keeps these docs on
+  GitHub; this project keeps only its status.") when the card's `repositoryElsewhere.kind` is
+  `together`, and "Kept by the agent; ..." otherwise (test id `docs-kept-by`;
+  `test/onerepo-link.test.tsx`).
 
 ## w8-issue-host (wave 8, 2026-11-24): the two-home harness and the status issue's host calls
 

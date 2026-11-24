@@ -3506,4 +3506,8 @@ checks one status issue with one comment by each home (no money, no raw device i
 starts a task of Bob's while his GitHub is cut and reads his Docs tab ("Status on GitHub: last
 updated ...; it updates when GitHub answers."); `one-status-issue` and `status-words-offline`
 lost their `known` mark and `two-status-comments` is new (19 of 31 pass on this code, 12 known,
-no other failure).
+no other failure). `one-status-issue` counts open issues titled "Forerunner status: Team site"
+with no `pull_request` (W8a-left-19, fixup-w8-status-write): when both homes open the issue in
+the same second the higher number is closed with one line, and that closed copy is the rule
+working, not a second issue; its detail line prints the open count, the closed copies and the
+issues on the host.

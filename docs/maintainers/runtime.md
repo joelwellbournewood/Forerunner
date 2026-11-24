@@ -10286,7 +10286,14 @@ parser `parseWriterComment`, which w8-status-read's reader uses).
   `tell` is an Update (a `type: "info"` message to the person); its `onStateChange` refreshes the
   guide (`docs.refreshGuide`) when the fact changed (the board notes it in its record at every
   write). `close()` (Quit, the daemon's close) clears this install's Working on now lines, best
-  effort within 5 s, then stops every timer.
+  effort within 5 s, then stops every timer; a clear GitHub does not take waits as the pending
+  text. fixup-w8-status-write: the start and the close are the install's daemon's only
+  (`ComposeOptions.statusDaemon`, default `recoverSessions`, so the daemon): at start compose
+  calls `statusBoard.resumeAll()` once its device row is registered, so a text Quit or a lost
+  connection left waiting goes out with no screen asking (GitHub still out, the minute's retry
+  sends it later); a CLI one-shot (`startServices: false`, beside a running daemon) neither
+  resumes nor clears (`close({ clearWorking: false })`), so it never takes the daemon's live
+  lines off GitHub. The two-home harness composes its homes with `statusDaemon: true`.
 - **The runner's hooks** (`SessionRunnerDeps.statusBoard`, `StatusBoardPort`, never awaited):
   `taskStarted(projectId, task)` at the task's `task.started` (Working on now: the title, the
   files its text names by `extractPathHints`, since and until = since + 90 min; it may open the
@@ -10313,22 +10320,32 @@ parser `parseWriterComment`, which w8-status-read's reader uses).
   (`closeOwnStatusPullRequest`: open on `fr/status`, its mark names the project, and a
   `docs.status_written` event of one of the project's sessions records its address), the issue
   (`issueOf`: the stored number, then the lowest open issue carrying the marker of K, then the
-  title, each opened by someone with write access; with `create` it opens one, labelled, then
+  title of an issue with no marker (one keyed to another project never), each opened by someone
+  with write access; with `create` it opens one, labelled, then
   closes its own with "Closed: #N is this project's status issue." when a lower one appeared at
   the same time; it pins, reading "pinned" for one that is), a closed issue stops the writes
   (never reopened), this writer's comment (`ownComment`: by its stored id and login, else by
   login and writer key; one by another login with this writer key is never its own), a comment
   whose body differs from the text last sent was changed on GitHub (the person is told once; the
   writer's text goes back), and the text is sent (`commentOnIssue` once, `updateIssueComment`
-  after). A refusal: `issues_off`, `no_permission` (also a refused token); anything else waits
-  (`waiting`, retried after a minute and whenever Settings or the Docs tab asks, `words`).
+  after). A refusal: `issues_off`, `no_permission` (also a refused token); a 404 (`missing`) is
+  read again with the same host first (`whyMissing`, W8a-left-3: GitHub answers 404 for a deleted
+  comment or issue and for a private repository the token no longer sees alike): the repository
+  not readable, or everything readable while the write was refused, is `no_permission` (no
+  timer; the next task, session or screen tries again); the stored issue or this writer's
+  comment gone means one more write now (the comment written again; a deleted issue by
+  W8-write-8's rule); anything else waits (`waiting`, retried after a minute and whenever
+  Settings or the Docs tab asks, `words`). The old status pull request is looked for again at the
+  next write when GitHub did not answer the look (`oldPrChecked` is set only once it answered).
+  Waiting for Merge leaves out a pull request closed on GitHub (`isClosedRecord`).
 - **The body** is rebuilt from the comments that pass `writerFilter` (D-W8-37: a valid marker for
   K, the header naming the comment's author, the author's write access by `getRepoPermission`,
   failing closed) at most once per `bodyIntervalMs` (30 s; `FORERUNNER_STATUS_BODY_MS`), each
   writer's parsed lines redacted again between `<!-- forerunner:status-quote -->` markers; read
   again with the ETag and rebuilt once more when a comment changed meanwhile.
 - **The words** (`status-board-words.ts`): `statusPlaceSentence` (Settings' row, after
-  `statusIssueRowWords`; "Everyone who can see this repository can read it." on a public one),
+  `statusIssueRowWords`, which ends each of its parts with a full stop; "Everyone who can see
+  this repository can read it." on a public one),
   `docsStatusNote` (the Docs tab), `commentChangedUpdate`, `issueDeletedUpdate`,
   `OLD_STATUS_PR_LINE`, `STATUS_ISSUE_EFFECT` (the setting's card; the UI's fake daemon imports
   it). Every quoted text passes `redactQuoted` (money figures, email addresses, an @mention's @),
@@ -10337,6 +10354,10 @@ parser `parseWriterComment`, which w8-status-read's reader uses).
 - Tests: `test/status-board.test.ts` (the renderers, the property over 400 draws, the writer on
   one MemoryGitHost with two logins: one issue, two comments, the race, GitHub off, issues off, no
   permission, three pins, another project's marker, the switch, tamper, the filter, the old pull
-  request, Working on now, Paused, a deleted issue), `test/docs-scaffold.test.ts` (the composed
+  request, Working on now, Paused, a deleted issue; fixup-w8-status-write: Quit's clear and no
+  write after it, a one-shot's close, the start's resume and the retry, a token that lost access,
+  a comment deleted between the read and the edit, a closed pull request, another project's
+  title, the old pull request looked for again), `test/docs-scaffold.test.ts` (the composed
   runner), `test/loop-docs.test.ts` (no status pull request), and the two-home cases in
-  `apps/ui/test/two-installs.test.ts` ('w8-status-write, wave 8').
+  `apps/ui/test/two-installs.test.ts` ('w8-status-write, wave 8'; Quit while a task runs, with
+  GitHub out and with it answering, through `home.quit()` and `home.start()`).
