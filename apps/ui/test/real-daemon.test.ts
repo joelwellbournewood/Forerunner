@@ -29154,4 +29154,106 @@ describe("l4-starts-carried, run L4", () => {
       await rt.close();
     }
   }, 120_000);
+
+  // L4g-left-2 (sibling of L4-money-203): while a CHF 1.00 session ran, chat's read-back of
+  // "make it ready" for a draft larger than its whole work budget said 'It joins this session if
+  // budget is left after its own tasks, else your next Start.': the preview had no estimate.
+  it("L4g-left-2: chat's read-back of Make ready on a draft larger than the running session's budget says it runs at your next Start, as the press does", async () => {
+    let reached: () => void = () => undefined;
+    const reachedP = new Promise<void>((r) => {
+      reached = r;
+    });
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let armed = true;
+    const player = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({
+          file: join(mkdtempSync(join(tmpdir(), "fr-l4carried-left2-")), "c.jsonl"),
+        }),
+      ),
+    );
+    const stream = player.stream.bind(player);
+    player.stream = (req) => {
+      if (!armed || detectRole(req).role !== "specialist") return stream(req);
+      armed = false;
+      return (async function* () {
+        reached();
+        await released;
+        yield* stream(req);
+      })();
+    };
+    const { rt, client } = await composeWithRolePlayer({}, { provider: player });
+    try {
+      const me = await client.me();
+      const project = await client.createProject({ name: "Garden club", goal: "A club page" });
+      const intro = await readyTask(client, project.id, "Write the intro");
+      await rt.store.task.patch(intro.id, { est_cost_usd_micro: 50_000 });
+      const started = await client.startSession({
+        agentId: rt.agent.id,
+        projectId: project.id,
+        budgetUsdMicro: 1_250_000,
+      });
+      const sessionId = started.session?.id ?? "";
+      await reachedP;
+      const draft = async (title: string, est: number) => {
+        const t = await client.createTask(project.id, {
+          title,
+          outcome: `${title} is written`,
+          acceptanceCriteria: ["it is written"],
+          priority: "medium",
+          status: "draft",
+          dependsOn: [],
+          budgetUsdMicro: 0,
+          specialist: "coder",
+          riskTier: 0,
+        });
+        await rt.store.task.patch(t.id, { est_cost_usd_micro: est });
+        return t;
+      };
+      await draft("Research local garden suppliers", 5_000_000);
+      await draft("Write the club motto", 20_000);
+      const say = (text: string) =>
+        client.chat({
+          humanId: me.id,
+          agentId: rt.agent.id,
+          projectId: project.id,
+          projectTab: true,
+          text,
+          source: "text",
+        });
+      const large = await say(
+        'tool: task_transition {"task": "Research local garden suppliers", "to": "ready"}',
+      );
+      expect(large.pendingConfirmation?.readback).toBe(
+        'Make "Research local garden suppliers" ready? It is larger than this session\'s budget, so it runs at your next Start.',
+      );
+      await say("no");
+      // One that fits keeps the room rule's words (the room is decided at the yes).
+      const small = await say(
+        'tool: task_transition {"task": "Write the club motto", "to": "ready"}',
+      );
+      expect(small.pendingConfirmation?.readback).toBe(
+        'Make "Write the club motto" ready? It joins this session if budget is left after its own tasks, else your next Start.',
+      );
+      await say("no");
+      release();
+      await eventually(
+        async () =>
+          ["completed", "stopped", "failed", "killed"].includes(
+            (await client.session(sessionId)).status,
+          ),
+        "the CHF 1.00 session to end (30 s)",
+        async () => (await client.session(sessionId)).status,
+        30_000,
+      );
+    } finally {
+      release();
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
 });

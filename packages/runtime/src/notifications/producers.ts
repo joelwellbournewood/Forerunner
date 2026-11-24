@@ -424,11 +424,7 @@ export function budgetStop(humanId: string, r: SessionEndFacts): Notification {
     ),
     body: bodyOf(
       limit
-        ? [
-            limitAmount(r.stopReason, r.stopCapChfMicro),
-            `The session spent ${spent}.`,
-            said,
-          ]
+        ? [limitAmount(r.stopReason, r.stopCapChfMicro), `The session spent ${spent}.`, said]
             .filter(Boolean)
             .join(" ")
         : said,

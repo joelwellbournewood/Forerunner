@@ -953,7 +953,9 @@ describe("l4-starts-sessions, run L4: the result of a session whose only task yo
       join(projectWorkspaceDir(join(rt.dirs.data, "projects"), project.id), "docs", "status.md"),
       "utf8",
     );
-    expect(status).toContain("- Note: Done. Spent CHF");
+    // l4-starts-carried (L4g-left-3): the money in the result's words ("less than CHF 0.01").
+    expect(status).toMatch(/- Note: Done\. Spent (?:less than )?CHF \d+\.\d{2}\.\n/);
+    expect(status).not.toContain("CHF 0.00");
     expect(status).not.toMatch(/needs? you/);
     // The session page's badge and the Sessions row say it as the person's pause.
     expect(String(ended.statusText)).not.toMatch(/needs? you/);

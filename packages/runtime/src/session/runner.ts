@@ -2131,6 +2131,25 @@ export class SessionRunner {
               }
               return out;
             },
+            // l4-starts-carried (L4g-left-2): the admit's answer, read-only, for chat's
+            // read-back of a move (before, the preview had no estimate and always said the room
+            // rule's words, also for a task larger than the whole work budget).
+            preview: async (taskIds) => {
+              const out = new Map<string, AdmitOutcome>();
+              const rows = await Promise.all(taskIds.map((id) => store.task.get(id)));
+              const stopping = await takesNothingNew();
+              for (const row of rows) {
+                if (!row) continue;
+                if (stopping) out.set(row.id, "stopping");
+                else if (own.has(row.id) || joined.has(row.id)) out.set(row.id, "joined");
+                else
+                  out.set(
+                    row.id,
+                    (await this.priceNow(row)) > workBudgetUsdMicro ? "too_large" : "no_room",
+                  );
+              }
+              return out;
+            },
             readmit: (taskIds) => {
               for (const id of taskIds) {
                 own.add(id);

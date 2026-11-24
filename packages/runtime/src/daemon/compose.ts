@@ -5129,8 +5129,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
             by,
           })
         )?.line ?? null,
-      previewWork: ({ projectId, by }) =>
-        previewWork(prepareDeps, { agentId: agent.id, projectId, by }),
+      previewWork: ({ projectId, by, taskIds }) =>
+        previewWork(prepareDeps, {
+          agentId: agent.id,
+          projectId,
+          by,
+          ...(taskIds ? { taskIds } : {}),
+        }),
       startWaits: (projectId) => continuations.waiting(projectId),
       // D4 (d1109-oversize-start): the chat's start reads back the Start dialog's warning when
       // the session would take a task larger than its work budget; it never refuses it.

@@ -399,7 +399,12 @@ export interface CommandPorts {
     by: "person" | "agent";
   }): Promise<string | null>;
   /** The same line, read-only, for chat's read-back of such a move (nothing joins or starts). */
-  previewWork?(req: { projectId: string; by: "person" | "agent" }): Promise<string | null>;
+  previewWork?(req: {
+    projectId: string;
+    by: "person" | "agent";
+    /** The tasks the move makes ready (l4-starts-carried L4g-left-2: read with their estimate). */
+    taskIds?: string[];
+  }): Promise<string | null>;
   /**
    * S-10: one wait per project: the sentence that says when the person's session waiting for its
    * Claude credential goes on ("Your session of 14:05 goes on by itself at 15:40."), or null.
