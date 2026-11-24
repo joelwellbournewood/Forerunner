@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { filesBlock, repositoryFacts } from "../src/conversation/project-facts.ts";
 import { ProjectPullRequests } from "../src/daemon/pull-requests.ts";
 import { loadTaskDisplayContext, taskDisplay } from "../src/daemon/task-display.ts";
-import { requestViews } from "../src/daemon/views.ts";
+import { projectSummary, requestViews } from "../src/daemon/views.ts";
 import { EnforcementHooks } from "../src/enforcement/hooks.ts";
 import {
   AllowAllCaps,
@@ -3718,5 +3718,34 @@ describe("l4-github-carried, run L4", { timeout: 240_000 }, () => {
     // "Reviewed by the critic" as if that review covered what its branch holds now.
     expect(rowB).toMatchObject({ kind: "task", review: "critic", rebuilt: true });
     expect(rowC?.rebuilt).toBeUndefined();
+  });
+
+  it("L4e-left-6: after A was closed and its change reached main through B's merge, the Overview's Last result says so, never 'merged #A and #B'; chat's facts do not list A as merged", async () => {
+    const m = await chainWorld({ level: 2 });
+    // One session leaves both pull requests for the person.
+    const a = await m.w.addTask("Add page");
+    const b = await m.w.addTask("Add footer", { depends_on: [a.id] });
+    await m.session();
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    await m.close(a.id);
+    expect((await m.github.mergePullRequest(REPO, prB)).merged).toBe(true);
+    await m.host.settle();
+    await m.poll();
+    expect(await m.record(a.id)).toMatchObject({ last_outcome: "merged_through" });
+    const summary = await projectSummary(m.w.store, m.w.project, 1);
+    // Before: ["Since then: merged #1 and #2."].
+    expect(summary.lastSession?.since).toEqual([
+      `Since then: merged #${prB}. #${prA}'s change reached main through #${prB}.`,
+    ]);
+    const block = filesBlock(
+      null,
+      await repositoryFacts(m.w.store, await m.w.store.project.mustGet(m.w.project)),
+    );
+    const urlA = `/pull/${prA}`;
+    const merged = block.split("\n").find((l) => l.startsWith("Merged: ")) ?? "";
+    // Before: A's pull request was listed under "Merged:" beside B's.
+    expect(merged).toContain(`/pull/${prB}`);
+    expect(merged).not.toContain(urlA);
+    expect(block).toContain(`Closed, but its change reached main through #${prB}: "Add page"`);
   });
 });

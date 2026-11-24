@@ -26,6 +26,7 @@ import type {
   TaskRow,
 } from "@forerunner/state";
 import { ENTITIES, type EntityDef, Repository } from "@forerunner/state";
+import { MERGED_THROUGH, throughNumberOf } from "../loop/merge-mode.ts";
 import {
   capEffort,
   DEFAULT_LADDER,
@@ -408,18 +409,30 @@ async function mergedSinceLine(store: StateStore, handoff: unknown): Promise<str
   const merges = (handoff as { merges?: unknown } | null)?.merges;
   if (!Array.isArray(merges)) return [];
   const numbers: number[] = [];
+  // L4e-left-6 (l4-github-carried): a pull request closed on GitHub whose change reached main
+  // through another's merge is not "merged"; it is said as what happened to it.
+  const through: string[] = [];
   for (const m of merges as { task_id?: unknown; status?: unknown }[]) {
     if (typeof m?.task_id !== "string" || m.status === "merged") continue;
     const record = await store.mergeRecord.forTask(m.task_id).catch(() => undefined);
-    if (record?.state === "merged" && record.pr_number) numbers.push(record.pr_number);
+    if (record?.state !== "merged" || !record.pr_number) continue;
+    if (record.last_outcome === MERGED_THROUGH) {
+      const via = throughNumberOf(record);
+      through.push(
+        via
+          ? `#${record.pr_number}'s change reached main through #${via}.`
+          : `#${record.pr_number}'s change reached main.`,
+      );
+    } else numbers.push(record.pr_number);
   }
-  if (!numbers.length) return [];
+  if (!numbers.length && !through.length) return [];
   const names = [...new Set(numbers)].sort((a, b) => a - b).map((n) => `#${n}`);
   const list =
     names.length <= 1
       ? (names[0] ?? "")
       : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-  return [`Since then: merged ${list}.`];
+  const said = [...(names.length ? [`merged ${list}.`] : []), ...through].join(" ");
+  return [`Since then: ${said}`];
 }
 
 /** L4-github-125: the Last result's line of a project closed into another. */

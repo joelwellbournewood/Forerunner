@@ -1956,3 +1956,39 @@ describe("l4-selftasks-carried, run L4: chat's recall names who made a change as
     await w.store.close();
   });
 });
+
+describe("l4-github-carried, run L4", () => {
+  it("L4e-left-6: a task whose pull request was closed while its change reached main through another's merge is said so by recall and the facts, never 'merged'", async () => {
+    const w = await setup();
+    await w.store.project.patch(w.quote, { repos: ["o/r"] } as never);
+    const url = (n: number) => `https://github.test/o/r/pull/${n}`;
+    const t = await task(w, "Add the footer", { status: "done", pr_url: url(21) } as never);
+    await w.store.mergeRecord.insert({
+      task_id: t.id,
+      project_id: w.quote,
+      agent_id: w.alice,
+      pr_number: 21,
+      pr_url: url(21),
+      reviewed_head_sha: "a".repeat(40),
+      state: "merged",
+      approval: "none",
+      last_outcome: "merged_through",
+      sentence: "#21 was closed on GitHub, but its change reached main through #22.",
+    } as never);
+    const [found, open] = await lookups(w, [
+      { tool: "recall", input: { words: "footer", kinds: ["tasks"] } },
+      { tool: "recall_open", input: { ref: "r1" } },
+    ]);
+    const facts = String(w.provider.calls[0]?.request.messages.at(-1)?.content ?? "");
+    const said = "Its pull request was closed, but its change reached main through #22.";
+    // Before: "Its pull request was merged on <date>." and the facts listed it under "Merged:".
+    expect(inner(found)).toContain(said);
+    expect(inner(found)).not.toContain("was merged");
+    expect(inner(open).split("\n")).toContain(said);
+    expect(facts).toContain(
+      `Closed, but its change reached main through #22: "Add the footer" ${url(21)}`,
+    );
+    expect(facts).not.toMatch(/Merged: [^\n]*Add the footer/);
+    await w.store.close();
+  });
+});

@@ -159,7 +159,7 @@ describe("l3-merge, run L3", () => {
     expect(facts?.cancelled).toEqual([{ title: "Write the About page in about.html", url }]);
     // Before: the facts listed done tasks only, so "where are my files?" never named #43.
     expect(filesBlock(null, facts)).toContain(
-      `Left open on GitHub when their task was cancelled (the person closes them there if not wanted): "Write the About page in about.html" ${url}`,
+      `Left open on GitHub when their task was cancelled (the person closes them with Close on the Overview or on GitHub, if not wanted): "Write the About page in about.html" ${url}`,
     );
     const filesList = readTools({
       store: w.store,

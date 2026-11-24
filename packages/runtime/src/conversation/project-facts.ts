@@ -20,7 +20,12 @@ import {
 } from "../daemon/task-display.ts";
 import { TASK_PROPOSAL_KEY } from "../daemon/task-proposal-words.ts";
 import { parseRepoRef } from "../loop/docs.ts";
-import { type MergeMode, mergeModeOf } from "../loop/merge-mode.ts";
+import {
+  MERGED_THROUGH,
+  type MergeMode,
+  mergeModeOf,
+  throughNumberOf,
+} from "../loop/merge-mode.ts";
 import type { IntakeState } from "../session/intake.ts";
 import { type LastSessionOutcome, stopWords } from "../session/result.ts";
 
@@ -544,6 +549,12 @@ export interface RepositoryFacts {
   merging: (TaskPullRequest & { sentence: string })[];
   /** Done tasks whose pull request was merged. */
   merged: TaskPullRequest[];
+  /**
+   * L4e-left-6 (l4-github-carried): done tasks whose pull request was closed on GitHub while its
+   * change reached main through another's merge (`MERGED_THROUGH`), with that one's number when
+   * known; never listed as merged. Absent: none (facts built before this field).
+   */
+  mergedThrough?: (TaskPullRequest & { through: number | null })[];
   /** Done tasks whose pull request was closed without merging. */
   closed: TaskPullRequest[];
   /** Done tasks with a pull request and no merge record (accepted before ADR 0111): no state. */
@@ -629,6 +640,17 @@ export async function repositoryFacts(
   for (const pr of await donePullRequests(store, project.id)) {
     const record = await store.mergeRecord.forTask(pr.taskId);
     const item = { title: pr.title, url: pr.url };
+    if (
+      record?.pr_url === pr.url &&
+      record.state === "merged" &&
+      record.last_outcome === MERGED_THROUGH
+    ) {
+      facts.mergedThrough = [
+        ...(facts.mergedThrough ?? []),
+        { ...item, through: throughNumberOf(record) },
+      ];
+      continue;
+    }
     const stand = mergeStandOf(record, pr.url, mode);
     if (!stand) facts.unknown.push(item);
     else if (stand.kind === "merged" || stand.kind === "closed") facts[stand.kind].push(item);
@@ -722,13 +744,18 @@ export function filesBlock(folder: string | null, repository?: RepositoryFacts |
   if (repository.merging.length > 10)
     lines.push(`And ${repository.merging.length - 10} more merging by themselves.`);
   if (repository.merged.length) lines.push(`Merged: ${prList(repository.merged)}`);
+  // L4e-left-6: closed on GitHub, its change on main all the same through another's merge.
+  for (const p of (repository.mergedThrough ?? []).slice(0, 10))
+    lines.push(
+      `Closed, but its change reached main${p.through ? ` through #${p.through}` : ""}: "${p.title}" ${p.url}`,
+    );
   if (repository.closed.length) lines.push(`Closed without merging: ${prList(repository.closed)}`);
   if (repository.unknown.length)
     lines.push(`Pull requests of finished tasks: ${prList(repository.unknown)}`);
   // L3-github-10: what a cancel left open on GitHub, for the person to close there.
   if (repository.cancelled?.length)
     lines.push(
-      `Left open on GitHub when their task was cancelled (the person closes them there if not wanted): ${prList(repository.cancelled)}`,
+      `Left open on GitHub when their task was cancelled (the person closes them with Close on the Overview or on GitHub, if not wanted): ${prList(repository.cancelled)}`,
     );
   return lines.join("\n");
 }

@@ -16727,7 +16727,7 @@ describe("l3-merge, run L3", () => {
       const told =
         JSON.stringify(chatCalls.at(-1)?.messages ?? []) + (chatCalls.at(-1)?.system ?? "");
       expect(told).toContain(
-        `Left open on GitHub when their task was cancelled (the person closes them there if not wanted): \\"Write the About page in about.html\\" ${(await view())?.prUrl}`,
+        `Left open on GitHub when their task was cancelled (the person closes them with Close on the Overview or on GitHub, if not wanted): \\"Write the About page in about.html\\" ${(await view())?.prUrl}`,
       );
       // Closed on GitHub: no longer listed.
       await w.github.updatePullRequest(w.REPO, pr, { state: "closed" });
