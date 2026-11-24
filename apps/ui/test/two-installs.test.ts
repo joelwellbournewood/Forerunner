@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join } from "@forerunner/platform";
 import { describe, expect, it } from "vitest";
 import type { PullRequestInfo } from "../../../packages/capabilities/src/githost/types.ts";
 import { detectRole } from "../../../testenv/src/bench/roles.ts";
