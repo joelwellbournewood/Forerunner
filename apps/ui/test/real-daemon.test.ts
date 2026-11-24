@@ -8653,7 +8653,34 @@ describe("the UI client against the real daemon: a Claude credential at its limi
       const notes = await client.createProject({ name: "Notes", goal: "Two notes" });
       await addTask(client, notes.id, "Write note A");
       await addTask(client, notes.id, "Write note B");
-      const sessionId = await runToEnd(client, notes.id);
+      // l4-starts-carried (L4d-left-2): with the refusal known, a person's Start through the API
+      // is refused in words (the Start dialog's sentence); the session that meets the mark is
+      // one that reached the runner (a start made before the refusal was known).
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const refusedStart = await client.startSession({ agentId, projectId: notes.id }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect((refusedStart as ApiError).message).toBe(
+        "Nothing can run until you save a new API key in Settings.",
+      );
+      await rt.scheduler.requestStart({
+        agentId,
+        projectId: notes.id,
+        trigger: "manual",
+        by: "person",
+        reason: "a start that reached the runner",
+      });
+      await eventually(
+        async () =>
+          (await client.sessions({ projectId: notes.id })).some(
+            (s) => !["running", "paused", "planned"].includes(s.status),
+          ),
+        "the session that met the refusal to end (20 s)",
+        async () => JSON.stringify(await client.sessions({ projectId: notes.id })),
+        20_000,
+      );
+      const sessionId = (await client.sessions({ projectId: notes.id }))[0]?.id ?? "";
       // S-10: the person's session goes on once a new key is saved.
       expect((await client.session(sessionId)).summary?.split("\n")[0]).toBe(
         "Waits for a new API key: save one in Settings; then your session goes on.",
@@ -27688,9 +27715,24 @@ describe("l4-starts-sessions, run L4", () => {
       const project = await a.client.createProject({ name: "Field notes", goal: "A note" });
       projectId = project.id;
       await readyTask(a.client, project.id, "Write notes/today.md");
-      const started = await a.client.startSession({ agentId: a.agentId, projectId: project.id });
-      waitingId = started.session?.id ?? "";
-      expect(waitingId, JSON.stringify(started)).not.toBe("");
+      // l4-starts-carried (L4d-left-2): with the refusal known, a person's Start through the API
+      // is refused in words; the session that stops at once to wait is one that reached the
+      // runner (a start made before the refusal was known, live check 4's LC-C21).
+      await a.rt.scheduler.requestStart({
+        agentId: a.agentId,
+        projectId: project.id,
+        trigger: "manual",
+        by: "person",
+        reason: "a start that reached the runner",
+      });
+      await eventually(
+        async () => (await a.client.sessions({ projectId: project.id })).length > 0,
+        "the person's session to begin (20 s)",
+        async () => JSON.stringify(await a.client.sessions({ projectId: project.id })),
+        20_000,
+      );
+      waitingId = (await a.client.sessions({ projectId: project.id }))[0]?.id ?? "";
+      expect(waitingId).not.toBe("");
       await ended(a.client, waitingId, "the person's session");
       await settleSessions(a.rt);
       // No run and no money: it met the key's mark, not the API.
@@ -29258,6 +29300,102 @@ describe("l4-starts-carried, run L4", () => {
       release();
       await settleSessions(rt);
       await rt.close();
+    }
+  }, 120_000);
+
+  // L4d-left-2 (the session lead's decision at the L4d merge, 2026-11-23; the owner can
+  // overrule): a start under a refused credential is refused in words outright, also with no
+  // session kept, with the Start dialog's sentence. Before, POST /sessions (the Start the API,
+  // the phone and Continue send) started a session that met the refusal and ended to wait,
+  // while the dialog's Start was off and the user guide promised "every Start says the same".
+  it("L4d-left-2: with the API key refused and no session kept, POST /sessions is refused with the Start dialog's sentence and starts nothing", async () => {
+    const home = mkdtempSync(join(tmpdir(), "fr-ui-real-l4carried-refused-"));
+    const clock = new SimulatedClock("2026-03-05T08:00:00Z");
+    const refusedKey = ["sk-ant-api03-", "refused", "6".repeat(40)].join(""); // not-a-secret
+    const model = createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(home, "model-calls.jsonl") }),
+      ),
+    );
+    const standIn = messagesApiStandIn({
+      model,
+      clock,
+      answerFor: keyRule({ refuse: ["refused"] }),
+    });
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: home },
+      dirs: appDirs({ env: { FORERUNNER_HOME: home } }),
+      config: null,
+      clock,
+      stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+      vault: new MemoryVault({ anthropic_api_key: refusedKey }),
+      fetchImpl: standInFetch(standIn, {
+        fallback: async () => new Response("not here", { status: 404 }),
+      }),
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    try {
+      // The key's refusal is known: the plan from a brief met it first (live check 4's LC-C21).
+      const planned = await client.createProject({
+        name: "Plan first",
+        goal: goalFromBrief("A page that shows a random quote."),
+        brief: "A page that shows a random quote.",
+        intake: true,
+      });
+      await eventually(
+        async () => (await client.intakeStatus(planned.id)).state === "waiting",
+        "the planning to wait for a new key (20 s)",
+        async () => JSON.stringify(await client.intakeStatus(planned.id)),
+        20_000,
+      );
+      const project = await client.createProject({ name: "Field notes", goal: "A note" });
+      await readyTask(client, project.id, "Write notes/today.md");
+      const dialog = (await client.startCheck(project.id)).blocked;
+      expect(dialog?.sentence).toBe("Nothing can run until you save a new API key in Settings.");
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const refused = await client.startSession({ agentId, projectId: project.id }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(refused).toBeInstanceOf(ApiError);
+      expect((refused as ApiError).status).toBe(400);
+      expect((refused as ApiError).message).toBe(dialog?.sentence);
+      // Chat's start says the same sentence (L4-creds-8).
+      const chat = await client.executeCommands({
+        commands: [{ name: "session.start", params: { project: project.id } }],
+        wordsUsed: "start a session",
+        source: "text",
+        projectId: project.id,
+      });
+      expect((chat as { reason?: string }).reason).toBe(dialog?.sentence);
+      // Nothing started, nothing is kept, nothing was spent; the task stays ready.
+      expect(await client.sessions({ projectId: project.id })).toEqual([]);
+      expect(rt.scheduler.isActive(rt.agent.id)).toBe(false);
+      expect(await rt.continuations.waiting(project.id)).toBeNull();
+      expect((await client.tasks(project.id)).map((t) => t.status)).toEqual(["ready"]);
+      // The phone's start meets the same refusal (the daemon's one check for a person's start).
+      expect(await rt.refusedStart(project.id)).toBe(dialog?.sentence);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+      removeHomes([home]);
     }
   }, 120_000);
 });

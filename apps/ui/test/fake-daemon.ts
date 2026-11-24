@@ -3774,6 +3774,24 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // the work, the Start is kept for the reset: no session now, its sentence says when, and the
     // wait reads as the person's kept Start (Cancel the wait drops it).
     const resting = parsed.data.projectId ? state.credentialWaitNow[parsed.data.projectId] : null;
+    // l4-starts-carried (L4d-left-2), as the daemon: a refused credential the work needs refuses
+    // a person's start in the Start dialog's sentence, kept session or not; nothing starts.
+    if (
+      parsed.data.projectId &&
+      resting &&
+      !resting.startable &&
+      resting.save?.to === "/setup" &&
+      !parsed.data.useOtherCredential &&
+      state.tasks.some((t) => t.projectId === parsed.data.projectId && t.status === "ready")
+    )
+      return errorBody(
+        c,
+        400,
+        "validation",
+        resting.kept && resting.startsAt
+          ? `${resting.startsAt}.`
+          : nothingRunsYetSentence(resting.text),
+      );
     const at = resting?.startable ? fakeResetAt(resting.text) : null;
     if (parsed.data.projectId && resting && at) {
       const project = state.projects.find((p) => p.id === parsed.data.projectId);

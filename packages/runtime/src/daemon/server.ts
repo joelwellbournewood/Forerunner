@@ -2039,22 +2039,14 @@ export function createDaemonApp(
     // Start dialog's and chat's sentence ("Nothing can run until you save a new API key in
     // Settings."), also while the person's session is kept to go on; before, a start from the
     // API, the phone or the session page's Continue got the kept session's "goes on by itself
-    // once its Claude credential is back", which names no step. Only while a session is kept:
-    // without one, a start still runs and meets the refusal, and that session goes on by itself
-    // once a new one is saved (S-10, the refused-key case's "starts both by itself").
-    if (body.projectId && !yesForStop && (await rt.continuations.waiting(body.projectId))) {
-      const check = await rt.startCheck(body.projectId, body.budgetUsdMicro);
-      const refused = await startBlocked(check, body.projectId, body.agentId, {
-        credentialWait: true,
-      });
-      if (
-        refused?.kind === "nothing_runnable" &&
-        !refused.startable &&
-        refused.action?.kind === "link" &&
-        refused.action.to === "/setup"
-      )
-        throw new ForerunnerError("validation", refused.sentence, {
-          details: { blocked: refused, cause: "credential_refused", reason: START_REFUSED },
+    // once its Claude credential is back", which names no step. l4-starts-carried (L4d-left-2,
+    // the session lead's decision of 2026-11-23): also with no session kept; before, such a
+    // start ran a session that only met the refusal and ended to wait.
+    if (body.projectId && !yesForStop) {
+      const refused = await rt.refusedStart(body.projectId);
+      if (refused)
+        throw new ForerunnerError("validation", refused, {
+          details: { cause: "credential_refused", reason: START_REFUSED },
         });
     }
     // S-10: one wait per project: while the person's session waits to go on (or a Start was kept
