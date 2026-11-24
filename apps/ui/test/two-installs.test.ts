@@ -974,6 +974,103 @@ describe("w8-status-write, wave 8: one pinned status issue, one comment per Fore
     }
   }, 300_000);
 
+  /**
+   * fixup-w8-status-write: Ada's home runs a task whose specialist call is held, until the
+   * comment on GitHub says she works on it ("Working on now"). The issue's number, her comment
+   * and a read of the comments on the host itself (no home's client: one may be stopped).
+   */
+  async function adaWorkingOnNews(two: TwoHomes, made: { id: string }) {
+    const { ada } = two;
+    const memory = two.memory as MemoryGitHost;
+    await runOneTask(ada, two, made.id, "Write the about page in about.md");
+    await ada.rt.statusBoard.settled();
+    const [issue] = await statusIssues(ada, two.repo);
+    const n = issue?.number ?? 0;
+    const onHost = async () => (await memory.listIssueComments(two.repo, n)).comments;
+    const [mine] = await onHost();
+    const held = ada.holdModelCalls((req) => detectRole(req).role === "specialist");
+    await ada.client.createTask(made.id, {
+      title: "Write the news page in news.md",
+      outcome: "news.md lists the team's news",
+      riskTier: 1,
+      specialist: "coder",
+    });
+    const agent = await principalOf(ada.client);
+    await ada.client.startSession({ agentId: agent.id, projectId: made.id });
+    await held.waiting;
+    await until(
+      "Ada's Working on now line on GitHub",
+      async () => {
+        await ada.rt.statusBoard.settled();
+        return ((await onHost())[0]?.body ?? "").includes(
+          'Working on now\n- "Write the news page in news.md"',
+        );
+      },
+      async () => (await onHost())[0]?.body ?? "",
+    );
+    return { n, mine, onHost };
+  }
+
+  it("memory: Quit while a task runs and GitHub does not answer: at the next start, with GitHub back and no screen open, the comment loses its Working on now line, in one edit of the same comment", async () => {
+    const two = await composeTwo({ host: "memory" });
+    try {
+      const { ada } = two;
+      const made = await teamSite(two);
+      const { mine, onHost } = await adaWorkingOnNews(two, made);
+      ada.githubOff();
+      await ada.quit();
+      // GitHub still shows the line Quit could not clear.
+      expect((await onHost())[0]?.body).toContain("Working on now");
+      const atQuit = two.writesBy("ada").length;
+      ada.githubOn();
+      await ada.start();
+      // No Settings, no Docs tab, no new work: the start itself sends what waited.
+      await until(
+        "the waiting text to reach GitHub with no screen open",
+        async () =>
+          two
+            .writesBy("ada")
+            .slice(atQuit)
+            .some((w) => w.action === "comment.update"),
+        async () => JSON.stringify(two.writesBy("ada").slice(atQuit)),
+      );
+      await ada.rt.statusBoard.settled();
+      const after = await onHost();
+      expect(after.map((c) => c.id)).toEqual([mine?.id]);
+      expect(after[0]?.body).not.toContain("Working on now");
+      const sent = two.writesBy("ada").slice(atQuit);
+      expect(sent.filter((w) => w.action === "comment.update")).toHaveLength(1);
+      expect(sent.filter((w) => w.action === "comment" || w.action === "issue.create")).toEqual([]);
+    } finally {
+      await two.close();
+    }
+  }, 300_000);
+
+  it("memory: Quit while a task runs with GitHub answering clears its Working on now line before the daemon ends; nothing of the writer runs after, and the next start writes nothing", async () => {
+    const two = await composeTwo({ host: "memory" });
+    try {
+      const { ada } = two;
+      const made = await teamSite(two);
+      const { mine, onHost } = await adaWorkingOnNews(two, made);
+      await ada.quit();
+      const atQuit = two.writesBy("ada").length;
+      const after = await onHost();
+      expect(after.map((c) => c.id)).toEqual([mine?.id]);
+      expect(after[0]?.body).not.toContain("Working on now");
+      expect(ada.rt.statusBoard.read(made.id).pending).toBeNull();
+      await ada.start();
+      await ada.rt.statusBoard.settled();
+      expect(
+        two
+          .writesBy("ada")
+          .slice(atQuit)
+          .filter((w) => /^(comment|issue)/.test(w.action)),
+      ).toEqual([]);
+    } finally {
+      await two.close();
+    }
+  }, 300_000);
+
   it("memory: W8-write-9: Bob's 'Site' on team/shared, whose default branch's marker names Ada's 'Team site', writes no issue and no comment over a session and a restart, and its status stays in the app with its sentence", async () => {
     const two = await composeTwo({ host: "memory" });
     try {

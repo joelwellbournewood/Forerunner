@@ -850,6 +850,89 @@ describe("w8-status-write, wave 8: the writer", () => {
       expect(holdsPrivateText(line), line).toBe(false);
   });
 
+  it("fixup-w8-status-write: Quit clears a running task's Working on now line the session's end did not reach; after the close no event and no timer writes", async () => {
+    const { clock, github, make } = await world();
+    const ada = await make("ada", "dev-ada", "Ada's agent");
+    const task = await ada.store.task.insert({
+      project_id: K,
+      title: "Add a footer to footer.html",
+      status: "in_progress",
+    });
+    ada.board.taskStarted(K, task);
+    await ada.board.settled();
+    expect((await commentsOn(github, 1))[0]?.body).toContain("Working on now");
+    await ada.board.close();
+    const [after] = await commentsOn(github, 1);
+    expect(after?.body).not.toContain("Working on now");
+    expect(ada.board.read(K)).toMatchObject({ working: {}, pending: null });
+    const writes = github.writesBy("ada").length;
+    ada.board.taskStarted(K, task);
+    ada.board.taskBoundary(K);
+    ada.board.sessionEnded(K, { endedAt: clock.nowIso(), done: ["One"], next: [] });
+    ada.board.resume(K);
+    await ada.board.resumeAll();
+    await clock.advance(31 * 60_000);
+    await ada.board.settled();
+    expect(github.writesBy("ada").slice(writes)).toEqual([]);
+    expect(ada.board.read(K).working).toEqual({});
+  });
+
+  it("fixup-w8-status-write: a one-shot's close (an fr command beside the running daemon) leaves the daemon's Working on now line on GitHub and in the record", async () => {
+    const { github, make } = await world();
+    const ada = await make("ada", "dev-ada", "Ada's agent");
+    const task = await ada.store.task.insert({
+      project_id: K,
+      title: "Add a footer to footer.html",
+      status: "in_progress",
+    });
+    ada.board.taskStarted(K, task);
+    await ada.board.settled();
+    const daemon = ada.board;
+    const writes = github.writesBy("ada").length;
+    ada.remake();
+    await ada.board.close({ clearWorking: false });
+    expect(github.writesBy("ada").slice(writes)).toEqual([]);
+    expect((await commentsOn(github, 1))[0]?.body).toContain(
+      '\nWorking on now\n- "Add a footer to footer.html"',
+    );
+    expect(Object.keys(daemon.read(K).working)).toEqual([task.id]);
+  });
+
+  it("fixup-w8-status-write: the start sends what waited with no screen asking; GitHub still out at the start, the retry sends it once it answers, once", async () => {
+    const { clock, github, make } = await world();
+    const ada = await make("ada", "dev-ada", "Ada's agent");
+    ada.board.sessionEnded(K, { endedAt: "2026-11-24T21:10:00.000Z", done: [], next: [] });
+    await ada.board.settled();
+    ada.off.now = true;
+    ada.board.sessionEnded(K, { endedAt: "2026-11-24T21:20:00.000Z", done: ["One"], next: [] });
+    await ada.board.settled();
+    await ada.board.close();
+    expect(ada.board.read(K).pending).toContain('did 1 task: "One"');
+    const writes = github.writesBy("ada").length;
+    // The next start, GitHub still out: nothing reaches it, the text keeps waiting.
+    ada.remake();
+    await ada.board.resumeAll();
+    await ada.board.settled();
+    expect(ada.board.place(ada.project)).toMatchObject({ kind: "waiting" });
+    // GitHub answers again; no screen reads the words: the retry sends it.
+    ada.off.now = false;
+    await clock.advance(60_000);
+    await ada.board.settled();
+    const sent = github.writesBy("ada").slice(writes);
+    expect(sent.filter((w) => w.op === "updateIssueComment")).toHaveLength(1);
+    expect(sent.filter((w) => w.op === "commentOnIssue" || w.op === "createIssue")).toEqual([]);
+    expect((await commentsOn(github, 1))[0]?.body).toContain('did 1 task: "One"');
+    expect(ada.board.read(K).pending).toBeNull();
+    await clock.advance(10 * 60_000);
+    await ada.board.settled();
+    expect(
+      github
+        .writesBy("ada")
+        .slice(writes)
+        .filter((w) => w.op === "updateIssueComment"),
+    ).toHaveLength(1);
+  });
+
   it("W8-write-8: a deleted issue gets one new issue and the person is told once", async () => {
     const { github, make } = await world();
     const ada = await make("ada", "dev-ada", "Ada's agent");

@@ -286,8 +286,13 @@ export class StatusBoard implements StatusBoardPort {
     this.schedule(projectId, { create: false, body: true, force: true });
   }
 
-  /** Every project with a pending write (compose calls it once its services start). */
+  /**
+   * Every project with a pending write: the daemon calls it once at its start (compose, the
+   * install's one live process: `statusDaemon`), so a text Quit or a lost connection left waiting
+   * goes out without a screen asking; GitHub still out, the retry timer sends it later.
+   */
   async resumeAll(): Promise<void> {
+    if (this.closed) return;
     const projects = await this.deps.store.project.list({}, { limit: 1000 }).catch(() => []);
     for (const p of projects) this.resume(p.id);
   }
@@ -304,11 +309,18 @@ export class StatusBoard implements StatusBoardPort {
   /**
    * Quit (POST /shutdown) and the daemon's close: a project whose comment still says this install
    * works on something has those lines cleared, best effort, within `withinMs`; then nothing of the
-   * writer runs (validation rule 4).
+   * writer runs (validation rule 4). A clear GitHub does not take waits as the pending text, which
+   * the next start sends (`resumeAll`). `clearWorking: false` is a one-shot's close (an `fr`
+   * command composed beside a running daemon): the daemon's lines are live, so they are left as
+   * they are, in the record and on GitHub.
    */
-  async close(withinMs = 5000): Promise<void> {
+  async close(opts: { withinMs?: number; clearWorking?: boolean } = {}): Promise<void> {
     if (this.closed) return;
-    const projects = await this.deps.store.project.list({}, { limit: 1000 }).catch(() => []);
+    const withinMs = opts.withinMs ?? 5000;
+    const projects =
+      opts.clearWorking === false
+        ? []
+        : await this.deps.store.project.list({}, { limit: 1000 }).catch(() => []);
     for (const p of projects) {
       const s = this.read(p.id);
       if (Object.keys(s.working).length === 0) continue;

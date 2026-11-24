@@ -571,6 +571,14 @@ export interface ComposeOptions {
    */
   recoverSessions?: boolean;
   /**
+   * The install's one live process for its status comments (w8-status-write, ADR 0122): at start
+   * it sends the status text a stopped daemon left waiting for GitHub (`StatusBoard.resumeAll`),
+   * and its close (Quit) clears this install's Working on now lines. Default: `recoverSessions`
+   * (the daemon); a CLI one-shot composes beside a running daemon whose lines are live and
+   * leaves both alone. A test that composes a daemon without its services passes true.
+   */
+  statusDaemon?: boolean;
+  /**
    * Notification channel seams (tests): the OS tools the desktop and Signal channels run, the
    * fetch the Telegram channel uses, the platform, and the agent mailbox the email channel
    * sends through. Production uses the platform's `run`/`which`, `globalThis.fetch` and
@@ -2814,6 +2822,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // and which writes no status comment yet.
   const statusBoardWired =
     opts.billing?.runner !== "cloud" && (opts.gitHost !== undefined || !!ghToken);
+  const statusDaemon = opts.statusDaemon ?? opts.recoverSessions ?? opts.startServices !== false;
   const guideRefreshes = new Set<Promise<unknown>>();
   const statusBoard = new StatusBoard({
     store,
@@ -6312,6 +6321,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   presence?.start();
   remoteWatcher?.start();
   githostWatcher?.start();
+  // w8-status-write (ADR 0122 point 5, "it updates when GitHub answers"): a status text a
+  // stopped daemon left waiting (Quit or a lost connection) goes out now, with no screen asking;
+  // GitHub still out, the board's retry timer sends it once it answers. Not awaited past the
+  // store's read: GitHub's answer never holds the start.
+  if (statusBoardWired && statusDaemon)
+    await statusBoard.resumeAll().catch((e: unknown) => {
+      logger.warn("waiting status texts not resumed", { error: errorMessage(e) });
+    });
   // Answers given on another device (the phone, the web approvals) land in the shared state
   // and reach no route of this daemon: the approvals poll applies them within
   // `approvalsPollMs`, the way the remote watcher picks up the phone's commands. Only where
@@ -6609,7 +6626,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       githostWatcher?.stop();
       // w8-status-write: Quit clears this install's Working on now lines, best effort; then
       // nothing of the writer runs.
-      await statusBoard.close();
+      await statusBoard.close({ clearWorking: statusDaemon });
       await Promise.allSettled([...guideRefreshes]);
       // A Merge pressed in the app finishes its call before the store closes (merge-in-app);
       // the records of the merges not started yet stay queued for the next start.

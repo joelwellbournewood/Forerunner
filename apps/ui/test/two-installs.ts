@@ -28,6 +28,11 @@
  *   repositories (`memory`) are not cut: the bench's `cut.mjs` cuts the whole connection.
  * - `home.holdModelCalls(when)`: hold that home's model calls matching `when` until `release()`
  *   (as scenario 04's holds), so a test can freeze a session mid-task.
+ * - `home.quit()` / `home.start()` (fixup-w8-status-write): the desktop shell's Quit, `POST
+ *   /shutdown` as the shell sends it (the daemon stops every run, answers 202, then closes as `fr
+ *   daemon` closes it); the home stays stopped until `start()` composes it again, so a test can
+ *   change GitHub between the two (the person starts the app later). Holds are let go after the
+ *   Quit, so a held call ends as a stopped one does.
  * - `two.writesBy(login)`: every write that login made on the host, in order (the memory host's
  *   write log, or the stand-in's request log: non-GET calls and git pushes).
  * - `two.pullRequests()`: the host's pull requests in any state, read by neither home.
@@ -139,6 +144,8 @@ export interface Home {
   githubOn(): void;
   readonly githubIsOff: boolean;
   holdModelCalls(when: (req: ModelRequest) => boolean): HeldCalls;
+  quit(): Promise<void>;
+  start(): Promise<void>;
 }
 
 export interface TwoHomes {
@@ -429,8 +436,17 @@ export async function composeTwo(opts: ComposeTwoOptions): Promise<TwoHomes> {
         // Its own device row, the install id (compose registers it with this option and no
         // services; the remote watcher stays off without services).
         remote: { enabled: true },
+        // The home is a daemon, not a one-shot beside one (fixup-w8-status-write): its start
+        // sends a status text that waited, and its Quit clears its Working on now lines.
+        statusDaemon: true,
       });
-      const { app, token } = createDaemonApp(rt);
+      // Quit (`POST /shutdown`): the route stops every run and asks for the process to end,
+      // which `quit()` does as `fr daemon` does (the runtime closed).
+      let shutdownAsked: () => void = () => undefined;
+      const shutdown = new Promise<void>((resolve) => {
+        shutdownAsked = resolve;
+      });
+      const { app, token } = createDaemonApp(rt, { onShutdown: () => shutdownAsked() });
       const client = createClient(
         {
           baseUrl: "http://daemon.test",
@@ -442,9 +458,28 @@ export async function composeTwo(opts: ComposeTwoOptions): Promise<TwoHomes> {
         },
         (input, init) => Promise.resolve(app.request(input, init)),
       );
-      return { rt, client };
+      const quit = async () => {
+        const res = await app.request("/shutdown", {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}` },
+        });
+        if (res.status !== 202) throw new Error(`Quit answered ${res.status}: ${await res.text()}`);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          shutdown,
+          new Promise<void>((_r, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("still waiting after 10 s for Quit to end the daemon")),
+              10_000,
+            );
+          }),
+        ]).finally(() => clearTimeout(timer));
+      };
+      return { rt, client, quit };
     };
     const first = await compose();
+    let quitCurrent = first.quit;
+    let stopped = false;
     const h: Home = {
       key,
       login: person.login,
@@ -460,6 +495,22 @@ export async function composeTwo(opts: ComposeTwoOptions): Promise<TwoHomes> {
         const next = await compose();
         h.rt = next.rt;
         h.client = next.client;
+        quitCurrent = next.quit;
+      },
+      async quit() {
+        await quitCurrent();
+        model.releaseAll();
+        await settleSessions(h.rt);
+        await h.rt.close();
+        stopped = true;
+      },
+      async start() {
+        if (!stopped) throw new Error(`${person.humanName}'s Forerunner is running`);
+        const next = await compose();
+        h.rt = next.rt;
+        h.client = next.client;
+        quitCurrent = next.quit;
+        stopped = false;
       },
       githubOff() {
         off = true;
@@ -474,6 +525,8 @@ export async function composeTwo(opts: ComposeTwoOptions): Promise<TwoHomes> {
     };
     // On close every hold lets go, so no session waits on a test that ended.
     (h as Home & { releaseAll: () => void }).releaseAll = model.releaseAll;
+    // A home stopped by `quit()` is closed already.
+    (h as Home & { isStopped: () => boolean }).isStopped = () => stopped;
     homes.push(h);
     return h;
   };
@@ -525,6 +578,7 @@ export async function composeTwo(opts: ComposeTwoOptions): Promise<TwoHomes> {
         const failures: unknown[] = [];
         for (const h of homes) {
           (h as Home & { releaseAll?: () => void }).releaseAll?.();
+          if ((h as Home & { isStopped?: () => boolean }).isStopped?.()) continue;
           await settleSessions(h.rt).catch((e: unknown) => failures.push(e));
           await h.rt.close().catch(() => undefined);
         }
