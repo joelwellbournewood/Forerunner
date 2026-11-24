@@ -1090,7 +1090,11 @@ l4-money-pause, run L4 (2026-11-22, L4-money-109): `SETTING_SPECS.session_reserv
   timer, and `sweepPending` on any later call). The daemon turns it into inbox.changed,
   project.changed and, when no turn of that conversation runs, conversation.changed
   (runtime.md). Before, only the chat route told the screens, so a card answered in the Inbox
-  left the chat's header on "Waiting for you".
+  left the chat's header on "Waiting for you". `confirm` tells it in a `finally`, so a yes whose
+  change throws after the card was taken out (a change-log write that failed) is told too, as
+  `yes` (`no` for a no). A lapse calls `onExpired` first and `onClosed` after it, so the
+  screens told of the close read the Inbox with the lapse's Update already in it
+  (fixup-l4-selftasks-carried; test: `test/selftasks-carried.test.ts` "a close is told once").
 - **A fix set's Yes is judged per task (L4f-left-2, ADR 0119 amended 2026-11-23).**
   `taskListFingerprint` is `v2|<id>=<hash>,...` with one short hash per task of its status,
   title, outcome and dependencies (`fixFields`); `fixListMoved(store, projectId, print, named)`

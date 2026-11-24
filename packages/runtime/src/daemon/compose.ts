@@ -4992,7 +4992,9 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     },
     // l4-selftasks-chat (L4-selftasks-117): a confirmation that still lapses (a settings-screen or
     // email card; a chat read-back waits until it is answered) leaves one Update that says nothing
-    // changed (the screens hear it through onClosed).
+    // changed. The screens hear it through onClosed, which the executor tells after this
+    // (fixup-l4-selftasks-carried: with the Update in the Inbox already, so they read it once;
+    // before, this emitted inbox.changed a second time).
     onExpired: async (card) => {
       await store.message.send({
         from_agent_id: agent.id,
@@ -5003,8 +5005,6 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         requires_ack: false,
         author_agent: agent.id,
       });
-      // The Update is in the Inbox now: its count and list follow.
-      events.emit("inbox", {});
     },
     ports: {
       chfPerUsd: async () => chfPerUsd(),

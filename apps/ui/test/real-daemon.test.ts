@@ -28480,6 +28480,19 @@ describe("l4-selftasks-carried, run L4", () => {
       a.reset();
       await clock.advance(11 * 60_000);
       expect(a.heard.inbox).toBeGreaterThan(0);
+      // fixup-l4-selftasks-carried: the lapse's Update is in the Inbox when the screens hear the
+      // close, which is told once (before, once at the close and once more after the Update).
+      await vi.waitFor(
+        async () =>
+          expect(
+            (await a.client.inbox(a.me.id)).messages.some((m) =>
+              m.body.startsWith("The change you asked for was not made: the monthly cap"),
+            ),
+          ).toBe(true),
+        { timeout: 10_000 },
+      );
+      await settleSessions(a.rt);
+      expect(a.heard.inbox).toBe(1);
       expect((await a.client.inbox(a.me.id)).needsYouCount).toBe(1);
       expect(await status()).toBe(ONE_QUESTION);
       await a.chat(project.id, "what is waiting?");

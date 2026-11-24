@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { CommandExecutor, fixListMoved, namedTaskIds, taskListFingerprint } from "../src/index.ts";
+import { describe, expect, it, vi } from "vitest";
+import {
+  type ClosedConfirmation,
+  CommandExecutor,
+  fixListMoved,
+  namedTaskIds,
+  taskListFingerprint,
+} from "../src/index.ts";
 import { type World, world } from "./helpers.ts";
 
 /**
@@ -467,5 +473,68 @@ describe("l4-selftasks-carried, run L4: a value read back in chat that moved sin
       expect(yes.status, `restart: ${restart}`).toBe("done");
       await w.store.close();
     }
+  });
+});
+
+/**
+ * fixup-l4-selftasks-carried (the review's non-blocking items): every close is told once, also
+ * when the change after a yes fails to be recorded (before, `confirm` told nothing when
+ * `perform` threw, so the header kept "Waiting for you" until a reload), and a lapse tells its
+ * Update before it tells the close, so the screens read the Inbox once with the Update in it.
+ */
+describe("fixup-l4-selftasks-carried, run L4: a close is told once whatever happens after it (L4f-left-1)", () => {
+  it("a yes whose change cannot be recorded still tells the close", async () => {
+    const w = await world();
+    const closed: ClosedConfirmation[] = [];
+    const executor = new CommandExecutor({
+      registry: w.registry,
+      store: w.store,
+      clock: w.clock,
+      onClosed: (c) => {
+        closed.push(c);
+      },
+    });
+    const task = await seed(w, "Write the FAQ");
+    const asked = await executor.execute({
+      name: "task.transition",
+      params: { task: task.id, to: "cancelled" },
+      ctx: w.ctx({ source: "chat" }),
+    });
+    if (asked.status !== "pending") throw new Error(JSON.stringify(asked));
+    vi.spyOn(w.store.changeLog, "record").mockRejectedValueOnce(new Error("disk full"));
+    await expect(executor.confirmByText(asked.pendingId, "yes", w.ctx().actor)).rejects.toThrow(
+      "disk full",
+    );
+    expect(closed).toEqual([
+      expect.objectContaining({ id: asked.pendingId, projectId: w.pharma.id, how: "yes" }),
+    ]);
+    expect(executor.getPending(asked.pendingId)).toBeUndefined();
+    await w.store.close();
+  });
+
+  it("a lapse tells its Update first, then the close, once each", async () => {
+    const w = await world();
+    const told: string[] = [];
+    const executor = new CommandExecutor({
+      registry: w.registry,
+      store: w.store,
+      clock: w.clock,
+      onExpired: (c) => {
+        told.push(`expired ${c.id}`);
+      },
+      onClosed: (c) => {
+        told.push(`closed ${c.id} ${c.how}`);
+      },
+    });
+    const asked = await executor.execute({
+      name: "budget.set",
+      params: { scope: "month", amountChf: 400 },
+      ctx: w.ctx({ source: "ui" }),
+    });
+    if (asked.status !== "pending") throw new Error(JSON.stringify(asked));
+    await w.clock.advance(11 * 60_000);
+    await vi.waitFor(() => expect(told).toHaveLength(2), { timeout: 10_000 });
+    expect(told).toEqual([`expired ${asked.pendingId}`, `closed ${asked.pendingId} expired`]);
+    await w.store.close();
   });
 });

@@ -1203,15 +1203,29 @@ export class CommandExecutor {
    */
   async confirm(pendingId: string, answer: ConfirmationAnswer): Promise<ExecuteResult> {
     const p = this.pendings.get(pendingId);
-    const r = await this.answerPending(pendingId, answer);
-    // l4-selftasks-carried (L4f-left-1): an answer that took the card out (a yes made or
-    // refused, a no) is told once, whatever route gave it.
-    if (p?.answered)
-      await this.tellClosed(
-        p,
-        r.status === "cancelled" ? "no" : r.status === "refused" ? "refused" : "yes",
-      );
-    return r;
+    let r: ExecuteResult | undefined;
+    try {
+      r = await this.answerPending(pendingId, answer);
+      return r;
+    } finally {
+      // l4-selftasks-carried (L4f-left-1): an answer that took the card out (a yes made or
+      // refused, a no) is told once, whatever route gave it. fixup-l4-selftasks-carried: also
+      // when the change after the yes threw (a change-log write that failed): the card is out
+      // all the same, and before, the header kept "Waiting for you" until a reload.
+      if (p?.answered)
+        await this.tellClosed(
+          p,
+          r === undefined
+            ? answer.kind === "no"
+              ? "no"
+              : "yes"
+            : r.status === "cancelled"
+              ? "no"
+              : r.status === "refused"
+                ? "refused"
+                : "yes",
+        );
+    }
   }
 
   /** The answer to a pending card (`confirm`): checked, then made, refused or declined. */
@@ -1460,23 +1474,28 @@ export class CommandExecutor {
     } catch (e) {
       this.logger.warn("could not expire the request", { id, error: errorMessage(e) });
     }
-    if (expired) await this.tellClosed(p, "expired");
+    if (!expired) return;
     // L4-selftasks-117: an expiry that remains is told (before, the card left the Inbox with
-    // no event, no message and a Yes still drawn in the open chat).
-    if (!expired || !this.onExpired) return;
-    try {
-      await this.onExpired({
-        id,
-        humanId: p.humanId,
-        projectId: p.card.projectId ?? row?.project_id ?? null,
-        what: p.card.what,
-        change: cardChange(p.card),
-        source: ((row?.change_card as { context?: { source?: CommandSource } } | null)?.context
-          ?.source ?? "ui") as CommandSource,
-      });
-    } catch (e) {
-      this.logger.warn("could not tell about the lapsed card", { id, error: errorMessage(e) });
+    // no event, no message and a Yes still drawn in the open chat). fixup-l4-selftasks-carried:
+    // its Update first, then the close (`onClosed`), so the screens told of the close read the
+    // Inbox once with the Update in it (before, the close came first and the daemon told the
+    // Inbox a second time after the Update).
+    if (this.onExpired) {
+      try {
+        await this.onExpired({
+          id,
+          humanId: p.humanId,
+          projectId: p.card.projectId ?? row?.project_id ?? null,
+          what: p.card.what,
+          change: cardChange(p.card),
+          source: ((row?.change_card as { context?: { source?: CommandSource } } | null)?.context
+            ?.source ?? "ui") as CommandSource,
+        });
+      } catch (e) {
+        this.logger.warn("could not tell about the lapsed card", { id, error: errorMessage(e) });
+      }
     }
+    await this.tellClosed(p, "expired");
   }
 
   // -------------------------------------------------------------------------------------

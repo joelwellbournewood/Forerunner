@@ -10008,8 +10008,10 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 - **compose.ts `onClosed` (L4f-left-1).** Every close of a confirmation (commands.md) emits
   `inbox` and `project` (the card's project), and `conversation` for the conversation the card
   was read back in (`conversationOfCard`, transcript.ts) unless a turn of it is in flight
-  (`ChatTurns.inFlight`: that turn tells it itself). `onExpired` files its Update first, then
-  emits inbox. server.ts `heardChat` no longer emits for a card the turn answered; it still
+  (`ChatTurns.inFlight`: that turn tells it itself). `onExpired` files its Update and emits
+  nothing: the executor calls it before `onClosed`, whose inbox.changed then finds the Update
+  in the Inbox (fixup-l4-selftasks-carried; before, a lapse emitted inbox.changed twice, the
+  first before the Update was filed). server.ts `heardChat` no longer emits for a card the turn answered; it still
   tells a card the turn filed and the projects its changes touched.
 - **Change rows by the person and the agent (L4f-left-4).** `ChangeLogView.byYouAndAgent`
   (change-rows.ts) when a row has `author_human` and `author_agent`; recall's `whoOf` says "You
