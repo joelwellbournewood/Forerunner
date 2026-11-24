@@ -3402,3 +3402,13 @@ fixup-l4-selftasks-chat (L4-selftasks-121; C2-left-14, C4-left-4, C3-left-10) ad
   person's words (ADR 0119 amended 2026-11-24); use the knob for a note the model wrote.
 - The stand-in's `thoroughWhy` never reads a "tool:" line (before, a tool line whose input named
   review.md went to answer_thoroughly). Test: packages/runtime/test/chat-final.test.ts.
+
+## l4-github-carried (run L4, 2026-11-24): GitHub writes counted, and a host that refuses a push
+
+- A real-daemon case that counts GitHub writes reads the fake host's `requests()` log and leaves
+  out `git-upload-pack` (a fetch is a read): Close is exactly one `PATCH` of the pull request.
+- The Try again case (`real-daemon.test.ts` "l4-github-carried, run L4: Try again on the
+  take-over's line") runs over `MemoryGitHost` and bare repositories, with a `pre-receive` hook
+  that refuses the push; another project's open docs pull request is marked with
+  `forerunnerMarker({ project })`, since an unmarked one reads as this project's own when it is
+  the only one linked (W15-01).

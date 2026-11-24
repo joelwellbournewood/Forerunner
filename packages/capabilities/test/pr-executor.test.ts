@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import { GitOps } from "../src/githost/git.ts";
 import { MemoryGitHost } from "../src/githost/memory.ts";
 import {
+  branchSegment,
   DEPS_BASE_REF,
   emptiedSentence,
   HELD_FOR_COMMIT_RESUME,
@@ -27,6 +28,7 @@ import {
   REBUILD_PENDING_REF,
   RUN_UNPUSHED_REF,
   readForerunnerMarker,
+  taskBranchName,
   WIP_SUBJECT,
   workInProgressMessage,
 } from "../src/githost/pr-executor.ts";
@@ -2820,5 +2822,79 @@ describe("w15-words, wave 15 run B", { timeout: 120_000 }, () => {
     expect(wip).not.toContain(task.id);
     expect(wip).not.toMatch(/\bTask [0-9a-f-]{8,}/);
     expect(wip.split("\n\n").at(-1)).toBe("Left to do:\n- add the test");
+  });
+});
+
+describe("l4-github-carried, run L4", { timeout: 120_000 }, () => {
+  // L4e-left-2: a task's branch kept the dots of its title, so "Update yarn.lock" gave
+  // fr/<8>-update-yarn.lock (a component ending ".lock") and "Wait... what" gave
+  // fr/<8>-wait...-what (".."); git refuses both, and the task's push failed. The branch now
+  // turns dots into dashes, as the scaffold's and the plan's docs branches do (one helper).
+  for (const [title, slug] of [
+    ["Update yarn.lock", "update-yarn-lock"],
+    ["Wait... what", "wait--what"],
+  ] as const)
+    it(`a task titled "${title}" pushes its branch and opens its pull request (L4e-left-2)`, async () => {
+      const w = await world();
+      const task = await w.store.task.insert({
+        project_id: w.project,
+        title,
+        outcome: "o",
+        acceptance_criteria: ["works"],
+        risk_tier: 1,
+        status: "in_progress",
+        priority: 5,
+        depends_on: [],
+        budget_usd_micro: 1,
+        est_cost_usd_micro: 1,
+        actual_cost_usd_micro: 0,
+        attempt: 0,
+        reason: "seed",
+      });
+      const exec = new PrTaskExecutor({
+        store: w.store,
+        clock: w.clock,
+        host: w.host,
+        inner: innerWriting({ "notes.txt": "one line\n" }),
+        repoFor: async () => ({
+          clone: w.bare,
+          repo: { owner: "o", name: "sample" },
+          base: "main",
+        }),
+        worktreeRoot: join(w.root, "wt"),
+        identity,
+      });
+      const res = await exec.execute({
+        task,
+        session: w.session,
+        token: w.token,
+        budget: w.budget,
+        item: { taskId: task.id, title: task.title, specialist: "coder", estimateUsdMicro: 1 },
+        signal: new AbortController().signal,
+      });
+      expect(res.summary).not.toMatch(/could not|refused|failed/i);
+      expect(res.outcome).toBe("in_review");
+      expect(res.branch).toMatch(new RegExp(`^fr/[0-9a-f]{8}-${slug}$`));
+      expect(taskBranchName(task)).toBe(res.branch);
+      const ok = await run(["git", "check-ref-format", "--branch", res.branch ?? ""]);
+      expect(ok.code).toBe(0);
+      // The branch is on the remote with the file, and one pull request is open on it.
+      const heads = (await run(["git", "--git-dir", w.bare, "branch", "--list", res.branch ?? ""]))
+        .stdout;
+      expect(heads.trim()).toBe(res.branch);
+      const prs = await w.host.listPullRequests({ owner: "o", name: "sample" });
+      expect(prs.map((p) => p.head.ref)).toEqual([res.branch]);
+      await w.store.close();
+    });
+
+  it("one branch-name helper for tasks, the plan's docs and the scaffold: dots become dashes, no '..', no '.lock' end (L4e-left-2)", () => {
+    expect(branchSegment("Update yarn.lock", "task")).toBe("update-yarn-lock");
+    expect(branchSegment("Wait... what", "task")).toBe("wait--what");
+    expect(branchSegment("index.html page.", "task")).toBe("index-html-page");
+    expect(branchSegment("...", "task")).toBe("task");
+    expect(branchSegment(`${"a".repeat(39)}-b`, "task")).toBe("a".repeat(39));
+    expect(
+      taskBranchName({ id: "01a19c00-0000-7000-8000-0000abcd1234", title: "Update yarn.lock" }),
+    ).toBe("fr/abcd1234-update-yarn-lock");
   });
 });

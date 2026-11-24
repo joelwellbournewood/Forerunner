@@ -34,6 +34,15 @@ export function unknownShapeSentence(number: number): string {
   return `#${number} was merged in a way Forerunner cannot undo safely; undo it on GitHub.`;
 }
 
+/**
+ * L4e-left-3: a closed pull request whose change reached main with no merge commit Forerunner
+ * can take back (pushed or fast-forwarded there): what went wrong and what to do, never a
+ * "Try again in a minute" that no later press can keep.
+ */
+export function noMergeCommitSentence(number: number): string {
+  return `#${number}'s change reached main without a merge commit, so Forerunner cannot take it out by itself: undo it by hand, or ask in Chat for a task that does it.`;
+}
+
 /** The answer of a take-out that waits for the person, with the done tasks that built on it. */
 export function takeOutOpenedSentence(
   title: string,

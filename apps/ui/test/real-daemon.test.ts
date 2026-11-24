@@ -53,6 +53,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { GitOps } from "../../../packages/capabilities/src/githost/git.ts";
 import { GitHubHost } from "../../../packages/capabilities/src/githost/github.ts";
 import { MemoryGitHost } from "../../../packages/capabilities/src/githost/memory.ts";
+import { forerunnerMarker } from "../../../packages/capabilities/src/githost/pr-executor.ts";
 import { ZERO_REFUSED } from "../../../packages/commands/src/commands/budget.ts";
 import { saidByName } from "../../../packages/critic/src/followup.ts";
 import { providerReply } from "../../../packages/runtime/test/cred-world.ts";
@@ -16757,7 +16758,7 @@ describe("l3-merge, run L3", () => {
       const told =
         JSON.stringify(chatCalls.at(-1)?.messages ?? []) + (chatCalls.at(-1)?.system ?? "");
       expect(told).toContain(
-        `Left open on GitHub when their task was cancelled (the person closes them there if not wanted): \\"Write the About page in about.html\\" ${(await view())?.prUrl}`,
+        `Left open on GitHub when their task was cancelled (the person closes them with Close on the Overview or on GitHub, if not wanted): \\"Write the About page in about.html\\" ${(await view())?.prUrl}`,
       );
       // Closed on GitHub: no longer listed.
       await w.github.updatePullRequest(w.REPO, pr, { state: "closed" });
@@ -18517,12 +18518,16 @@ describe("d1109-onerepo-link, run C", () => {
       });
       // L4-github-102 (run L4): the Overview says it too, never nothing (before: no line, as if
       // GitHub now named this project).
+      // l4-github-carried (L4e-left-1, OQ-L4e-1's default): the outcome line carries its Try
+      // again (`outcome`, `tryAgainLine`).
       const saidOnOverview = {
         kind: "elsewhere",
         text: noPr,
         canTakeOver: false,
         takeOverLine: null,
         details: null,
+        outcome: "took_over_no_pull_request",
+        tryAgainLine: "Tries again to open the docs pull request that names this project.",
       };
       expect((await client.project(made.id)).repositoryElsewhere).toEqual(saidOnOverview);
       // The other project's pull request is untouched (no push, comment or close).
@@ -26280,6 +26285,9 @@ describe("l4-github-link, run L4", () => {
         canTakeOver: false,
         takeOverLine: null,
         details: null,
+        // l4-github-carried (L4e-left-1, L4e-left-4): the take-over's outcome, with Try again.
+        outcome: "took_over_no_pull_request",
+        tryAgainLine: "Tries again to open the docs pull request that names this project.",
       };
       expect((await client.project(made.id)).repositoryElsewhere).toEqual(said);
       await settleSessions(rt);
@@ -30013,4 +30021,317 @@ describe("l4-chat-final, run L4", () => {
       await a.rt.close();
     }
   }, 60_000);
+});
+
+describe("l4-github-carried, run L4", () => {
+  /** A repository project on the fake GitHub, the watcher polled by the test, recomposable. */
+  async function repoWorld(name: string) {
+    const work = mkdtempSync(join(tmpdir(), `fr-ui-real-l4c-${name}-`));
+    const clock = new SystemClock();
+    const host = await FakeGitHost.start({ rootDir: join(work, "host"), clock });
+    host.createUser({ login: "alice", name: "Alice", email: "alice@example.test" });
+    await host.createRepo({
+      owner: "alice",
+      name,
+      private: true,
+      defaultBranch: "main",
+      initialFiles: { "README.md": `# ${name}\n` },
+    });
+    const REPO = { owner: "alice", name };
+    const token = host.createToken({ owner: "alice", kind: "classic", scopes: ["repo"] }).token;
+    const github = new GitHubHost({ token, baseUrl: host.baseUrl, clock });
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const homeEnv = { FORERUNNER_HOME: home };
+    const compose = async () => {
+      const vault = new MemoryVault();
+      await vault.set(SECRET_NAMES.github, token);
+      return composeWithRolePlayer(
+        {},
+        {
+          env: homeEnv,
+          dirs: appDirs({ env: homeEnv }),
+          stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+          gitHost: new GitHubHost({ token, baseUrl: host.baseUrl, clock }),
+          vault,
+          tryIt: false,
+          githostWatch: { enabled: true, pollMs: 86_400_000 },
+          config: {
+            version: 1,
+            profile: "default",
+            timezone: "UTC",
+            githubApiBase: host.baseUrl,
+            anthropicApiBase: "http://an.test",
+            repos: [],
+            credentials: { github: true, anthropic: false, anthropicSubscription: false },
+            stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+          },
+        },
+      );
+    };
+    return { host, github, REPO, token, compose, work };
+  }
+  const prOf = (url: string | null | undefined) => Number(/\/pull\/(\d+)/.exec(url ?? "")?.[1]);
+  async function runSession(client: DaemonClient, projectId: string) {
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const started = await client.startSession({ agentId, projectId });
+    await eventually(
+      async () => (await client.session(started.session?.id ?? "")).status !== "running",
+      "the session to end (at least 60 s)",
+      async () => (await client.tasks(projectId)).map((t) => `${t.title}=${t.status}`).join(", "),
+      60_000,
+    );
+  }
+
+  it("L4-github-130 (the owner's decision of 2026-11-18): Close on a cancelled task's pull request still open on GitHub, pressed through the client, closes exactly that pull request on GitHub (one PATCH, no branch deleted); the row is gone once GitHub answered, its record says closed, a second press and a press on a task that is not cancelled are refused in one sentence, and the daemon started again lists it nowhere", async () => {
+    const w = await repoWorld("l4close");
+    let { rt, client } = await w.compose();
+    try {
+      const project = await client.createProject({
+        name: "Kite club",
+        goal: "The club's pages",
+        repos: ["alice/l4close"],
+      });
+      const a = await client.createTask(project.id, {
+        title: "Write kite/about.txt about the club",
+        outcome: "kite/about.txt tells the club's story",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const b = await client.createTask(project.id, {
+        title: "Write kite/rules.txt with the rules",
+        outcome: "kite/rules.txt lists the rules",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await runSession(client, project.id);
+      const agentId = (await client.agents())[0]?.id ?? "";
+      // A is redone and cancelled: its pull request stays open on GitHub.
+      let arow = await rt.store.task.mustGet(a.id);
+      await rt.store.task.reopen(a.id, arow.version, "ready", "Redo asked by you", { agentId });
+      arow = await rt.store.task.mustGet(a.id);
+      await rt.store.task.transition(a.id, arow.version, "cancelled", "you cancelled it", {
+        agentId,
+      });
+      const [prA, prB] = [
+        prOf((await rt.store.task.mustGet(a.id)).pr_url),
+        prOf((await rt.store.task.mustGet(b.id)).pr_url),
+      ];
+      const branchA = (await rt.store.task.mustGet(a.id)).branch ?? "";
+      const cancelledRows = async () =>
+        (await client.projectPullRequests(project.id)).waiting.filter(
+          (r) => r.kind === "cancelled",
+        );
+      expect((await cancelledRows()).map((r) => r.number)).toEqual([prA]);
+      await w.host.settle();
+      const seen = w.host.requests().length;
+      // B is not a cancelled task's pull request: refused, nothing written to GitHub.
+      expect(await client.closePullRequest(project.id, prB)).toEqual({
+        state: "refused",
+        sentence: `#${prB} is not a cancelled task's pull request, so Forerunner does not close it: close it on GitHub if you do not want it.`,
+        number: prB,
+      });
+      expect((await w.github.getPullRequest(w.REPO, prB)).state).toBe("open");
+      // The person presses Close on A's row.
+      expect(await client.closePullRequest(project.id, prA)).toEqual({
+        state: "closed",
+        sentence: `Closed #${prA} on GitHub; you can reopen it there.`,
+        number: prA,
+      });
+      await w.host.settle();
+      // A fetch (git-upload-pack: the merged-through check reads main) is a read; a push
+      // (git-receive-pack) or any other non-GET call is a write.
+      const writes = w.host
+        .requests()
+        .slice(seen)
+        .filter((r) => r.method !== "GET" && !r.path.endsWith("/git-upload-pack"));
+      // Exactly one write, the close of A; no branch delete, no push, nothing on B.
+      expect(writes.map((r) => `${r.method} ${r.path}`)).toEqual([
+        `PATCH /repos/alice/l4close/pulls/${prA}`,
+      ]);
+      expect((await w.github.getPullRequest(w.REPO, prA)).state).toBe("closed");
+      expect((await w.github.getPullRequest(w.REPO, prA)).merged).toBe(false);
+      expect(await w.github.getBranchHead(w.REPO, branchA)).not.toBeNull();
+      expect((await w.github.getPullRequest(w.REPO, prB)).state).toBe("open");
+      // The row is gone at once; its record says closed (chat's facts read it so).
+      expect(await cancelledRows()).toEqual([]);
+      expect(await rt.store.mergeRecord.forTask(a.id)).toMatchObject({
+        state: "left_to_you",
+        last_outcome: "closed",
+        sentence: `#${prA} was closed without merging.`,
+      });
+      // A second press: nothing to close, in one sentence.
+      expect(await client.closePullRequest(project.id, prA)).toEqual({
+        state: "refused",
+        sentence: `#${prA} is not open on GitHub any more, so there is nothing to close.`,
+        number: prA,
+      });
+      // The daemon starts again: the row stays gone, the record stays closed.
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      await rt.githostWatcher?.pollOnce();
+      expect(await cancelledRows()).toEqual([]);
+      expect(await rt.store.mergeRecord.forTask(a.id)).toMatchObject({
+        state: "left_to_you",
+        last_outcome: "closed",
+      });
+      expect((await w.github.getPullRequest(w.REPO, prB)).state).toBe("open");
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+      await w.host.stop();
+      rmSync(w.work, { recursive: true, force: true });
+    }
+  }, 240_000);
+});
+
+describe("l4-github-carried, run L4: Try again on the take-over's line (L4e-left-1)", () => {
+  const KITE_ID = "01a1a000-0000-7000-8000-00000000c1ab";
+  const SANDBOX_ID = "01a1a000-0000-7000-8000-00000000d2cd";
+  const marker = (project: string, name: string) =>
+    `${JSON.stringify({ schema: 1, project, name }, null, 2)}\n`;
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  /** A daemon on its own home with a memory git host over real bare repositories (as l4-github-link's). */
+  const world = () => {
+    const work = mkdtempSync(join(tmpdir(), "fr-ui-real-l4c-retry-"));
+    homes.push(work);
+    const home = join(work, "home");
+    mkdirSync(home, { recursive: true });
+    const env = { FORERUNNER_HOME: home };
+    const host = new MemoryGitHost("alice");
+    const identity = { name: "Forerunner", email: "agent@example.test" };
+    const seeded = async (name: string, files: Record<string, string>) => {
+      const bare = join(work, `${name}.git`);
+      await run(["git", "init", "--bare", "-b", "main", bare]);
+      const seedDir = join(work, `${name}-seed`);
+      const seed = new GitOps({ cwd: seedDir, identity });
+      await seed.clone(bare);
+      for (const [path, text] of Object.entries(files)) {
+        mkdirSync(join(seedDir, ...path.split("/").slice(0, -1)), { recursive: true });
+        writeFileSync(join(seedDir, ...path.split("/")), text);
+      }
+      await seed.commitAll("seed");
+      await seed.push("main");
+      await host.createRepo({ owner: "o", name, private: true, cloneUrl: bare });
+      for (const [path, text] of Object.entries(files))
+        await host.putFile(
+          { owner: "o", name },
+          { path, content: text, message: "seed", branch: "main" },
+        );
+      return { bare, seedDir, seed };
+    };
+    const compose = () =>
+      composeWithRolePlayer(
+        {},
+        {
+          gitHost: host,
+          tryIt: false,
+          env,
+          dirs: appDirs({ env }),
+          stateUrl: `sqlite:${join(home, "state.sqlite")}`,
+        },
+      );
+    return { work, host, seeded, compose };
+  };
+
+  it("the no-pull-request line offers Try again; a push GitHub refuses and another project's open docs pull request are refused in one sentence each and keep the line; once both are out of the way, Try again opens one pull request on this project's own branch, never touches main or the other project's branch, and the line is gone, also after the daemon starts again", async () => {
+    const w = world();
+    const { bare, seed, seedDir } = await w.seeded("kite", {
+      "README.md": "# kite\n",
+      ".forerunner/project.json": marker(KITE_ID, "Kite club"),
+    });
+    const repo = { owner: "o", name: "kite" };
+    const git = async (...args: string[]) =>
+      (await run(["git", "--git-dir", bare, ...args])).stdout.trim();
+    // An earlier project's scaffold branch is on GitHub (its pull request not open now).
+    await run(["git", "-C", seedDir, "checkout", "-q", "-b", "fr/docs-scaffold"]);
+    writeFileSync(join(seedDir, ".forerunner", "project.json"), marker(SANDBOX_ID, "Sandbox"));
+    await seed.commitAll("docs: scaffold the standard doc set");
+    await seed.push("fr/docs-scaffold", { defaultBranch: "main" });
+    await run(["git", "-C", seedDir, "checkout", "-q", "main"]);
+    const mainBefore = await git("rev-parse", "main");
+    const sandboxBefore = await git("rev-parse", "fr/docs-scaffold");
+    // GitHub refuses every push (a branch rule, a token without write).
+    const hook = join(bare, "hooks", "pre-receive");
+    writeFileSync(hook, "#!/bin/sh\necho refused >&2\nexit 1\n", { mode: 0o755 });
+    let { rt, client } = await w.compose();
+    try {
+      const made = await client.createProject({
+        name: "Kite flyers",
+        goal: "Fly kites",
+        repos: ["o/kite"],
+        switch: true,
+        takeOver: { projects: [KITE_ID] },
+      });
+      const line = {
+        kind: "elsewhere",
+        text: 'Took over o/kite from "Kite club" here, but the docs pull request that names this project could not be opened, so GitHub still names "Kite club".',
+        outcome: "took_over_no_pull_request",
+        tryAgainLine: "Tries again to open the docs pull request that names this project.",
+      };
+      expect((await client.project(made.id)).repositoryElsewhere).toMatchObject(line);
+      // 1. GitHub still refuses the push.
+      expect(await client.retryTakeOver(made.id)).toEqual({
+        state: "refused",
+        sentence:
+          "The docs pull request still could not be opened: check that the saved GitHub token can push to o/kite, then try again.",
+        prUrl: null,
+      });
+      expect((await client.project(made.id)).repositoryElsewhere).toMatchObject(line);
+      // 2. The push works now, but the other project's docs pull request is open on its branch.
+      rmSync(hook);
+      const sandboxPr = await w.host.createPullRequest(repo, {
+        title: "docs: scaffold",
+        body: `The Sandbox project's docs.\n\n${forerunnerMarker({ project: SANDBOX_ID })}`,
+        head: "fr/docs-scaffold",
+        base: "main",
+      });
+      expect(await client.retryTakeOver(made.id)).toEqual({
+        state: "refused",
+        sentence:
+          "The docs pull request still could not be opened: another project's docs pull request is open on o/kite; close it on GitHub, then try again.",
+        prUrl: null,
+      });
+      expect((await w.host.getPullRequest(repo, sandboxPr.number)).state).toBe("open");
+      expect(await git("rev-parse", "fr/docs-scaffold")).toBe(sandboxBefore);
+      expect((await client.project(made.id)).repositoryElsewhere).toMatchObject(line);
+      // 3. The person closes that one on GitHub; the daemon starts again; the line is still there.
+      await w.host.updatePullRequest(repo, sandboxPr.number, { state: "closed" });
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      expect((await client.project(made.id)).repositoryElsewhere).toMatchObject(line);
+      const opened = await client.retryTakeOver(made.id);
+      const open = await w.host.listPullRequests(repo, { state: "open" });
+      expect(open.map((p) => p.head.ref)).toEqual(["fr/docs-scaffold-kite-flyers"]);
+      expect(opened).toEqual({
+        state: "opened",
+        sentence: `Opened #${open[0]?.number}: once you merge it, GitHub names this project.`,
+        prUrl: open[0]?.htmlUrl,
+      });
+      // Its branch names this project; main and the other project's branch are as they were.
+      const named = await git("show", "fr/docs-scaffold-kite-flyers:.forerunner/project.json");
+      expect(JSON.parse(named)).toMatchObject({ project: made.id });
+      expect(await git("rev-parse", "main")).toBe(mainBefore);
+      expect(await git("rev-parse", "fr/docs-scaffold")).toBe(sandboxBefore);
+      // The line is gone, and a second press has nothing to try.
+      expect((await client.project(made.id)).repositoryElsewhere ?? null).toBeNull();
+      expect(await client.retryTakeOver(made.id)).toEqual({
+        state: "refused",
+        sentence: "There is nothing to try again: a docs pull request already names this project.",
+        prUrl: null,
+      });
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await w.compose());
+      expect((await client.project(made.id)).repositoryElsewhere ?? null).toBeNull();
+      expect((await w.host.listPullRequests(repo, { state: "open" })).length).toBe(1);
+      await settleSessions(rt);
+    } finally {
+      await rt.close();
+    }
+  }, 180_000);
 });

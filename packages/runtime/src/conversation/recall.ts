@@ -35,7 +35,7 @@ import {
 import { withoutIds, withoutNoActionGiven } from "../daemon/task-words.ts";
 import { requestViews, stillBlocked, taskView } from "../daemon/views.ts";
 import { wrapUntrusted } from "../injection/scan.ts";
-import { mergeModeOf } from "../loop/merge-mode.ts";
+import { MERGED_THROUGH, mergeModeOf, throughNumberOf } from "../loop/merge-mode.ts";
 import type { MemoryPort } from "../loop/ports.ts";
 import { moneyWords } from "../session/money-words.ts";
 import { ANSWER_CARD_KEYS, isChatOnlyCard } from "../wiring/request-answers.ts";
@@ -544,6 +544,12 @@ async function mergeWords(c: KindContext, p: ProjectRow, task: TaskRow): Promise
   const m = await c.deps.store.mergeRecord.forTask(task.id).catch(() => undefined);
   const stand = mergeStandOf(m, task.pr_url, mergeModeOf(p.settings));
   if (!m || !stand) return null;
+  // L4e-left-6 (l4-github-carried): closed on GitHub, its change on main through another's
+  // merge; the facts list it on its own line, so recall says the same, never "merged on".
+  if (stand.kind === "merged" && m.last_outcome === MERGED_THROUGH) {
+    const via = throughNumberOf(m);
+    return `Its pull request was closed, but its change reached main${via ? ` through #${via}` : ""}.`;
+  }
   switch (stand.kind) {
     case "merged":
       // The record's last change is the merge until a take-out pull request is asked for

@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import {
+  branchSegment,
   dropKeptSame,
   ensureBaseBranch,
   ensureWorkspaceGitignore,
@@ -153,11 +154,8 @@ export function isScaffoldBranch(branch: string): boolean {
  * be another project's or another person's).
  */
 export function scaffoldBranchesOf(project: Pick<ProjectRow, "id" | "name">): string[] {
-  const slug =
-    safeSegment(project.name.toLowerCase(), "project")
-      .replace(/\.+/g, "-")
-      .slice(0, 40)
-      .replace(/[-_]+$/, "") || "project";
+  // One rule with the plan's docs branch and a task's (`branchSegment`, L4e-left-2).
+  const slug = branchSegment(project.name, "project");
   const hex = project.id.toLowerCase().replace(/[^0-9a-f]/g, "");
   const own = hex.length >= 8 ? hex.slice(-8) : safeSegment(project.id, "project").slice(0, 8);
   return [

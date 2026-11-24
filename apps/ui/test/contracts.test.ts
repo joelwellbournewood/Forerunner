@@ -301,3 +301,24 @@ describe("l4-github-link, run L4 (L4-creds-23): the fake daemon's onerepo answer
     });
   });
 });
+
+describe("l4-github-carried, run L4", () => {
+  it("L4e-left-10: the fake daemon's import refuses a repository on another host in the daemon's shape (cause other_host), as it refuses one in use", async () => {
+    const { ErrorBody } = await import("@forerunner/runtime/daemon/api-types");
+    const { createHarness } = await import("./helpers.tsx");
+    const harness = createHarness();
+    const refused = await harness.daemon.app.request("/projects/proj_beacon/data/import", {
+      method: "POST",
+      headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+      body: JSON.stringify({ source: "github", locator: "https://gitlab.com/o/site" }),
+    });
+    // Before: 200 with a made-up clone of gitlab.com/o/site.
+    expect(refused.status).toBe(409);
+    expect(ErrorBody.parse(await refused.json())).toEqual({
+      code: "conflict",
+      message:
+        "Forerunner works with repositories on github.com, not gitlab.com. Link a GitHub repository or a folder.",
+      details: { cause: "other_host" },
+    });
+  });
+});

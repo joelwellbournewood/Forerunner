@@ -70,9 +70,24 @@ export function repoHostsFor(opts: {
   const add = (host: string | null) => {
     if (host && !out.includes(host)) out.push(host);
   };
-  add(hostnameOf(opts.gitRemoteBase ?? "https://github.com"));
+  // L4e-left-10 (l4-github-carried): an enterprise install (its API base in GitHub Enterprise's
+  // form, https://HOST/api/v3) that names no git remote base accepts its own host only (before:
+  // github.com too, the remote base's default, so a github.com link passed the check). Any other
+  // API base (a stand-in's) keeps github.com as before.
+  if (opts.gitRemoteBase) add(hostnameOf(opts.gitRemoteBase));
+  else if (!isEnterpriseApi(opts.githubApiBase)) add("github.com");
   add(hostnameOf(opts.githubApiBase ?? "https://api.github.com")?.replace(/^api\./, "") ?? null);
   return out.length ? out : [...DEFAULT_REPO_HOSTS];
+}
+
+/** An API base in GitHub Enterprise Server's form: its path is /api/v3. */
+function isEnterpriseApi(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    return /^\/api\/v3\/?$/.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
 }
 
 function hostnameOf(url: string): string | null {

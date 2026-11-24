@@ -1302,6 +1302,29 @@ export class GitOps {
       .filter(Boolean);
   }
 
+  /**
+   * L4e-left-3: the merge commit on `into`'s first-parent line that brought commit `sha` in (its
+   * second parent holds `sha`, its first does not), read from history; null when `sha` is not
+   * on `into`, or came onto that line without a merge commit (pushed or fast-forwarded there).
+   */
+  async mergeThatBrought(sha: string, into: string): Promise<string | null> {
+    if (!(await this.hasRef(sha)) || !(await this.isAncestor(sha, into))) return null;
+    const lines = (args: string[]) =>
+      this.git(args).then((r) => this.must(r, "rev-list").stdout.split(/\r?\n/).filter(Boolean));
+    const descendants = new Set(await lines(["rev-list", "--ancestry-path", `${sha}..${into}`]));
+    // The first-parent line, newest first: the commits that hold `sha` form its newest part.
+    let oldest: string | null = null;
+    for (const c of await lines(["rev-list", "--first-parent", `${sha}..${into}`])) {
+      if (!descendants.has(c)) break;
+      oldest = c;
+    }
+    if (!oldest) return null;
+    const [before, merged] = await this.parentsOf(oldest);
+    if (!before || !merged) return null;
+    if (await this.isAncestor(sha, before)) return null;
+    return (await this.isAncestor(sha, merged)) ? oldest : null;
+  }
+
   /** Where a worktree for a task should live under a root. */
   static worktreePath(root: string, taskId: string): string {
     return join(root, taskId.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 60));

@@ -171,7 +171,7 @@ describe("d1109-onerepo-join, run C: project.join (OJ-02, OJ-04, OJ-06, OJ-08)",
       site.id,
       [kite.id],
       // L4-creds-28: one sentence of at most 100 characters (was about 130).
-      'A session of "Site" starts by itself soon: make one project after it ran.',
+      'A session of "Site" waits to start by itself: make one project after it ran.',
     );
     const siteRow = await w.store.project.mustGet(site.id);
     await w.store.project.patch(site.id, { summary_cache: {} });
@@ -462,10 +462,19 @@ describe("l4-github-merge, run L4", () => {
   it("L4-creds-28: the held hands-off start's refusal is one sentence of at most 100 characters", () => {
     const line = joinRefusedHeldStart("Kite club");
     expect(line).toBe(
-      'A session of "Kite club" starts by itself soon: make one project after it ran.',
+      'A session of "Kite club" waits to start by itself: make one project after it ran.',
     );
     expect(line.length).toBeLessThanOrEqual(100);
     expect(line.match(/[.!?](\s|$)/g)).toHaveLength(1);
+  });
+});
+
+describe("l4-github-carried, run L4", () => {
+  it("L4e-left-8: the held hands-off start's refusal promises no 'soon' (quiet hours can hold it for hours)", () => {
+    const line = joinRefusedHeldStart("Kite club");
+    // Before: 'A session of "Kite club" starts by itself soon: make one project after it ran.'
+    expect(line).not.toMatch(/\bsoon\b/);
+    expect(line).toContain("waits to start by itself");
   });
 });
 

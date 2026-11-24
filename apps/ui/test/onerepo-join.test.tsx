@@ -388,3 +388,15 @@ describe("l4-chat-carried, run L4: Talk on a joined project (C4-left-9)", () => 
     expect(within(talk).getByTestId("conversation-about")).toHaveTextContent("About Atlas");
   });
 });
+
+describe("l4-github-carried, run L4", () => {
+  it("L4e-left-10: when the viewed project cannot be read (GET /projects/:id fails), the header's switcher still says what it does, never an empty name", async () => {
+    const harness = createHarness();
+    renderApp("/projects/proj_gone/summary", harness);
+    // Before: the switcher button read "" (no name, no words) once the read failed.
+    await waitFor(() =>
+      expect(screen.getByTestId("active-project")).toHaveTextContent("Switch project"),
+    );
+    expect(screen.getByTestId("active-project")).not.toHaveTextContent("Atlas");
+  });
+});

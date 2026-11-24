@@ -366,3 +366,34 @@ listed nowhere after the join when the kept project's own Status pull request se
    (`taskRunFacts`); money and totals stay the project's own ledger (BA-9, OJ-07).
 5. The held hands-off start's refusal is one sentence of at most 100 characters: 'A session of
    "Kite club" starts by itself soon: make one project after it ran.'.
+
+## Amendment (2026-11-24, run L4): Try again on the take-over's line, and what Docs shows (l4-github-carried)
+
+1. **Try again (L4e-left-1; the default of owner question OQ-L4e-1 until the owner answers).**
+   The take-over's line 'Took over o/kite from "Kite club" here, but the docs pull request that
+   names this project could not be opened, so GitHub still names "Kite club".' gave no next
+   step (design §5 rule 8). The Overview and Docs now show **Try again** beside it with
+   "Tries again to open the docs pull request that names this project." (`TAKE_OVER_TRY_AGAIN_
+   LINE`). The press (`POST /projects/:id/take-over/retry`, `retryTakeOverDocs`) runs the
+   scaffold again exactly as the take-over ran it (L4-github-102's rules: this project's own
+   branch, `fr/docs-scaffold-<name>` when another project holds `fr/docs-scaffold`, a push with a
+   lease, never the default branch, never another project's open pull request). Opened, it says
+   "Opened #N: once you merge it, GitHub names this project." and the line goes; GitHub refusing
+   the push ("... check that the saved GitHub token can push to o/kite, then try again.") or
+   another project's open docs pull request ("... another project's docs pull request is open on
+   o/kite; close it on GitHub, then try again.") is said in one sentence and the line stays. It
+   is the person's press only; nothing retries by itself. The one place the owner's answer
+   changes it: `RepositoryUse.overviewOf` sets `tryAgainLine` on that line, the screens offer
+   Try again only with it, and the route reads it.
+2. **Docs shows only the take-over's outcome (L4e-left-4; the session lead's decision of
+   2026-11-23).** The card's `repositoryElsewhere.outcome` (`took_over_no_pull_request`) marks
+   the outcome line; Docs shows that line with its Try again and nothing else. OR-07's offer
+   ("o/kite is also the Forerunner project ...") stays on the Overview with Take it over, never
+   repeated on Docs (design §5 rule 10).
+
+3. **The join's words after a join and before one (L4e-left-8).** The refusal for a held
+   hands-off start reads 'A session of "Kite club" waits to start by itself: make one project
+   after it ran.' (before: "starts by itself soon", untrue when quiet hours hold the start for
+   hours; the held start keeps no time to name). A project closed into another drops its stored
+   "Left N reviewed pull requests for you to merge." from its last result: the join moved those
+   pull requests, and "Its tasks went on in ..." says where.

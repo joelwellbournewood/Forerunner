@@ -100,6 +100,12 @@ import {
   OPEN_ON_A_CLOSED_PROJECT,
   sessionsBeforeJoinSentence,
 } from "@forerunner/runtime/daemon/join-words";
+import {
+  closeFailedSentence,
+  closeNotCancelledSentence,
+  closeNotOpenSentence,
+  pullRequestClosedSentence,
+} from "@forerunner/runtime/daemon/pull-request-close-words";
 import { reviewPartUsdMicro } from "@forerunner/runtime/estimates/model";
 import { openPlanSentence } from "@forerunner/runtime/session/intake-words";
 import {
@@ -108,11 +114,14 @@ import {
   inUseSentence,
   nothingToTakeOverSentence,
   otherHostSentence,
+  TAKE_OVER_NOTHING_TO_RETRY,
   TOGETHER_OVERVIEW_DETAILS,
   TOGETHER_OVERVIEW_LINE,
   takeOverAsk,
   takeOverDetails,
   takeOverLine,
+  takeOverRetryFailedSentence,
+  takeOverRetryOpenedSentence,
   togetherDocNote,
   togetherLine,
   togetherStatusPullRequestSentence,
@@ -659,6 +668,12 @@ export interface FakeDaemonState {
    */
   takeOverUndoBlocked: string | null;
   /**
+   * l4-github-carried (L4e-left-1): set by a test, the next Try again of the take-over's docs
+   * pull request for this project id fails (`refused`: GitHub refused the push; `blocked`:
+   * another project's docs pull request is in its way), as `retryTakeOverDocs` answers it.
+   */
+  takeOverRetryFails: Record<string, "refused" | "blocked">;
+  /**
    * d1109-onerepo-join (OJ-01): per project id, the Overview's line about the other projects here
    * on its repository or folder, as the daemon's `sharesRepositoryWith` gives it. A test sets it;
    * `project.join` clears it for the projects it made one (its Undo puts it back).
@@ -785,6 +800,16 @@ export interface FakeDaemonState {
   >;
   /** How many times `GET /projects/:id/pull-requests` was read, by project (the Overview's polling). */
   pullRequestReads: Record<string, number>;
+  /**
+   * l4-github-carried (L4-github-130): the Close presses that closed a cancelled task's pull
+   * request, in order (the daemon makes one PATCH on GitHub for each, never a branch delete).
+   */
+  pullRequestCloses: { projectId: string; number: number }[];
+  /**
+   * l4-github-carried: set by a test, the next Close of `<project id>#<number>` fails as GitHub
+   * refuses or does not answer; the row stays, as the daemon's `ProjectPullRequests.close`.
+   */
+  pullRequestCloseFails: Record<string, "refused_token" | "no_access" | "unreachable">;
   /** How many times `GET /projects` was read (leftovers7-merge: the list follows other changes). */
   projectListReads: number;
   /**
@@ -1548,6 +1573,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     repositoryElsewhere: {},
     repositoryOverview: {},
     takeOverUndoBlocked: null,
+    takeOverRetryFails: {},
     sharedRepository: {},
     joinPreviews: {},
     joined: {},
@@ -1564,6 +1590,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     pullRequestMerges: {},
     pullRequestMergeOutcome: null,
     pullRequestPressFinds: {},
+    pullRequestCloses: [],
+    pullRequestCloseFails: {},
     pullRequestReads: {},
     projectListReads: 0,
     holdSessions: false,
@@ -9332,6 +9360,17 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (body.source === "github") {
       // As the daemon (OR-04, C2-left-12, L4-creds-23): a repository another project here uses
       // is refused before anything is cloned, 409 "conflict" with the cause the offer reads.
+      // L4e-left-10 (l4-github-carried): a URL on another host too, as the daemon's checkHere.
+      const link = fakeLinkOf(locator);
+      if (link && "host" in link)
+        return c.json(
+          {
+            code: "conflict",
+            message: otherHostSentence(link.host),
+            details: { cause: "other_host" },
+          },
+          409,
+        );
       const inUse = linkInUse(locator, id);
       if (inUse)
         return c.json({ code: "conflict", message: inUse.message, details: inUse.details }, 409);
@@ -9561,6 +9600,77 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     for (const r of prs.waiting) delete r.preview;
     row.preview = { folder, sentence };
     return c.json({ state: "ready", sentence, folder, number });
+  });
+  // l4-github-carried (L4e-left-1, owner question OQ-L4e-1's default), as the daemon's
+  // `retryTakeOverDocs`: only the take-over's no-pull-request line is tried again; opened, the
+  // line goes and the docs pull request waits on the Overview; a failure set by a test keeps it.
+  app.post("/projects/:id/take-over/retry", (c) => {
+    const id = c.req.param("id");
+    const project = state.projects.find((p) => p.id === id);
+    if (!project) return errorBody(c, 404, "not_found", "no such project");
+    const refused = (sentence: string) => c.json({ state: "refused", sentence, prUrl: null });
+    const line = state.repositoryOverview[id];
+    if (line?.outcome !== "took_over_no_pull_request") return refused(TAKE_OVER_NOTHING_TO_RETRY);
+    const locator = project.repos?.[0] ?? "";
+    const fails = state.takeOverRetryFails[id];
+    if (fails) {
+      delete state.takeOverRetryFails[id];
+      return refused(takeOverRetryFailedSentence(locator, fails));
+    }
+    delete state.repositoryOverview[id];
+    const prs = state.pullRequests[id] ?? { waiting: [], error: null };
+    state.pullRequests[id] = prs;
+    const number = Math.max(1, ...prs.waiting.map((r) => r.number + 1));
+    const repository = repositoryOf(project.repos);
+    const url = `${repository?.url ?? "https://github.com/o/repo"}/pull/${number}`;
+    prs.waiting.push({
+      kind: "docs",
+      taskId: null,
+      title: "The project's standard docs",
+      number,
+      url,
+      branch: "fr/docs-scaffold",
+      review: null,
+      merge: { state: "ready", canMerge: true, sentence: null, first: [] },
+    });
+    emit("project.changed", { id });
+    return c.json({ state: "opened", sentence: takeOverRetryOpenedSentence(number), prUrl: url });
+  });
+  // l4-github-carried (L4-github-130, the owner's decision of 2026-11-18), as the daemon's
+  // `ProjectPullRequests.close` answers it: only a cancelled task's open pull request is closed
+  // (one close, its branch kept), its merge record then says closed and the row is gone; a
+  // failure set by a test keeps the row and says why in one sentence.
+  app.post("/projects/:id/pull-requests/:number/close", (c) => {
+    const id = c.req.param("id");
+    const project = state.projects.find((p) => p.id === id);
+    if (!project) return errorBody(c, 403, "forbidden", "not your project");
+    const number = Number(c.req.param("number"));
+    if (!Number.isInteger(number) || number <= 0)
+      return errorBody(c, 400, "validation", "not a pull request number");
+    const refused = (sentence: string) => c.json({ state: "refused", sentence, number });
+    if (!repositoryOf(project.repos)) return refused("This project has no repository.");
+    const prs = state.pullRequests[id];
+    if (prs?.error) return refused(prs.error);
+    const row = prs?.waiting.find((r) => r.number === number);
+    if (!prs || !row) return refused(closeNotOpenSentence(number));
+    if (row.kind !== "cancelled" || !row.taskId) return refused(closeNotCancelledSentence(number));
+    const fails = state.pullRequestCloseFails[`${id}#${number}`];
+    if (fails) {
+      delete state.pullRequestCloseFails[`${id}#${number}`];
+      return refused(closeFailedSentence(number, fails));
+    }
+    prs.waiting = prs.waiting.filter((r) => r.number !== number);
+    state.pullRequestCloses.push({ projectId: id, number });
+    state.taskMeta.merges?.set(row.taskId, {
+      approval: "none",
+      ...state.taskMeta.merges.get(row.taskId),
+      state: "left_to_you",
+      sentence: `#${number} was closed without merging.`,
+      pr_number: number,
+      last_outcome: "closed",
+    });
+    emit("project.changed", { id });
+    return c.json({ state: "closed", sentence: pullRequestClosedSentence(number), number });
   });
   app.get("/projects/:id/files", (c) => {
     const id = c.req.param("id");

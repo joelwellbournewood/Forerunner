@@ -9,6 +9,7 @@ import type { MergeMethod, MergeRecordRow, StateStore, TaskRow } from "@forerunn
 import type { TaskTakeOutAnswer } from "../daemon/api-types.ts";
 import {
   andList,
+  noMergeCommitSentence,
   quoted,
   TAKE_OUT_NOTICE_PREFIX,
   takeOutConflictSentence,
@@ -46,7 +47,8 @@ export interface TakeOutGitPort {
   takeOut(req: {
     task: TaskRow;
     number: number;
-    mergeSha: string;
+    /** Null only with `through`: the merge commit is read from main's history (L4e-left-3). */
+    mergeSha: string | null;
     headSha: string | null;
     branch: string;
     /** L4-github-112: only the task's own commits that `mergeSha` brought in (its PR was closed). */
@@ -194,20 +196,21 @@ export class TaskTakeOut {
       !pr.merged && record?.state === "merged" && record.last_outcome === MERGED_THROUGH
         ? { number: throughNumberOf(record), head: record.reviewed_head_sha || pr.head.sha }
         : null;
-    if (through) {
-      if (!record?.merge_sha)
-        return refused(
-          `Forerunner is still reading where the change of #${ref.number} reached main. Try again in a minute.`,
-        );
-      pr = { ...pr, merged: true, mergeCommitSha: record.merge_sha };
-    }
+    // L4e-left-3: a merged-through record whose merge commit is not known yet (no pull request
+    // could be named, or that merge was not read yet) is not refused with "Try again in a
+    // minute" for good: the PR executor reads the merge commit from main's history at the press,
+    // and the record keeps it once the take-out opens.
+    if (through) pr = { ...pr, merged: true, mergeCommitSha: record?.merge_sha ?? null };
     if (!pr.merged)
       return refused(
         `#${ref.number} is not merged, so the work of ${quoted(task.title)} is not in main: close #${ref.number} on GitHub if you do not want it.`,
       );
     const mergeSha =
-      (record?.state === "merged" && record.merge_sha) || pr.mergeCommitSha || record?.merge_sha;
-    if (!mergeSha) return refused(unknownShapeSentence(ref.number));
+      (record?.state === "merged" && record.merge_sha) ||
+      pr.mergeCommitSha ||
+      record?.merge_sha ||
+      null;
+    if (!mergeSha && !through) return refused(unknownShapeSentence(ref.number));
     const later = (await this.builtOn(task)).map((t) => t.title);
     // Never the id's time part alone (R-branch): two tasks of one minute shared it.
     const branch = `${task.branch?.trim() || taskBranchName(task)}-take-out`;
@@ -237,6 +240,8 @@ export class TaskTakeOut {
         );
       case "unknown_shape":
         return refused(unknownShapeSentence(ref.number), later);
+      case "no_merge_commit":
+        return refused(noMergeCommitSentence(ref.number), later);
       case "conflict": {
         const sentence = takeOutConflictSentence(task.title, done.files);
         await this.notice(task, sentence, done.files);
@@ -274,7 +279,8 @@ export class TaskTakeOut {
     await this.keep(task, record, {
       prNumber: ref.number,
       prUrl: task.pr_url ?? opened.htmlUrl,
-      mergeSha,
+      // L4e-left-3: the merge commit read from main's history settles a merged-through record.
+      mergeSha: done.mergeSha ?? mergeSha ?? "",
       how: done.how,
       takeOut: opened,
     });
@@ -357,7 +363,13 @@ export class TaskTakeOut {
     if (record) {
       // A record the watcher has not marked merged yet (the merge was on GitHub a moment ago)
       // says merged now: the host says so.
-      const merged = record.merge_sha ? {} : { merge_sha: m.mergeSha, method: m.how };
+      // A merged-through record keeps no method of its own (its change came in another's merge).
+      const merged =
+        record.merge_sha || !m.mergeSha
+          ? {}
+          : record.last_outcome === MERGED_THROUGH
+            ? { merge_sha: m.mergeSha }
+            : { merge_sha: m.mergeSha, method: m.how };
       if (record.state === "merged")
         await this.deps.store.mergeRecord.patch(record.id, { ...takeOut, ...merged });
       else

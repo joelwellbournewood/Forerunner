@@ -57,7 +57,11 @@ export function Shell() {
       .then((p) => {
         if (!gone) setShownElsewhere({ id: p.id, name: p.name });
       })
-      .catch(() => undefined);
+      // L4e-left-10 (l4-github-carried): a project that cannot be read names nothing; the
+      // switcher says what it does (before: an empty button).
+      .catch(() => {
+        if (!gone) setShownElsewhere({ id: viewedId, name: "Switch project" });
+      });
     return () => {
       gone = true;
     };

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import {
+  branchSegment,
   ensureBaseBranch,
   forerunnerMarker,
   type GitHost,
@@ -176,13 +177,9 @@ export function intakeDocsBranch(project: Pick<ProjectRow, "id" | "name">): stri
     hex.length === 32
       ? hex.slice(-8)
       : safeSegment(project.id.toLowerCase(), "project").slice(0, 8);
-  // Dots become dashes, as in the scaffold's branch (`scaffoldBranchesOf`): git refuses ".." and
-  // a component ending ".lock", which a name such as "Wait... what" would otherwise give.
-  const name = safeSegment(project.name.toLowerCase(), "project")
-    .replace(/\.+/g, "-")
-    .slice(0, 40)
-    .replace(/[-._]+$/, "");
-  return `fr/intake-${own}-${name || "project"}-docs`;
+  // Dots become dashes (`branchSegment`, one rule with the scaffold's and a task's branch): git
+  // refuses ".." and a component ending ".lock", which "Wait... what" would otherwise give.
+  return `fr/intake-${own}-${branchSegment(project.name, "project")}-docs`;
 }
 
 /**

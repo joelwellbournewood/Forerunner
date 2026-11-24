@@ -503,6 +503,23 @@ export function droppedWords(d: Pick<HeldDependency, "number" | "title" | "state
 }
 
 /**
+ * One part of a branch name made from a person's words (a task's title, a project's name):
+ * lower case, `safeSegment`'s characters, dots turned into dashes, at most `max` characters, no
+ * dash or underscore at its end; `fallback` when nothing is left. L4e-left-2: git refuses ".."
+ * and a component ending ".lock", which "Wait... what" and "Update yarn.lock" gave a task's
+ * branch, so its push failed. The task's branch (`taskBranchName`), the plan's docs branch
+ * (`intakeDocsBranch`) and the scaffold's (`scaffoldBranchesOf`) all use this one rule.
+ */
+export function branchSegment(text: string, fallback: string, max = 40): string {
+  return (
+    safeSegment(text.toLowerCase(), fallback)
+      .replace(/\.+/g, "-")
+      .slice(0, max)
+      .replace(/[-_]+$/, "") || fallback
+  );
+}
+
+/**
  * A task's branch name: `fr/<8 characters of its id>-<its title>` (R-branch, leftovers7-merge).
  * The 8 characters are the id's random end, never its start: a UUIDv7 starts with its creation
  * time, which is the same for 65 s, so two tasks titled alike created within a minute got one
@@ -516,7 +533,7 @@ export function taskBranchName(task: Pick<TaskRow, "id" | "title">): string {
     hex.length === 32
       ? hex.slice(-8)
       : safeSegment(task.id.toLowerCase(), "task").slice(0, 8);
-  return `fr/${own}-${safeSegment(task.title.toLowerCase(), "task").slice(0, 40)}`;
+  return `fr/${own}-${branchSegment(task.title, "task")}`;
 }
 
 /**
@@ -2322,7 +2339,11 @@ export class PrTaskExecutor implements TaskExecutor {
   async takeOut(req: {
     task: TaskRow;
     number: number;
-    mergeSha: string;
+    /**
+     * The merge commit to take back. Null only with `through`: then it is read from the default
+     * branch's history (`GitOps.mergeThatBrought`, L4e-left-3), and the pushed result says which.
+     */
+    mergeSha: string | null;
     headSha: string | null;
     branch: string;
     /**
@@ -2356,7 +2377,7 @@ export class PrTaskExecutor implements TaskExecutor {
     req: {
       task: TaskRow;
       number: number;
-      mergeSha: string;
+      mergeSha: string | null;
       headSha: string | null;
       branch: string;
       through?: boolean;
@@ -2369,14 +2390,26 @@ export class PrTaskExecutor implements TaskExecutor {
       await git.clone(target.clone);
     }
     const base = `origin/${target.base}`;
-    if (!(await git.hasRef(req.mergeSha)) || !(await git.isAncestor(req.mergeSha, base)))
-      return { kind: "not_in_main" };
     let head = req.headSha;
     if (head && !(await git.hasRef(head))) await git.fetchRef(`refs/pull/${req.number}/head`);
     if (head && !(await git.hasRef(head))) head = null;
+    // L4e-left-3: a merged-through record whose merge commit is not known (its change reached
+    // main through no pull request Forerunner can name) gets it from main's history now: the
+    // merge commit that brought the reviewed head in. None (a push or a fast-forward put it
+    // there) is said in its own words; before, the press answered "still reading ... Try again
+    // in a minute" for good.
+    let mergeSha = req.mergeSha;
+    if (!mergeSha) {
+      if (!req.through) return { kind: "not_in_main" };
+      if (!head) return { kind: "unknown_shape" };
+      mergeSha = await git.mergeThatBrought(head, base);
+      if (!mergeSha) return { kind: "no_merge_commit" };
+    }
+    if (!(await git.hasRef(mergeSha)) || !(await git.isAncestor(mergeSha, base)))
+      return { kind: "not_in_main" };
     const plan = req.through
-      ? await throughPlan(git, req.mergeSha, head)
-      : await takeOutPlan(git, req.mergeSha, head);
+      ? await throughPlan(git, mergeSha, head)
+      : await takeOutPlan(git, mergeSha, head);
     if (!plan) return { kind: "unknown_shape" };
     // R-takeoutdep (leftovers7-merge): a merge commit whose merged side carries work of a task
     // this one built on (a dependency merged by GitHub through it, out of dependency order) is
@@ -2384,7 +2417,7 @@ export class PrTaskExecutor implements TaskExecutor {
     if (
       !req.through &&
       plan.mainline &&
-      (await this.carriesDependencyWork(git, req.task, req.mergeSha))
+      (await this.carriesDependencyWork(git, req.task, mergeSha))
     )
       return { kind: "unknown_shape" };
     await git.createBranch(req.branch, base);
@@ -2407,6 +2440,7 @@ export class PrTaskExecutor implements TaskExecutor {
       how: plan.how,
       sure: plan.sure,
       commits: plan.commits,
+      mergeSha,
     };
   }
 
@@ -3153,11 +3187,18 @@ export type TakeOutGitResult =
       sure?: boolean;
       /** The commits taken back, in the order reverted. */
       commits: string[];
+      /**
+       * L4e-left-3: the merge commit taken back (the one asked for, or the one read from the
+       * default branch's history for a merged-through take-out). Absent from older callers.
+       */
+      mergeSha?: string;
     }
   | { kind: "conflict"; files: string[] }
   | { kind: "unknown_shape" }
   | { kind: "not_in_main" }
-  | { kind: "no_repository" };
+  | { kind: "no_repository" }
+  /** L4e-left-3: a merged-through change that reached main with no merge commit to take back. */
+  | { kind: "no_merge_commit" };
 
 /**
  * How to take a merged pull request back, by the way it was merged (merged-actions), or null

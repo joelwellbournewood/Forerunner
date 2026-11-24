@@ -1,4 +1,5 @@
 import { MAKE_ONE_EXPLAIN } from "@forerunner/runtime/daemon/join-words";
+import { CLOSE_PULL_REQUEST_EXPLAIN } from "@forerunner/runtime/daemon/pull-request-close-words";
 import { researchReadsLine, webAccessOf } from "@forerunner/runtime/wiring/web-access";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
@@ -23,6 +24,7 @@ import { DecisionsSection } from "./DecisionsSection.tsx";
 import { JoinProjectsDialog } from "./JoinProjectsDialog.tsx";
 import { PeersSection } from "./PeersSection.tsx";
 import { QueueSection } from "./QueueSection.tsx";
+import { TakeOverTryAgain } from "./TakeOverTryAgain.tsx";
 
 /**
  * Overview (design §3.4, was Summary): where this project stands and what happens next. Its
@@ -315,8 +317,10 @@ function RepositoryElsewhere({ projectId, project }: { projectId: string; projec
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // L4e-left-1: what Try again opened, kept once the line it stood beside is gone.
+  const [reopened, setReopened] = useState<string | null>(null);
   const line = project?.repositoryElsewhere ?? null;
-  if (!line && !done) return null;
+  if (!line && !done && !reopened) return null;
   const takeOver = async () => {
     setBusy(true);
     setError(null);
@@ -364,6 +368,19 @@ function RepositoryElsewhere({ projectId, project }: { projectId: string; projec
               Details
             </button>
           ) : null}
+        </p>
+      ) : null}
+      {line?.tryAgainLine ? (
+        <TakeOverTryAgain
+          projectId={projectId}
+          line={line.tryAgainLine}
+          testId="repository-try-again"
+          onOpened={setReopened}
+        />
+      ) : null}
+      {reopened && !line?.tryAgainLine ? (
+        <p data-testid="repository-try-again-opened" role="status">
+          {reopened}
         </p>
       ) : null}
       {line?.takeOverLine && line.canTakeOver ? (
@@ -522,9 +539,12 @@ function ResearchReads({ projectId, project }: { projectId: string; project?: Pr
  * over its PRs, and no PR is listed under a check it did not get. Review (2026-11-02): every PR
  * read "Reviewed by the critic.", Forerunner's status and plan-docs PRs too.
  */
-type PrGroup = "critic" | "you" | "not-reviewed" | "docs" | "take-out";
+type PrGroup = "critic" | "rebuilt" | "you" | "not-reviewed" | "docs" | "take-out";
 const PR_GROUPS: { key: PrGroup; label: string }[] = [
   { key: "critic", label: "Reviewed by the critic" },
+  // L4-github-124 (c): rebuilt without a closed pull request it built on; its review read work
+  // that is gone, so it is not under "Reviewed by the critic" (each row's line says what to do).
+  { key: "rebuilt", label: "Rebuilt since the critic's review: look at each before you merge" },
   { key: "you", label: "Accepted by you at sign-off" },
   { key: "not-reviewed", label: "Marked done without the critic's review" },
   { key: "docs", label: "Forerunner's docs, merge them when you like" },
@@ -535,6 +555,7 @@ const PR_GROUPS: { key: PrGroup; label: string }[] = [
 function groupOf(pr: ProjectPullRequestView): PrGroup {
   if (pr.kind === "take_out") return "take-out";
   if (pr.kind === "docs") return "docs";
+  if (pr.rebuilt) return "rebuilt";
   if (pr.review === "critic") return "critic";
   if (pr.review === "you") return "you";
   return "not-reviewed";
@@ -580,6 +601,17 @@ function RepositoryFiles({
   useEffect(() => {
     if (version) reload();
   }, [version, reload]);
+  // l4-github-carried (the bench walk of L4e-left-1): Try again that opened the take-over's docs
+  // pull request changes the card's repository line, not the summary: read the list again then,
+  // so the new pull request is listed at once (before: "No pull request waits for you." until a
+  // reload).
+  const takeOverOutcome = card?.repositoryElsewhere?.outcome ?? null;
+  const lastTakeOverOutcome = useRef(takeOverOutcome);
+  useEffect(() => {
+    if (lastTakeOverOutcome.current === takeOverOutcome) return;
+    lastTakeOverOutcome.current = takeOverOutcome;
+    reload();
+  }, [takeOverOutcome, reload]);
   // The Merge pressed last: what the daemon answered, the pull requests it merges, and the list
   // as it was read before the answer (until a read after it comes, the click's sentence stands).
   const [pressed, setPressed] = useState<{
@@ -671,6 +703,32 @@ function RepositoryFiles({
   // The row's preview as the daemon lists it; the answer's until the list is read again.
   const previewOf = (pr: ProjectPullRequestView) =>
     pr.preview ?? (previewed?.number === pr.number ? previewed : null);
+  // L4-github-130 (the owner's decision of 2026-11-18): Close on a cancelled task's pull request
+  // still open on GitHub. The daemon answers once GitHub closed it; the list is read again, so
+  // the row goes. A refusal or a GitHub failure is said on the row, which stays.
+  const [closing, setClosing] = useState<number | null>(null);
+  const [closeAnswer, setCloseAnswer] = useState<{
+    number: number;
+    sentence: string;
+    closed: boolean;
+  } | null>(null);
+  const closePr = async (pr: ProjectPullRequestView) => {
+    setClosing(pr.number);
+    setCloseAnswer(null);
+    try {
+      const answer = await client.closePullRequest(projectId, pr.number);
+      setCloseAnswer({
+        number: pr.number,
+        sentence: answer.sentence,
+        closed: answer.state === "closed",
+      });
+      reload();
+    } catch (e) {
+      setCloseAnswer({ number: pr.number, sentence: describeError(e), closed: false });
+    } finally {
+      setClosing(null);
+    }
+  };
   const mode = prs.data?.mode;
   const kind = prs.data?.errorKind;
   return (
@@ -720,6 +778,11 @@ function RepositoryFiles({
         {mergeError ? (
           <p className="text-red-700 dark:text-red-300" data-testid="merge-error" role="alert">
             {mergeError}
+          </p>
+        ) : null}
+        {closeAnswer?.closed ? (
+          <p data-testid="pr-close-answer" role="status">
+            {closeAnswer.sentence}
           </p>
         ) : null}
         {waiting.length > 0 ? (
@@ -820,9 +883,10 @@ function RepositoryFiles({
         {leftOpen.length > 0 ? (
           <div data-testid="prs-cancelled">
             <h3 className="font-medium">Cancelled, still open on GitHub</h3>
-            <p className="text-xs text-neutral-500">
-              Their tasks were cancelled and Forerunner leaves them as they are: close them on
-              GitHub, or reopen the task in Tasks.
+            <p className="text-xs text-neutral-500" data-testid="prs-cancelled-explain">
+              {leftOpen.length === 1
+                ? "Its task was cancelled: close its pull request, or reopen the task in Tasks."
+                : "Their tasks were cancelled: close each pull request, or reopen its task in Tasks."}
             </p>
             <ul className="space-y-0.5">
               {leftOpen.map((pr) => (
@@ -838,6 +902,25 @@ function RepositoryFiles({
                   <ExternalLink href={pr.url} variant="inline" testId="pr-cancelled-link">
                     Open
                   </ExternalLink>
+                  <Button
+                    variant="secondary"
+                    className="px-2 py-0.5 text-xs"
+                    disabled={closing !== null}
+                    title={CLOSE_PULL_REQUEST_EXPLAIN}
+                    onClick={() => void closePr(pr)}
+                    data-testid="pr-cancelled-close"
+                  >
+                    {closing === pr.number ? "Closing…" : "Close"}
+                  </Button>
+                  {closeAnswer && !closeAnswer.closed && closeAnswer.number === pr.number ? (
+                    <span
+                      className="basis-full text-xs text-red-700 dark:text-red-300"
+                      data-testid="pr-close-error"
+                      role="alert"
+                    >
+                      {closeAnswer.sentence}
+                    </span>
+                  ) : null}
                 </li>
               ))}
             </ul>

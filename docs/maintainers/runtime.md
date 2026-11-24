@@ -10203,3 +10203,43 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   one store), task-proposal-sync.test.ts, pr-answers-takeout.test.ts, chat-final.test.ts,
   chat-carried-sentences.test.ts; chat-depth.test.ts and conversation-memory.test.ts assert the
   exact stopped line "You stopped this answer: under CHF 0.01 spent." (L4h-left-2).
+
+## l4-github-carried (run L4, 2026-11-24): Close, Try again, branch names, take-outs, merged-through words
+
+- **Close a cancelled task's pull request** (L4-github-130, ADR 0105 amended 2026-11-24):
+  `ProjectPullRequests.close(project, number)` (`daemon/pull-requests.ts`) closes only a row of
+  kind `cancelled` whose task is cancelled, with one `PATCH` (`updatePullRequest`, state closed;
+  no branch is deleted), then settles the record as at a press (`closedAtPress`). Its words are
+  the leaf `daemon/pull-request-close-words.ts` (the fake daemon imports it). Route `POST
+  /projects/:id/pull-requests/:number/close` (`docs-routes.ts`; 403 for another person's project,
+  400 for a bad number). A token GitHub refuses, one without write access and GitHub not
+  answering each have their sentence; nothing is recorded then.
+- **Try again on the take-over's no-pull-request line** (L4e-left-1, ADR 0117 amended
+  2026-11-24): `RepositoryUse.overviewOf` gives that line `outcome: "took_over_no_pull_request"`
+  and `tryAgainLine`; `daemon/take-over-retry.ts`' `retryTakeOverDocs` runs the scaffold again
+  (`ProjectDocs.scaffoldProject`, the L4-github-102 branch rules unchanged) once at a time per
+  project, and answers opened, or refused with the reason (the token cannot push, or another
+  project's docs pull request is open). Route `POST /projects/:id/take-over/retry` (server.ts).
+- **Branch names with dots** (L4e-left-2): `branchSegment` (`capabilities/githost/pr-executor.ts`)
+  turns dots into dashes, so "Update yarn.lock" pushes `fr/<id>-update-yarn-lock` (git refuses
+  a ref with `..` or one ending in `.lock`); the intake's docs branch and the scaffold slug use it
+  too.
+- **A merged-through take-out** (L4e-left-3): `take-out.ts` no longer answers "Try again in a
+  minute" when the merge commit is not recorded yet: `PrExecutor.takeOut` finds the merge that
+  brought the change to main (`Git.mergeThatBrought`, first-parent walk) and reverts it; with
+  none (a fast-forward or a squash) it says so in one sentence (`noMergeCommitSentence`).
+- **Merged-through words** (L4e-left-6): the Overview's "Since then" says "#A's change reached
+  main through #B." (never "merged #A and #B"), chat's `# Your files` lists such a task on its own
+  line ("Closed, but its change reached main through #B: ...", `RepositoryFacts.mergedThrough`)
+  and recall says "Its pull request was closed, but its change reached main through #B.".
+- **A joined project's result** (L4e-left-8): `withoutReadyClause` also drops "Left N reviewed
+  pull requests for you to merge." and what merges by itself; the held-start join refusal says
+  "waits to start by itself" (no "soon").
+- **Hosts and marker names** (L4e-left-10): `repoHostsFor` adds github.com only when no git
+  remote base is set and the API base is not GitHub Enterprise's `/api/v3` form; `markerNameOf`
+  cuts a long name at a word with "…".
+- Tests: "l4-github-carried, run L4" in `dependent-branches-merge.test.ts`, `l3-merge.test.ts`,
+  `chat-recall.test.ts`, `project-status.test.ts`, `repository-use.test.ts`,
+  `packages/commands/test/project-join.test.ts`, `packages/capabilities/test/pr-executor.test.ts`
+  and `apps/ui/test/real-daemon.test.ts` (Close through the client with one PATCH and a restart;
+  Try again over a bare repository with a pre-receive refusal, a restart and the success).

@@ -127,6 +127,8 @@ import {
   ProjectSessionsView as ProjectSessionsViewSchema,
   type ProjectSummary,
   ProjectSummary as ProjectSummarySchema,
+  type PullRequestCloseAnswer,
+  PullRequestCloseAnswer as PullRequestCloseAnswerSchema,
   type PullRequestMergeAnswer,
   PullRequestMergeAnswer as PullRequestMergeAnswerSchema,
   type PullRequestPreviewAnswer,
@@ -184,6 +186,8 @@ import {
   StoredSecretsView as StoredSecretsViewSchema,
   type StoreSecretView,
   StoreSecretView as StoreSecretViewSchema,
+  type TakeOverRetryAnswer,
+  TakeOverRetryAnswer as TakeOverRetryAnswerSchema,
   type TaskAction,
   type TaskActionBody,
   type TaskCheck,
@@ -352,6 +356,7 @@ export type {
   ProjectSessionsView,
   ProjectSettingsView,
   ProjectSummary,
+  PullRequestCloseAnswer,
   PullRequestMergeAnswer,
   PullRequestPreviewAnswer,
   QueueItemView,
@@ -379,6 +384,7 @@ export type {
   StartSessionView,
   StoredSecretsView,
   StoreSecretView,
+  TakeOverRetryAnswer,
   TaskAction,
   TaskActionBody,
   TaskCheck,
@@ -973,6 +979,18 @@ export interface DaemonClient {
   // daemon's vault, never read back (the list says only whether each is stored).
   storedSecrets(name?: string, signal?: AbortSignal): Promise<StoredSecretsView>;
   storeSecret(name: string, value: string): Promise<StoreSecretView>;
+
+  /**
+   * l4-github-carried (L4-github-130, the owner's decision of 2026-11-18): Close on the
+   * Overview's "Cancelled, still open on GitHub" row, answered once GitHub closed that pull
+   * request (it can be reopened there); read `projectPullRequests` again for the row's going.
+   */
+  closePullRequest(projectId: string, number: number): Promise<PullRequestCloseAnswer>;
+  /**
+   * l4-github-carried (L4e-left-1, owner question OQ-L4e-1's default): Try again beside the
+   * take-over's line that says its docs pull request could not be opened.
+   */
+  retryTakeOver(projectId: string): Promise<TakeOverRetryAnswer>;
 }
 
 function isAbort(error: unknown): boolean {
@@ -1488,6 +1506,14 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       get(routePath("storedSecrets"), StoredSecretsViewSchema, name ? { name } : undefined, signal),
     storeSecret: (name, value) =>
       post(routePath("storeSecret"), StoreSecretViewSchema, { name, value }),
+    closePullRequest: (projectId, number) =>
+      post(
+        routePath("closePullRequest", { id: projectId, number: String(number) }),
+        PullRequestCloseAnswerSchema,
+        {},
+      ),
+    retryTakeOver: (projectId) =>
+      post(routePath("retryTakeOver", { id: projectId }), TakeOverRetryAnswerSchema, {}),
     auditExport: async (filter, signal) => {
       const format: AuditExportFormat = filter?.format ?? "jsonl";
       const res = await raw({

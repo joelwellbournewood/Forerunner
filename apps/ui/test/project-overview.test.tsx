@@ -1075,8 +1075,11 @@ describe("l3-merge, run L3", () => {
     const files = await screen.findByTestId("your-files");
     const block = await within(files).findByTestId("prs-cancelled");
     expect(block).toHaveTextContent("Cancelled, still open on GitHub");
+    // l4-github-carried (L4-github-124 (b), L4-github-130): one pull request reads in the
+    // singular, and the row's Close closes it (before: "Their tasks were cancelled and
+    // Forerunner leaves them as they are: close them on GitHub, ...").
     expect(block).toHaveTextContent(
-      "Their tasks were cancelled and Forerunner leaves them as they are: close them on GitHub, or reopen the task in Tasks.",
+      "Its task was cancelled: close its pull request, or reopen the task in Tasks.",
     );
     const item = within(block).getByTestId("pr-cancelled");
     expect(item).toHaveTextContent('"Write the About page in about.html" · pull request #43');
@@ -1160,5 +1163,250 @@ describe("l4-github-merge, run L4 (fixup)", () => {
         "Accepted · pull request closed",
       );
     });
+  });
+});
+
+describe("l4-github-carried, run L4", () => {
+  const cancelledRow = (n: number, title: string) => ({
+    kind: "cancelled" as const,
+    taskId: `task_c${n}`,
+    title,
+    number: n,
+    url: `https://example.test/org/atlas/pull/${n}`,
+    branch: `fr/${n}`,
+    review: null,
+    merge: {
+      state: "blocked" as const,
+      canMerge: false,
+      sentence: `Its task was cancelled; #${n} stays open on GitHub: close it there, or reopen the task.`,
+      first: [],
+    },
+  });
+
+  it("L4-github-130 (the owner's decision of 2026-11-18): Close beside Open on the 'Cancelled, still open on GitHub' row says what it does; one press closes that pull request (one close sent), the row goes and the answer says it can be reopened on GitHub", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [cancelledRow(43, "Write the About page in about.html")],
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    const block = await within(files).findByTestId("prs-cancelled");
+    // L4-github-124 (b): one pull request, one sentence in the singular.
+    expect(within(block).getByTestId("prs-cancelled-explain")).toHaveTextContent(
+      "Its task was cancelled: close its pull request, or reopen the task in Tasks.",
+    );
+    const item = within(block).getByTestId("pr-cancelled");
+    const close = within(item).getByTestId("pr-cancelled-close");
+    expect(close).toHaveTextContent("Close");
+    expect(close).toHaveAttribute(
+      "title",
+      "Closes this pull request on GitHub; you can reopen it there.",
+    );
+    // Beside Open, which still links the pull request on GitHub.
+    expect(within(item).getByTestId("pr-cancelled-link")).toHaveAttribute(
+      "href",
+      "https://example.test/org/atlas/pull/43",
+    );
+    await user.click(close);
+    expect(await within(files).findByTestId("pr-close-answer")).toHaveTextContent(
+      "Closed #43 on GitHub; you can reopen it there.",
+    );
+    await waitFor(() => expect(within(files).queryByTestId("prs-cancelled")).toBeNull());
+    expect(postedCalls(harness, "/projects/proj_atlas/pull-requests/43/close")).toHaveLength(1);
+    expect(harness.daemon.state.pullRequestCloses).toEqual([
+      { projectId: "proj_atlas", number: 43 },
+    ]);
+    expect(postedCalls(harness, "/projects/proj_atlas/pull-requests/43/merge")).toHaveLength(0);
+  });
+
+  it("L4-github-130: a Close GitHub does not answer says so in one sentence on the row, and the row stays with its Close", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [cancelledRow(43, "Write the About page in about.html")],
+      error: null,
+    };
+    harness.daemon.state.pullRequestCloseFails["proj_atlas#43"] = "unreachable";
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    const item = await within(files).findByTestId("pr-cancelled");
+    await user.click(within(item).getByTestId("pr-cancelled-close"));
+    expect(await within(files).findByTestId("pr-close-error")).toHaveTextContent(
+      "GitHub did not answer, so #43 was not closed. Try again later.",
+    );
+    expect(within(files).queryByTestId("pr-close-answer")).toBeNull();
+    expect(within(files).getByTestId("pr-cancelled")).toBeInTheDocument();
+    expect(within(files).getByTestId("pr-cancelled-close")).toBeEnabled();
+    expect(harness.daemon.state.pullRequestCloses).toEqual([]);
+  });
+
+  it("L4-github-124 (c): a pull request rebuilt without a closed one it built on is listed apart from 'Reviewed by the critic', with its Merge and line", async () => {
+    const harness = createHarness();
+    const sentence =
+      "#48 was rebuilt without #11, which was closed. It was reviewed with #11's changes, so it waits for you: look at it, then merge it or redo the task.";
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [
+        {
+          kind: "task",
+          taskId: "task_40",
+          title: "Link trips page",
+          number: 40,
+          url: "https://example.test/org/atlas/pull/40",
+          branch: "fr/40",
+          review: "critic",
+          merge: { state: "ready", canMerge: true, sentence: null, first: [] },
+        },
+        {
+          kind: "task",
+          taskId: "task_48",
+          title: "Write kite/club-day.txt",
+          number: 48,
+          url: "https://example.test/org/atlas/pull/48",
+          branch: "fr/48",
+          review: "critic",
+          rebuilt: true,
+          merge: { state: "left_to_you", canMerge: true, sentence, first: [] },
+        },
+      ],
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    const critic = await within(files).findByTestId("prs-critic");
+    expect(
+      within(critic)
+        .getAllByTestId("pr-waiting")
+        .map((r) => r.dataset.number),
+    ).toEqual(["40"]);
+    const rebuilt = within(files).getByTestId("prs-rebuilt");
+    expect(rebuilt).toHaveTextContent(
+      "Rebuilt since the critic's review: look at each before you merge",
+    );
+    const row = within(rebuilt).getByTestId("pr-waiting");
+    expect(row.dataset.number).toBe("48");
+    expect(within(row).getByTestId("pr-merge-sentence")).toHaveTextContent(sentence);
+    expect(within(row).getByTestId("pr-merge")).toBeEnabled();
+  });
+
+  it("L4-github-124 (b): two cancelled pull requests read in the plural, each with its own Close", async () => {
+    const harness = createHarness();
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [cancelledRow(43, "Write the About page"), cancelledRow(44, "Write the FAQ")],
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    const block = await within(files).findByTestId("prs-cancelled");
+    expect(within(block).getByTestId("prs-cancelled-explain")).toHaveTextContent(
+      "Their tasks were cancelled: close each pull request, or reopen its task in Tasks.",
+    );
+    expect(within(block).getAllByTestId("pr-cancelled-close")).toHaveLength(2);
+  });
+
+  const noPrLine = {
+    kind: "elsewhere" as const,
+    text: 'Took over org/atlas from "Kite club" here, but the docs pull request that names this project could not be opened, so GitHub still names "Kite club".',
+    canTakeOver: false,
+    takeOverLine: null,
+    details: null,
+    outcome: "took_over_no_pull_request" as const,
+    tryAgainLine: "Tries again to open the docs pull request that names this project.",
+  };
+
+  it("L4e-left-1 (OQ-L4e-1's default): the take-over's no-pull-request line on the Overview has Try again with its consequence line; a refused press says why and keeps the line; a press that opens it says so and the line goes", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.repositoryOverview.proj_atlas = noPrLine;
+    harness.daemon.state.takeOverRetryFails.proj_atlas = "refused";
+    renderApp("/projects/proj_atlas", harness);
+    const section = await screen.findByTestId("repository-elsewhere");
+    expect(within(section).getByTestId("repository-elsewhere-line")).toHaveTextContent(
+      noPrLine.text,
+    );
+    // Before: the line alone, with no next step (design §5 rule 8).
+    const button = within(section).getByTestId("repository-try-again-button");
+    expect(button).toHaveTextContent("Try again");
+    expect(within(section).getByTestId("repository-try-again-line")).toHaveTextContent(
+      "Tries again to open the docs pull request that names this project.",
+    );
+    expect(within(section).queryByTestId("repository-take-over")).toBeNull();
+    await user.click(button);
+    expect(await within(section).findByTestId("repository-try-again-refused")).toHaveTextContent(
+      "The docs pull request still could not be opened: check that the saved GitHub token can push to org/atlas, then try again.",
+    );
+    expect(within(section).getByTestId("repository-elsewhere-line")).toBeInTheDocument();
+    await user.click(within(section).getByTestId("repository-try-again-button"));
+    expect(await screen.findByTestId("repository-try-again-opened")).toHaveTextContent(
+      /^Opened #\d+: once you merge it, GitHub names this project\.$/,
+    );
+    await waitFor(() => expect(screen.queryByTestId("repository-elsewhere-line")).toBeNull());
+    expect(postedCalls(harness, "/projects/proj_atlas/take-over/retry")).toHaveLength(2);
+    // The bench walk (l4-github-carried): the docs pull request it opened is listed at once
+    // under Waiting for you to merge (before: "No pull request waits for you." until a reload).
+    const opened = Number(
+      /#(\d+)/.exec(screen.getByTestId("repository-try-again-opened").textContent ?? "")?.[1],
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("your-files")).toHaveTextContent(`pull request #${opened}`),
+    );
+  });
+
+  it("L4e-left-4 (the session lead's decision of 2026-11-23) with L4e-left-1: Docs shows the take-over's outcome line with its Try again, and never OR-07's offer, which stays on the Overview with Take it over", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.repositoryOverview.proj_atlas = noPrLine;
+    renderApp("/projects/proj_atlas/docs", harness);
+    const docs = await screen.findByTestId("docs");
+    expect(within(docs).getByTestId("docs-repository-line")).toHaveTextContent(noPrLine.text);
+    await user.click(within(docs).getByTestId("docs-try-again-button"));
+    expect(await within(docs).findByTestId("docs-try-again-opened")).toHaveTextContent(
+      /^Opened #\d+: once you merge it, GitHub names this project\.$/,
+    );
+    await waitFor(() => expect(within(docs).queryByTestId("docs-repository-line")).toBeNull());
+  });
+
+  it("L4e-left-4: OR-07's offer ('... is also the Forerunner project ...') is not repeated on Docs", async () => {
+    const harness = createHarness();
+    harness.daemon.state.repositoryOverview.proj_atlas = {
+      kind: "elsewhere",
+      text: 'org/atlas is also the Forerunner project "Kite club", which is not on this computer.',
+      canTakeOver: true,
+      takeOverLine:
+        "Makes this project the repository's project; Kite club's work stays on GitHub.",
+      details: null,
+    };
+    renderApp("/projects/proj_atlas/docs", harness);
+    const docs = await screen.findByTestId("docs");
+    await within(docs).findByTestId("docs-present");
+    // Before: the offer's line stood on Docs too, without its Take it over.
+    expect(within(docs).queryByTestId("docs-repository-line")).toBeNull();
+    expect(within(docs).queryByTestId("docs-try-again-button")).toBeNull();
+  });
+
+  it("L4c-left-4: after Add to on a project with tasks, 'Waiting for you: approve the plan' shows once on its page (the plan's banner), not again as the status line", async () => {
+    // What Add to it leaves (onerepo-link.test.tsx "Add to it sends the brief to Atlas's plan"):
+    // Atlas, which has tasks, with a plan from the brief waiting in the Inbox.
+    const harness = createHarness();
+    harness.daemon.state.intake.proj_atlas = {
+      projectId: "proj_atlas",
+      state: "pending",
+      requestId: "req_intake",
+      outcome: null,
+      appliedAt: null,
+      docs: null,
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const header = await screen.findByTestId("project-header");
+    expect(header).toHaveTextContent("Atlas");
+    const banner = await screen.findByTestId("intake-banner");
+    expect(banner).toHaveAttribute("data-state", "pending");
+    await waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text.split("Waiting for you: approve the plan").length - 1).toBe(1);
+    });
+    expect(within(header).queryByTestId("project-status")).toBeNull();
   });
 });

@@ -221,6 +221,7 @@ import {
   runsWork,
   startBlocked as startBlockedReason,
 } from "./start-blocked.ts";
+import { retryTakeOverDocs } from "./take-over-retry.ts";
 import {
   ACTION_FROM,
   ACTION_WORDS,
@@ -819,6 +820,8 @@ export function createDaemonApp(
       mergePullRequest: (project, number) => rt.pullRequests.merge(project, number, rt.human.id),
       // merged-actions: "Open this version" of a waiting pull request, beside the copy.
       previewPullRequest: (project, number) => rt.pullRequests.preview(project, number),
+      // L4-github-130: Close on a cancelled task's pull request still open on GitHub.
+      closePullRequest: (project, number) => rt.pullRequests.close(project, number),
       // merged-copy: when the copy was last brought to what is merged; its Local only folder.
       copyView: (project) => rt.docs.copyView(project),
       who: daemonWho,
@@ -1254,6 +1257,21 @@ export function createDaemonApp(
     const s = await rt.intake.retry(c.req.param("id"));
     rt.events.emit("project", { id: s.projectId });
     return c.json(intakeStatusView(s), 202);
+  });
+  // L4e-left-1 (l4-github-carried; owner question OQ-L4e-1's default): Try again beside the
+  // take-over's line that says its docs pull request could not be opened. The scaffold runs
+  // again with its own rules (`retryTakeOverDocs`); answered once it ran.
+  app.post("/projects/:id/take-over/retry", async (c) => {
+    const project = await rt.store.project.mustGet(c.req.param("id"));
+    const answer = await retryTakeOverDocs(
+      {
+        overviewOf: (p) => rt.repositoryUse.overviewOf(p),
+        scaffold: async (p) => rt.docs.scaffoldProject(await rt.store.project.mustGet(p.id)),
+      },
+      project,
+    );
+    rt.events.emit("project", { id: project.id });
+    return c.json(answer);
   });
 
   app.get("/projects/:id", async (c) => c.json(await projectCardOf(c.req.param("id"))));

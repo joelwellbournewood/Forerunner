@@ -229,7 +229,9 @@ export function joinRefusedWaiting(name: string, when: string | null): string {
  * setting's name is the dialog's link ("When work is ready"), not in the sentence.
  */
 export function joinRefusedHeldStart(name: string): string {
-  return `A session of "${name}" starts by itself soon: make one project after it ran.`;
+  // L4e-left-8 (l4-github-carried): not "soon": quiet hours can hold the start for hours, and
+  // the held start keeps no time to name.
+  return `A session of "${name}" waits to start by itself: make one project after it ran.`;
 }
 
 /** The projects share no repository or folder. */

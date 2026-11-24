@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { filesBlock, repositoryFacts } from "../src/conversation/project-facts.ts";
 import { ProjectPullRequests } from "../src/daemon/pull-requests.ts";
 import { loadTaskDisplayContext, taskDisplay } from "../src/daemon/task-display.ts";
-import { requestViews } from "../src/daemon/views.ts";
+import { projectSummary, requestViews } from "../src/daemon/views.ts";
 import { EnforcementHooks } from "../src/enforcement/hooks.ts";
 import {
   AllowAllCaps,
@@ -3566,5 +3566,186 @@ describe("l4-github-merge, run L4", { timeout: 240_000 }, () => {
       sentence: before.sentence,
     });
     expect((await m.pr(a.id)).state).toBe("open");
+  });
+});
+
+describe("l4-github-carried, run L4", { timeout: 240_000 }, () => {
+  type ChainWorld = Awaited<ReturnType<typeof chainWorld>>;
+  /** The daemon started again: a new PR executor on the same folders, and its take-out. */
+  function takeOutAfterRestart(m: ChainWorld) {
+    const executor = new PrTaskExecutor({
+      store: m.w.store,
+      clock: m.w.clock,
+      host: m.github,
+      inner: doneExecutor(m.w),
+      repoFor: async () => ({ clone: m.host.cloneUrl(FULL), repo: REPO, base: "main" }),
+      worktreeRoot: m.worktreeRoot,
+      token: m.token,
+      identity,
+    });
+    return new TaskTakeOut({
+      store: m.w.store,
+      host: m.github,
+      git: executor,
+      humanId: m.w.human,
+      agentId: m.w.alice,
+    });
+  }
+  async function rowOf(m: ChainWorld, taskId: string) {
+    const tasks = await m.w.store.task.list({ project_id: m.w.project } as never);
+    const ctx = await loadTaskDisplayContext(m.w.store, tasks, true);
+    const t = tasks.find((x) => x.id === taskId);
+    if (!t) throw new Error("no task");
+    return taskDisplay(t, ctx);
+  }
+  /**
+   * A, its pull request closed on GitHub, and then its branch put on main by someone outside
+   * Forerunner: with a merge commit of its own (`merge`), or fast-forwarded (`ff`). No pull
+   * request of Forerunner's carried it, so the merged-through record names none.
+   */
+  async function reachedMainByHand(m: ChainWorld, how: "merge" | "ff") {
+    const a = await m.runTask("Add page");
+    const prA = await m.prNumber(a.id);
+    const head = (await m.pr(a.id)).head.sha;
+    await m.close(a.id);
+    let merge: string | null = null;
+    if (how === "merge") {
+      const tree = await m.hostGit("rev-parse", `${head}^{tree}`);
+      merge = await m.hostGit(
+        "-c",
+        "user.name=Pat",
+        "-c",
+        "user.email=pat@example.test",
+        "commit-tree",
+        tree,
+        "-p",
+        "main",
+        "-p",
+        head,
+        "-m",
+        "Merge the page by hand",
+      );
+      await m.hostGit("update-ref", "refs/heads/main", merge);
+    } else await m.hostGit("update-ref", "refs/heads/main", head);
+    await m.poll();
+    expect(await m.record(a.id)).toMatchObject({
+      state: "merged",
+      last_outcome: "merged_through",
+      merge_sha: null,
+      sentence: `#${prA} was closed, but its change reached main.`,
+    });
+    expect((await rowOf(m, a.id)).takeOut?.state).toBe("offered");
+    return { a, prA, merge };
+  }
+
+  it("L4e-left-3: a merged-through change that reached main through no named pull request: Take this work out after a restart reads the merge commit from main's history and opens one pull request that takes A's change out; the record keeps it across another restart", async () => {
+    const m = await chainWorld({ level: 2 });
+    const { a, prA, merge } = await reachedMainByHand(m, "merge");
+    const pullsBefore = (await m.github.listPullRequests(REPO, { state: "all" })).length;
+    // Before: refused with "Forerunner is still reading where the change of #1 reached main.
+    // Try again in a minute." at every press, for good (nothing ever filled the merge commit in).
+    const answer = await takeOutAfterRestart(m).takeOut(a.id);
+    await m.host.settle();
+    expect(answer.sentence).not.toMatch(/still reading|Try again in a minute/);
+    expect(answer.state).toBe("opened");
+    const opened = (await m.github.listPullRequests(REPO, { state: "open" })).filter((p) =>
+      p.title.startsWith("Take out:"),
+    );
+    expect(opened.map((p) => p.title)).toEqual(["Take out: Add page"]);
+    expect(answer.sentence).toBe(
+      `Opened #${opened[0]?.number} to take "Add page" out: merge it to remove the work, or close it to keep the work.`,
+    );
+    expect(opened[0]?.body).toContain(
+      `(#${prA}, closed, its change merged through another): it reverts that change`,
+    );
+    expect((await m.github.listPullRequests(REPO, { state: "all" })).length).toBe(pullsBefore + 1);
+    const onBranch = await m.hostGit("ls-tree", "-r", "--name-only", opened[0]?.head.ref ?? "");
+    expect(onBranch).not.toContain(m.fileOf("Add page"));
+    expect(onBranch).toContain("README.md");
+    // The record is settled: the merge commit read from history, the take-out kept.
+    expect(await m.record(a.id)).toMatchObject({
+      state: "merged",
+      last_outcome: "merged_through",
+      merge_sha: merge,
+      method: null,
+      take_out_pr_number: opened[0]?.number,
+      take_out_state: "open",
+    });
+    // Started again: the row and a second press read the stored record.
+    expect((await rowOf(m, a.id)).label).toBe(
+      `Taken out in #${opened[0]?.number} (waiting for you to merge)`,
+    );
+    const again = await takeOutAfterRestart(m).takeOut(a.id);
+    expect(again).toMatchObject({
+      state: "refused",
+      sentence: `"Add page" is being taken out in #${opened[0]?.number}: merge #${opened[0]?.number} to finish it.`,
+    });
+  });
+
+  it("L4e-left-3: a merged-through change fast-forwarded onto main (no merge commit): Take this work out says in one sentence that it cannot be taken out here and what to do, at every press and after a restart; nothing is pushed or opened", async () => {
+    const m = await chainWorld({ level: 2 });
+    const { a, prA } = await reachedMainByHand(m, "ff");
+    const branchesBefore = await m.hostGit("for-each-ref", "--format=%(refname)", "refs/heads");
+    const pullsBefore = (await m.github.listPullRequests(REPO, { state: "all" })).length;
+    const sentence = `#${prA}'s change reached main without a merge commit, so Forerunner cannot take it out by itself: undo it by hand, or ask in Chat for a task that does it.`;
+    for (let press = 0; press < 2; press++) {
+      const answer = await takeOutAfterRestart(m).takeOut(a.id);
+      await m.host.settle();
+      expect(answer).toMatchObject({ state: "refused", sentence, number: null, url: null });
+    }
+    expect(sentence).not.toMatch(/Try again/);
+    expect(await m.hostGit("for-each-ref", "--format=%(refname)", "refs/heads")).toBe(
+      branchesBefore,
+    );
+    expect((await m.github.listPullRequests(REPO, { state: "all" })).length).toBe(pullsBefore);
+    expect(await m.record(a.id)).toMatchObject({ merge_sha: null, take_out_state: null });
+  });
+
+  it("L4-github-124 (c): a pull request rebuilt without the closed one it built on is marked rebuilt in the Overview's list (its critic's review read work that is gone), and one that was not rebuilt is not", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const c = await m.runTask("Add rules");
+    const [prB, prC] = [await m.prNumber(b.id), await m.prNumber(c.id)];
+    await m.close(a.id);
+    await m.poll();
+    expect(await m.record(b.id)).toMatchObject({ last_outcome: "rebuilt_without" });
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const view = await new ProjectPullRequests({ store: m.w.store, host: m.github }).view(project);
+    const rowB = view.waiting.find((r) => r.number === prB);
+    const rowC = view.waiting.find((r) => r.number === prC);
+    // Before: B was listed with review "critic" and nothing else, so the Overview put it under
+    // "Reviewed by the critic" as if that review covered what its branch holds now.
+    expect(rowB).toMatchObject({ kind: "task", review: "critic", rebuilt: true });
+    expect(rowC?.rebuilt).toBeUndefined();
+  });
+
+  it("L4e-left-6: after A was closed and its change reached main through B's merge, the Overview's Last result says so, never 'merged #A and #B'; chat's facts do not list A as merged", async () => {
+    const m = await chainWorld({ level: 2 });
+    // One session leaves both pull requests for the person.
+    const a = await m.w.addTask("Add page");
+    const b = await m.w.addTask("Add footer", { depends_on: [a.id] });
+    await m.session();
+    const [prA, prB] = [await m.prNumber(a.id), await m.prNumber(b.id)];
+    await m.close(a.id);
+    expect((await m.github.mergePullRequest(REPO, prB)).merged).toBe(true);
+    await m.host.settle();
+    await m.poll();
+    expect(await m.record(a.id)).toMatchObject({ last_outcome: "merged_through" });
+    const summary = await projectSummary(m.w.store, m.w.project, 1);
+    // Before: ["Since then: merged #1 and #2."].
+    expect(summary.lastSession?.since).toEqual([
+      `Since then: merged #${prB}. #${prA}'s change reached main through #${prB}.`,
+    ]);
+    const block = filesBlock(
+      null,
+      await repositoryFacts(m.w.store, await m.w.store.project.mustGet(m.w.project)),
+    );
+    const urlA = `/pull/${prA}`;
+    const merged = block.split("\n").find((l) => l.startsWith("Merged: ")) ?? "";
+    // Before: A's pull request was listed under "Merged:" beside B's.
+    expect(merged).toContain(`/pull/${prB}`);
+    expect(merged).not.toContain(urlA);
+    expect(block).toContain(`Closed, but its change reached main through #${prB}: "Add page"`);
   });
 });

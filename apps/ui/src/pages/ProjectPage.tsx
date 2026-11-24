@@ -124,14 +124,18 @@ export function ProjectPage() {
   // l4-chat-carried (C4-left-9): the same line as Talk's on this page (`closedChatOf`).
   const closedChat = closedChatOf(view);
   // The plan banner says "Drafting the plan…" / "Waiting for you: approve the plan" itself.
+  // L4c-left-4 (l4-github-carried): a plan waiting for approval is the status sentence's first
+  // case ("Waiting for you: approve the plan" with Open), so while the banner says it the status
+  // line is not shown also for a project that has tasks already (Add to it); before, the page
+  // said it twice.
   const planBanner =
     !closed &&
-    (view.progress?.total ?? 0) === 0 &&
-    (intake === "drafting" ||
-      intake === "pending" ||
-      intake === "failed" ||
-      intake === "waiting" ||
-      intake === "rejected");
+    (intake === "pending" ||
+      ((view.progress?.total ?? 0) === 0 &&
+        (intake === "drafting" ||
+          intake === "failed" ||
+          intake === "waiting" ||
+          intake === "rejected")));
   const moreTabs = PROJECT_TABS.filter((t) => t.more);
   const inMore = moreTabs.some((t) => t.id === tab);
   const tabClass = ({ isActive }: { isActive: boolean }) =>

@@ -28,6 +28,7 @@ import {
   otherHostSentence,
   projectIdsOf,
   scaffoldLeftNoMarker,
+  TAKE_OVER_TRY_AGAIN_LINE,
   TAKE_OVER_UNDO_MERGED,
   TAKE_OVER_UNDO_OPEN,
   TAKE_OVER_UNDO_UNREADABLE,
@@ -437,7 +438,15 @@ export function markerNameOf(name: string | null | undefined): string | null {
   if (scanForInjection(name, "repo_file").suspicious) return null;
   // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are removed.
   const clean = name.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").trim();
-  const cut = clean.length > 60 ? clean.slice(0, 60).trim() : clean;
+  // L4e-left-10 (l4-github-carried): a long name is cut at a word with "…" (before: at 60
+  // characters, mid-word, in the offer's first sentence).
+  const one = clean.replace(/\s+/g, " ");
+  const head = one.slice(0, 59);
+  const space = head.lastIndexOf(" ");
+  const cut =
+    one.length > 60
+      ? `${(space > 30 ? head.slice(0, space) : head).replace(/[\s,;:.]+$/, "")}…`
+      : one;
   if (!cut) return null;
   if (scanForInjection(cut, "repo_file").suspicious) return null;
   if (/["<>`]/.test(cut)) return null;
@@ -740,6 +749,17 @@ export interface RepositoryOverview {
   takeOverLine: string | null;
   /** The line's Details. */
   details: string | null;
+  /**
+   * l4-github-carried (L4e-left-4): the line is a take-over's outcome (Took over here, but the
+   * docs pull request that names this project could not be opened), not OR-07's offer. Docs shows
+   * only such a line. Absent on any other line.
+   */
+  outcome?: "took_over_no_pull_request";
+  /**
+   * L4e-left-1 (OQ-L4e-1's default): Try again's consequence line beside the outcome line;
+   * absent without the button.
+   */
+  tryAgainLine?: string;
 }
 
 /** How long the Overview reuses a read of a repository's marks (the press always reads anew). */
@@ -1007,6 +1027,9 @@ export class RepositoryUse {
         canTakeOver: false,
         takeOverLine: null,
         details: null,
+        // L4e-left-1 (OQ-L4e-1's default) and L4e-left-4: the outcome line, with Try again.
+        outcome: "took_over_no_pull_request",
+        tryAgainLine: TAKE_OVER_TRY_AGAIN_LINE,
       };
     const own = new Set([...projectIdsOf(project), ...(tookOverOf(project)?.projects ?? [])]);
     if (own.has(id)) return null;
