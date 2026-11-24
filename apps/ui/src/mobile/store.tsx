@@ -159,6 +159,12 @@ export interface MobileState {
   shellVersion: string | null;
   /** The cloud runner auto-unlock window this phone set with an answer (ADR 0068), or null. */
   unlockWindowUntil: string | null;
+  /**
+   * The person's time zone from the desktop's `GET /me` (null until it answers). w8-two-homes
+   * (L4i-left-62): `MobileRoutes` reads it, so every screen draws its times again when it
+   * arrives or changes.
+   */
+  personZone: string | null;
 }
 
 export type MobileAction =
@@ -200,6 +206,7 @@ export function initialMobileState(partial: Partial<MobileState> = {}): MobileSt
     inShell: false,
     shellVersion: null,
     unlockWindowUntil: null,
+    personZone: null,
     ...partial,
   };
 }
@@ -860,7 +867,11 @@ export class MobileController {
     try {
       const me = await this.client.me();
       // l4-cred-screens (L4-creds-20): the phone writes times in the person's zone too.
-      setPersonZone(typeof me.timezone === "string" ? me.timezone : null);
+      // w8-two-homes (L4i-left-62): kept in the state as well, so the screens draw their times
+      // again when it arrives or changes (`MobileRoutes` reads it).
+      const personZone = typeof me.timezone === "string" ? me.timezone : null;
+      setPersonZone(personZone);
+      if (personZone !== this.state.personZone) this.patch({ personZone });
       const session = this.state.session;
       if (session) {
         const humanName = me.humanName !== undefined ? (me.humanName ?? null) : session.humanName;

@@ -8,7 +8,7 @@ import {
 } from "../api/client.ts";
 import { ExternalLink } from "../components/ExternalLink.tsx";
 import { Button, ErrorBanner, INPUT_CLASS, Loading } from "../components/ui.tsx";
-import { useClient, useUiState } from "../store/context.tsx";
+import { refreshIdentity, useClient, useUiState, useUiStore } from "../store/context.tsx";
 
 /**
  * The setup assistant (ADR 0092): the first thing a new install shows. The human pastes the
@@ -280,6 +280,7 @@ export function firstStep(s: SetupStatusView, claudeRefused: boolean): Step {
 
 export function SetupPage() {
   const client = useClient();
+  const store = useUiStore();
   const vaultBackend = useUiState((s) => s.connection.health?.vaultBackend ?? null);
   const navigate = useNavigate();
   const [status, setStatus] = useState<SetupStatusView | null>(null);
@@ -477,6 +478,10 @@ export function SetupPage() {
                 );
                 if (s) {
                   setStatus(s);
+                  // w8-two-homes (L4i-left-62): the name and the zone are the person's (`/me`):
+                  // read it again, so every clock and every place that names them follows now,
+                  // not after a restart.
+                  void refreshIdentity(client, store).catch(() => {});
                   go("Claude");
                 }
               }}

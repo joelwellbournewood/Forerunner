@@ -68,6 +68,9 @@ export function mobileBasename(pathname?: string): string {
 
 /** The route tree alone, for tests that mount it in a MemoryRouter. */
 export function MobileRoutes() {
+  // w8-two-homes (L4i-left-62): times are written in the person's zone; reading it here draws
+  // every screen again when it arrives or changes, as the desktop's `AppRoutes` does.
+  useMobileState((s) => s.personZone);
   return (
     <Routes>
       <Route element={<MobileShell />}>

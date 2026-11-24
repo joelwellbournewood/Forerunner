@@ -13,6 +13,8 @@ import { SettingsPage } from "./pages/SettingsPage.tsx";
 import { SetupPage } from "./pages/SetupPage.tsx";
 import { UpdatesPage } from "./pages/UpdatesPage.tsx";
 import { Shell } from "./shell/Shell.tsx";
+import { useUiState } from "./store/context.tsx";
+import { personZoneOf } from "./store/store.ts";
 
 /**
  * Routes mirror the spec's Interface module (K): home, project pages with tabs, live session,
@@ -22,6 +24,11 @@ import { Shell } from "./shell/Shell.tsx";
  * router so tests can mount them in a MemoryRouter.
  */
 export function AppRoutes() {
+  // w8-two-homes (L4i-left-62): every time on a screen is written in the person's zone (`GET
+  // /me`). Reading it here draws every route again when it arrives or changes (after the setup
+  // assistant's save, or a re-read for another window's change), so a screen already on show
+  // follows it without a reload; the pages keep their state, nothing is mounted again.
+  useUiState(personZoneOf);
   return (
     <Routes>
       <Route element={<Shell />}>

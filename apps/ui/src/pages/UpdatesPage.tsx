@@ -131,9 +131,13 @@ export function UpdatesPage() {
         )
       : null;
 
+  // w8-two-homes (L4i-left-3): the answer names the person who gave it, so it waits for /me; a
+  // press before /me answered went as "human", recorded for nobody. The buttons stay off until
+  // then (`answerOff`), and a press that still gets here sends nothing.
+  const answerOff = busy !== null || !me?.id;
   const answer = (decision: ModelWatchAnswerInput["decision"]) => {
-    if (!report) return;
-    const by = me?.id ?? "human";
+    if (!report || !me?.id) return;
+    const by = me.id;
     void act(`mw-${decision}`, async () => {
       const r = await client.modelWatchAnswer(report.id, {
         decision,
@@ -537,7 +541,7 @@ export function UpdatesPage() {
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button
                   variant="primary"
-                  disabled={busy !== null || chosen.length === 0}
+                  disabled={answerOff || chosen.length === 0}
                   onClick={() => answer("adopt")}
                   data-testid="model-watch-adopt"
                 >
@@ -545,7 +549,7 @@ export function UpdatesPage() {
                 </Button>
                 {report.evals_deferred ? (
                   <Button
-                    disabled={busy !== null}
+                    disabled={answerOff}
                     onClick={() =>
                       setConfirm({
                         kind: "evaluate",
@@ -560,14 +564,14 @@ export function UpdatesPage() {
                   </Button>
                 ) : null}
                 <Button
-                  disabled={busy !== null}
+                  disabled={answerOff}
                   onClick={() => answer("ignore")}
                   data-testid="model-watch-ignore"
                 >
                   Ignore
                 </Button>
                 <Button
-                  disabled={busy !== null}
+                  disabled={answerOff}
                   onClick={() => answer("remind")}
                   data-testid="model-watch-remind"
                 >

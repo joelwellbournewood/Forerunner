@@ -3249,3 +3249,24 @@ L4 (fixup)").
   `pullRequestCloseFails`, `takeOverRetryFails`) and its import refuses a link on another host
   with cause `other_host`, as the daemon does (`test/contracts.test.ts` "l4-github-carried, run
   L4").
+
+## w8-two-homes (wave 8, 2026-11-24): state read from `/me` before it answers
+
+- **The model watch's answer waits for `/me`** (L4i-left-3). `UpdatesPage.tsx` sent
+  `me?.id ?? "human"` as the answer's `by`, so a press before `GET /me` answered recorded the
+  decision for nobody (one `e2e/updates.spec.ts` failure). Adopt selected, Run evaluations,
+  Ignore and Remind me later stay off (`answerOff`) until `/me` has answered, and `answer()`
+  sends nothing without the person's id. The daemon never fills in a person for a missing actor.
+- **The person's zone redraws every screen** (L4i-left-62). `setPersonZone` no longer runs
+  inside the store's reducer: the store's `dispatch` sets it from `personZoneOf(state)`
+  (`me.timezone`) before the listeners run, and `AppRoutes` reads `personZoneOf`, so every route
+  draws its times again when the zone arrives or changes (pages keep their state; nothing is
+  mounted again). The phone's store keeps `personZone` in its state and `MobileRoutes` reads it
+  the same way. The setup assistant's profile step (`SetupPage.tsx`, Continue) reads `/me` again
+  after `POST /setup/profile` (`refreshIdentity`), so a new zone or name reaches the app without
+  a restart.
+- Tests: `test/me-races.test.tsx` (describe "w8-two-homes, wave 8: state read from /me before it
+  answers": a harness whose `fetch` holds `GET /me` back until the test lets it go; the answer
+  sends nothing until `/me` answers, then `human_alice`; a session page on screen goes from
+  21:00 to 15:00 when the person's zone moves from Zurich to New York; the setup assistant's
+  zone reaches the store). No route or shape changed, so the fake daemon is unchanged.
