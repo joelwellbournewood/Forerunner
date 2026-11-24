@@ -68,8 +68,19 @@ export const ASK_PERSON_TOOL = "ask_person";
 export const PERSON_ANSWERS_AUDIT_TOOL = "person.answers";
 /** Where the answers go, relative to the project's workspace (the intake's first decision). */
 export const DECISION_DOC_DIR = "docs/decisions";
-/** The decision doc written when the workspace has no `0001-*.md` yet. */
-export const DEFAULT_DECISION_DOC = "0001-project-decisions.md";
+/**
+ * W8-guide-3 (D-W8-9): the decision record started for the answers when the workspace has none,
+ * named by the day it is started (`<day>-project-decisions.md`): never a new `0001` file, so two
+ * people's records never collide by number.
+ */
+export const DEFAULT_DECISION_DOC = "project-decisions.md";
+/**
+ * The hidden mark of the project's decision record (an HTML comment, which GitHub shows as
+ * nothing): the plan's first decision carries it (the intake's `writeDocSet`), and so does a
+ * record started for the answers, so every later answer finds the same file whatever day it is
+ * named by.
+ */
+export const DECISION_RECORD_MARK = "<!-- forerunner:decision-record -->";
 export const MAX_PERSON_QUESTIONS = 10;
 export const MAX_QUESTION_CHARS = 500;
 
@@ -513,8 +524,18 @@ export function personQuestionsCardOf(
   };
 }
 
-function whyFor(source: PersonQuestionsSource, title: string): string {
-  const where = `Your answers are written to the project's decision record (${DECISION_DOC_DIR}/0001-…).`;
+/**
+ * W8-guide-3: where the card says the answers go: the record's real file when it is known
+ * (`decisionRecordFor`), else the decisions folder; never the number a record no longer has.
+ */
+function recordWords(record: string | null | undefined): string {
+  return record
+    ? `Your answers are written to the project's decision record (${record}).`
+    : `Your answers are written to the project's decision record in ${DECISION_DOC_DIR}.`;
+}
+
+function whyFor(source: PersonQuestionsSource, title: string, record?: string | null): string {
+  const where = recordWords(record);
   switch (source) {
     case "planned":
       return `"${title}" needs your answers. No specialist works on it: answer the questions below. ${where} The task is then done.`;
@@ -538,6 +559,11 @@ export interface FilePersonQuestionsInput {
   context?: string | null;
   /** False: the card offers no Go ahead without (the person went ahead without before). */
   goAhead?: boolean;
+  /**
+   * W8-guide-3: the decision record the answers will be written to (`decisionRecordFor`), named
+   * on the card; without it the card names the decisions folder.
+   */
+  decisionRecord?: string | null;
 }
 
 /** The task's person-questions cards that are open, or answered and not applied yet. */
@@ -585,7 +611,7 @@ export async function filePersonQuestions(
     task_id: task.id,
     session_id: input.sessionId ?? null,
     kind: "decision",
-    why: whyFor(input.source, task.title).slice(0, 4000),
+    why: whyFor(input.source, task.title, input.decisionRecord).slice(0, 4000),
     steps: questions,
     options: [...PERSON_QUESTIONS_OPTIONS],
     blocking: true,
@@ -844,8 +870,13 @@ function renderPairs(questions: readonly string[], answers: readonly PersonAnswe
 // ---------------------------------------------------------------------------------------
 // The decision doc
 
-/** The first decision doc in the workspace (`docs/decisions/0001-*.md`), or the default name. */
-async function decisionDocPath(workspace: string): Promise<string> {
+/**
+ * The project's decision record in the workspace (W8-guide-3, D-W8-9): an existing
+ * `docs/decisions/0001-*.md` (a record made before records were named by day stays as it is),
+ * else the one that carries `DECISION_RECORD_MARK` (the plan's first decision, or a record
+ * started for answers), else a new one named by the day (`<day>-project-decisions.md`).
+ */
+async function decisionDocPath(workspace: string, day: string): Promise<string> {
   const dir = join(workspace, ...DECISION_DOC_DIR.split("/"));
   let names: string[] = [];
   try {
@@ -853,8 +884,22 @@ async function decisionDocPath(workspace: string): Promise<string> {
   } catch {
     names = [];
   }
-  const first = names.filter((n) => /^0001-.+\.md$/i.test(n)).sort()[0];
-  return join(dir, first ?? DEFAULT_DECISION_DOC);
+  const numbered = names.filter((n) => /^0001-.+\.md$/i.test(n)).sort()[0];
+  if (numbered) return join(dir, numbered);
+  for (const name of names.filter((n) => /\.md$/i.test(n) && n !== "README.md").sort()) {
+    const text = await readFile(join(dir, name), "utf8").catch(() => "");
+    if (text.includes(DECISION_RECORD_MARK)) return join(dir, name);
+  }
+  return join(dir, `${day.slice(0, 10)}-${DEFAULT_DECISION_DOC}`);
+}
+
+/**
+ * The repository-relative path of the project's decision record in `workspace`, as the Inbox
+ * card names it (`decisions/…` of `decisionDocPath`): the file the answers will be written to.
+ */
+export async function decisionRecordFor(workspace: string, day: string): Promise<string> {
+  const path = await decisionDocPath(workspace, day);
+  return `${DECISION_DOC_DIR}/${path.split(/[\\/]/).pop()}`;
 }
 
 const marker = (requestId: string) => `<!-- forerunner:answers ${requestId} -->`;
@@ -872,7 +917,7 @@ export async function writeAnswersToDecisionDoc(input: {
   answeredBy: string;
   date: string;
 }): Promise<string> {
-  const path = await decisionDocPath(input.workspace);
+  const path = await decisionDocPath(input.workspace, input.date);
   let current = "";
   try {
     current = await readFile(path, "utf8");
@@ -903,11 +948,14 @@ export async function writeAnswersToDecisionDoc(input: {
   return path;
 }
 
-/** The decision doc `current` with `section` appended (a title first when it is empty). */
+/**
+ * The decision doc `current` with `section` appended (a title and the record's mark first when it
+ * is empty, so the next answers find it: W8-guide-3).
+ */
 function withSection(current: string, section: string): string {
   const head = current.trim()
     ? `${current.replace(/\s*$/, "")}\n\n`
-    : "# 0001: Project decisions\n\nDecisions about this project, with the answers you gave in the Inbox.\n\n";
+    : `# Project decisions\n\nDecisions about this project, with the answers given in the Inbox.\n\n${DECISION_RECORD_MARK}\n\n`;
   return `${head}${section.replace(/\s*$/, "")}\n`;
 }
 
@@ -1027,6 +1075,11 @@ async function fileDueQuestions(deps: PersonQuestionsSyncDeps): Promise<number> 
           humanId: deps.humanId,
           agentId: deps.agentId,
           source: "planned",
+          // W8-guide-3: the card names the record the answers will be written to.
+          decisionRecord: await decisionRecordFor(
+            deps.workspaceDir(task.project_id),
+            deps.clock.nowIso(),
+          ).catch(() => null),
         });
         if (task.status === "ready")
           await tx.task.transition(

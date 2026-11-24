@@ -130,7 +130,6 @@ function proposal(over: Partial<Record<"plan" | "docs" | "firstSession", unknown
       "README.md": "# Gamma\n\nShip the thing.\n\n## Run\n\npnpm dev\n",
       "docs/overview.md": "# Overview\n\n## Goal\n\nShip the thing to the first ten users.\n",
       "docs/architecture.md": "# Architecture\n\nOne service, one database.\n",
-      "docs/status.md": "# Status\n\n## Next\n\n- scaffold\n",
       "docs/runbook.md": "# Runbook\n\n## Start and stop\n\npnpm start\n",
       "docs/data.md": "# Data\n\nOne SQLite file.\n",
       "docs/decisions/0001-stack.md":
@@ -254,7 +253,7 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
         pending: true,
         projectId,
         reused: false,
-        summary: { milestones: 2, tasks: 3, docs: 7, firstSessionTasks: 2 },
+        summary: { milestones: 2, tasks: 3, docs: 6, firstSessionTasks: 2 },
       });
       requestId = String(view.requestId);
       expect(provider.calls.length).toBe(callsBefore + 1);
@@ -305,7 +304,9 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       const firstLine = row.steps.find((st) => st.startsWith("First session:")) ?? "";
       expect(firstLine).toContain("1. Scaffold the repository");
       expect(firstLine).not.toContain("CHF");
-      expect(Object.keys(prop.docs)).toContain("docs/decisions/0001-stack.md");
+      // W8-guide-3 (D-W8-9): the numbered name the reply gave is the day's name on the card.
+      expect(Object.keys(prop.docs)).toContain("docs/decisions/2026-03-05-stack.md");
+      expect(Object.keys(prop.docs)).not.toContain("docs/decisions/0001-stack.md");
       // l4-cred-screens (L4-creds-29): the plural as the number says.
       expect(row.why).toContain("2 milestones");
       expect(row.why).not.toContain("(s)");
@@ -390,9 +391,18 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
       // The docs: the drafted ones as drafted, the two the model left out from the templates.
       const dir = rt.intake.workspaceDir(projectId);
       expect(readFileSync(join(dir, "README.md"), "utf8")).toContain("Ship the thing.");
-      expect(readFileSync(join(dir, "docs", "decisions", "0001-stack.md"), "utf8")).toContain(
-        "0001 — Stack",
+      // W8-guide-3: written under the day's name, with the record's hidden mark; no 0001 file.
+      const record = readFileSync(join(dir, "docs", "decisions", "2026-03-05-stack.md"), "utf8");
+      expect(record).toContain("0001 — Stack");
+      expect(record).toContain("<!-- forerunner:decision-record -->");
+      expect(existsSync(join(dir, "docs", "decisions", "0001-stack.md"))).toBe(false);
+      // W8-guide-1, -2: the guide from its facts (a folder project's: no GitHub part), and no
+      // docs/status.md in the project's doc set.
+      expect(readFileSync(join(dir, "CLAUDE.md"), "utf8")).toBe("@AGENTS.md\n");
+      expect(readFileSync(join(dir, "AGENTS.md"), "utf8")).toContain(
+        'This folder is the Forerunner project "Gamma".',
       );
+      expect(existsSync(join(dir, "docs", "status.md"))).toBe(false);
       expect(readFileSync(join(dir, "docs", "testing.md"), "utf8")).toContain(
         "maintained-by: forerunner",
       );
@@ -562,9 +572,12 @@ describe("PM intake (A.2): the brief becomes docs, milestones, tasks and a first
     const requestId = String(pending.requestId);
     await answer(requestId, "reject");
     expectNotDrafted(projectId);
+    // W8-guide-1, -2: the guide is in the set, docs/status.md is not.
+    expect(existsSync(join(dir, "docs", "status.md"))).toBe(false);
     for (const rel of [
+      ["AGENTS.md"],
+      ["CLAUDE.md"],
       ["docs", "overview.md"],
-      ["docs", "status.md"],
       ["docs", "decisions", "README.md"],
       ["docs", "testing.md"],
       [".forerunner", "project.json"],
@@ -1895,7 +1908,7 @@ describe("d1109-onerepo-link, run C: a new brief for a project with work plans o
       );
       expect(call?.system).not.toContain("A new project has a brief.");
       expect(call?.system).not.toContain('"docs": {');
-      expect(call?.system).not.toContain("docs/decisions/0001-<slug>.md");
+      expect(call?.system).not.toContain("docs/decisions/YYYY-MM-DD-<slug>.md");
       expect(call?.system).toContain('  "firstSession": { "summary": string,');
       // The user message: the project's tasks as data, then the instruction line.
       const user = String(call?.messages[0]?.content ?? "");
@@ -2089,7 +2102,7 @@ describe("l4-github-link, run L4", () => {
       expect(String(retry?.content)).toBe(
         [
           "Forerunner could not use your reply:",
-          "- docs: the decision record is missing: write docs/decisions/0001-<slug>.md with the choice the brief points to; any standard doc you leave out is written from the template.",
+          "- docs: the decision record is missing: write docs/decisions/YYYY-MM-DD-<slug>.md, named by the Today date, with the choice the brief points to; any standard doc you leave out is written from the template.",
           "",
           "Reply again with the whole JSON object in the shape the instructions give, with these problems fixed and nothing else changed: no text and no code fence around it.",
         ].join("\n"),
@@ -2099,7 +2112,9 @@ describe("l4-github-link, run L4", () => {
       const docs = (card.proposal as JsonObject).docs as Record<string, string>;
       // The stored record whole; what the Inbox card shows from it is pinned in
       // apps/ui/test/real-daemon.test.ts ("l4-github-link, run L4", L4-github-104).
-      expect(docs["docs/decisions/0001-stack.md"]).toBe(record);
+      // W8-guide-3: kept under the day's name (the world's clock: 2026-03-05).
+      expect(docs["docs/decisions/2026-03-05-stack.md"]).toBe(record);
+      expect(docs["docs/decisions/0001-stack.md"]).toBeUndefined();
       // A plan-only form (the project has tasks now) takes a reply without docs at once.
       await w.answer(String(planned.requestId), "approve");
       const { docs: _none, ...planOnly } = proposal();
@@ -2140,7 +2155,7 @@ describe("l4-github-link, run L4", () => {
       throw new Error("not refused");
     };
     expect(cutOff(false)).toEqual([
-      "Your reply was cut off at the output limit before the JSON object ended. Write each doc in a few lines, or leave out the standard docs (Forerunner writes them from its templates), but keep docs/decisions/0001-<slug>.md, in a few lines, so the whole object fits.",
+      "Your reply was cut off at the output limit before the JSON object ended. Write each doc in a few lines, or leave out the standard docs (Forerunner writes them from its templates), but keep the decision record docs/decisions/YYYY-MM-DD-<slug>.md, in a few lines, so the whole object fits.",
     ]);
     expect(cutOff(true)).toEqual([
       "Your reply was cut off at the output limit before the JSON object ended. Write each task in a few lines, so the whole object fits.",

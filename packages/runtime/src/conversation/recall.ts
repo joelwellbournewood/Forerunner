@@ -1012,6 +1012,9 @@ async function lessonHits(
 /**
  * The project's status doc stays out (design §3.9): its sessions come in any order. One
  * constant for the documents kind and the per-turn doc excerpts (agent.ts reads it from here).
+ * Wave 8 (W8-guide-2): `docs/status.md` is no longer a doc of a repository's set (the status is
+ * the app's), but a repository a person keeps one in, or an older one Forerunner scaffolded,
+ * still holds it; it stays out of the documents for the same reason.
  */
 export const STATUS_DOC_RE = /^docs\/status\.md$/i;
 

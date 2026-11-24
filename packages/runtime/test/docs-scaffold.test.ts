@@ -218,7 +218,12 @@ describe("standard doc set at project creation (G.5)", () => {
     expect(await show(bare, DOCS_SCAFFOLD_BRANCH, "docs/overview.md")).toBe(
       "# Drafted by the intake\n",
     );
-    expect(await show(bare, DOCS_SCAFFOLD_BRANCH, "docs/status.md")).toContain("# Status");
+    // W8-guide-1, -2: the guide joins the branch, and no docs/status.md.
+    expect(await show(bare, DOCS_SCAFFOLD_BRANCH, "docs/status.md")).toBeNull();
+    expect(await show(bare, DOCS_SCAFFOLD_BRANCH, "CLAUDE.md")).toBe("@AGENTS.md\n");
+    expect(await show(bare, DOCS_SCAFFOLD_BRANCH, "AGENTS.md")).toContain(
+      'This repository is the Forerunner project "Delta".',
+    );
     expect(await tree(bare, "main")).toEqual(["README.md"]);
     const row = await rt.store.project.mustGet(row0.id);
     expect(row.summary_cache.docs).toMatchObject({
@@ -786,7 +791,12 @@ describe("l4-github-link, run L4: the scaffold's branch starts from the default 
         parseInstallMarker((await show(kite.bare, branch, INSTALL_MARKER_FILE)) ?? "")?.project,
       ).toBe(id);
       expect(await isAncestor(kite.bare, "main", branch)).toBe(true);
-      expect(await diffNames(kite.bare, "main", branch)).toEqual([INSTALL_MARKER_FILE]);
+      // The marker, and the guide (W8-guide-1): main had the doc set but no guide.
+      expect(await diffNames(kite.bare, "main", branch)).toEqual([
+        INSTALL_MARKER_FILE,
+        "AGENTS.md",
+        "CLAUDE.md",
+      ]);
       // The old branch and its closed pull request are left as they are (never force-pushed).
       expect(await head(kite.bare, DOCS_SCAFFOLD_BRANCH)).toBe(oldHead);
       expect(
@@ -806,7 +816,12 @@ describe("l4-github-link, run L4: the scaffold's branch starts from the default 
       const again = await w.host.listPullRequests({ owner: "o", name: "kite" }, { state: "open" });
       expect(again.map((p) => p.head.ref)).toEqual([branch]);
       expect(await isAncestor(kite.bare, "main", branch)).toBe(true);
-      expect(await diffNames(kite.bare, "main", branch)).toEqual([INSTALL_MARKER_FILE]);
+      // The marker, and the guide (W8-guide-1): main had the doc set but no guide.
+      expect(await diffNames(kite.bare, "main", branch)).toEqual([
+        INSTALL_MARKER_FILE,
+        "AGENTS.md",
+        "CLAUDE.md",
+      ]);
       expect(await head(kite.bare, DOCS_SCAFFOLD_BRANCH)).toBe(oldHead);
     } finally {
       await w.rt.close();

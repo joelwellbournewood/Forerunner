@@ -159,6 +159,11 @@ describe("questions only the person can answer, on the daemon (U-022)", () => {
     expect(String(card?.why)).toContain(
       '"Choose the domain and the contact address" needs your answers',
     );
+    // W8-guide-3 (D-W8-9): the card names the file its answers go to, by the day's name (the
+    // project has no decision record yet).
+    expect(String(card?.why)).toContain(
+      "Your answers are written to the project's decision record (docs/decisions/2026-10-31-project-decisions.md).",
+    );
     // The 1.0.3 plan's row in the owner's data asks its three questions.
     expect((await cardFor(legacy.id))?.steps).toEqual([
       "Stack: what do you choose?",
@@ -199,12 +204,14 @@ describe("questions only the person can answer, on the daemon (U-022)", () => {
     });
     expect(answered.status).toBe(200);
     expect((await rt.store.task.mustGet(planned.id)).status).toBe("done");
+    // W8-guide-3: the file the card named (a new record, named by the day).
     const doc = join(
       rt.intake.workspaceDir(projectId),
       ...DECISION_DOC_DIR.split("/"),
-      DEFAULT_DECISION_DOC,
+      `2026-10-31-${DEFAULT_DECISION_DOC}`,
     );
     expect(existsSync(doc)).toBe(true);
+    expect(readFileSync(doc, "utf8")).toContain("<!-- forerunner:decision-record -->");
     const text = readFileSync(doc, "utf8");
     expect(text).toContain('## Answers for "Choose the domain and the contact address"');
     expect(text).toContain("**Which domain should the site use?**\n\nclub-site.example");

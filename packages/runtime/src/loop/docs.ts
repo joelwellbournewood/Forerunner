@@ -35,6 +35,13 @@ import {
   WORKSPACE_IDENTITY,
 } from "@forerunner/capabilities";
 import {
+  GUIDE_FILE,
+  GUIDE_IMPORT_FILE,
+  GUIDE_IMPORT_LINE,
+  type GuideFacts,
+  guidePartOf,
+  renderGuidePart,
+  type ScaffoldResult,
   STATUS_DOC,
   type StatusLists,
   type StatusUpdate,
@@ -60,6 +67,7 @@ import {
 } from "../sources/marker.ts";
 import { RepositoryIndex, tookOverLine } from "../sources/repository-use.ts";
 import { isTogether, projectIdsOf, tookOverOf } from "../sources/repository-words.ts";
+import { guideFactsOf, guideKeyOf } from "./guide.ts";
 import type {
   DocsScaffoldOutcome,
   ProjectDocsPort,
@@ -885,6 +893,7 @@ export class ProjectDocs implements ProjectDocsPort {
   async scaffoldProject(project: ProjectRow): Promise<DocsScaffoldOutcome> {
     const info = { name: project.name, goal: project.goal, repos: project.repos };
     let outcome: DocsScaffoldOutcome;
+    let guideKey: string | null = null;
     // D9 (d1109-onerepo-link): a project worked on together with another Forerunner writes
     // nothing to the repository by itself (no marker, no doc set, no pull request): its docs and
     // marker are the other Forerunner's. Only this computer's copy is brought along (nothing
@@ -913,7 +922,11 @@ export class ProjectDocs implements ProjectDocsPort {
       if (!target) {
         const dir = this.workspaceDir(project.id);
         mkdirSync(dir, { recursive: true });
-        const res = await scaffoldDocs(dir, info);
+        // W8-guide-1: a project kept in a folder gets its guide too (no GitHub part).
+        const res = await scaffoldDocs(dir, {
+          ...info,
+          guide: guideFactsOf(project, { dir, defaultBranch: null }),
+        });
         const marker = await this.mark(project, dir);
         outcome = {
           location: "data_dir",
@@ -924,7 +937,12 @@ export class ProjectDocs implements ProjectDocsPort {
         };
       } else {
         // The copy to itself (merged-copy): a refresh or another docs write waits.
-        outcome = await this.withCopy(project.id, () => this.scaffoldInCopy(project, target));
+        outcome = await this.withCopy(project.id, async () => {
+          const out = await this.scaffoldInCopy(project, target);
+          // W8-guide-1: the facts the guide went out with, so the session end finds it current.
+          if (!out.stopped) guideKey = this.guideKeyIn(project, target.base);
+          return out;
+        });
       }
     } catch (e) {
       // Project creation never fails on the docs: the gap is recorded on the project and
@@ -943,6 +961,7 @@ export class ProjectDocs implements ProjectDocsPort {
       existing: outcome.existing,
       ...(outcome.marker ? { marker: outcome.marker } : {}),
       ...(outcome.firstCommit ? { first_commit: true } : {}),
+      ...(guideKey ? { guide_key: guideKey } : {}),
       scaffolded_at: this.deps.clock.nowIso(),
     });
     this.logger.info("standard docs scaffolded", {
@@ -1096,22 +1115,33 @@ export class ProjectDocs implements ProjectDocsPort {
     const rebuilt = existingPr
       ? await this.rebuildForTakeOver(project, target, git, dir, branch)
       : false;
-    const res = await scaffoldDocs(dir, info);
+    // W8-guide-1: the guide rendered from its facts (this copy's checks, the default branch).
+    const res = await scaffoldDocs(dir, {
+      ...info,
+      guide: guideFactsOf(project, { dir, defaultBranch: target.base }),
+    });
     const marker = await this.mark(project, dir);
     const written = [
       ...res.created,
+      ...(res.updated ?? []),
       ...(marker.status === "created" || marker.status === "replaced" ? [marker.path] : []),
     ];
+    // W8-guide-2: Forerunner's untouched status template, taken out (said in the words below).
+    const removed = res.removed ?? [];
     // An open scaffold PR is this project's here (`foreign` above, W15-01): its docs PR.
     let prUrl = existingPr ? existingPr.htmlUrl : null;
-    if (written.length) {
-      const list = written.map((p) => `- ${p}`).join("\n");
+    if (written.length || removed.length) {
+      const list = [
+        ...written.map((p) => `- ${p}`),
+        ...removed.map((p) => `- ${p} (taken out)`),
+      ].join("\n");
       const markerNote =
         marker.status === "created"
           ? `\n\n\`${marker.path}\` marks the repository as managed by a Forerunner project (spec A.4); a source scan by any install reads it.`
           : marker.status === "replaced"
             ? `\n\n${tookOverLine(marker.was.name, project.name)}`
             : "";
+      const guideNote = guideWords(res, removed);
       await git.commitAll(`docs: scaffold the standard doc set\n\n${list}`);
       // D-L4-24: a branch this project owns that GitHub already has (a merged or closed pull
       // request's, or the open one rebuilt) is replaced with a lease on the head just fetched;
@@ -1125,14 +1155,14 @@ export class ProjectDocs implements ProjectDocsPort {
           target.repo,
           existingPr.number,
           rebuilt
-            ? `Rebuilt on ${target.base} for project ${project.name}:\n${list}${markerNote}`
-            : `Added the missing standard docs for project ${project.name}:\n${list}${markerNote}`,
+            ? `Rebuilt on ${target.base} for project ${project.name}:\n${list}${markerNote}${guideNote}`
+            : `Added the missing standard docs for project ${project.name}:\n${list}${markerNote}${guideNote}`,
         );
       } else {
         const pr = await this.deps.host.createPullRequest(target.repo, {
           title: "docs: scaffold the standard project doc set",
           // The project it is for in the hidden mark (W15-01, W15-08), never as visible text.
-          body: `Standard project docs for ${project.name} (spec G.5), written from templates for the files the repository lacked:\n${list}${markerNote}\n\nExisting files were left as they are${res.existing.length ? ` (${res.existing.join(", ")})` : ""}. Opened by Forerunner.\n\n${docsPrMarker(project)}`,
+          body: `Standard project docs for ${project.name} (spec G.5), written from templates for the files the repository lacked:\n${list}${markerNote}${guideNote}\n\nExisting files were left as they are${res.existing.length ? ` (${res.existing.join(", ")})` : ""}. Opened by Forerunner.\n\n${docsPrMarker(project)}`,
           head: branch,
           base: target.base,
         });
@@ -1145,6 +1175,8 @@ export class ProjectDocs implements ProjectDocsPort {
       prUrl,
       created: res.created,
       existing: res.existing,
+      ...(res.updated?.length ? { updated: res.updated } : {}),
+      ...(removed.length ? { removed } : {}),
       marker,
     };
   }
@@ -1377,6 +1409,88 @@ export class ProjectDocs implements ProjectDocsPort {
   }
 
   /**
+   * W8-guide-1 (the owner's "kept current by Forerunner"): the repository guide brought up to
+   * its facts, at the end of each session and whenever one of its facts changes (w8-status-write
+   * calls it when the status issue's state changes). Only the Forerunner that made the project
+   * writes it: a project worked on together with another Forerunner never does (D-W8-9).
+   *
+   * Cheap when nothing changed: this computer's copy (on the default branch, as the session's end
+   * just refreshed it) is compared with the rendered facts, with no git and no GitHub call.
+   * Otherwise one docs pull request at a time: while this project's own docs pull request from
+   * the plan (`fr/intake-...`) is open, nothing (the next end, once it is merged); else the
+   * scaffold's own branch, which updates this project's open scaffold pull request in place or
+   * opens one (`scaffoldInCopy`, with every ownership rule of L4i-left-2). A run that finds the
+   * guide already on that open pull request writes nothing, so a restart opens no second one.
+   * A project kept in a folder has its guide rewritten there (nothing to push).
+   */
+  async refreshGuide(given: ProjectRow): Promise<{ changed: boolean; prUrl: string | null }> {
+    const none = { changed: false, prUrl: null };
+    const project = (await this.deps.store.project.get(given.id)) ?? given;
+    if (isTogether(project) || project.status === "archived") return none;
+    const target = await this.deps.repoFor(project);
+    if (!target) {
+      const dir = this.workspaceDir(project.id);
+      if (!existsSync(dir)) return none;
+      const facts = guideFactsOf(project, { dir, defaultBranch: null });
+      if (guideIsCurrentIn(dir, facts)) return none;
+      const res = await scaffoldDocs(dir, {
+        name: project.name,
+        goal: project.goal,
+        repos: project.repos,
+        guide: facts,
+      });
+      return { changed: res.created.length + (res.updated?.length ?? 0) > 0, prUrl: null };
+    }
+    const docs = (project.summary_cache?.docs ?? {}) as { guide_key?: unknown };
+    const copy = this.copyDir(project.id);
+    // The facts the guide last went out with: unchanged, nothing to read or write.
+    if (docs.guide_key === this.guideKeyIn(project, target.base)) return none;
+    const facts = guideFactsOf(project, { dir: copy, defaultBranch: target.base });
+    if (existsSync(join(copy, ".git")) && guideIsCurrentIn(copy, facts)) {
+      await this.record(project, { ...docs, guide_key: guideKeyOf(facts) });
+      return none;
+    }
+    // The intake's docs pull request carries the guide while it is open (`writeDocSet`).
+    const open = await this.deps.host.listPullRequests(target.repo, { state: "open" });
+    if (open.some((pr) => /^fr\/intake-.+-docs$/.test(pr.head.ref) && isProjectDocsPr(project, pr)))
+      return none;
+    let after: string | null = null;
+    const out = await this.withCopy(project.id, async () => {
+      const res = await this.scaffoldInCopy(project, target);
+      if (!res.stopped) after = this.guideKeyIn(project, target.base);
+      return res;
+    });
+    const changed =
+      out.created.length + (out.updated?.length ?? 0) + (out.removed?.length ?? 0) > 0 ||
+      (!!out.prUrl && out.prUrl !== this.recordedDocsPr(project));
+    await this.record(project, {
+      ...((await this.deps.store.project.get(project.id))?.summary_cache?.docs as object),
+      ...(out.prUrl ? { pr_url: out.prUrl } : {}),
+      ...(after ? { guide_key: after } : {}),
+      guide_at: this.deps.clock.nowIso(),
+    });
+    this.logger.info("repository guide checked", {
+      projectId: project.id,
+      prUrl: out.prUrl ?? null,
+      stopped: out.stopped ?? null,
+    });
+    return { changed, prUrl: out.prUrl ?? null };
+  }
+
+  /** The key of the guide's facts as this computer's copy (on `base`) gives them now. */
+  private guideKeyIn(project: ProjectRow, base: string): string {
+    return guideKeyOf(
+      guideFactsOf(project, { dir: this.copyDir(project.id), defaultBranch: base }),
+    );
+  }
+
+  /** The docs pull request the project's scaffold recorded, or null. */
+  private recordedDocsPr(project: ProjectRow): string | null {
+    const url = (project.summary_cache?.docs as { pr_url?: unknown } | undefined)?.pr_url;
+    return typeof url === "string" ? url : null;
+  }
+
+  /**
    * The docs waiting in one of Forerunner's docs pull requests (the scaffold, the intake's set,
    * the status), for the Docs tab: "waiting in pull request #1". Reads the host and fetches the
    * docs clone; nothing when the project has no repository or no docs clone yet.
@@ -1476,6 +1590,7 @@ export class ProjectDocs implements ProjectDocsPort {
           name: project.name,
           goal: project.goal,
           repos: project.repos,
+          guide: guideFactsOf(project, { dir: scratch, defaultBranch: target.base }),
         });
         const marker = await this.mark(project, scratch);
         first = { created: res.created, marker };
@@ -1718,4 +1833,39 @@ export class ProjectDocs implements ProjectDocsPort {
 
 function line(items: string[]): string {
   return items.length ? items.join("; ") : "none";
+}
+
+/**
+ * What a docs pull request (and its comment) says about the guide and the status template
+ * (W8-guide-1, -2): GitHub text, so no id, no cost, no person's details.
+ */
+function guideWords(res: ScaffoldResult, removed: readonly string[]): string {
+  const parts: string[] = [];
+  if ([...res.created, ...(res.updated ?? [])].includes(GUIDE_FILE))
+    parts.push(
+      "`AGENTS.md` tells people and agents how to work on this repository, and `CLAUDE.md` points Claude Code to it. Forerunner keeps its part between the forerunner:guide marks current; text outside them stays as it was written.",
+    );
+  if (res.updated?.includes(GUIDE_IMPORT_FILE))
+    parts.push("`CLAUDE.md` got `@AGENTS.md` as its first line; the rest of it is as it was.");
+  if (removed.includes(STATUS_DOC))
+    parts.push(
+      "`docs/status.md` was Forerunner's untouched template, so it is taken out: the status is kept in Forerunner, not in the repository.",
+    );
+  return parts.length ? `\n\n${parts.join("\n\n")}` : "";
+}
+
+/** Whether `dir` holds the guide these facts give: Forerunner's part as rendered, and the import. */
+export function guideIsCurrentIn(dir: string, facts: GuideFacts): boolean {
+  let agents: string;
+  let claude: string;
+  try {
+    agents = readFileSync(join(dir, GUIDE_FILE), "utf8");
+    claude = readFileSync(join(dir, GUIDE_IMPORT_FILE), "utf8");
+  } catch {
+    return false;
+  }
+  return (
+    guidePartOf(agents) === renderGuidePart(facts) &&
+    claude.split(/\r?\n/).some((l) => l.trim() === GUIDE_IMPORT_LINE)
+  );
 }

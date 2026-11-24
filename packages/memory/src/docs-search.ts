@@ -87,17 +87,30 @@ export const DOCS_BLOCK_HEADER =
 const DOC_EXT = /\.(md|markdown|mdx)$/i;
 const SKIP_DIR = /^(\.|node_modules$)/;
 
-/** `README.md` at the root plus every markdown file under `docs/`, sorted; symlinks are skipped. */
+/**
+ * The root files the docs search reads beside `docs/` (W8-guide-4, wave 8): the README and the
+ * repository guide (`AGENTS.md`, with the one-line `CLAUDE.md` that imports it), so "how do we
+ * work in this repository?" finds the guide. Their text is data, as every excerpt is
+ * (`DOCS_BLOCK_HEADER`): a repository's guide is never an instruction to Forerunner's agents.
+ */
+export const ROOT_DOC_FILES = ["AGENTS.md", "CLAUDE.md", "README.md"] as const;
+
+/**
+ * The root doc files (`ROOT_DOC_FILES`) plus every markdown file under `docs/`, sorted; symlinks
+ * are skipped.
+ */
 export async function collectDocFiles(
   root: string,
   opts: CollectDocsOptions = {},
 ): Promise<DocFile[]> {
   const out: DocFile[] = [];
-  try {
-    const readme = await fs.lstat(join(root, "README.md"));
-    if (readme.isFile()) out.push({ path: "README.md", abs: join(root, "README.md") });
-  } catch {
-    // no README
+  for (const name of ROOT_DOC_FILES) {
+    try {
+      const file = await fs.lstat(join(root, name));
+      if (file.isFile()) out.push({ path: name, abs: join(root, name) });
+    } catch {
+      // not there
+    }
   }
   const walk = async (abs: string, rel: string[]): Promise<void> => {
     let entries: Dirent[];
