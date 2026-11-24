@@ -505,6 +505,9 @@ export class ProjectPullRequests {
             ? { state: "blocked", canMerge: false, sentence: ruleSentence, first: [] }
             : own,
           ...(folder ? { folder } : {}),
+          // L4-github-124 (c): rebuilt without a pull request it built on that was closed; its
+          // review read work that is gone, so it is not listed as reviewed by the critic.
+          ...(ofThisPr?.last_outcome === "rebuilt_without" ? { rebuilt: true } : {}),
         });
       } else if (
         isDocsBranch(pr.head.ref) &&

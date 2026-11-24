@@ -1242,6 +1242,54 @@ describe("l4-github-carried, run L4", () => {
     expect(harness.daemon.state.pullRequestCloses).toEqual([]);
   });
 
+  it("L4-github-124 (c): a pull request rebuilt without a closed one it built on is listed apart from 'Reviewed by the critic', with its Merge and line", async () => {
+    const harness = createHarness();
+    const sentence =
+      "#48 was rebuilt without #11, which was closed. It was reviewed with #11's changes, so it waits for you: look at it, then merge it or redo the task.";
+    harness.daemon.state.pullRequests.proj_atlas = {
+      waiting: [
+        {
+          kind: "task",
+          taskId: "task_40",
+          title: "Link trips page",
+          number: 40,
+          url: "https://example.test/org/atlas/pull/40",
+          branch: "fr/40",
+          review: "critic",
+          merge: { state: "ready", canMerge: true, sentence: null, first: [] },
+        },
+        {
+          kind: "task",
+          taskId: "task_48",
+          title: "Write kite/club-day.txt",
+          number: 48,
+          url: "https://example.test/org/atlas/pull/48",
+          branch: "fr/48",
+          review: "critic",
+          rebuilt: true,
+          merge: { state: "left_to_you", canMerge: true, sentence, first: [] },
+        },
+      ],
+      error: null,
+    };
+    renderApp("/projects/proj_atlas", harness);
+    const files = await screen.findByTestId("your-files");
+    const critic = await within(files).findByTestId("prs-critic");
+    expect(
+      within(critic)
+        .getAllByTestId("pr-waiting")
+        .map((r) => r.dataset.number),
+    ).toEqual(["40"]);
+    const rebuilt = within(files).getByTestId("prs-rebuilt");
+    expect(rebuilt).toHaveTextContent(
+      "Rebuilt since the critic's review: look at each before you merge",
+    );
+    const row = within(rebuilt).getByTestId("pr-waiting");
+    expect(row.dataset.number).toBe("48");
+    expect(within(row).getByTestId("pr-merge-sentence")).toHaveTextContent(sentence);
+    expect(within(row).getByTestId("pr-merge")).toBeEnabled();
+  });
+
   it("L4-github-124 (b): two cancelled pull requests read in the plural, each with its own Close", async () => {
     const harness = createHarness();
     harness.daemon.state.pullRequests.proj_atlas = {

@@ -1620,6 +1620,13 @@ export const ProjectPullRequestView = z.object({
    * row is kept and answered with that sentence; it goes on once the folder is clean.
    */
   folder: z.string().nullable().optional(),
+  /**
+   * l4-github-carried (L4-github-124 (c)): the task's pull request was rebuilt without one it
+   * built on that was closed (its record says `rebuilt_without`), so the critic's review read
+   * work that is no longer there: the Overview lists it apart, never under "Reviewed by the
+   * critic". Absent otherwise.
+   */
+  rebuilt: z.boolean().optional(),
 });
 export type ProjectPullRequestView = z.infer<typeof ProjectPullRequestView>;
 

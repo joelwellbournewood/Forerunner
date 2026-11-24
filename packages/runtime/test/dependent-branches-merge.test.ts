@@ -3700,4 +3700,23 @@ describe("l4-github-carried, run L4", { timeout: 240_000 }, () => {
     expect((await m.github.listPullRequests(REPO, { state: "all" })).length).toBe(pullsBefore);
     expect(await m.record(a.id)).toMatchObject({ merge_sha: null, take_out_state: null });
   });
+
+  it("L4-github-124 (c): a pull request rebuilt without the closed one it built on is marked rebuilt in the Overview's list (its critic's review read work that is gone), and one that was not rebuilt is not", async () => {
+    const m = await chainWorld({ level: 2 });
+    const a = await m.runTask("Add page");
+    const b = await m.runTask("Add footer", { dependsOn: [a.id] });
+    const c = await m.runTask("Add rules");
+    const [prB, prC] = [await m.prNumber(b.id), await m.prNumber(c.id)];
+    await m.close(a.id);
+    await m.poll();
+    expect(await m.record(b.id)).toMatchObject({ last_outcome: "rebuilt_without" });
+    const project = await m.w.store.project.mustGet(m.w.project);
+    const view = await new ProjectPullRequests({ store: m.w.store, host: m.github }).view(project);
+    const rowB = view.waiting.find((r) => r.number === prB);
+    const rowC = view.waiting.find((r) => r.number === prC);
+    // Before: B was listed with review "critic" and nothing else, so the Overview put it under
+    // "Reviewed by the critic" as if that review covered what its branch holds now.
+    expect(rowB).toMatchObject({ kind: "task", review: "critic", rebuilt: true });
+    expect(rowC?.rebuilt).toBeUndefined();
+  });
 });
