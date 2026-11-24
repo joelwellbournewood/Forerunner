@@ -1,0 +1,87 @@
+{
+ "merged": [
+  "fix/w8-two-homes (cddbfa3) as merge commit 417f050",
+  "fix/w8-issue-host (cfbd69f, with fix-up 1fcb0e2 and cfbd69f) as merge commit 84480d1",
+  "fix/w8-repo-guide (500b564, with fix-up d6e1950, e788fdd and 500b564) as merge commit ebc82fe"
+ ],
+ "head_sha": "8299aa3b98e248e8cfb8b20fe6762fde497b8cff",
+ "pushed": true,
+ "conflicts_resolved": [
+  "None. The three branches are stacked: w8-issue-host contains w8-two-homes, and w8-repo-guide contains w8-issue-host. All were based on 8262c31, so each --no-ff merge applied cleanly. git grep -n '^<<<<<<< ' finds nothing."
+ ],
+ "integration_fixes": [
+  "8299aa3, 'live tests: the guide's docs pull request beside the task's (w8-repo-guide, W8-guide-1)'. After the merge, the live harness dry runs failed 3 cases. pnpm check does not run them, and the area did not run them either. Failing cases: tests/live/test/harness.test.ts 'one session completes a task through a PR on the fake host ...' and 'one session runs the task through the SDK driver on the subscription ...' (expected 1 pull request, got 2), and tests/live/test/live-6-researcher.live.test.ts 'one researcher session on the registry default ...' (answer.present false). Root cause: w8-repo-guide's ProjectDocs.refreshGuide (ADR 0121) opens, at a session's end, one docs pull request on fr/docs-scaffold that brings AGENTS.md and CLAUDE.md to a repository without a guide. That is the intended design, and loop-docs.test.ts was already updated for it. The researcher case took the first fr/ branch as the task's branch, and that is now the guide's branch. Fix (tests only, no assertion dropped): the dry runs now assert one task pull request, one guide pull request on DOCS_SCAFFOLD_BRANCH, and that its AGENTS.md names the project. The researcher reads answer.md from the task's own branch, not a docs branch. The live-only siblings (live-1-phase1 and live-4-subscription, which expect 3 fr/ pull requests) now count task pull requests without the guide's, so the session lead's real-model runs follow the same rule. The commit is signed."
+ ],
+ "validation": [
+  {
+   "command": "git merge --no-edit --no-ff fix/w8-two-homes; fix/w8-issue-host; fix/w8-repo-guide",
+   "result": "3 clean merges, no conflicts; no conflict markers"
+  },
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "ok (Done in 2.1s)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0. Lint: 40 warnings, the same count as before. lint:paths and typecheck pass. Unit tests: 570 files, 6364 passed, 7 skipped. docs:links ok (214 files), secrets:scan clean (2301 files). The inner docs:check checks nothing in this checkout because it has no origin/main, so it was run with --base."
+  },
+  {
+   "command": "pnpm docs:check --base origin/claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (95 files), both before and after the fix commit"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped (no FORERUNNER_TEST_PG)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock env -u FORERUNNER_ANTHROPIC_API_KEY -u FORERUNNER_TEST_GITHUB_TOKEN -u FORERUNNER_LIVE pnpm --filter @forerunner/live test (after the merge)",
+   "result": "exit 1: 3 failed, 60 passed, 17 skipped (the guide docs pull request; see integration_fixes)"
+  },
+  {
+   "command": "same live harness dry runs after 8299aa3",
+   "result": "exit 0: 11 files passed, 4 skipped; 63 passed, 17 skipped. No keys were used."
+  },
+  {
+   "command": "pnpm --filter @forerunner/live typecheck; pnpm exec biome check tests/live",
+   "result": "both clean"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock env -u <keys> -u GIT_* HOME=<empty dir> FORCE_COLOR=1 pnpm test (CI style; git has no identity there, checked)",
+   "result": "exit 0: 570 files, 6364 passed, 7 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock env HOME=<empty dir> FORCE_COLOR=1 pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 107 files, 1566 passed (two-installs, me-races, real-daemon included)"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "40 passed (1.2m)"
+  },
+  {
+   "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+   "result": "not run: no area touched apps/desktop (git diff 8262c31..HEAD names no file there)"
+  },
+  {
+   "command": "signature check over origin/claude/nifty-knuth-f9udt0..HEAD",
+   "result": "29 commits, all carry gpgsig; nothing printed"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "8262c31..8299aa3 pushed on the first try; the remote head equals the local head (8299aa3)"
+  }
+ ],
+ "smoke": "node scripts/bench/start.mjs --name merge-w34 --daemon-port 49290 --ui-port 2890 --fresh, then node scripts/bench/journeys/smoke.cjs merge-w34: 25/25 checks passed, 0 findings, 0 recorded problems. Model calls: intake 1, specialist 9, critic 6, chat 1. The project's folder now also holds AGENTS.md and CLAUDE.md (W8-guide-1). The journey script needed no change. Result: /tmp/frbench/merge-w34/steps/smoke-result.json (copy at /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/merge-w34-smoke-result.json). The bench was stopped with stop.mjs and its home deleted. Only the logs and steps/ are kept (19 MB under /tmp/frbench/merge-w34).",
+ "problems_left": [
+  "None broken on the merged head: every suite above is green.",
+  "Not re-run here: the live-only tests (live-1-phase1, live-4-subscription, live-6 live half), because they need the real model or GitHub. Their pull-request counts were adjusted in 8299aa3 so the guide's docs pull request does not count as a task's. The session lead should confirm them on the next live run.",
+  "Carried from the area reports, unchanged by this merge: (1) guideStatusIssueState always returns 'on', so every AGENTS.md mentions a pinned status issue that this base never creates. Ship it with w8-status-write. (2) cut.mjs cuts only the REST API proxy; git fetch and push still reach the stand-in. (3) Branch-marker ownership is inherited from main once the maker's marker merges; this needs the session lead's call. (4) On the stand-in, GET /repos/:o/:r/issues/comments is shadowed by /issues/:number. (5) The phone's /me sends no timezone. (6) A Settings change reaches the guide only at the next session's end."
+ ]
+}

@@ -1,54 +1,129 @@
-// Review walk 4 (l4-chat-depth): after the restart, Garden club's chat and the Talk panel keep
-// the older ask lines in the past; a new ask still has Go ahead.
-const repo = process.argv[2];
-const R = require(`${repo}/scripts/bench/recorder.cjs`);
-const N = "review-l4-chat-depth";
-const UI = "http://127.0.0.1:2551";
-const fs = require("fs");
-const OUT = "/tmp/frbench/review-l4-chat-depth/walk4.json";
-(async () => {
-  const out = { steps: {} };
-  const save = () => fs.writeFileSync(OUT, JSON.stringify(out, null, 1));
-  const { browser, page } = await R.openApp(N);
-  const shot = async (label) => {
-    out.steps[label] = await R.step(page, label);
-    save();
-  };
-  const idle = async (wait = 40_000) => {
-    const until = Date.now() + wait;
-    while (Date.now() < until) {
-      if (!(await page.getByRole("button", { name: "Stop", exact: true }).count())) break;
-      await page.waitForTimeout(400);
-    }
-    await page.waitForTimeout(1200);
-  };
+// Review walk 4 (L4i-left-8): a take-over made with a brief; GitHub cut for Ada when she approves
+// the plan; the Overview's no-pull-request line with Try again, after a restart too; Try again opens it.
+"use strict";
+const R = require("/home/user/Forerunner/.claude/worktrees/wf_245aa20b-b1c-7/scripts/bench/recorder.cjs");
+const fs = require("node:fs");
+const { execFileSync } = require("node:child_process");
+
+const A = "review-w8-repo-guide";
+const WT = "/home/user/Forerunner/.claude/worktrees/wf_245aa20b-b1c-7";
+const GH = JSON.parse(fs.readFileSync(`/tmp/frbench/${A}/githost.json`, "utf8"));
+const OLD2 = "01a1b000-0000-7000-8000-0000000002d0";
+const gh = async (login, method, route, body) => {
+  const res = await fetch(`${GH.url}${route}`, {
+    method,
+    headers: {
+      authorization: `token ${GH.users[login].token}`,
+      accept: "application/vnd.github+json",
+      "content-type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  if (res.status >= 400) throw new Error(`${method} ${route} -> ${res.status}: ${text.slice(0, 300)}`);
   try {
-    const garden = JSON.parse(
-      fs.readFileSync("/tmp/frbench/review-l4-chat-depth/walk1.json", "utf8"),
-    ).projectId;
-    await page.goto(`${UI}/projects/${garden}/chat`);
-    await page.waitForTimeout(3000);
-    const box = page.getByPlaceholder("Message your agent…");
-    await box.fill("compare the two ways to style the page");
-    await box.press("Enter");
-    await page.waitForTimeout(900);
-    await idle();
-    await shot("w4-01-garden-new-ask-after-restart");
-    out.goAhead = await page.getByRole("button", { name: "Go ahead", exact: true }).count();
-    // The Talk panel shows the same conversation.
-    await page.goto(`${UI}/projects/${garden}/summary`);
-    await page.waitForTimeout(2000);
-    await page.getByRole("button", { name: "Talk", exact: true }).first().click();
-    await page.waitForTimeout(2500);
-    await shot("w4-02-talk-panel");
-    out.talkGoAhead = await page.getByRole("button", { name: "Go ahead", exact: true }).count();
-    out.offeredLines = await page.getByText(/^Offered: /).allTextContents();
-    out.questionLines = await page.getByText(/Go ahead\?$/).allTextContents();
-  } finally {
-    save();
-    await browser.close();
+    return JSON.parse(text);
+  } catch {
+    return text;
   }
+};
+const put = (path, text) =>
+  gh("ada", "PUT", `/repos/team/club/contents/${path}`, {
+    message: "seed",
+    content: Buffer.from(text).toString("base64"),
+    branch: "main",
+  });
+const cut = (state) =>
+  execFileSync("node", [`${WT}/scripts/bench/cut.mjs`, A, "github", state], { stdio: "inherit" });
+const up = () =>
+  R.until(
+    async () => {
+      try {
+        return (await R.apiRaw(A, "GET", "/health")).status === 200;
+      } catch {
+        return false;
+      }
+    },
+    90_000,
+    1000,
+    "daemon up",
+  );
+
+(async () => {
+  await gh("ada", "POST", "/orgs/team/repos", { name: "club", private: true });
+  await put("README.md", "# club\n");
+  await put(
+    ".forerunner/project.json",
+    `${JSON.stringify({ schema: 1, project: OLD2, name: "Club page" }, null, 2)}\n`,
+  );
+  const made = await R.api(A, "POST", "/projects", {
+    name: "Club page again",
+    goal: "The club page, kept going",
+    repos: ["team/club"],
+    switch: true,
+    takeOver: { projects: [OLD2] },
+    brief: "A one-page site for the club: plain HTML and CSS.",
+    intake: true,
+  });
+  const id = made.id;
+  const pending = await R.until(
+    async () => {
+      const s = await R.api(A, "GET", `/projects/${id}/intake`);
+      if (s.state === "failed") throw new Error(`intake failed: ${s.error}`);
+      return s.state === "pending" ? s : null;
+    },
+    120_000,
+    1000,
+    "the plan",
+  );
+  const inbox = await R.api(A, "GET", "/inbox");
+  const card = inbox.requests.find((r) => r.id === pending.requestId);
+  cut("off");
+  const ans = await R.apiRaw(A, "POST", `/requests/${card.id}/answer`, {
+    version: card.version,
+    answer: "Approve and start",
+  });
+  console.log("approve:", ans.status, JSON.stringify(ans.body).slice(0, 300));
+  await new Promise((r) => setTimeout(r, 8000));
+  cut("on");
+  const b = JSON.parse(fs.readFileSync(`/tmp/frbench/${A}/bench.json`, "utf8"));
+  let app = await R.openApp(A);
+  try {
+    await app.page.goto(`${b.uiUrl}/projects/${id}`, { waitUntil: "domcontentloaded" });
+    await app.page.waitForTimeout(4000);
+    const t = await R.step(app.page, "review-l4i8-overview");
+    const k = t.indexOf("Took over");
+    console.log("---- overview\n", k >= 0 ? t.slice(k, k + 400) : t.slice(0, 2000));
+  } finally {
+    await app.browser.close();
+  }
+  console.log("PRs on team/club:", JSON.stringify((await gh("ada", "GET", "/repos/team/club/pulls?state=all")).map((p) => [p.number, p.head.ref, p.state])));
+  // Stop any session the approval started, so the restart is clean.
+  execFileSync("node", [`${WT}/scripts/bench/restart-daemon.mjs`, "--name", A], { stdio: "inherit" });
+  await up();
+  const b2 = JSON.parse(fs.readFileSync(`/tmp/frbench/${A}/bench.json`, "utf8"));
+  app = await R.openApp(A);
+  try {
+    await app.page.goto(`${b2.uiUrl}/projects/${id}`, { waitUntil: "domcontentloaded" });
+    await app.page.waitForTimeout(4000);
+    let t = await R.step(app.page, "review-l4i8-overview-after-restart");
+    let k = t.indexOf("Took over");
+    console.log("---- after restart\n", k >= 0 ? t.slice(k, k + 400) : "(no take-over line)");
+    if (k >= 0) {
+      await app.page.getByTestId("repository-try-again-button").click();
+      await app.page.waitForTimeout(8000);
+      t = await R.step(app.page, "review-l4i8-try-again");
+      k = t.indexOf("Your files");
+      console.log("---- after Try again\n", t.slice(k, k + 1500));
+    }
+  } finally {
+    await app.browser.close();
+  }
+  console.log("PRs on team/club:", JSON.stringify((await gh("ada", "GET", "/repos/team/club/pulls?state=all")).map((p) => [p.number, p.head.ref, p.state, p.user.login])));
 })().catch((e) => {
   console.error(e);
+  try {
+    cut("on");
+  } catch {}
   process.exit(1);
 });

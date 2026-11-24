@@ -1,0 +1,124 @@
+{
+ "area": "w8-repo-guide",
+ "branch": "fix/w8-repo-guide",
+ "head_sha": "500b564f83b9ca4c99e50f026d0df7f5b8692c02",
+ "commits": [
+  {
+   "sha": "d6e1950fca9e3dd94c38f9831a9b265e9e043050",
+   "subject": "runtime, ui: a docs pull request that names no project is listed apart, under \"Also open on GitHub\", as \"Docs pull request #N\" (L4i-left-2)"
+  },
+  {
+   "sha": "e788fdd317cfa4263a416081f89030e543a341bf",
+   "subject": "runtime: the Inbox answers go to the file the card named, whatever day they come (W8-guide-3)"
+  },
+  {
+   "sha": "500b564f83b9ca4c99e50f026d0df7f5b8692c02",
+   "subject": "runtime tests: the plan's and the specialist's decision lines asserted as the exact text the model receives (W8-guide-3)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Blocking 1 (review): Ada's Overview listed another person's unmarked docs pull request under \"Waiting for you to merge\" > \"Forerunner's docs, merge them when you like\", titled '\"The project's standard docs\" · pull request #12', next to its own line saying it names no project. That is three untrue claims about Bob's pull request (design section 5 rules 4 and 9). The cause: the new \"listed\" row reused the docs row's kind and title.",
+   "u_ids": [
+    "L4i-left-2"
+   ],
+   "failing_test_before": "apps/ui/test/project-overview.test.tsx > w8-repo-guide, wave 8 (2 cases: own group 'Also open on GitHub', title 'Docs pull request #12', no Merge, no Open this version, 'No pull request waits for you.' stays true); apps/ui/test/two-installs.test.ts > the three L4i-left-2 cases (kind 'listed', title, Merge refused with its line); apps/ui/test/real-daemon.test.ts > 'a take-over typed as a web address ...' (kind, title, preview refused). Each failed with the daemon fix set aside (received kind 'docs').",
+   "how": "- api-types.ts: ProjectPullRequestView.kind gains \"listed\".\n- pull-requests.ts: the row is titled by listedDocsTitle(n), \"Docs pull request #N\", and keeps its blocked merge line. Merge is refused with that line. Open this version is refused for it, as for a cancelled task's pull request.\n- SummaryTab.tsx: such rows go into their own section, data-testid prs-listed, headed \"Also open on GitHub\". Each row has its title, Open and its line, and no Merge or preview. They never appear under \"Waiting for you to merge\" or in the docs group.\n- The fake daemon's preview route mirrors this.\n- Docs updated: apps.md, runtime.md, user-guide.md and the ADR 0121 point 8 wording.",
+   "check_in_the_app": "1. Start two benches on one stand-in (ada, bob, org team). As Ada, make 'Team site' on team/shared.\n2. As bob on GitHub, push fr/docs-scaffold-notes without .forerunner/project.json and open a pull request whose body names no project.\n3. Open Ada's Overview. Under 'Your files' there is a separate heading 'Also open on GitHub' with 'Docs pull request #N', Open, and the line '#N names no project, so it is only listed here: open it on GitHub to see whose it is.' It has no Merge and no Open this version.\n4. '#N' is not under 'Waiting for you to merge', and no row is titled \"The project's standard docs\" for it.\n5. On GitHub, Bob's pull request has no commit or comment by ada.\n\nBench result (2026-11-24): /tmp/frbench/fixup-w8-repo-guide/steps/09-fixup-overview-ada-listed-pr.png shows exactly this for #12. Merge through the route was refused with the line, and the stand-in log shows 0 writes by ada on #12. For the live check, do the same on real GitHub with a second account."
+  },
+  {
+   "problem": "Blocking 2 (review): the Inbox card named the decision record by the day it was filed, but the answers went to a file named by the day they were answered. The review's probe: filed 2026-10-31, answered 2026-11-01; the card named 2026-10-31-project-decisions.md and only 2026-11-01-project-decisions.md was written. The intake-record path and a restart case were not tested.",
+   "u_ids": [
+    "W8-guide-3"
+   ],
+   "failing_test_before": "packages/runtime/test/person-questions-daemon.test.ts > w8-repo-guide, wave 8: (1) 'a card filed one evening and answered the next morning ...' failed: expected ['2026-10-31-project-decisions.md'], received ['2026-11-01-project-decisions.md']. (2) 'two person tasks whose cards are filed on two days ...' failed: the second card named 2026-11-01-project-decisions.md. (3) The intake-record case was added as missing coverage; it passed before and after.",
+   "how": "person-questions.ts:\n- The card now keeps the record it names in change_card.decision_doc. namedDecisionRecord accepts only docs/decisions/<name>.md: no other folder, no '..', not README.\n- writeAnswersToDecisionDoc writes to that file whatever day the answers come.\n- decisionRecordForProject picks the record when a card is filed, in this order: the workspace's record (a 0001-*.md file, else the one with the hidden mark); else the record an earlier open or unapplied card of the project already names; else '<filing day>-project-decisions.md'. So cards filed on two days before either is answered share one record.\n- A card that names only the folder (a specialist's, a critic's, an older one) finds the record at write time, as before.\n- No API shape change; the card's sentence is unchanged.\n- Docs updated: runtime.md and ADR 0121 point 5.",
+   "check_in_the_app": "1. In a folder project, add a task for the person ('Me') with a question. The Inbox card reads '... Your answers are written to the project's decision record (docs/decisions/<today>-project-decisions.md). The task is then done.'\n2. Answer it. The file with that exact name appears in the project's folder (Docs tab, decision records) and holds the answer.\n3. Across days: file the card, leave it overnight, answer it the next day. The answer lands in the file named on the card, and no file named by the answer's day appears.\n4. With a plan from a brief, the card names the plan's dated record (docs/decisions/<plan day>-<slug>.md) and the answers land there.\n\nBench result (2026-11-24): the card named docs/decisions/2026-11-24-project-decisions.md, and after answering the folder held only that file and README.md (/tmp/frbench/fixup-w8-repo-guide/steps/10-fixup-inbox-card-names-record.png, fixup-walk-b2-result.json). The cross-day case is covered by the composed tests with a simulated clock, not the bench."
+  },
+  {
+   "problem": "Blocking 3 (review): the changed model-facing lines were not asserted as the exact text the model receives:\n- the first plan's 'and docs/decisions/YYYY-MM-DD-<slug>.md for the first decision, named by the Today date;'\n- 'choice and why in that decision record.'\n- the specialist brief's 'A new decision goes in its own file, docs/decisions/YYYY-MM-DD-<slug>.md named by today's date, never by a number.'",
+   "u_ids": [
+    "W8-guide-3"
+   ],
+   "failing_test_before": "none failed: these tests add the missing coverage. The lines were right and only untested. Each new assertion fails on any change to its line.",
+   "how": "Assertions on the scripted provider's recorded calls, no source change:\n- packages/runtime/test/person-questions-daemon.test.ts (w8-repo-guide, wave 8):\n  - The first-plan system prompt contains both decision blocks word for word (three lines each) and no '0001'.\n  - The plan message carries 'Today: 2026-10-31 (UTC)'.\n  - A reply naming docs/notes.md gets the exact retry message with 'docs may only name the standard doc set (README.md, docs/overview.md, docs/architecture.md, docs/decisions/README.md, docs/runbook.md, docs/data.md, docs/testing.md) or docs/decisions/YYYY-MM-DD-<slug>.md, named by the Today date'.\n- packages/runtime/test/executor-brief.test.ts (w8-repo-guide, wave 8): the brief's Project section word for word, including the decision line, and \"Today's date is <day> (UTC).\" in the same brief.",
+   "check_in_the_app": "Live check by the session lead (real model):\n1. New project from a brief on a repository.\n2. The plan's docs pull request has docs/decisions/<today>-<slug>.md, not 0001-*.\n3. Run a task whose outcome records a choice ('Record the hosting choice'). The task's pull request adds a new docs/decisions/<today>-<slug>.md file and does not use a number."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "Non-blocking review items were not changed in this fix-up: branch-marker ownership inherited from main once Ada's marker merges, the CRLF rewrite of a person's AGENTS.md, the guide-refresh PR's title and body wording, the Try again 'close it on GitHub' advice, a composed recall and injection case for AGENTS.md, the fake daemon's TAKE_OVER_NOT_TAKEN answer, the together Status row's 'GitHub's copy' wording, a silently blocked guide refresh while fr/docs-scaffold has an open PR, and the UTC day in record names.",
+   "why": "The task was to fix the blocking findings. The branch-marker item is the session lead's decision wording ('its branch's own .forerunner/project.json names this project itself'), so changing it needs the session lead's call. The others are listed in new_problems for routing."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0: lint (40 warnings, as before), lint:paths, typecheck, unit tests 570 files / 6364 passed / 7 skipped, docs:links, secrets:scan green; docs:check needs a base in a worktree"
+  },
+  {
+   "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (95 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "5 passed, 7 skipped files (30 passed, 83 skipped)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx vitest run --config vitest.config.ts",
+   "result": "107 files, 1566 passed"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "40 passed"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "PASS: 92 cases, 92 passed, 0 failed"
+  },
+  {
+   "command": "node scripts/bench/journeys/two-people.cjs fixup-w8-repo-guide fixup-w8-repo-guide-bob (--provider bench, stand-in GitHub, users ada,bob, org team)",
+   "result": "16/30 passed; failed (not known): none; known: 14 (as the fixer and the reviewer saw)"
+  },
+  {
+   "command": "node <scratchpad>/fixup-walk.cjs (Bob's unmarked PR #12 on team/shared; a person task's card in a folder project)",
+   "result": "9/9 checks ok: kind 'listed', title 'Docs pull request #12', Merge refused with its line, Overview section 'Also open on GitHub', not under 'Waiting for you to merge', 0 writes by ada on #12, Bob's head unchanged; card names docs/decisions/2026-11-24-project-decisions.md and the answer lands only there. Both benches stopped with stop.mjs --clean (steps/ kept)."
+  },
+  {
+   "command": "cargo checks",
+   "result": "not run: the desktop shell was not changed"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-w8-repo-guide/steps/10-review-overview-ada-unmarked-pr.png",
+   "/tmp/frbench/review-w8-repo-guide/steps/12-review-takeover-try-again.png"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-w8-repo-guide/steps/09-fixup-overview-ada-listed-pr.png",
+   "/tmp/frbench/fixup-w8-repo-guide/steps/10-fixup-inbox-card-names-record.png"
+  ]
+ },
+ "new_problems": [
+  "Branch-marker ownership is inherited (review non-blocking, still open). Once Ada's doc set merges, every branch cut from main carries .forerunner/project.json naming her project. A person's unmarked fr/docs-scaffold* PR cut from main then counts as Ada's, by the decision's wording. My bench walk had to delete the marker on Bob's branch to get a 'listed' row. Suggest counting the branch marker only when it differs from the default branch's; needs the session lead's call.",
+  "A planned person task that a session reaches before the approvals sync files its card goes through executor.ts filePersonQuestions with no decisionRecord. Its card then names only the folder ('... decision record in docs/decisions.'). That is true, but less precise than the sync-filed card. Could pass decisionRecordForProject there too.",
+  "The Overview header on the bench read 'Done: all 5 tasks. 5 pull requests wait for you to merge.' while 6 rows waited (5 task PRs and the plan's docs PR #1). Is the count of task PRs only intended? Not this area's code; flagged for the words owner.",
+  "The review's other non-blocking items stand as the reviewer wrote them: CRLF AGENTS.md rewrite; guide-refresh PR title and body; 'close it on GitHub' advice on another person's PR; no composed recall or injection case for AGENTS.md; fake daemon TAKE_OVER_NOT_TAKEN versus the real TAKE_OVER_NOTHING_TO_RETRY; together Status row 'GitHub's copy'; guide refresh silently blocked while fr/docs-scaffold is open; UTC day in record names."
+ ],
+ "notes_for_other_areas": [
+  "ProjectPullRequestView.kind has a new value 'listed': a docs pull request that names no project, on the one project here linked to the repository. Its title is listedDocsTitle(n) = 'Docs pull request #N' (daemon/pull-requests.ts) and merge = {state: 'blocked', canMerge: false, sentence: unmarkedDocsSentence(n)}. Merge and preview routes refuse it. The Overview shows it under 'Also open on GitHub' (SummaryTab prs-listed / pr-listed / pr-listed-title / pr-listed-link / pr-listed-sentence). w8-status-write: if the fr/status half ever lists an unmarked status PR, reuse this kind rather than 'docs'.",
+  "New person-facing words (old, then new): Overview heading for such a PR: (none; it sat under 'Waiting for you to merge' > \"Forerunner's docs, merge them when you like\") -> 'Also open on GitHub'. Its title: \"The project's standard docs\" -> 'Docs pull request #N'. The row line is unchanged: '#N names no project, so it is only listed here: open it on GitHub to see whose it is.'",
+  "person-questions.ts: new exports decisionRecordForProject(store, workspace, projectId, day) and namedDecisionRecord(record). A planned person card now stores the named record in change_card.decision_doc, and writeAnswersToDecisionDoc({..., record}) writes there. Any area that files person-questions cards with a named record should pass decisionRecordForProject's answer as decisionRecord.",
+  "Suggested UPDATE-LOG/CHANGELOG line (not written): 'A docs pull request your Forerunner did not open is listed apart on the Overview, under Also open on GitHub, with no Merge; your Inbox answers go to the decision record the card names, on whatever day you answer.'"
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "apps/ui/test/two-installs.test.ts (three L4i-left-2 cases) and apps/ui/test/real-daemon.test.ts ('a take-over typed as a web address ...')",
+   "why": "The listed row's kind moved from 'docs' to 'listed' and its title from \"The project's standard docs\" to 'Docs pull request #N'. The assertions were tightened to the kind and title, plus Merge or preview refused. None was weakened."
+  }
+ ]
+}

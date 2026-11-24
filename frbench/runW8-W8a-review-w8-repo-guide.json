@@ -1,0 +1,90 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "I ran two benches on one stand-in GitHub from detached fix/w8-repo-guide (7e5009b): Ada was review-w8-repo-guide (49272/2872, --githost 49274 --users ada,bob --org team) and Bob was review-w8-repo-guide-bob (49273/2873, --githost-shared). Both used --provider bench. Both benches were stopped afterwards with stop.mjs --clean; the steps/ folders are kept.\n\n1. **Two-person journey** (scripts/bench/journeys/two-people.cjs): 16/30 checks pass, no unknown failure, and guide-in-docs-pr passes. Ada's plan docs pull request #1 on team/shared holds .forerunner/project.json, AGENTS.md, CLAUDE.md, the docs set and docs/decisions/2026-11-24-plain-static-page.md. It has no docs/status.md. I fetched AGENTS.md as the stand-in serves it: it has the Work together line, the status issue named by its title, Before you start, branches, who merges, checks, unfinished-work rules, do-not-touch and agents' rules. It has no ids and no money. Result: /tmp/frbench/review-w8-repo-guide/steps/two-people-result.json.\n\n2. **Docs tabs.**\n   - Ada (09-review-docs-tab-ada.png): Guide and Guide for Claude Code come first, each \"waiting in pull request #1\", and Status comes last (\"kept in the app\").\n   - Bob, working together (review-w8-repo-guide-bob/steps/09-review-docs-tab-bob.png): the guide rows read 'The other Forerunner of \"Team site\" writes this doc on GitHub; this project does not write docs.'\n\n3. **Bob's unmarked pull request on team/shared.** As bob I pushed fr/docs-scaffold and opened #12 with a body that names no project. Ada's Overview (10-review-overview-ada-unmarked-pr.png) lists #12 without Merge, with \"#12 names no project, so it is only listed here...\". But it sits under \"Waiting for you to merge\" and \"Forerunner's docs, merge them when you like\", titled '\"The project's standard docs\" · pull request #12' (blocking 1).\n\n4. **Take-over with Try again** (11/12/13-review-takeover-*.png).\n   - Setup: team/old's main is marked \"Old site\", and Bob's unmarked PR is open on fr/docs-scaffold. Ada made the project with the address typed as https://github.com/team/old and Take it over.\n   - The Overview showed the no-pull-request line with Try again. Pressing it gave \"...another docs pull request is open on team/old; close it on GitHub, then try again.\" (L4i-left-5: owner/name, not the URL).\n   - With cut.mjs github off for Ada, Try again gave \"...GitHub did not answer. Try again in a moment.\" (L4i-left-6).\n   - Bob's branch head was unchanged, his PR had no comments, and Ada's only requests on team/old were git-upload-pack fetches.\n\n5. **Guide kept current.**\n   - I merged #1 with Ada's Merge and set merge_mode to after_review.\n   - With Bob's #12 then closed, one session opened exactly one docs PR, #16, on Ada's own branch fr/docs-scaffold-team-site. Its AGENTS.md has the after_review line. Ada never wrote to #12.\n   - After restart-daemon and another session, there was no second PR.\n\n6. **L4i-left-8** (14/15/16-review-l4i8-*.png).\n   - Setup: a take-over of team/club made with a brief. I cut Ada's GitHub, pressed Approve and start, then restored GitHub.\n   - The Overview showed 'Took over team/club from \"Club page\" here, but the docs pull request that names this project could not be opened...' with Try again. The line was still there after a daemon restart.\n   - Try again opened fr/docs-scaffold #1 and the line was replaced by \"Opened #1: once you merge it, GitHub names this project.\"\n\n7. **Failing-first check.** With this area's source files reverted locally to cfbd69f, these failed; they pass at HEAD:\n   - two-installs.test.ts: 5 of the 6 w8-repo-guide cases. In all three L4i-left-2 cases Ada pushed onto Bob's fr/docs-scaffold (the sha changed); L4i-left-8 and the guide case failed too.\n   - real-daemon.test.ts: the w8-repo-guide Try again case.\n   - docs-scaffold.test.ts: L4i-left-14 (the template replaced main's docs/overview.md).\n\n8. **Suites.**\n   - pnpm check: green (570 files, 6359 passed, 7 skipped; 40 lint warnings, as before).\n   - pnpm docs:check --base claude/nifty-knuth-f9udt0: ok (91 files).\n   - UI vitest: 107 files, 1564 passed.\n   - pnpm test:e2e: 13 files, 25 passed.\n   - Playwright project-extras.spec.ts: 5 passed.\n   - The area's unit files: 10 files, 225 passed.\n\n9. **Decision-record probe.** A temporary test, run and then deleted: the card was filed 2026-10-31 and answered the next day. The card named docs/decisions/2026-10-31-project-decisions.md, but the file written was 2026-11-01-project-decisions.md (blocking 2).",
+ "blocking": [
+  {
+   "issue": "Ada's Overview lists another person's unmarked docs pull request under headings and a title that say it is hers to merge, while its own line says it names no project. The area's new 'listed' row reuses the docs row's title and group.",
+   "where": "packages/runtime/src/daemon/pull-requests.ts:531-545 (title: docsTitle(pr.head.ref)); apps/ui/src/pages/project/SummaryTab.tsx:550 (group label)",
+   "evidence": "On the bench, Bob's PR #12 (team/shared) and #1 (team/old) show on Ada's Overview as 'Waiting for you to merge' > 'Forerunner's docs, merge them when you like' > '\"The project's standard docs\" · pull request #1', then '#1 names no project, so it is only listed here: open it on GitHub to see whose it is.' Screenshots: /tmp/frbench/review-w8-repo-guide/steps/12-review-takeover-try-again.png and 10-review-overview-ada-unmarked-pr.png. These are three untrue claims about Bob's pull request on one screen, against design section 5 rule 4 (true now) and rule 9 (no promises the code does not keep). The decision says the sole-linked fallback stays 'only for listing, as information, never with Merge'.",
+   "expected": "Show such a row as information only: in its own group, not under 'Waiting for you to merge' or 'Forerunner's docs, merge them when you like', and not titled \"The project's standard docs\". It could carry its GitHub title quoted as data, or a neutral title, with the existing one-sentence line. Assert the exact title and group text in a UI test and in the real-daemon or two-home case."
+  },
+  {
+   "issue": "W8-guide-3: the Inbox card names the decision record by the day the card was filed, but the answers are written to a file named by the day they were answered. The card's sentence is untrue whenever the person answers on another day, which is common.",
+   "where": "packages/runtime/src/session/person-questions.ts:1079 (card: decisionRecordFor(workspace, clock.nowIso())), :1221 (write: date: row.answered_at), :893 (`${day}-project-decisions.md`)",
+   "evidence": "I ran a probe test with the same compose as person-questions-daemon.test.ts: card filed at 2026-10-31T20:00Z, answer posted after clock.set('2026-11-01T08:00Z'). The card said \"Your answers are written to the project's decision record (docs/decisions/2026-10-31-project-decisions.md).\" but docs/decisions held only 2026-11-01-project-decisions.md (assertion failed). The acceptance asks for 'the person's Inbox answers after a date-named intake decision land in that record, no 0001 file is created, and the card names that file (exact text), also after a compose twice'. Only the same-day, no-record case is tested. The intake-record path and the restart case have no test.",
+   "expected": "Write to the file the card named: record it on the card or row when filed, or create the marked record at filing. Add a case answered on a later day, a case where answers land in the intake's dated, marked record with no 0001 file, and a compose-twice case. Each asserts the card's exact sentence and the file written."
+  },
+  {
+   "issue": "Changed model-facing prompt lines are not asserted as the exact text the model receives.",
+   "where": "packages/runtime/src/session/intake.ts:2130-2138 (first-plan system prompt: 'and docs/decisions/YYYY-MM-DD-<slug>.md for the first decision, named by the Today date;' ... 'write each choice and why in that decision record.'); packages/runtime/src/session/task-context.ts:348 (specialist brief: 'A new decision goes in its own file, docs/decisions/YYYY-MM-DD-<slug>.md named by today's date, never by a number.')",
+   "evidence": "No test in packages, apps or testenv contains 'for the first decision, named by the Today date', 'choice and why in that decision record' or 'A new decision goes in its own file'. The only test touching the new form in the plan prompt is a negative not.toContain for the plan-only form (intake.test.ts:1911). The retry and cut-off problem texts are asserted, but not these lines. The acceptance requires 'the plan prompt's decision lines are asserted as the exact text the model receives'. The round's common rule says model-facing prompts are code whose exact text is asserted.",
+   "expected": "Assert the exact changed lines in the system prompt of the first-plan call and in a specialist's brief, as the model receives them (for example from the FakeProvider's recorded call)."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "L4i-left-2: an unmarked docs pull request this install did not open is nobody's. The scaffold, take-over, rebuild and Try again write nothing to it, and the Overview lists it without Merge.",
+   "holds": true,
+   "note": "two-installs: 3 L4i-left-2 cases fail with the source reverted to cfbd69f (Ada pushed onto Bob's fr/docs-scaffold) and pass at HEAD. On the bench, Ada's take-over and Try again on team/old left Bob's branch and PR untouched. The on-screen words of the listed row are wrong (blocking 1). Caveat in non_blocking: the branch-marker evidence is inherited from main."
+  },
+  {
+   "claim": "L4i-left-5/-6/-7: Try again names owner/name, says what stopped it, and answers by the real state.",
+   "holds": true,
+   "note": "The bench showed team/old for an address typed as a URL, 'another docs pull request is open on team/old', and 'GitHub did not answer. Try again in a moment.' with Ada's GitHub cut. The real-daemon w8-repo-guide case fails before the fix and passes after."
+  },
+  {
+   "claim": "W8-guide-1/-2/-5: AGENTS.md and CLAUDE.md in the docs PR, no docs/status.md, drift no longer asks for it, the guide is kept current, and one docs PR per fact change, none after a restart.",
+   "holds": true,
+   "note": "The journey's guide-in-docs-pr passes. On the bench, merge_mode after_review gave exactly one PR (#16, Ada's own branch) and none after restart-daemon plus another session. Caveats: the guide says the status issue is on (no issue exists on this base), and a CRLF AGENTS.md is not kept byte for byte."
+  },
+  {
+   "claim": "W8-guide-3: date-named decisions; the together project writes no docs; the Inbox card names the record's real file.",
+   "holds": false,
+   "note": "Date naming and the writer rule hold (the two-installs http case passes and failed before). The card names the wrong file when answered on a later day (probe). The intake-record path and the compose-twice case are untested. The changed plan-prompt lines are not asserted exactly."
+  },
+  {
+   "claim": "W8-guide-4: recall finds AGENTS.md.",
+   "holds": true,
+   "note": "Unit level only (docs-search.test.ts). There is no composed recall case and no injection case for the new channel."
+  },
+  {
+   "claim": "W8-guide-6: a task PR changing AGENTS.md says so in its body and in the critic's evidence.",
+   "holds": true,
+   "note": "pr-executor.test.ts and loop-critic.test.ts pass with exact text. Not walked on the bench."
+  },
+  {
+   "claim": "L4i-left-8: a take-over with a brief whose plan docs PR failed shows the no-pull-request line with Try again, after a restart too.",
+   "holds": true,
+   "note": "Bench walk with cut.mjs and restart-daemon confirmed it, and the two-installs case fails before the fix. Try again opens the template doc set, not the plan's drafted docs (non_blocking)."
+  },
+  {
+   "claim": "L4i-left-14: the take-over rebuild keeps main's newer file.",
+   "holds": true,
+   "note": "docs-scaffold.test.ts fails with the source reverted (template replaced 'Written by the team.') and passes at HEAD."
+  },
+  {
+   "claim": "Validation: pnpm check, docs:check, test:integration, test:e2e, UI vitest, Playwright and injection green.",
+   "holds": true,
+   "note": "Re-run here: pnpm check green (570 files, 6359 passed), docs:check ok (91 files), UI vitest 107 files / 1564 passed, test:e2e 25 passed, Playwright project-extras 5 passed. Not re-run: test:integration, test:injection, full Playwright."
+  },
+  {
+   "claim": "Tests changed for design, none weakened.",
+   "holds": true,
+   "note": "Every removed or changed assertion I read (docs-scaffold Delta case, loop-critic drift, loop-docs, intake, queue-docs-routes, fixtures) follows ADR 0121. loop-critic still asserts that docs-drift names other missing docs."
+  }
+ ],
+ "non_blocking": [
+  "Branch-marker ownership is inherited. Once Ada's doc set merges, main carries .forerunner/project.json naming her project, so every branch cut from main carries it too. A person's unmarked PR on a fr/docs-scaffold* branch cut from main then counts as Ada's (isProjectDocsPr branchMarker, loop/docs.ts ~262). Her scaffold and guide refresh would push and comment onto it and her Overview would offer Merge. This follows the session lead's decision wording, but contradicts docs/user-guide.md ('never written to by your Forerunner'). Suggest counting the branch marker only when it differs from the default branch's marker, or not at all without the recorded URL.",
+  "The guide says the status issue is on (guideStatusIssueState returns 'on'), so every AGENTS.md tells agents to read a pinned 'Forerunner status: <name>' issue that this base never creates. This is per the spec and the fixer flagged it: ship with w8-status-write.",
+  "Guide-refresh PR words on GitHub are untrue for an update. PR #16 was titled 'docs: scaffold the standard project doc set' with the body 'written from templates for the files the repository lacked: - AGENTS.md', though AGENTS.md was updated, not missing. The plan PR body also lists 'From the templates: AGENTS.md, CLAUDE.md'. 'spec G.5' is jargon on GitHub (pre-existing).",
+  "applyGuide and applyGuideImport normalise line endings, so a person's CRLF AGENTS.md or CLAUDE.md is rewritten to LF. That is not byte for byte, and docs.test.ts pins the conversion. On a repository that stores CRLF, the whole file shows as changed.",
+  "L4i-left-8: Try again opens the template doc set (fr/docs-scaffold). The plan's drafted docs and its decision record (docs/decisions/2026-11-24-plain-static-page.md) stay only in the app's workspace, though the Overview shows 'Decision record: A plain static page, no build step'.",
+  "The Try again 'blocked' advice ('another docs pull request is open on <repo>; close it on GitHub') tells the person to close a pull request that may be another person's or another Forerunner's (D9). Consider 'ask whoever opened it' wording.",
+  "W8-guide-4: AGENTS.md is a new recall and per-turn-excerpt channel from GitHub text, but there is no composed recall case quoting it as a document, and no test:injection case for it.",
+  "Rule 3, 'same commit': f8ad5df changed GET /projects/:id/docs rows without the fake's fixtures (updated in f5e3f29), and left queue-docs-routes.test.ts failing until 738cbac. The new rows have no real-daemon.test.ts case; they are covered through the two-installs client only.",
+  "The fake daemon answers TAKE_OVER_NOT_TAKEN for a project that took over successfully but was never retried, because it knows a take-over only from a retried line. The real daemon answers TAKE_OVER_NOTHING_TO_RETRY there.",
+  "Bob's (together) Docs tab Status row still reads 'Kept in the app: you work on \"Team site\" together, so GitHub's copy is left as it is.' There is no docs/status.md on GitHub any more, so 'GitHub's copy' no longer exists (pre-existing words, now untrue). The tab header 'Kept by the agent; ...' also reads oddly for a together project.",
+  "From reading scaffoldBranchFor (not walked): while any pull request is open on fr/docs-scaffold, the scaffold always picks fr/docs-scaffold and stops (pull_request_open). A guide refresh after a fact change therefore stays blocked silently, with no line telling Ada why, until that pull request closes.",
+  "The record name and the intake's rename use the UTC day (clock.nowIso().slice(0,10)), not the person's zone. For a repository project the answers' record lives in the app's workspace, not the repository, though the card's 'docs/decisions/...' path reads like a repository path (pre-existing)."
+ ]
+}

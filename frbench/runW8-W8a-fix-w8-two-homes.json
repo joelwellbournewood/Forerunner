@@ -1,0 +1,264 @@
+{
+ "area": "w8-two-homes",
+ "branch": "fix/w8-two-homes",
+ "head_sha": "cddbfa378ee9547a06cc965d5b19d94e506fadda",
+ "commits": [
+  {
+   "sha": "42fbce880f42d29bd2c5ebeb42a91b2b4e81187e",
+   "subject": "ui: the model watch's answer waits for /me; the person's zone redraws every screen (L4i-left-3, L4i-left-62)"
+  },
+  {
+   "sha": "79216b223d1f0b0e3449c1ff4121197f82cc14f2",
+   "subject": "runtime tests: the continuation and hands-off cases count sessions only once nothing more can start (L4i-left-18)"
+  },
+  {
+   "sha": "089d5fbaab48fc382ed76d1c0373926188fcb3ff",
+   "subject": "capabilities: MemoryGitHost gets one view per GitHub account over one shared host (W8-homes-2)"
+  },
+  {
+   "sha": "01e0013178cdcadcc2b94b61c6958794ba9e0861",
+   "subject": "ui tests: the two-home harness: Ada's and Bob's Forerunners on one GitHub, driven through the UI's client (W8-homes-1, W8-homes-4)"
+  },
+  {
+   "sha": "77da676d71ba150656bc0dd6b91010b1ce85e663",
+   "subject": "bench: the recorder cuts every daemon token from what it writes, console lines included (L4i-left-54)"
+  },
+  {
+   "sha": "bd98b38c77c95b7318a3c89f416d6f01ce29430f",
+   "subject": "testenv: the stand-in GitHub gives a collaborator a role: write, read or none (W8-homes-3)"
+  },
+  {
+   "sha": "35b881409d9dc2063fb83e37ae1c5f06567167f6",
+   "subject": "bench: two people's benches on one GitHub, GitHub off for one home, the two-person journey (W8-homes-3, W8-homes-4, W8-homes-5)"
+  },
+  {
+   "sha": "4bb7fa20de26a9b44d2d46a25689a16d9eaa6f59",
+   "subject": "docs: validation rule 11, two people's Forerunners tested as two people run them (W8-homes-6)"
+  },
+  {
+   "sha": "cddbfa378ee9547a06cc965d5b19d94e506fadda",
+   "subject": "bench: the two-person journey's screenshots show the pages, not the setup assistant (W8-homes-5)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "L4i-left-3 (never cut): on the Updates page, the model watch's Adopt selected, Run evaluations, Ignore and Remind me later buttons could be pressed before GET /me answered. The answer then went out as by: \"human\" (me?.id ?? \"human\") instead of the person's id. No U-entry; the u_ids field holds the item id.",
+   "u_ids": [
+    "L4i-left-3"
+   ],
+   "failing_test_before": "apps/ui/test/me-races.test.tsx, describe \"w8-two-homes, wave 8: state read from /me before it answers\": the model watch answer sends nothing until /me answers, then {decision:\"adopt\", by:\"human_alice\", adopt:[\"rec_1\",\"rec_2\"]}",
+   "how": "UpdatesPage.tsx: answerOff = busy !== null || !me?.id disables the four answer buttons. answer() returns early without me.id and sends by = me.id. The test harness holds GET /me until the test releases it.",
+   "check_in_the_app": "Open More > Updates while a model watch recommendation is waiting. The four buttons stay greyed until the app knows who you are. Press Adopt selected: the recommendation is answered in your name (Settings > Changes shows you, not 'human')."
+  },
+  {
+   "problem": "L4i-left-62 (cut line): setPersonZone ran inside the store's reducer, a side effect in a pure function. A zone change also did not redraw pages already on screen, because the Shell Outlet element is stable and AppRoutes did not re-render. A session page kept showing the old zone's times until a reload. The setup assistant's zone reached the app only after a restart.",
+   "u_ids": [
+    "L4i-left-62"
+   ],
+   "failing_test_before": "apps/ui/test/me-races.test.tsx: the session page heading goes from \"Atlas · session at 21:00\" to \"Atlas · session at 15:00\" after setupProfile to America/New_York and an agent.changed; also the setup assistant's zone reaches the store",
+   "how": "store.ts: setPersonZone moved out of the reducer into dispatch, before the listeners run, only when personZoneOf(state) changes. routes.tsx: AppRoutes subscribes with useUiState(personZoneOf), so every page redraws. SetupPage.tsx: refreshIdentity after setupProfile. Mobile store: personZone is in its state and MobileRoutes subscribes to it.",
+   "check_in_the_app": "Open a session page. In Settings (or the setup assistant's first step), change Time zone from Europe/Zurich to America/New_York and save. Go back to the session page without reloading: its times now show in New York time."
+  },
+  {
+   "problem": "L4i-left-18: the continuation and hands-off runtime tests counted sessions while a start could still be waiting in the scheduler's queue. On a busy machine they failed now and then.",
+   "u_ids": [
+    "L4i-left-18"
+   ],
+   "failing_test_before": "packages/runtime/test/continuation.test.ts and packages/runtime/test/start-by-itself.test.ts (intermittent: a session count taken while a start was still queued)",
+   "how": "A nothingMore(rt) helper runs settleSessions(rt), then asserts rt.scheduler.pendingFor(agent) is undefined. It runs before every count of sessions. Both files passed five runs in a row.",
+   "check_in_the_app": "No change a person sees: these are test-only fixes. Run pnpm vitest run packages/runtime/test/continuation.test.ts packages/runtime/test/start-by-itself.test.ts five times; all are green."
+  },
+  {
+   "problem": "W8-homes-2 (never cut): MemoryGitHost had one login. A second person was faked with Object.create(host), which shared state but could not tell which account wrote what. A test could therefore not check who wrote which pull request or comment.",
+   "u_ids": [
+    "W8-homes-2"
+   ],
+   "failing_test_before": "packages/capabilities/test/githost-memory-views.test.ts (4 tests; before the change: host.asLogin is not a function)",
+   "how": "A private MemoryHostWorld holds the repositories, projects, merges and the write log, and every view shares it. asLogin(login) returns a view for that account, and writesBy(login) lists its writes. Every write method records {login, op, repo, number?, detail?}. openPullRequestAs writes through asLogin(author). In onerepo-together.test.ts, Object.create(host) became host.asLogin(\"bob\").",
+   "check_in_the_app": "No screen of its own: test infrastructure. Its effect shows in the two-home harness and journey: each person's pull requests carry their own login."
+  },
+  {
+   "problem": "W8-homes-1 and W8-homes-4, harness part (never cut): no test could run two people's Forerunners (each its own home, store, vault, device row and GitHub login) against one GitHub through the UI's client, with a restart and with GitHub out of reach for one home only.",
+   "u_ids": [
+    "W8-homes-1",
+    "W8-homes-4"
+   ],
+   "failing_test_before": "apps/ui/test/two-installs.test.ts, describe \"w8-two-homes, wave 8: harness\", memory mode. With the old Object.create view, Bob's task pull request had authorLogin 'ada': \"expected 'ada' to be 'bob'\" (log /tmp/frbench/fix-w8-two-homes-harness-before.log).",
+   "how": "apps/ui/test/two-installs.ts has composeTwo({host:'memory'|'http'}). The memory host is a MemoryGitHost with a per-login view. The http host is the testenv stand-in GitHub, with users ada and bob, org team, team/shared and team/empty, and a classic token each. Each Home has client, restart(), githubOff()/githubOn() (refused-connection errors on that home only), holdModelCalls() and modelCalls. TwoHomes has writesBy(login) with a normalised action, pullRequests(), and close(), which settles, closes and runs removeHomes. Four cases in both modes: install ids differ; Bob's New project gets a 409 with canWorkTogether and no take-over; Work together gives the same id and writes nothing; each home lists only its own pull requests; there are no cross writes; both restarts keep the person, the device id and the together line; GitHub off for Bob gives \"GitHub did not answer, so the project cannot be checked. Try again.\"",
+   "check_in_the_app": "Start two benches as in scripts/bench/README.md, 'Two people on one GitHub'. In Ada's app, make 'Team site' on team/shared. In Bob's app, choose New project on team/shared: he is offered Work together and no Take it over. Press Work together. Bob's Overview shows 'Shared on GitHub with another Forerunner: each keeps its own tasks.' After restart-daemon.mjs on Bob's bench, the line is still there."
+  },
+  {
+   "problem": "L4i-left-54 (security, never cut): the bench recorder wrote console lines to steps/problems.jsonl without redaction. After a daemon restart, a 'Failed to load resource ... /events?token=...' line carried the daemon token in its text and location URL.",
+   "u_ids": [
+    "L4i-left-54"
+   ],
+   "failing_test_before": "scripts/bench-scripts.test.ts, describe \"w8-two-homes, wave 8: the bench recorder writes no daemon token (L4i-left-54)\" (2 tests; before: recorder.redactRecord is not a function, and the raw line was written)",
+   "how": "recorder.cjs: stripToken now covers ?token= and &token= up to a quote or bracket. Every daemon token this process has seen (openApp, each followDaemon reconnect, bench.json at each write) is remembered. recordProblem passes each record through redactRecord, which cleans every string recursively.",
+   "check_in_the_app": "Walk any bench journey that restarts the daemon, such as two-people.cjs (step 16). Then grep steps/problems.jsonl for the token in bench.json: there is no match, only token=[REDACTED]. The 2026-11-24 walk had 0 matches on both benches."
+  },
+  {
+   "problem": "W8-homes-3: the bench's stand-in GitHub had one user, 'bench'. A second bench could not share it, and the stand-in had no read-only collaborator. Two people's Forerunners could not be walked as people run them.",
+   "u_ids": [
+    "W8-homes-3"
+   ],
+   "failing_test_before": "testenv/test/githost.test.ts \"w8-two-homes, wave 8: two users, an organisation and a collaborator's role\" (setCollaboratorRole did not exist). scripts/bench-scripts.test.ts \"start.mjs refuses GitHub options that do not fit, before it starts anything\" (the options did not exist).",
+   "how": "testenv: repository records have readers; setCollaboratorRole(repo, login, write|read|none) sets the role; a reader can see and read the repository, and every write is answered 403. githost-server.ts takes --users ada,bob, --org team, --members and --collaborators login=role; the request log names each call's login. start.mjs takes --githost-shared <bench> and --githost-user <login>; the owning bench lists the second bench under sharedWith; options that do not fit are refused before anything starts. lib.mjs has sharedGithost, githostLogin and startGithubProxy.",
+   "check_in_the_app": "node scripts/bench/start.mjs --name ada --daemon-port 49260 --ui-port 2860 --fresh --provider bench --githost 49262 --users ada,bob --org team; then node scripts/bench/start.mjs --name bob --daemon-port 49261 --ui-port 2861 --fresh --provider bench --githost-shared ada --githost-user bob. In each app, Settings shows GitHub connected and team/shared can be chosen. Each pull request on the stand-in is by its own person's login."
+  },
+  {
+   "problem": "W8-homes-4, bench part: the bench had no way to make GitHub unreachable for one home while the other home still reached it.",
+   "u_ids": [
+    "W8-homes-4"
+   ],
+   "failing_test_before": "scripts/bench-scripts.test.ts \"cut.mjs: GitHub off for one bench refuses its connections while the other bench still reaches GitHub; on again, it answers\" (new script)",
+   "how": "github-proxy.mjs gives each bench a TCP proxy to the stand-in, used as the daemon's GitHub API base. It closes its port while <bench>/github-cut exists, and records each change in github-proxy.json. cut.mjs <bench> github off|on writes or removes that file and waits for the state. stop.mjs ends the proxy.",
+   "check_in_the_app": "With both benches up, run node scripts/bench/cut.mjs bob github off. Bob's Overview of Team site says 'GitHub did not answer, so the pull requests are not listed. Try again later.' Ada's still lists her pull requests. Run cut.mjs bob github on: Bob's list comes back. The journey measured bob +0 and ada +4 requests while cut. Screenshot: /tmp/frbench/fix-w8-two-homes-bob/steps/08-13-github-off-bob.png"
+  },
+  {
+   "problem": "W8-homes-5: no bench journey walked two people's Forerunners, so wave 8's later areas had no shared before/after measure.",
+   "u_ids": [
+    "W8-homes-5"
+   ],
+   "failing_test_before": "scripts/bench-scripts.test.ts \"the journey names the 16 steps in order; each known gap names its area; an unwalked step holds only known gaps\" (new). Before the cddbfa3 fix, the journey's screenshots showed the setup assistant, not the pages (seen in the first walk's 03-03-work-together-bob.png).",
+   "how": "journeys/two-people-checks.cjs lists the 16 steps of w8-journey with 30 checks; each D9 gap is marked known, with its owning area. journeys/two-people.cjs walks them through the daemon routes, uses the stand-in's request log, cut.mjs and restart-daemon.mjs, and takes screenshots of both apps at each step (pressing Set up later first). It writes two-people-result.json and exits 1 only when a check that is not known fails. recorder.cjs has openTwo. stop.mjs --clean removes a stopped bench's files once every recorded PID is gone; it keeps steps/, bench.json and any --home outside the bench root.",
+   "check_in_the_app": "node scripts/bench/journeys/two-people.cjs ada bob on the two benches. Result: 15/30 passed; failed (not known): none; 15 known gaps, each with its owner. Then node scripts/bench/stop.mjs --name bob --clean and --name ada --clean."
+  },
+  {
+   "problem": "W8-homes-6: wave 8's test rule was written nowhere a fixer reads. validation.md and testing.md said nothing of two homes on one GitHub, and the 2026-11-02 'Postgres every time' rule still stood.",
+   "u_ids": [
+    "W8-homes-6"
+   ],
+   "failing_test_before": "none (docs). pnpm docs:check --base claude/nifty-knuth-f9udt0 passes.",
+   "how": "validation.md has a new rule 11: two composed homes against one stand-in GitHub, driven through the UI's client; what each person sees and what each login wrote; a restart case; GitHub off for one home; the two-person journey walked before and after, with known marks removed; the stand-in model only; FORERUNNER_TEST_PG only for packages/state changes. The author's and reviewer's checklists point to it. testing.md has the harness, the testenv roles, and the bench and journey section. scripts/bench/README.md has the options, the recipe, cut.mjs, the journey, openTwo and stop --clean.",
+   "check_in_the_app": "Read docs/maintainers/validation.md, rule 11, and scripts/bench/README.md, 'Two people on one GitHub'."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "W8-homes-5 beyond the three named checks: 15 of the journey's 30 checks are known D9 gaps. Steps 6, 10, 11, 12, 14 and 15 are recorded as not walked: the announcements, the merged-work reading, paused work, the status issue comment, chat from GitHub and the first-person Updates line.",
+   "why": "These features do not exist yet. Each gap is marked known, with the wave 8 area that builds it (w8-shared-repo, w8-repo-guide, w8-status-read, w8-status-write, w8-github-feed). That area removes the mark when the check passes. This is the cut line named in the task."
+  },
+  {
+   "problem": "L4i-left-62 on the phone: the mobile store and routes now follow personZone, but there is no end-to-end check.",
+   "why": "The shared state service's /me sends no timezone, so the phone's personZone stays null. Nothing on the phone can change zone until the state service sends one (listed under new problems)."
+  },
+  {
+   "problem": "CHANGELOG.md [Unreleased] and docs/status/UPDATE-LOG.md lines for this area (W8-homes-6 names CHANGELOG).",
+   "why": "The task forbids editing them. Suggested lines are in notes_for_other_areas."
+  },
+  {
+   "problem": "The user guide is unchanged.",
+   "why": "The only person-facing changes are the model watch buttons waiting for the person's identity and the zone redrawing pages. Neither changes a step the guide describes."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check (lint, lint:paths, typecheck, unit tests, docs:links, secrets:scan)",
+   "result": "exit 0; 569 test files, 6311 passed, 7 skipped; link-check ok (213 files); secret-scan clean (2296 files). It ran at 4bb7fa2; after cddbfa3 (one .cjs change), pnpm lint was re-run (no errors) and so was docs:check."
+  },
+  {
+   "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (35 files). Without --base it checks nothing, because origin/main is not in this worktree."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0; 5 files passed, 7 skipped; 30 tests passed, 83 skipped (no FORERUNNER_TEST_PG; this area does not change packages/state)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0; 13 files passed; 25 tests passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0; 107 files, 1555 tests passed (including me-races.test.tsx and two-installs.test.ts)"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm exec playwright test --config playwright.local.config.ts",
+   "result": "40 passed (1.1 min); the local config was copied in for the run, removed afterwards, and never committed"
+  },
+  {
+   "command": "cd apps/ui && pnpm exec playwright test --config playwright.local.config.ts e2e/updates.spec.ts --repeat-each 5",
+   "result": "10 passed (the Updates page touched by L4i-left-3)"
+  },
+  {
+   "command": "pnpm exec vitest run testenv/test/githost.test.ts scripts/bench-scripts.test.ts",
+   "result": "2 files, 61 tests passed"
+  },
+  {
+   "command": "pnpm exec tsc -p tsconfig.node.json --noEmit",
+   "result": "exit 0 (after fixing two string|undefined errors in githost-server.ts)"
+  },
+  {
+   "command": "node scripts/bench/journeys/two-people.cjs fix-w8-two-homes fix-w8-two-homes-bob (two --fresh --provider bench benches, one stand-in GitHub with ada, bob and team)",
+   "result": "exit 0; 15/30 passed; failed (not known): none; known: 15; known but passing: none. /tmp/frbench/fix-w8-two-homes/steps/two-people-result.json"
+  },
+  {
+   "command": "grep each bench's daemon token and the stand-in user tokens in steps/problems.jsonl, steps/* and bench.json",
+   "result": "0 matches; problems.jsonl holds only token=[REDACTED]"
+  },
+  {
+   "command": "node scripts/bench/stop.mjs --name fix-w8-two-homes-bob --clean; node scripts/bench/stop.mjs --name fix-w8-two-homes --clean; kill -0 on every recorded PID",
+   "result": "both exit 0, 'cleaned: no process left'; all 9 recorded PIDs are gone; only steps/ and bench.json are kept; disk has 12 GB free"
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "no matches"
+  },
+  {
+   "command": "git branch -f fix/w8-two-homes HEAD",
+   "result": "fix/w8-two-homes = cddbfa378ee9547a06cc965d5b19d94e506fadda; the working tree is clean"
+  }
+ ],
+ "screenshots": {
+  "before": [],
+  "after": [
+   "/tmp/frbench/fix-w8-two-homes/steps/01-01-setup-ada.png",
+   "/tmp/frbench/fix-w8-two-homes/steps/02-02-project-ada.png",
+   "/tmp/frbench/fix-w8-two-homes/steps/03-03-work-together-ada.png",
+   "/tmp/frbench/fix-w8-two-homes/steps/04-04-private-ada.png",
+   "/tmp/frbench/fix-w8-two-homes/steps/05-05-both-plan-ada.png",
+   "/tmp/frbench/fix-w8-two-homes/steps/06-07-live-ada.png",
+   "/tmp/frbench/fix-w8-two-homes/steps/07-08-pull-requests-ada.png",
+   "/tmp/frbench/fix-w8-two-homes/steps/08-13-github-off-ada.png",
+   "/tmp/frbench/fix-w8-two-homes-bob/steps/01-01-setup-bob.png",
+   "/tmp/frbench/fix-w8-two-homes-bob/steps/02-02-project-bob.png",
+   "/tmp/frbench/fix-w8-two-homes-bob/steps/03-03-work-together-bob.png",
+   "/tmp/frbench/fix-w8-two-homes-bob/steps/04-04-private-bob.png",
+   "/tmp/frbench/fix-w8-two-homes-bob/steps/05-05-both-plan-bob.png",
+   "/tmp/frbench/fix-w8-two-homes-bob/steps/06-07-live-bob.png",
+   "/tmp/frbench/fix-w8-two-homes-bob/steps/07-08-pull-requests-bob.png",
+   "/tmp/frbench/fix-w8-two-homes-bob/steps/08-13-github-off-bob.png"
+  ]
+ },
+ "new_problems": [
+  "The together project takes the name the person typed ('Bob's site'), not the repository's project name ('Team site'), while the marker exists only in Ada's unmerged docs pull request (main has none). The harness had to drop a name assertion. Owner suggestion: w8-shared-repo or w8-repo-guide (read the name from the open PR's marker, as the project id already is).",
+  "Both agents are named 'Alice' by default, so two people's Forerunners look the same on GitHub (journey step 1: 'Alice / Alice'). Marked known in the journey, owner w8-shared-repo.",
+  "D9 duplicate work: Bob's first plan in the together project repeated Ada's 5 tasks, and both did all 5, so the host has 11 pull requests (journey step 5: 'Bob planned 5, 5 also in Ada's plan'; '5 done by both'). Marked known, owner w8-status-read.",
+  "Ada's docs pull request (#1) writes docs/status.md, docs/overview.md and the other docs, with no AGENTS.md or CLAUDE.md (journey step 2). Marked known, owner w8-repo-guide.",
+  "The phone's shared state service /me carries no timezone, so the mobile store's personZone stays null and setPersonZone never runs on the phone (apps/ui/src/mobile/store.tsx reads it; services/state-api /me does not send it).",
+  "The default person name is 'me' until setup's name step is done. A home that skips setup shows 'me' to the other person if names ever reach GitHub. Observed in the harness before setupProfile; no check yet.",
+  "The journey's 'one-status-issue' detail reads '11 issues on the host': the stand-in, like GitHub, lists pull requests in /issues. w8-status-write should count only entries without pull_request when it makes that check pass."
+ ],
+ "notes_for_other_areas": [
+  "Harness (apps/ui/test/two-installs.ts): composeTwo({host:'memory'|'http', bench?}) returns TwoHomes {ada, bob, writesBy(login), pullRequests(), close()}. Each Home has client (the UI's createClient over app.request), login, restart(), githubOff()/githubOn(), holdModelCalls(when) and modelCalls. TEAM_SHARED='team/shared' (seeded) and TEAM_EMPTY='team/empty'. writesBy returns {action, repo, number?, detail?} with actions such as pull_request.create, pull_request.update, comment, review, issue.create, push and merge. Later areas append their own describe blocks and helpers and do not change the existing ones.",
+  "MemoryGitHost (packages/capabilities/src/githost/memory.ts): asLogin(login) returns a view over one shared world; writes and writesBy(login) list {login, op, repo, number?, detail?}. w8-issue-host: every new write method (issue pinning, status comments, issue updates) must call the private wrote(op, repo, extra) so writesBy sees it. Add the op to MEMORY_ACTIONS in two-installs.ts so the harness maps it to an action.",
+  "testenv FakeGitHost.setCollaboratorRole(repo, login, 'write'|'read'|'none'): a reader sees and reads a private repository and gets 403 on every write; 'none' gives 404. Use it for w8-shared-repo's person without write access. The bench takes it as --collaborators carol=read.",
+  "Bench: start.mjs --githost <port> --users ada,bob --org team [--members] [--collaborators]; a second bench uses --githost-shared <bench> --githost-user bob. githost.json (owner bench) has users.{login}.token; githost-requests.jsonl lines have login; bench.json githost has {url, via, login, repos, users, org, shared|sharedWith}. cut.mjs <bench> github off|on. stop.mjs --clean (stop the user bench before the owner bench).",
+  "Two-person journey: scripts/bench/journeys/two-people-checks.cjs holds the known marks and their owners: w8-shared-repo: agent-names-differ. w8-repo-guide: guide-in-docs-pr. w8-status-read: bob-plan-leaves-out-ada, no-task-twice, earlier-keeps-it, bob-brief-names-merged, bob-leaves-paused, comment-quoted-not-obeyed, chat-answers-from-github. w8-status-write: one-status-issue, status-words-offline. w8-github-feed: on-github-names-other, bob-sees-ada-live, bob-lists-ada-info, ada-told-once. An area removes known:true (and walked:false for a step it makes walkable) from the checks it makes pass, and walks the step in two-people.cjs. A known check that passes is listed under knownPassing. Today's words with GitHub cut: 'GitHub did not answer, so the pull requests are not listed. Try again later.'",
+  "UI: personZoneOf(state) is exported from apps/ui/src/store/store.ts. setPersonZone runs in dispatch only when it changes; AppRoutes subscribes so every page redraws. SetupPage calls refreshIdentity after setupProfile. Code that reads /me should not act before me.id is known (pattern in UpdatesPage: answerOff).",
+  "Recorder: redactRecord(rec, tokens), recordProblem(name, rec, afterStep) and stripToken are exported. openTwo(a, b) returns {a, b, close}. skipSetup(page) is needed on benches without a Claude key before a screenshot.",
+  "validation.md rule 11 is the wave 8 test rule. Each wave 8 area adds a two-home case to two-installs.test.ts and walks two-people.cjs before and after.",
+  "Suggested CHANGELOG [Unreleased] lines (not written; editing the file was forbidden): 'Fixed: the model watch's answer on the Updates page is recorded in your name; its buttons wait until the app knows who you are.' 'Fixed: a new time zone from Settings or the setup assistant shows on every open page at once, without a restart.' 'Testing: two people's Forerunners on one GitHub, in the tests and on the bench (two-home harness, --githost-shared, cut.mjs, the two-person journey).'",
+  "Suggested UPDATE-LOG lines: 'w8-two-homes (2026-11-24): L4i-left-3, L4i-left-62, L4i-left-18, L4i-left-54, W8-homes-1..6 done on fix/w8-two-homes (cddbfa3). Two-person journey on base code: 15/30, 15 known gaps with owners, no other failure. Check in the app: Updates > model watch answers in your name; change time zone, open session page shows new times without reload.'"
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/onerepo-together.test.ts (both Object.create(host) sites)",
+   "why": "MemoryGitHost now gives a real view per login (host.asLogin('bob')) over one shared host, replacing the prototype trick. The assertions are unchanged; Bob's writes are now recorded as Bob's."
+  },
+  {
+   "test": "packages/runtime/test/continuation.test.ts and packages/runtime/test/start-by-itself.test.ts",
+   "why": "Not a design change: a test race fix (L4i-left-18). Each session count now waits for nothingMore(rt), which settles sessions and asserts no start is still queued. The expected counts are unchanged."
+  }
+ ]
+}

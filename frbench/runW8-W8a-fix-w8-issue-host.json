@@ -1,0 +1,200 @@
+{
+ "area": "w8-issue-host",
+ "branch": "fix/w8-issue-host",
+ "head_sha": "94eded56738ba181230cffef0123233b93c0c086",
+ "commits": [
+  {
+   "sha": "450619c",
+   "subject": "capabilities, testenv: the status issue's host calls on GitHub and both stand-ins (W8-host-1, W8-host-2, W8-host-3, W8-host-4, W8-host-5, W8-host-6, W8-host-8)"
+  },
+  {
+   "sha": "f532769",
+   "subject": "ui tests, testenv tests: two homes read one status issue; a restart starts with no GitHub copy (W8-host-7, W8-host-3)"
+  },
+  {
+   "sha": "afc0ee5",
+   "subject": "docs: the status issue's host calls, the stand-in's noticeboard and the harness restart (W8-host-1..8)"
+  },
+  {
+   "sha": "94eded5",
+   "subject": "ui tests: the two-home issue case joins paths with the platform's join (path lint)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "W8-host-1 (major, never cut): the GitHost port could not keep a noticeboard. It had no list of one issue's comments with authors, no comment get or edit, no pin, no hasIssues and no conditional read. IssueInfo had no author, node id, times or locked flag, and CommentInfo had no updatedAt.",
+   "u_ids": [
+    "W8-host-1"
+   ],
+   "failing_test_before": "packages/capabilities/test/githost-issues.test.ts, \"w8-issue-host, wave 8: issue host contract (http)\" and \"(memory)\". Before the fix: 15 failed and 10 skipped, because neither world could be built (log /tmp/frbench/fix-w8-issue-host-contract-before.log).",
+   "how": "types.ts gained getIssue, listIssues (paged; creator, labels, sort, direction), listIssueComments(repo, n, {etag, since}) returning {notModified, etag, comments}, getIssueComment (null when deleted), updateIssueComment (keeps the agent's mark; there is no delete), pinIssue ('pinned' | 'limit' | 'forbidden'), getRepoPermission and RepoInfo.hasIssues. IssueInfo now carries id, nodeId, stateReason, locked, author, authorAssociation, authorType, createdAt, updatedAt and isPullRequest. The new IssueCommentInfo has exactly the fields of GitHub's REST comment, with no editor field. Helpers: hasWriteAccess, newestCommentPerAuthor, issueRefusalOf, associationOf, accountTypeOf and roleOf. GitHubHost implements all of it. Pinning first reads StatusPinnedIssues over GraphQL, then sends StatusPinIssue with the issue's node id (github-graphql.ts).",
+   "check_in_the_app": "No screen changes: this area builds host calls only, and w8-status-write and w8-status-read are their callers. Live check on real GitHub for the session lead, FORERUNNER_TEST_GITHUB_TOKEN on the sandbox repository only. Use a tsx script with new GitHubHost({token, baseUrl:'https://api.github.com'}) and repo joelwellbournewood/forerunner-sandbox: createIssue {title:'w8 host check'}; commentOnIssue twice; listIssueComments shows author = your login, authorAssociation OWNER, authorType User, and updatedAt equal to createdAt; updateIssueComment on the first comment keeps its id and moves updatedAt, and the issue page says 'edited'; getIssue returns a nodeId starting with 'I_', state open and locked false; pinIssue answers 'pinned' and the issue shows as pinned on the Issues page; a second pinIssue answers 'pinned' again. Then close the issue and unpin it by hand."
+  },
+  {
+   "problem": "W8-host-2 (major, never cut): the adapter read only one page of issues and paid for every poll. It kept no ETag, sent no If-None-Match, and its mappers dropped the author, node id and times.",
+   "u_ids": [
+    "W8-host-2"
+   ],
+   "failing_test_before": "packages/capabilities/test/githost-issues.test.ts: \"a repeated read with the ETag answers not modified ...\", \"issues and comments are read past one page of 100\", and \"the ETag copy is kept per token ...\" (all failed before the fix).",
+   "how": "github.ts has request() support for ifNoneMatch, which answers a 304 through onResponse. conditionalGet keeps an in-memory copy (LRU of 500, ETAG_CACHE_MAX) keyed by the sha256 of the Authorization header plus the URL, and serves a 304 from that copy. pagedConditional follows Link pages, and a list's ETag joins its pages' ETags. getIssue, listIssues, listIssueComments, getIssueComment and getRepoPermission are conditional reads. Nothing is written to disk. A next page on another origin is still refused before the token is sent.",
+   "check_in_the_app": "Live on GitHub with the issue from the step above: call listIssueComments(repo, n), then listIssueComments(repo, n, {etag}). The second answers notModified true, and rateLimit().remaining is the same before and after it (GitHub does not count a 304). Add a comment on GitHub's page, then read again with the old etag: notModified is false."
+  },
+  {
+   "problem": "W8-host-3 (major, never cut): the stand-in GitHub could not test any of this. has_issues was always true and nothing ever answered 410. There was no sort=, no 304, and author_association was always OWNER. There was no GraphQL endpoint, no pin, and no permission read.",
+   "u_ids": [
+    "W8-host-3"
+   ],
+   "failing_test_before": "packages/capabilities/test/githost-issues.test.ts (http world). On the bench before the fix, /tmp/frbench/fix-w8-issue-host-before/steps/issue-probe.json recorded: every author OWNER, no ETag, the conditional read answered 200, the permission route 404, POST /graphql 404, and has_issues could not be turned off.",
+   "how": "fake-git-host.ts: every JSON answer to a GET now carries ETag W/\"sha1\"; If-None-Match gets a 304, which refunds its rate-limit point (RateLimiter.refund); the request log has ifNoneMatch and graphql {operation, kind}; new admin calls setIssuesEnabled, pinnedIssues and setOrgBasePermission; createOrg({basePermission}); and setCollaboratorRole takes admin, maintain, write, triage, read or none. store.ts works out association from the owner, org members and collaborators; a [bot] login is type Bot; roleOf; has_issues comes from the repository. routes-issues.ts: 410 'Issues are disabled for this repo' on every issue route, while pull request comments stay on; sort= and direction; anyone who may read the repository may open an issue or comment, as on GitHub; an author edits their own comment and anyone with write access edits any comment. New routes-collaborators.ts serves GET /collaborators/:login/permission, which answers 404 to a caller without push access. New routes-graphql.ts serves POST /graphql at the stand-in's own base, dispatching on operationName: StatusPinnedIssues and StatusPinIssue, at most three pins (UNPROCESSABLE beyond that), FORBIDDEN, NOT_FOUND, 401 without a token, and an issues 'pinned' event. routes-repos.ts accepts PATCH has_issues.",
+   "check_in_the_app": "Bench (stand-in only): node scripts/bench/start.mjs --name a --daemon-port 49261 --ui-port 2861 --fresh --provider bench --githost 49263 --users ada,bob --org team, then run the probe /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/probe/issue-probe.mjs against that bench. Expected: author_association MEMBER, an ETag and then a 304, permission read write, pin data isPinned true, and with issues off a list of 410 'Issues are disabled for this repo' (as in /tmp/frbench/fix-w8-issue-host/steps/issue-probe.json)."
+  },
+  {
+   "problem": "W8-host-4 (major): MemoryGitHost had no comment edit, no issue author, no pin and no ETag.",
+   "u_ids": [
+    "W8-host-4"
+   ],
+   "failing_test_before": "packages/capabilities/test/githost-issues.test.ts, \"w8-issue-host, wave 8: issue host contract (memory)\" (all 10 cases; before the fix, setOrg was not a function).",
+   "how": "memory.ts implements the same calls on w8-two-homes' per-login view, with these test seams: setOrg(org, {members, basePermission}), setCollaboratorRole(repo, login, role), setIssuesEnabled, pinnedIssues and removeIssueComment. A repository with no roles declared stays open to every login. Association is worked out at each read. A comment edit moves updatedAt. Issue comments are stamped with now(); pull request comments keep their epoch stamp. A comment list's ETag is a sha1 of the comments. updateIssueComment and pinIssue are recorded through wrote() for writesBy.",
+   "check_in_the_app": "Test infrastructure only. In the harness's memory mode, a comment written by Ada's view is listed by Bob's view with author ada and MEMBER, once the test calls two.memory.setOrg('team', ...)."
+  },
+  {
+   "problem": "W8-host-5 (minor, cut line): there was no listIssues by creator or label with paging and sort, and no read of each author's newest comment.",
+   "u_ids": [
+    "W8-host-5"
+   ],
+   "failing_test_before": "packages/capabilities/test/githost-issues.test.ts, \"issues are listed by creator and label and sorted by when they were updated; the newest comment of each author comes from one paged read\" (http and memory).",
+   "how": "listIssues takes creator, labels, sort (created, updated or comments) and direction, on all three hosts. newestCommentPerAuthor(comments) picks each author's newest comment by updatedAt, then by id, from the one paged listIssueComments read.",
+   "check_in_the_app": "Live: listIssues(repo, {creator: <your login>, sort: 'updated'}) lists the check issue first."
+  },
+  {
+   "problem": "W8-host-6 (minor): issues off (410) and a 5xx after retries were both provider_error, and nothing read a 403, or a 404 on a repository the token sees, as 'no permission'.",
+   "u_ids": [
+    "W8-host-6"
+   ],
+   "failing_test_before": "packages/capabilities/test/githost-issues.test.ts, \"the adapter's errors, ETag cache and token\": the 410 case, the no-permission case, and 'GitHub not answering ...' (the stub cases). Also the stand-in's 403 (a read-role edit of another person's comment) and its 410, in the contract.",
+   "how": "There is a new platform ErrorCode, issues_disabled, for GitHub's 410 'Issues are disabled'. A deleted issue's 410 is not_found and keeps status 410. On a 404 when opening an issue, createIssue makes one GET of the repository; if the token sees it, the error is marked details.reason 'no_permission'. issueRefusalOf(e) answers issues_off, no_permission, token_refused, missing, rate_limited or unreachable. details.status is kept, and the older codes are unchanged.",
+   "check_in_the_app": "Live: on a sandbox fork with issues turned off in Settings, createIssue throws code issues_disabled with details.status 410, and issueRefusalOf gives 'issues_off'."
+  },
+  {
+   "problem": "W8-host-7 (minor, never cut): nothing showed that two homes on one host see one issue store, or that a restart keeps no GitHub copy.",
+   "u_ids": [
+    "W8-host-7"
+   ],
+   "failing_test_before": "apps/ui/test/two-installs.test.ts, \"w8-issue-host, wave 8: issue host\" (memory and http). With the harness's old single GitHub client per home, the http restart case read [200, 200, 304, 304] instead of [200, 200, 304, 200] (log /tmp/frbench/fix-w8-issue-host-restart-before.log).",
+   "how": "The harness (two-installs.ts) now builds an http home's GitHubHost at each compose, as fr daemon does, so restart() starts with empty in-memory copies. writesBy counts a GraphQL mutation (the pin, as issue.pin) and no GraphQL query. MEMORY_ACTIONS gains comment.update and issue.pin. The test checks: Ada's comment is listed to Bob with ada / MEMBER / User, and the reverse; each reads the other's role as write; a repeated read is notModified (a 304 on the stand-in); Bob's first read after his restart carries no If-None-Match; neither home holds the ETag on disk.",
+   "check_in_the_app": "F-W8-1 with two homes on forerunner-sandbox: after each daemon restarts once, the first issue read in githost logs or GitHub's audit log is a full 200. No screen changes."
+  },
+  {
+   "problem": "W8-host-8 (major, never cut, security): nothing could tell whether a comment's author has write access. author_association is not write access: MEMBER is any org member, and COLLABORATOR includes the read role.",
+   "u_ids": [
+    "W8-host-8"
+   ],
+   "failing_test_before": "packages/capabilities/test/githost-issues.test.ts, \"a login's role is read from the repository, never from its association; the read is cached with its ETag; a refused read counts as no write access\" (http and memory), plus the stub case \"a permission read that GitHub refuses counts as none\".",
+   "how": "getRepoPermission(repo, login) reads GET /collaborators/:login/permission with the ETag, cached per login and token. It reads role_name, or the legacy permission for a custom role, and anything unknown is none. A refused read (401, 403 or 404) answers none, so it fails closed. GitHub not answering throws. On both stand-ins: the owner reads admin; a write collaborator reads write; a read collaborator reads read; an org member with read base permission reads read although their association is MEMBER; triage and maintain read as themselves; a stranger reads none; a caller without push access reads none for everyone.",
+   "check_in_the_app": "Live: getRepoPermission(sandbox, <your login>) reads admin; getRepoPermission(sandbox, 'octocat') reads none (a public repository answers read; GitHub's answer is the check). With a read-only token, if the owner provides one, every login reads none: confirm that GitHub answers 404 (or 403) there."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "An injection-suite case for the status issue channel (a hostile issue comment), required by the area's security rule.",
+   "why": "This area only returns issue text, as data with its author. No code yet hands that text to a model, so there is no path for the injection runner to exercise; the existing issue_comment ContentSource is unchanged. The contract does have a case in which a comment that gives orders comes back verbatim and nothing moves. The status-issue injection case belongs to w8-status-read's reader, the first code that wraps issue text (wrapUntrusted('issue_comment', url)) for a model. pnpm test:injection passes: 92 of 92."
+  },
+  {
+   "problem": "A 404 'no permission' produced by the stand-in itself (W8-host-6 asks for each reason to come from the stand-in).",
+   "why": "For a missing token permission the stand-in answers 403, as GitHub documents ('Resource not accessible by personal access token'). I found no documented GitHub case that answers 404 on a repository the token can see and that the stand-in could copy honestly. The 403 and 410 reasons are produced by the stand-in. The 404-on-a-seen-repository reason (createIssue, with one GET probe of the repository) is covered by a fetch-stub unit case. The stand-in's permission route does answer 404 to a caller without push access, as GitHub's docs list, and getRepoPermission reads that as none."
+  },
+  {
+   "problem": "CHANGELOG.md [Unreleased], docs/status/UPDATE-LOG.md and docs/requirements.md lines.",
+   "why": "The task forbids editing them. Suggested lines are in notes_for_other_areas."
+  },
+  {
+   "problem": "A docs/user-guide.md paragraph.",
+   "why": "No step a person takes changes: this area builds host calls only."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0 at 94eded5: lint, lint:paths ok (1643 files), typecheck, unit tests 570 files with 6343 passed and 7 skipped, link-check ok (213 files), secret-scan clean (2299 files). The first run exited 1 on lint:paths (node:path in the new test), which 94eded5 fixed. Log: /tmp/frbench/fix-w8-issue-host-check.log"
+  },
+  {
+   "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (46 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped (no FORERUNNER_TEST_PG; packages/state is unchanged)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 107 files, 1557 tests passed (including two-installs.test.ts, 6 cases)"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "40 passed (1.1 min). The local config was copied in and removed afterwards; it was not committed."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed"
+  },
+  {
+   "command": "pnpm exec vitest run packages/capabilities/test/githost-issues.test.ts testenv/test/githost.test.ts",
+   "result": "25 and 40 passed. Before the fix the contract had 15 failed and 10 skipped."
+  },
+  {
+   "command": "two-person journey: node scripts/bench/journeys/two-people.cjs on base cddbfa3 (benches fix-w8-issue-host-before and -before-bob, run from a git-archive copy) and on fix/w8-issue-host (fix-w8-issue-host and -bob)",
+   "result": "Both runs: 15/30 passed, failed (not known): none, 15 known gaps owned by later areas. The issue probe went from OWNER everywhere, no ETag and 404s (before) to MEMBER, ETag with 304, the permission read, the pin and 410 (after). 0 daemon or GitHub tokens in any steps file. Both benches were stopped with --clean, and the base copy was removed."
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"; git status --short",
+   "result": "no matches; working tree clean; fix/w8-issue-host = HEAD = 94eded5; fix/w8-two-homes (cddbfa3) is included"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-w8-issue-host-before/steps/07-08-pull-requests-ada.png",
+   "/tmp/frbench/fix-w8-issue-host-before-bob/steps/07-08-pull-requests-bob.png",
+   "/tmp/frbench/fix-w8-issue-host-before/steps/issue-probe.json",
+   "/tmp/frbench/fix-w8-issue-host-before/steps/two-people-result.json"
+  ],
+  "after": [
+   "/tmp/frbench/fix-w8-issue-host/steps/07-08-pull-requests-ada.png",
+   "/tmp/frbench/fix-w8-issue-host-bob/steps/07-08-pull-requests-bob.png",
+   "/tmp/frbench/fix-w8-issue-host/steps/issue-probe.json",
+   "/tmp/frbench/fix-w8-issue-host/steps/two-people-result.json"
+  ]
+ },
+ "tests_changed_for_design": [
+  {
+   "test": "testenv/test/githost.test.ts, \"w8-two-homes, wave 8: two users, an organisation and a collaborator's role\"",
+   "why": "On GitHub the read role may open issues and comment, and the threat W8-host-8 guards against (a read-only person's comment on the status issue) needs the stand-in to allow it. Carol's issue now expects 201 instead of 403. The test now also checks that a contents push and a new label are still 403, and that the push is 201 once she has the write role. No assertion was weakened: the refused writes are still asserted."
+  },
+  {
+   "test": "apps/ui/test/two-installs.ts (harness): home.restart() and writesBy",
+   "why": "Not a test assertion. An http home's GitHub client is now built at each compose, as fr daemon builds its own, so the new in-memory ETag and permission copies end with the daemon. writesBy no longer counts a GraphQL query as a write. Without this change, the W8-host-7 restart case read a 304 after the restart. The existing w8-two-homes cases pass unchanged (6/6)."
+  }
+ ],
+ "new_problems": [
+  "Pre-existing in the stand-in: GET /repos/:o/:r/issues/comments (the repository-wide comment list) is registered after GET /issues/:number. Hono runs the :number handler first, and intParam('comments') throws 404, so the repository-wide list always answers 404 (routes-issues.ts, around lines 127 and 241). Nothing uses it today. The fix is to register it before /issues/:number, with a case in testenv/test/githost.test.ts.",
+  "Pre-existing in the stand-in: repoJson's permissions.admin is true for any collaborator with push access and a repo-scoped classic token, because checkRepoAccess(administration, write) passes for anyone affiliated. getBranchRules' 'unreadable' rule and w8-shared-repo's access cases may read that admin flag. getRepoPermission/roleOf gives the true role.",
+  "The real text of GitHub's GraphQL error for a fourth pinned issue is unknown here. The adapter does not depend on it: it reads the pinned count first, and on an UNPROCESSABLE answer it reads the count again. The live check should still confirm that a fourth pinIssue answers 'limit' and that nothing gets unpinned.",
+  "GitHub's documentation for GET /collaborators/{username}/permission lists only 200 and 404. Older behaviour answered 403 'Must have push access to view collaborator permission.' The adapter reads both as none (it fails closed), but the live check should record which one GitHub sends to a read-only token."
+ ],
+ "notes_for_other_areas": [
+  "For w8-status-write, w8-status-read and w8-github-feed: the port (packages/capabilities/src/githost/types.ts). getIssue(repo, n); listIssues(repo, {state, labels, creator, sort, direction}), which is paged and leaves out pull requests; listIssueComments(repo, n, {etag?, since?}) returns {notModified, etag, comments: IssueCommentInfo[]}; getIssueComment(repo, id) returns null when the comment is deleted; updateIssueComment(repo, id, body) adds AGENT_TEXT_MARKER, as commentOnIssue does; pinIssue(repo, n) returns 'pinned' | 'limit' | 'forbidden'; getRepoPermission(repo, login) returns RepoRole; RepoInfo.hasIssues. Helpers: hasWriteAccess(role) is true for write, maintain and admin (D-W8-37: the one source of write access; association is only a first filter); newestCommentPerAuthor(comments) for amendment 3's activity rule; issueRefusalOf(e) returns issues_off | no_permission | token_refused | missing | rate_limited | unreachable, and each caller turns it into its one sentence. The new platform ErrorCode is issues_disabled.",
+  "ETag reads are automatic in GitHubHost for getIssue, listIssues, listIssueComments, getIssueComment and getRepoPermission (an in-memory LRU of 500, per URL and token). Pass the etag from the previous read to get notModified. w8-github-feed: to make listPullRequests conditional as well, swap its request() for conditionalGet/pagedConditional in github.ts. That is a one-line change in this area's file and needs no port change.",
+  "getRepoPermission fails closed: GitHub needs push access to read anyone's permission, so a read-only Forerunner reads every writer as none and counts no announcements. A comment can only make Forerunner more careful.",
+  "MemoryGitHost roles: repositories follow roles only once declared, through setOrg(org, {members, basePermission}) or setCollaboratorRole(repo, login, role). An undeclared repository answers 'write' for every login and NONE association for non-owners. In the harness's memory mode, call two.memory.setOrg('team', {members: ['ada', 'bob'], basePermission: 'write'}) to get MEMBER, as the http stand-in gives. w8-shared-repo owns the per-login permissions and should build them on these same roles (the roles map, roleOn and governed in memory.ts).",
+  "Stand-in (testenv): FakeGitHost.setIssuesEnabled, pinnedIssues, setOrgBasePermission and createOrg({basePermission}). setCollaboratorRole takes admin, maintain, write, triage, read or none (w8-two-homes' setter, extended compatibly). The read role and read-base org members may now open issues and comment, as on GitHub; every other write by them is 403. w8-status-read's read-only collaborator and read-member injection cases rely on this. HostStore.roleOf and associationOf are available. The request log has ifNoneMatch and graphql {operation, kind}, and so do the bench's githost-requests.jsonl lines.",
+  "Harness (apps/ui/test/two-installs.ts, owned by w8-two-homes): home.restart() now builds a new GitHub client for an http home. writesBy excludes GraphQL queries and maps StatusPinIssue to 'issue.pin'. HostWriteAction gains 'issue.pin'. The memory ops updateIssueComment and pinIssue map to 'comment.update' and 'issue.pin'.",
+  "Doc sentences of w8-two-homes changed (old -> new). testing.md: 'is refused every write (403, as GitHub answers a read collaborator; the test writes an issue)' -> 'is refused every write but opening an issue and commenting (403, as GitHub answers a read collaborator; w8-issue-host: the read role opens issues and comments, as on GitHub; the test pushes a file and makes a label)'. apps.md: '`home.restart()` composes it again on the same home and vault;' -> '... on the same home and vault, with a new GitHub client (w8-issue-host: its in-memory ETag and permission copies end with the daemon);'.",
+  "No open owner questions were assigned to this area (wave8-plan owner_questions for w8-issue-host: none). D-W8-13's default 'not locked' holds: there is no lock call on the port.",
+  "Suggested CHANGELOG [Unreleased] line, not written: 'Internal: Forerunner's GitHub client can now keep a noticeboard issue: it lists an issue's comments with their authors, edits a comment in place, pins an issue, reads repeated pages with ETags (a 304 costs no rate-limit point), reads a person's write access on a repository, and tells when issues are turned off. Nothing writes an issue yet.'",
+  "Suggested UPDATE-LOG line: 'w8-issue-host (2026-11-24): W8-host-1..8 done on fix/w8-issue-host (94eded5). The contract runs on the stand-in over HTTP and on MemoryGitHost (25 cases); the two-home case covers memory and http; the stand-in gained ETag and 304, has_issues and 410, associations, roles, the permission read and POST /graphql. Two-person journey unchanged at 15/30 (15 known). Check in the app: none (host calls only); the live steps are in the report.'",
+  "final_check_additions suggestion for F-W8-1: record the real GitHub answers to (a) a fourth pinIssue, (b) the permission read by a read-only token (403 or 404), and (c) a 304 on listIssueComments with rateLimit().remaining unchanged."
+ ]
+}

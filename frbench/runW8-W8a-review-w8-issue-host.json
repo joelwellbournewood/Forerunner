@@ -1,0 +1,83 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "Worktree detached at fix/w8-issue-host (94eded5); pnpm install --frozen-lockfile. This area adds no screens, so I tested its acceptance at the host boundary (the real adapter against the real stand-in, on the bench and in tests), and walked the screens next to it.\n\nBench: `review-w8-issue-host`, daemon on 49271, UI on 2871, stand-in GitHub on 49273 with `--users ada,bob --org team`, `--provider bench`. One bench only, per the machine rule.\n\n(1) The fixer's raw-HTTP probe (`/tmp/frbench/review-w8-issue-host/steps/issue-probe.json`) shows: issue created 201 with MEMBER; comment list with ada and bob both MEMBER and an ETag; the repeat with If-None-Match is a 304; the permission read gives role_name write; POST /graphql StatusPinIssue answers isPinned true; with has_issues false the issue list is 410 'Issues are disabled for this repo'.\n\n(2) My adapter probe (`/tmp/frbench/review-w8-issue-host/steps/adapter-probe.json`) ran the real GitHubHost, Ada through her home's GitHub proxy and Bob direct:\n- Bob reads Ada's comment as ada / MEMBER / User; his repeat read is notModified with the same ETag.\n- After Ada edits her comment, Bob's read is modified and shows the new body. newestCommentPerAuthor picks the right comments.\n- Permission reads: Ada reads bob as write, Bob reads ada as write, 'nobody' reads none.\n- Pins: pinned, pinned again, then a third pinned and the fourth and fifth 'limit'.\n- Issues off: createIssue, listIssueComments and commentOnIssue each give issues_disabled with status 410, and issueRefusalOf gives issues_off.\n- Page boundary: on an issue with exactly 100 comments, Bob adds a 101st (\"I now work on the menu too\"). Ada's same client then answers 100 comments with notModified true; a fresh client reads 101. This is blocking 1.\n\nThe request log (`githost-requests.jsonl`) carries ifNoneMatch and graphql {operation, kind}. A scan of every bench file found no GitHub token outside githost.json.\n\n(3) UI walk of Ada (`/tmp/frbench/review-w8-issue-host/steps/01..07-r*.png/.txt`): Home, Settings, then a project made from a brief on team/shared (the same POST /projects the UI sends). The plan card appeared in the Inbox (`03-r03-inbox-plan.png`); I approved it and the session ran to the end. Overview (`04-r04-project.png`) reads \"Done: all 5 tasks. 5 pull requests wait for you to merge.\" with six pull requests (the docs PR and five task PRs, Merge buttons, the merges-first order). Tasks, Reviews and Updates screens are fine. problems.jsonl was never written. The stand-in log has no unexpected 4xx; the only 410s and 404s came from my probes, plus the app's normal 404 when it checks for .forerunner/project.json.\n\nThe screens next to this area match the core-experience design. This area changes none of them, so it brings no on-screen design violation.\n\n(4) Both people's screens: the fixer's two-bench runs (before at cddbfa3, after at 94eded5) both scored 15/30, with no failures outside the known gaps that later areas own. I checked the result JSONs and Bob's after screenshot (`/tmp/frbench/fix-w8-issue-host-bob/steps/07-08-pull-requests-bob.png`).\n\nFailing first, verified by reverting the fix's sources locally and keeping its tests:\n- At cddbfa3, githost-issues.test.ts had 15 failed and 10 skipped (as claimed), and githost.test.ts had 8 failed.\n- At claude/nifty-knuth-f9udt0 the contract had 5 failed and 20 skipped.\n- With only the harness (two-installs.ts) reverted, the http restart case read [200, 200, 304, 304] instead of [200, 200, 304, 200] (as claimed).\nAll files were restored; the worktree is clean.\n\nSuites at 94eded5:\n- githost-issues + githost tests: 65/65.\n- flock pnpm check: exit 0; 570 files, 6343 passed and 7 skipped; lint:paths ok; secret-scan clean.\n- pnpm docs:check --base claude/nifty-knuth-f9udt0: ok (46 files).\n- UI vitest: 107 files, 1557 passed.\n- pnpm test:e2e: 25 passed, 1 skipped.\n- pnpm test:integration: 30 passed, 83 skipped (no Postgres).\n- pnpm test:injection: passed.\n\nI did not re-run Playwright (no UI code changed; the fixer reports 40 passed).\n\nThe bench is stopped; its home, browser profile, stand-in repositories and githost.json are deleted. Steps and logs are kept in `/tmp/frbench/review-w8-issue-host/`.",
+ "blocking": [
+  {
+   "issue": "W8-host-2 (never cut): the paged ETag read misses an item added after an exactly full last page, and says nothing changed. In pagedConditional, a page answered 304 is served from the copy with the copy's Link header. When the last page held exactly pageSize items and one more is added at the end (comments are oldest first), page 1's body does not change, so its ETag does not either. The stand-in answers 304, the adapter reuses the old Link (no next page), never asks for page 2, and listIssueComments returns notModified: true with the old list. The port promises the opposite: 'notModified says whether anything changed since'. capabilities.md says 'A list's ETag joins its pages' ETags, so it changes when any page changes', which does not hold for an appended page. The contract's paging case uses 105 comments and never hits this boundary.",
+   "evidence": "Stand-in probe (`/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/probe2/page-boundary.mts`, run with pnpm exec tsx):\n- pageSize 3: 'after one more comment, same client: 3 comments, notModified = true'; 'a fresh client reads: 4 comments'; requests [per_page=3 200, per_page=3 304, then the fresh client's per_page=3 200 and page=2 200].\n- pageSize 100 (production default): 'after one more comment, same client: 100 comments, notModified = true'; 'a fresh client reads: 101 comments'.\nOn the bench (`/tmp/frbench/review-w8-issue-host/steps/adapter-probe.json`), the 101st comment was Bob's 'I now work on the menu too'. Ada's GitHubHost, reading through her proxy with the earlier etag, gave {count: 100, notModified: true}; a fresh client gave 101.\nFailure for D9: once a status issue holds a multiple of 100 comments, a new writer's announcement stays invisible to the other Forerunner's poller. Its reader (w8-status-read) skips work on notModified. This lasts until something on page 1 changes, so Bob's work can be done twice. The same holds for listIssues with direction asc, and for any list w8-github-feed moves onto pagedConditional, as the report suggests.",
+   "expected": "A conditional paged read never says not modified while an item exists past its copied last page. For example: when a page is served from the copy, holds a full page (length === pageSize) and the copy has no next link, also read page N+1 (or read the last full page without If-None-Match). Add a contract case on the stand-in over HTTP: a GitHubHost with a small pageSize (2 or 3); exactly pageSize comments, read, add one, read with the etag; expect notModified false and every comment. It should fail before the fix. Correct the capabilities.md sentence.",
+   "where": "packages/capabilities/src/githost/github.ts:470"
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "W8-host-1: the port has getIssue, listIssues (paged, creator/labels/sort/direction), listIssueComments with authors and an ETag, getIssueComment (null when deleted), updateIssueComment (keeps the mark, no delete), pinIssue (pinned/limit/forbidden), getRepoPermission and RepoInfo.hasIssues; IssueInfo and IssueCommentInfo carry the fields listed, with no editor field.",
+   "holds": true,
+   "note": "Read in types.ts, github.ts and memory.ts. The contract passes on both stand-ins and fails before the fix. The bench probe confirms pinned → limit at three and the field set."
+  },
+  {
+   "claim": "W8-host-2: ETag reads with If-None-Match; a 304 answered from an in-memory LRU (500) keyed by the token hash and URL; paged lists past 100; nothing on disk; a next page on another origin is refused before the token goes there.",
+   "holds": false,
+   "note": "The ETag, 304, per-token key, other-origin refusal and paging past 100 all hold (tests, and the bench log shows ifNoneMatch). But the paged conditional read gives a false notModified at an exactly full last page (blocking 1), so 'notModified says whether anything changed' does not hold in general."
+  },
+  {
+   "claim": "W8-host-3: the stand-in gives ETags and 304 (with a rate-limit refund), has_issues and 410 on issue routes (pull request comments stay on), sort/direction, associations from owner/org/collaborators, a Bot type for [bot] logins, the permission route (404 without push access), and POST /graphql with StatusPinnedIssues/StatusPinIssue and at most three pins.",
+   "holds": true,
+   "note": "Read routes-graphql.ts, routes-collaborators.ts, routes-issues.ts, store.ts and fake-git-host.ts. githost.test.ts passes (8 cases fail without the fix). The raw probe on my bench reproduces each answer."
+  },
+  {
+   "claim": "W8-host-4: MemoryGitHost implements the same calls with the seams setOrg, setCollaboratorRole, setIssuesEnabled, pinnedIssues and removeIssueComment; association is worked out at each read; an edit moves updatedAt; writes are recorded.",
+   "holds": true,
+   "note": "The memory contract describe passes (10 cases fail before). A repository with no roles declared answers 'write' for every login, as documented."
+  },
+  {
+   "claim": "W8-host-5: listIssues by creator and label, sorted by updated; newestCommentPerAuthor from one paged read.",
+   "holds": true,
+   "note": "Contract case passes on both stand-ins; the bench probe confirms newestCommentPerAuthor."
+  },
+  {
+   "claim": "W8-host-6: a new issues_disabled code for 'Issues are disabled' 410; a deleted issue's 410 is not_found; a 404 on createIssue in a repository the token sees is marked no_permission; issueRefusalOf maps every reason; details.status is kept; older codes are unchanged.",
+   "holds": true,
+   "note": "Stub cases pass, and the stand-in's 410 and 403 cases pass. The stand-in itself never produces the 404-as-no-permission reason; this is in not_done with a reason, and W8-host-6 is not a never-cut item. The 404 probe applies to createIssue only."
+  },
+  {
+   "claim": "W8-host-7: the harness builds an http home's GitHubHost at each compose; the two-home case shows ada/MEMBER to Bob and the reverse; a restart's first read is a full 200 with no If-None-Match; nothing is on disk.",
+   "holds": true,
+   "note": "Verified failing first: with the old harness the case reads [200,200,304,304]. compose.ts builds one GitHubHost per daemon, so the harness change matches production."
+  },
+  {
+   "claim": "W8-host-8: getRepoPermission reads role_name (or the legacy permission), cached per login and token with the ETag; a refused read (401/403/404) answers none; GitHub not answering throws; on both stand-ins an org member with read base permission reads read although their association is MEMBER.",
+   "holds": true,
+   "note": "Contract and stub cases pass. On the bench, permissions read write/write/none."
+  },
+  {
+   "claim": "The tests named fail before the fix.",
+   "holds": true,
+   "note": "Confirmed by reverting the sources locally to cddbfa3 and to claude/nifty-knuth-f9udt0 with the tests kept, then restoring."
+  },
+  {
+   "claim": "No test was weakened: carol's (read role) issue creation in the w8-two-homes case changed from 403 to 201, for a design reason.",
+   "holds": true,
+   "note": "GitHub lets the read role open issues and comment. The changed test now also asserts that a contents push and a label creation stay 403, and that the push is 201 once carol has the write role. That is a real reason, not a weakening."
+  },
+  {
+   "claim": "Validation: pnpm check, test:integration, test:e2e, UI vitest, test:injection and docs:check all pass.",
+   "holds": true,
+   "note": "Re-ran all of them except Playwright; all exit 0 with the same counts."
+  },
+  {
+   "claim": "The status-issue injection case belongs to w8-status-read, not this area.",
+   "holds": true,
+   "note": "wave8-plan.json puts the record-channel status-issue case in w8-status-read (W8-read-8) and w8-status-write. This area hands no issue text to a model; its contract has a case where a comment giving orders comes back verbatim."
+  }
+ ],
+ "non_blocking": [
+  "pinIssue calls getIssue outside its try block, so a 403 or 401 on that read throws tool_not_allowed or provider_auth instead of answering 'forbidden' (github.ts pinIssue). The re-read after UNPROCESSABLE (three pins taken in a race) is never tested: the adapter checks the pin count first, so the contract never reaches it. A fetch-stub case would cover it.",
+  "W8-host-6's 404-as-no_permission probe exists only on createIssue. A 404 on commentOnIssue or updateIssueComment in a repository the token sees reads as 'missing'. On GitHub these are usually 403, so the harm is small; the w8-status-write caller should know about it.",
+  "conditionalGet reads the token for the cache key and request() reads it again. If the vault token changes between the two reads, the answer is stored under the old token's key. The window is tiny and the next read with the new token is a full 200 anyway.",
+  "Stand-in fidelity: HostStore.affiliations(login, 'write') now leaves out orgs whose base permission is read, and canCreateRepo uses those affiliations, so a read-base member can no longer create repositories in the org. On GitHub that is a separate member privilege. No current test depends on it.",
+  "The fixer's new_problems hold. The repository-wide GET /repos/:o/:r/issues/comments is shadowed by /issues/:number, so it is always 404 (this predates the area), and the new issuesOn(repo) on it can never be reached. repoJson's permissions.admin is still loose for collaborators; w8-shared-repo should read the role through roleOf.",
+  "I did not re-run Playwright (no UI code changed in this area; the fixer reports 40 passed). I walked one bench (Ada) because of the one-bench rule; the two-person screens are the fixer's (15/30 both before and after, no failure outside the known gaps).",
+  "Live check for the session lead (in addition to the fixer's steps): on the sandbox issue, post exactly 100 comments, call listIssueComments(repo, n), add a 101st, then call listIssueComments(repo, n, {etag}). Record whether GitHub answers page 1 with a 304 (it would if its ETag covers only the body). That shows how real GitHub behaves at the boundary in blocking 1."
+ ]
+}

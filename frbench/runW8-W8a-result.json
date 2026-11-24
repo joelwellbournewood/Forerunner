@@ -1,0 +1,1318 @@
+{
+ "wave": 34,
+ "areas": [
+  {
+   "key": "w8-two-homes",
+   "fix": {
+    "area": "w8-two-homes",
+    "branch": "fix/w8-two-homes",
+    "head_sha": "cddbfa378ee9547a06cc965d5b19d94e506fadda",
+    "commits": [
+     {
+      "sha": "42fbce880f42d29bd2c5ebeb42a91b2b4e81187e",
+      "subject": "ui: the model watch's answer waits for /me; the person's zone redraws every screen (L4i-left-3, L4i-left-62)"
+     },
+     {
+      "sha": "79216b223d1f0b0e3449c1ff4121197f82cc14f2",
+      "subject": "runtime tests: the continuation and hands-off cases count sessions only once nothing more can start (L4i-left-18)"
+     },
+     {
+      "sha": "089d5fbaab48fc382ed76d1c0373926188fcb3ff",
+      "subject": "capabilities: MemoryGitHost gets one view per GitHub account over one shared host (W8-homes-2)"
+     },
+     {
+      "sha": "01e0013178cdcadcc2b94b61c6958794ba9e0861",
+      "subject": "ui tests: the two-home harness: Ada's and Bob's Forerunners on one GitHub, driven through the UI's client (W8-homes-1, W8-homes-4)"
+     },
+     {
+      "sha": "77da676d71ba150656bc0dd6b91010b1ce85e663",
+      "subject": "bench: the recorder cuts every daemon token from what it writes, console lines included (L4i-left-54)"
+     },
+     {
+      "sha": "bd98b38c77c95b7318a3c89f416d6f01ce29430f",
+      "subject": "testenv: the stand-in GitHub gives a collaborator a role: write, read or none (W8-homes-3)"
+     },
+     {
+      "sha": "35b881409d9dc2063fb83e37ae1c5f06567167f6",
+      "subject": "bench: two people's benches on one GitHub, GitHub off for one home, the two-person journey (W8-homes-3, W8-homes-4, W8-homes-5)"
+     },
+     {
+      "sha": "4bb7fa20de26a9b44d2d46a25689a16d9eaa6f59",
+      "subject": "docs: validation rule 11, two people's Forerunners tested as two people run them (W8-homes-6)"
+     },
+     {
+      "sha": "cddbfa378ee9547a06cc965d5b19d94e506fadda",
+      "subject": "bench: the two-person journey's screenshots show the pages, not the setup assistant (W8-homes-5)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "L4i-left-3 (never cut): on the Updates page, the model watch's Adopt selected, Run evaluations, Ignore and Remind me later buttons could be pressed before GET /me answered. The answer then went out as by: \"human\" (me?.id ?? \"human\") instead of the person's id. No U-entry; the u_ids field holds the item id.",
+      "u_ids": [
+       "L4i-left-3"
+      ],
+      "failing_test_before": "apps/ui/test/me-races.test.tsx, describe \"w8-two-homes, wave 8: state read from /me before it answers\": the model watch answer sends nothing until /me answers, then {decision:\"adopt\", by:\"human_alice\", adopt:[\"rec_1\",\"rec_2\"]}",
+      "how": "UpdatesPage.tsx: answerOff = busy !== null || !me?.id disables the four answer buttons. answer() returns early without me.id and sends by = me.id. The test harness holds GET /me until the test releases it.",
+      "check_in_the_app": "Open More > Updates while a model watch recommendation is waiting. The four buttons stay greyed until the app knows who you are. Press Adopt selected: the recommendation is answered in your name (Settings > Changes shows you, not 'human')."
+     },
+     {
+      "problem": "L4i-left-62 (cut line): setPersonZone ran inside the store's reducer, a side effect in a pure function. A zone change also did not redraw pages already on screen, because the Shell Outlet element is stable and AppRoutes did not re-render. A session page kept showing the old zone's times until a reload. The setup assistant's zone reached the app only after a restart.",
+      "u_ids": [
+       "L4i-left-62"
+      ],
+      "failing_test_before": "apps/ui/test/me-races.test.tsx: the session page heading goes from \"Atlas · session at 21:00\" to \"Atlas · session at 15:00\" after setupProfile to America/New_York and an agent.changed; also the setup assistant's zone reaches the store",
+      "how": "store.ts: setPersonZone moved out of the reducer into dispatch, before the listeners run, only when personZoneOf(state) changes. routes.tsx: AppRoutes subscribes with useUiState(personZoneOf), so every page redraws. SetupPage.tsx: refreshIdentity after setupProfile. Mobile store: personZone is in its state and MobileRoutes subscribes to it.",
+      "check_in_the_app": "Open a session page. In Settings (or the setup assistant's first step), change Time zone from Europe/Zurich to America/New_York and save. Go back to the session page without reloading: its times now show in New York time."
+     },
+     {
+      "problem": "L4i-left-18: the continuation and hands-off runtime tests counted sessions while a start could still be waiting in the scheduler's queue. On a busy machine they failed now and then.",
+      "u_ids": [
+       "L4i-left-18"
+      ],
+      "failing_test_before": "packages/runtime/test/continuation.test.ts and packages/runtime/test/start-by-itself.test.ts (intermittent: a session count taken while a start was still queued)",
+      "how": "A nothingMore(rt) helper runs settleSessions(rt), then asserts rt.scheduler.pendingFor(agent) is undefined. It runs before every count of sessions. Both files passed five runs in a row.",
+      "check_in_the_app": "No change a person sees: these are test-only fixes. Run pnpm vitest run packages/runtime/test/continuation.test.ts packages/runtime/test/start-by-itself.test.ts five times; all are green."
+     },
+     {
+      "problem": "W8-homes-2 (never cut): MemoryGitHost had one login. A second person was faked with Object.create(host), which shared state but could not tell which account wrote what. A test could therefore not check who wrote which pull request or comment.",
+      "u_ids": [
+       "W8-homes-2"
+      ],
+      "failing_test_before": "packages/capabilities/test/githost-memory-views.test.ts (4 tests; before the change: host.asLogin is not a function)",
+      "how": "A private MemoryHostWorld holds the repositories, projects, merges and the write log, and every view shares it. asLogin(login) returns a view for that account, and writesBy(login) lists its writes. Every write method records {login, op, repo, number?, detail?}. openPullRequestAs writes through asLogin(author). In onerepo-together.test.ts, Object.create(host) became host.asLogin(\"bob\").",
+      "check_in_the_app": "No screen of its own: test infrastructure. Its effect shows in the two-home harness and journey: each person's pull requests carry their own login."
+     },
+     {
+      "problem": "W8-homes-1 and W8-homes-4, harness part (never cut): no test could run two people's Forerunners (each its own home, store, vault, device row and GitHub login) against one GitHub through the UI's client, with a restart and with GitHub out of reach for one home only.",
+      "u_ids": [
+       "W8-homes-1",
+       "W8-homes-4"
+      ],
+      "failing_test_before": "apps/ui/test/two-installs.test.ts, describe \"w8-two-homes, wave 8: harness\", memory mode. With the old Object.create view, Bob's task pull request had authorLogin 'ada': \"expected 'ada' to be 'bob'\" (log /tmp/frbench/fix-w8-two-homes-harness-before.log).",
+      "how": "apps/ui/test/two-installs.ts has composeTwo({host:'memory'|'http'}). The memory host is a MemoryGitHost with a per-login view. The http host is the testenv stand-in GitHub, with users ada and bob, org team, team/shared and team/empty, and a classic token each. Each Home has client, restart(), githubOff()/githubOn() (refused-connection errors on that home only), holdModelCalls() and modelCalls. TwoHomes has writesBy(login) with a normalised action, pullRequests(), and close(), which settles, closes and runs removeHomes. Four cases in both modes: install ids differ; Bob's New project gets a 409 with canWorkTogether and no take-over; Work together gives the same id and writes nothing; each home lists only its own pull requests; there are no cross writes; both restarts keep the person, the device id and the together line; GitHub off for Bob gives \"GitHub did not answer, so the project cannot be checked. Try again.\"",
+      "check_in_the_app": "Start two benches as in scripts/bench/README.md, 'Two people on one GitHub'. In Ada's app, make 'Team site' on team/shared. In Bob's app, choose New project on team/shared: he is offered Work together and no Take it over. Press Work together. Bob's Overview shows 'Shared on GitHub with another Forerunner: each keeps its own tasks.' After restart-daemon.mjs on Bob's bench, the line is still there."
+     },
+     {
+      "problem": "L4i-left-54 (security, never cut): the bench recorder wrote console lines to steps/problems.jsonl without redaction. After a daemon restart, a 'Failed to load resource ... /events?token=...' line carried the daemon token in its text and location URL.",
+      "u_ids": [
+       "L4i-left-54"
+      ],
+      "failing_test_before": "scripts/bench-scripts.test.ts, describe \"w8-two-homes, wave 8: the bench recorder writes no daemon token (L4i-left-54)\" (2 tests; before: recorder.redactRecord is not a function, and the raw line was written)",
+      "how": "recorder.cjs: stripToken now covers ?token= and &token= up to a quote or bracket. Every daemon token this process has seen (openApp, each followDaemon reconnect, bench.json at each write) is remembered. recordProblem passes each record through redactRecord, which cleans every string recursively.",
+      "check_in_the_app": "Walk any bench journey that restarts the daemon, such as two-people.cjs (step 16). Then grep steps/problems.jsonl for the token in bench.json: there is no match, only token=[REDACTED]. The 2026-11-24 walk had 0 matches on both benches."
+     },
+     {
+      "problem": "W8-homes-3: the bench's stand-in GitHub had one user, 'bench'. A second bench could not share it, and the stand-in had no read-only collaborator. Two people's Forerunners could not be walked as people run them.",
+      "u_ids": [
+       "W8-homes-3"
+      ],
+      "failing_test_before": "testenv/test/githost.test.ts \"w8-two-homes, wave 8: two users, an organisation and a collaborator's role\" (setCollaboratorRole did not exist). scripts/bench-scripts.test.ts \"start.mjs refuses GitHub options that do not fit, before it starts anything\" (the options did not exist).",
+      "how": "testenv: repository records have readers; setCollaboratorRole(repo, login, write|read|none) sets the role; a reader can see and read the repository, and every write is answered 403. githost-server.ts takes --users ada,bob, --org team, --members and --collaborators login=role; the request log names each call's login. start.mjs takes --githost-shared <bench> and --githost-user <login>; the owning bench lists the second bench under sharedWith; options that do not fit are refused before anything starts. lib.mjs has sharedGithost, githostLogin and startGithubProxy.",
+      "check_in_the_app": "node scripts/bench/start.mjs --name ada --daemon-port 49260 --ui-port 2860 --fresh --provider bench --githost 49262 --users ada,bob --org team; then node scripts/bench/start.mjs --name bob --daemon-port 49261 --ui-port 2861 --fresh --provider bench --githost-shared ada --githost-user bob. In each app, Settings shows GitHub connected and team/shared can be chosen. Each pull request on the stand-in is by its own person's login."
+     },
+     {
+      "problem": "W8-homes-4, bench part: the bench had no way to make GitHub unreachable for one home while the other home still reached it.",
+      "u_ids": [
+       "W8-homes-4"
+      ],
+      "failing_test_before": "scripts/bench-scripts.test.ts \"cut.mjs: GitHub off for one bench refuses its connections while the other bench still reaches GitHub; on again, it answers\" (new script)",
+      "how": "github-proxy.mjs gives each bench a TCP proxy to the stand-in, used as the daemon's GitHub API base. It closes its port while <bench>/github-cut exists, and records each change in github-proxy.json. cut.mjs <bench> github off|on writes or removes that file and waits for the state. stop.mjs ends the proxy.",
+      "check_in_the_app": "With both benches up, run node scripts/bench/cut.mjs bob github off. Bob's Overview of Team site says 'GitHub did not answer, so the pull requests are not listed. Try again later.' Ada's still lists her pull requests. Run cut.mjs bob github on: Bob's list comes back. The journey measured bob +0 and ada +4 requests while cut. Screenshot: /tmp/frbench/fix-w8-two-homes-bob/steps/08-13-github-off-bob.png"
+     },
+     {
+      "problem": "W8-homes-5: no bench journey walked two people's Forerunners, so wave 8's later areas had no shared before/after measure.",
+      "u_ids": [
+       "W8-homes-5"
+      ],
+      "failing_test_before": "scripts/bench-scripts.test.ts \"the journey names the 16 steps in order; each known gap names its area; an unwalked step holds only known gaps\" (new). Before the cddbfa3 fix, the journey's screenshots showed the setup assistant, not the pages (seen in the first walk's 03-03-work-together-bob.png).",
+      "how": "journeys/two-people-checks.cjs lists the 16 steps of w8-journey with 30 checks; each D9 gap is marked known, with its owning area. journeys/two-people.cjs walks them through the daemon routes, uses the stand-in's request log, cut.mjs and restart-daemon.mjs, and takes screenshots of both apps at each step (pressing Set up later first). It writes two-people-result.json and exits 1 only when a check that is not known fails. recorder.cjs has openTwo. stop.mjs --clean removes a stopped bench's files once every recorded PID is gone; it keeps steps/, bench.json and any --home outside the bench root.",
+      "check_in_the_app": "node scripts/bench/journeys/two-people.cjs ada bob on the two benches. Result: 15/30 passed; failed (not known): none; 15 known gaps, each with its owner. Then node scripts/bench/stop.mjs --name bob --clean and --name ada --clean."
+     },
+     {
+      "problem": "W8-homes-6: wave 8's test rule was written nowhere a fixer reads. validation.md and testing.md said nothing of two homes on one GitHub, and the 2026-11-02 'Postgres every time' rule still stood.",
+      "u_ids": [
+       "W8-homes-6"
+      ],
+      "failing_test_before": "none (docs). pnpm docs:check --base claude/nifty-knuth-f9udt0 passes.",
+      "how": "validation.md has a new rule 11: two composed homes against one stand-in GitHub, driven through the UI's client; what each person sees and what each login wrote; a restart case; GitHub off for one home; the two-person journey walked before and after, with known marks removed; the stand-in model only; FORERUNNER_TEST_PG only for packages/state changes. The author's and reviewer's checklists point to it. testing.md has the harness, the testenv roles, and the bench and journey section. scripts/bench/README.md has the options, the recipe, cut.mjs, the journey, openTwo and stop --clean.",
+      "check_in_the_app": "Read docs/maintainers/validation.md, rule 11, and scripts/bench/README.md, 'Two people on one GitHub'."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "W8-homes-5 beyond the three named checks: 15 of the journey's 30 checks are known D9 gaps. Steps 6, 10, 11, 12, 14 and 15 are recorded as not walked: the announcements, the merged-work reading, paused work, the status issue comment, chat from GitHub and the first-person Updates line.",
+      "why": "These features do not exist yet. Each gap is marked known, with the wave 8 area that builds it (w8-shared-repo, w8-repo-guide, w8-status-read, w8-status-write, w8-github-feed). That area removes the mark when the check passes. This is the cut line named in the task."
+     },
+     {
+      "problem": "L4i-left-62 on the phone: the mobile store and routes now follow personZone, but there is no end-to-end check.",
+      "why": "The shared state service's /me sends no timezone, so the phone's personZone stays null. Nothing on the phone can change zone until the state service sends one (listed under new problems)."
+     },
+     {
+      "problem": "CHANGELOG.md [Unreleased] and docs/status/UPDATE-LOG.md lines for this area (W8-homes-6 names CHANGELOG).",
+      "why": "The task forbids editing them. Suggested lines are in notes_for_other_areas."
+     },
+     {
+      "problem": "The user guide is unchanged.",
+      "why": "The only person-facing changes are the model watch buttons waiting for the person's identity and the zone redrawing pages. Neither changes a step the guide describes."
+     }
+    ],
+    "validation": [
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm check (lint, lint:paths, typecheck, unit tests, docs:links, secrets:scan)",
+      "result": "exit 0; 569 test files, 6311 passed, 7 skipped; link-check ok (213 files); secret-scan clean (2296 files). It ran at 4bb7fa2; after cddbfa3 (one .cjs change), pnpm lint was re-run (no errors) and so was docs:check."
+     },
+     {
+      "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (35 files). Without --base it checks nothing, because origin/main is not in this worktree."
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+      "result": "exit 0; 5 files passed, 7 skipped; 30 tests passed, 83 skipped (no FORERUNNER_TEST_PG; this area does not change packages/state)"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+      "result": "exit 0; 13 files passed; 25 tests passed, 1 skipped"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0; 107 files, 1555 tests passed (including me-races.test.tsx and two-installs.test.ts)"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm exec playwright test --config playwright.local.config.ts",
+      "result": "40 passed (1.1 min); the local config was copied in for the run, removed afterwards, and never committed"
+     },
+     {
+      "command": "cd apps/ui && pnpm exec playwright test --config playwright.local.config.ts e2e/updates.spec.ts --repeat-each 5",
+      "result": "10 passed (the Updates page touched by L4i-left-3)"
+     },
+     {
+      "command": "pnpm exec vitest run testenv/test/githost.test.ts scripts/bench-scripts.test.ts",
+      "result": "2 files, 61 tests passed"
+     },
+     {
+      "command": "pnpm exec tsc -p tsconfig.node.json --noEmit",
+      "result": "exit 0 (after fixing two string|undefined errors in githost-server.ts)"
+     },
+     {
+      "command": "node scripts/bench/journeys/two-people.cjs fix-w8-two-homes fix-w8-two-homes-bob (two --fresh --provider bench benches, one stand-in GitHub with ada, bob and team)",
+      "result": "exit 0; 15/30 passed; failed (not known): none; known: 15; known but passing: none. /tmp/frbench/fix-w8-two-homes/steps/two-people-result.json"
+     },
+     {
+      "command": "grep each bench's daemon token and the stand-in user tokens in steps/problems.jsonl, steps/* and bench.json",
+      "result": "0 matches; problems.jsonl holds only token=[REDACTED]"
+     },
+     {
+      "command": "node scripts/bench/stop.mjs --name fix-w8-two-homes-bob --clean; node scripts/bench/stop.mjs --name fix-w8-two-homes --clean; kill -0 on every recorded PID",
+      "result": "both exit 0, 'cleaned: no process left'; all 9 recorded PIDs are gone; only steps/ and bench.json are kept; disk has 12 GB free"
+     },
+     {
+      "command": "git grep -n \"^<<<<<<< \"",
+      "result": "no matches"
+     },
+     {
+      "command": "git branch -f fix/w8-two-homes HEAD",
+      "result": "fix/w8-two-homes = cddbfa378ee9547a06cc965d5b19d94e506fadda; the working tree is clean"
+     }
+    ],
+    "screenshots": {
+     "before": [],
+     "after": [
+      "/tmp/frbench/fix-w8-two-homes/steps/01-01-setup-ada.png",
+      "/tmp/frbench/fix-w8-two-homes/steps/02-02-project-ada.png",
+      "/tmp/frbench/fix-w8-two-homes/steps/03-03-work-together-ada.png",
+      "/tmp/frbench/fix-w8-two-homes/steps/04-04-private-ada.png",
+      "/tmp/frbench/fix-w8-two-homes/steps/05-05-both-plan-ada.png",
+      "/tmp/frbench/fix-w8-two-homes/steps/06-07-live-ada.png",
+      "/tmp/frbench/fix-w8-two-homes/steps/07-08-pull-requests-ada.png",
+      "/tmp/frbench/fix-w8-two-homes/steps/08-13-github-off-ada.png",
+      "/tmp/frbench/fix-w8-two-homes-bob/steps/01-01-setup-bob.png",
+      "/tmp/frbench/fix-w8-two-homes-bob/steps/02-02-project-bob.png",
+      "/tmp/frbench/fix-w8-two-homes-bob/steps/03-03-work-together-bob.png",
+      "/tmp/frbench/fix-w8-two-homes-bob/steps/04-04-private-bob.png",
+      "/tmp/frbench/fix-w8-two-homes-bob/steps/05-05-both-plan-bob.png",
+      "/tmp/frbench/fix-w8-two-homes-bob/steps/06-07-live-bob.png",
+      "/tmp/frbench/fix-w8-two-homes-bob/steps/07-08-pull-requests-bob.png",
+      "/tmp/frbench/fix-w8-two-homes-bob/steps/08-13-github-off-bob.png"
+     ]
+    },
+    "new_problems": [
+     "The together project takes the name the person typed ('Bob's site'), not the repository's project name ('Team site'), while the marker exists only in Ada's unmerged docs pull request (main has none). The harness had to drop a name assertion. Owner suggestion: w8-shared-repo or w8-repo-guide (read the name from the open PR's marker, as the project id already is).",
+     "Both agents are named 'Alice' by default, so two people's Forerunners look the same on GitHub (journey step 1: 'Alice / Alice'). Marked known in the journey, owner w8-shared-repo.",
+     "D9 duplicate work: Bob's first plan in the together project repeated Ada's 5 tasks, and both did all 5, so the host has 11 pull requests (journey step 5: 'Bob planned 5, 5 also in Ada's plan'; '5 done by both'). Marked known, owner w8-status-read.",
+     "Ada's docs pull request (#1) writes docs/status.md, docs/overview.md and the other docs, with no AGENTS.md or CLAUDE.md (journey step 2). Marked known, owner w8-repo-guide.",
+     "The phone's shared state service /me carries no timezone, so the mobile store's personZone stays null and setPersonZone never runs on the phone (apps/ui/src/mobile/store.tsx reads it; services/state-api /me does not send it).",
+     "The default person name is 'me' until setup's name step is done. A home that skips setup shows 'me' to the other person if names ever reach GitHub. Observed in the harness before setupProfile; no check yet.",
+     "The journey's 'one-status-issue' detail reads '11 issues on the host': the stand-in, like GitHub, lists pull requests in /issues. w8-status-write should count only entries without pull_request when it makes that check pass."
+    ],
+    "notes_for_other_areas": [
+     "Harness (apps/ui/test/two-installs.ts): composeTwo({host:'memory'|'http', bench?}) returns TwoHomes {ada, bob, writesBy(login), pullRequests(), close()}. Each Home has client (the UI's createClient over app.request), login, restart(), githubOff()/githubOn(), holdModelCalls(when) and modelCalls. TEAM_SHARED='team/shared' (seeded) and TEAM_EMPTY='team/empty'. writesBy returns {action, repo, number?, detail?} with actions such as pull_request.create, pull_request.update, comment, review, issue.create, push and merge. Later areas append their own describe blocks and helpers and do not change the existing ones.",
+     "MemoryGitHost (packages/capabilities/src/githost/memory.ts): asLogin(login) returns a view over one shared world; writes and writesBy(login) list {login, op, repo, number?, detail?}. w8-issue-host: every new write method (issue pinning, status comments, issue updates) must call the private wrote(op, repo, extra) so writesBy sees it. Add the op to MEMORY_ACTIONS in two-installs.ts so the harness maps it to an action.",
+     "testenv FakeGitHost.setCollaboratorRole(repo, login, 'write'|'read'|'none'): a reader sees and reads a private repository and gets 403 on every write; 'none' gives 404. Use it for w8-shared-repo's person without write access. The bench takes it as --collaborators carol=read.",
+     "Bench: start.mjs --githost <port> --users ada,bob --org team [--members] [--collaborators]; a second bench uses --githost-shared <bench> --githost-user bob. githost.json (owner bench) has users.{login}.token; githost-requests.jsonl lines have login; bench.json githost has {url, via, login, repos, users, org, shared|sharedWith}. cut.mjs <bench> github off|on. stop.mjs --clean (stop the user bench before the owner bench).",
+     "Two-person journey: scripts/bench/journeys/two-people-checks.cjs holds the known marks and their owners: w8-shared-repo: agent-names-differ. w8-repo-guide: guide-in-docs-pr. w8-status-read: bob-plan-leaves-out-ada, no-task-twice, earlier-keeps-it, bob-brief-names-merged, bob-leaves-paused, comment-quoted-not-obeyed, chat-answers-from-github. w8-status-write: one-status-issue, status-words-offline. w8-github-feed: on-github-names-other, bob-sees-ada-live, bob-lists-ada-info, ada-told-once. An area removes known:true (and walked:false for a step it makes walkable) from the checks it makes pass, and walks the step in two-people.cjs. A known check that passes is listed under knownPassing. Today's words with GitHub cut: 'GitHub did not answer, so the pull requests are not listed. Try again later.'",
+     "UI: personZoneOf(state) is exported from apps/ui/src/store/store.ts. setPersonZone runs in dispatch only when it changes; AppRoutes subscribes so every page redraws. SetupPage calls refreshIdentity after setupProfile. Code that reads /me should not act before me.id is known (pattern in UpdatesPage: answerOff).",
+     "Recorder: redactRecord(rec, tokens), recordProblem(name, rec, afterStep) and stripToken are exported. openTwo(a, b) returns {a, b, close}. skipSetup(page) is needed on benches without a Claude key before a screenshot.",
+     "validation.md rule 11 is the wave 8 test rule. Each wave 8 area adds a two-home case to two-installs.test.ts and walks two-people.cjs before and after.",
+     "Suggested CHANGELOG [Unreleased] lines (not written; editing the file was forbidden): 'Fixed: the model watch's answer on the Updates page is recorded in your name; its buttons wait until the app knows who you are.' 'Fixed: a new time zone from Settings or the setup assistant shows on every open page at once, without a restart.' 'Testing: two people's Forerunners on one GitHub, in the tests and on the bench (two-home harness, --githost-shared, cut.mjs, the two-person journey).'",
+     "Suggested UPDATE-LOG lines: 'w8-two-homes (2026-11-24): L4i-left-3, L4i-left-62, L4i-left-18, L4i-left-54, W8-homes-1..6 done on fix/w8-two-homes (cddbfa3). Two-person journey on base code: 15/30, 15 known gaps with owners, no other failure. Check in the app: Updates > model watch answers in your name; change time zone, open session page shows new times without reload.'"
+    ],
+    "tests_changed_for_design": [
+     {
+      "test": "packages/runtime/test/onerepo-together.test.ts (both Object.create(host) sites)",
+      "why": "MemoryGitHost now gives a real view per login (host.asLogin('bob')) over one shared host, replacing the prototype trick. The assertions are unchanged; Bob's writes are now recorded as Bob's."
+     },
+     {
+      "test": "packages/runtime/test/continuation.test.ts and packages/runtime/test/start-by-itself.test.ts",
+      "why": "Not a design change: a test race fix (L4i-left-18). Each session count now waits for nothingMore(rt), which settles sessions and asserts no start is still queued. The expected counts are unchanged."
+     }
+    ]
+   },
+   "review": {
+    "verdict": "pass",
+    "acceptance_walk": "I set up a worktree detached at fix/w8-two-homes (cddbfa3), ran pnpm install --frozen-lockfile and used --provider bench only. There was no real GitHub and no API key.\n\n1) Two benches on one stand-in GitHub, started exactly as the README describes:\n- Ada: `start.mjs --name review-w8-two-homes --daemon-port 49270 --ui-port 2870 --fresh --provider bench --githost 49272 --users ada,bob --org team`\n- Bob: `--name review-w8-two-homes-bob --daemon-port 49271 --ui-port 2871 --githost-shared review-w8-two-homes --githost-user bob`\n\nI walked it in the browser with my own Playwright scripts, which use recorder.openTwo:\n- Setup assistant, first step on each app: name Ada / Bob, zone Europe/Zurich, then Skip for now and Start using Forerunner. /me answered \"Ada\" and \"Bob\". The device ids differed. Both agents are still called \"Alice\", a known gap owned by w8-shared-repo.\n- Ada pressed New project: \"Team site\", with a brief, on https://github.com/team/shared. The plan card came, and she pressed Approve and start in the Inbox. 5 tasks were done.\n- Bob pressed New project on the same repository. The dialog showed the offer, with Work together and its explanation and no Take it over button (scratchpad/walk-bob-steps/04-bob-offer.png). He pressed Work together and got the same project id. His Overview shows \"Shared on GitHub with another Forerunner: each keeps its own tasks.\" (05-bob-together-overview.png).\n- Bob pressed Approve and start; his session ran 5 tasks. On the stand-in, pull requests #1-#6 are by ada (#1 is her docs PR) and #7-#11 are by bob. The request log gives every call a login. Neither home wrote to the other's PR numbers. Each Overview lists only its own pull requests: Ada 1-6, Bob 7-11.\n- `cut.mjs bob github off`: Bob's GET /projects/:id/pull-requests answered errorKind \"unreachable\", and his Overview shows \"GitHub did not answer, so the pull requests are not listed. Try again later.\" (09-bob-overview-github-off.png). Ada's list still answered. After `on`, Bob's list came back (10-...github-on.png).\n- `restart-daemon.mjs` on Bob, then a hard restart with his page open: the together line, his name and his device id are all kept (11-15-bob-after-*.png).\n- Problems file after the hard restart: steps/problems.jsonl has 4 console and requestfailed lines with `/events?speech=play&token=[REDACTED]`. No file under steps/ holds the old or the new daemon token (L4i-left-54 fixed on the bench).\n- Zone: Ada opened a session page (\"Team site · session at 14:07\"). Settings has no Time zone row. I went Settings → setup assistant → Back to the first step and changed the zone to America/New_York. Without a reload, the same window showed \"session at 08:07\" (walk-ada-steps/15-ada-session-after-zone.png). A second window stayed at 14:07 until it was reloaded.\n- The Updates page shows the baseline model-watch report with nothing to decide, so the button race can only be checked by the UI test and Playwright.\n\n2) Journey script: `journeys/two-people.cjs` on a fresh pair of benches exited 0. Result: 15/30 passed, failed (not known) none, 15 known, each with its owner. This matches the fixer's figure. Screenshots are in /tmp/frbench/review-w8-two-homes-bob/steps/ (for example 03-03-work-together-bob.png and 08-13-github-off-bob.png); the result is saved at scratchpad/two-people-result.json.\n\n3) Single-user stand-in through the new proxy: `--githost 49272` without --users. A project on bench/seeded reached its plan card, and the pull-request route answered with no error. No regression.\n\n4) Cleanup: I ran `stop.mjs --clean` on every bench (once with the owner bench stopped first) and checked every recorded PID with kill -0; none was alive. Homes are removed; only steps/ and bench.json are kept. Disk has 12 GB free.\n\nScreens against the design: the offer, Overview and GitHub-off screens are plain one-sentence states with CHF only and no ids. This area adds no new person-facing sentence.\n\nScratchpad dir: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/",
+    "blocking": [],
+    "claims_checked": [
+     {
+      "claim": "L4i-left-3: the model watch's buttons stay off and nothing is sent until /me answers, then by = me.id",
+      "holds": true,
+      "note": "With apps/ui/src reverted to claude/nifty-knuth-f9udt0, me-races test 1 fails ('Received element is not disabled'). It passes on the branch. e2e/updates.spec.ts --repeat-each 5: 10 passed."
+     },
+     {
+      "claim": "L4i-left-62: setPersonZone is out of the reducer; AppRoutes redraws on a zone change; the setup assistant re-reads /me",
+      "holds": true,
+      "note": "On base all 3 me-races tests fail: the session heading stayed 'session at 21:00' (expected 15:00), and the zone stayed 'Europe/Zurich'. On the bench the same window went from 14:07 to 08:07 without a reload. A second window does not follow (see non_blocking)."
+     },
+     {
+      "claim": "check_in_the_app for L4i-left-62: 'In Settings (or the setup assistant's first step), change Time zone'",
+      "holds": false,
+      "note": "Settings has no Time zone row: human.timezone is not in SETTING_KEYS, so changeableSettings drops it. The only way is Settings → Open the setup assistant → Back to the first step."
+     },
+     {
+      "claim": "L4i-left-18: continuation and hands-off tests count sessions only after nothingMore(rt)",
+      "holds": true,
+      "note": "Only `await nothingMore(...)` lines were added; the expected counts are unchanged. continuation, start-by-itself and onerepo-together passed twice: 15/15 each run."
+     },
+     {
+      "claim": "W8-homes-2: MemoryGitHost.asLogin gives per-login views; every write is recorded with its login",
+      "holds": true,
+      "note": "All 17 write methods call wrote(). githost-memory-views.test.ts passes. In onerepo-together.test.ts only the Object.create lines changed."
+     },
+     {
+      "claim": "W8-homes-1: the harness's failing case is Bob's PR carrying ada through an Object.create view",
+      "holds": true,
+      "note": "I put the Object.create view back into two-installs.ts temporarily: the memory case fails with 'expected 'ada' to be 'bob''. Restored afterwards; on the branch both modes pass."
+     },
+     {
+      "claim": "Harness: 'Four cases in both modes' (GitHub off for Bob in both)",
+      "holds": false,
+      "note": "Only the main case runs on both memory and http. The holds and GitHub-off cases run on memory only, so the http githubOff path is never exercised."
+     },
+     {
+      "claim": "L4i-left-54: the recorder writes no daemon token, console lines included",
+      "holds": true,
+      "note": "Bench hard restart with the page open: the location URLs in problems.jsonl read token=[REDACTED], and 0 files hold the old or new token. The unit tests pass."
+     },
+     {
+      "claim": "W8-homes-3: --users/--org/--githost-shared/--githost-user; a read collaborator gets 403 on every write",
+      "holds": true,
+      "note": "Bench PR authors are correct and the request log names each call's login. testenv githost.test passes."
+     },
+     {
+      "claim": "W8-homes-4: cut.mjs makes GitHub unreachable for one home only",
+      "holds": true,
+      "note": "True for the REST API: bob unreachable, ada lists. Git is not cut: Bob's worktree origin is http://127.0.0.1:49272/team/shared.git, the stand-in's own port, not the proxy (see non_blocking)."
+     },
+     {
+      "claim": "W8-homes-5: the journey reports 15/30, no failure that is not known, 15 known with owners",
+      "holds": true,
+      "note": "Reproduced exactly on fresh benches; exit 0."
+     },
+     {
+      "claim": "W8-homes-6: validation.md rule 11, testing.md and the README; docs:check passes",
+      "holds": true,
+      "note": "`docs:check --base claude/nifty-knuth-f9udt0`: ok (35 files)."
+     },
+     {
+      "claim": "Full validation green",
+      "holds": true,
+      "note": "pnpm check exit 0 (569 files, 6311 passed, 7 skipped; links ok; secrets clean). test:integration: 30 passed, 83 skipped. test:e2e: 25 passed, 1 skipped. UI vitest: 107 files, 1555 passed. Playwright: 40 passed."
+     },
+     {
+      "claim": "No test weakened",
+      "holds": true,
+      "note": "The only lines removed from test files are the two Object.create sites and two import lines; no assertion was removed or changed."
+     },
+     {
+      "claim": "not_done items are listed with reasons",
+      "holds": true,
+      "note": "Listed with reasons: the journey's known gaps, the phone end-to-end check, CHANGELOG (forbidden to edit), and the unchanged user guide."
+     }
+    ],
+    "non_blocking": [
+     "W8-homes-4 fidelity: cut.mjs closes only the REST API proxy. The stand-in builds clone_url from its own baseUrl (testenv/src/githost/store.ts:447), so the daemon's git fetch and push go straight to the stand-in's port while GitHub is 'off'. Bob's worktree .git/config has url = http://127.0.0.1:49272/team/shared.git, not the proxy port. The README says 'a refused connection, as when the network is gone', and the two-installs.ts header says 'the bench's cut.mjs cuts the whole connection'. Both are inaccurate. A session running during a cut would push its branch but fail to open its PR. Either send git through the proxy (clone_url from the request's Host, or have githost-server use the bench's via URL) or document the cut as API-only before w8-status-write relies on it.",
+     "L4i-left-62 check_in_the_app should read: Settings → Open the setup assistant → Back to the first step → Time zone. Settings itself has no Time zone row.",
+     "me-races.test.tsx 'a session page on screen follows…' says a setup-assistant change in another window makes this window read /me again via agent.changed. The real daemon sends agent.changed only on a rename (server.ts:3844), and the test fires it with renameAgent. On the bench a second window kept 'session at 14:07' until reloaded. The redraw mechanism is tested correctly. Fix the comment, or have POST /setup/profile send an event so other windows (and the phone) follow.",
+     "The acceptance asks for 'a screen rendered before /me answers shows times in the person's zone once it arrives'. The zone tests do not hold /me (only the L4i-left-3 test does). They cover a later zone change, which uses the same code path. A held-/me zone case would match the acceptance line exactly.",
+     "In two-installs.test.ts, the check 'Bob's home wrote no docs, marker, guide or status' leaves out the action 'other'. MEMORY_ACTIONS has no entry for ensureProject, ensureFields, upsertItem, setItemFields, archiveItem, createRelease or uploadReleaseAsset, so such writes by Bob, or unmapped stand-in routes, would pass unnoticed. Map them or assert on 'other' too.",
+     "The harness's holds and GitHub-off cases run on the memory host only. The http-mode githubOff (fetch wrapper) path is untested.",
+     "The journey takes screenshots at 8 of its 16 steps. Steps 9 and 16 are walked but have none; the acceptance says both apps at each step. A screenshot after the step-16 restart would show the together line kept.",
+     "The owner of the together-project name gap differs: the test comment says 'a finding for w8-together', while the report's new_problems says w8-shared-repo or w8-repo-guide.",
+     "docs/maintainers/testing.md: the stand-in bullet has a run-on, over-long line ('For w8-shared-repo (the person without write access). Tests: …').",
+     "UpdatesPage: if /me fails, the four model-watch buttons stay off with no explanation. Edge case; the app likely shows a connection error anyway.",
+     "Known D9 gaps also seen on the bench, owned by later areas: both agents are named 'Alice'; the person is 'me' until setup's name step is done; Bob's first plan repeated Ada's 5 tasks, giving 11 PRs; Bob's together project takes the typed name ('Bob's site')."
+    ]
+   },
+   "fixup": null
+  },
+  {
+   "key": "w8-issue-host",
+   "fix": {
+    "area": "w8-issue-host",
+    "branch": "fix/w8-issue-host",
+    "head_sha": "94eded56738ba181230cffef0123233b93c0c086",
+    "commits": [
+     {
+      "sha": "450619c",
+      "subject": "capabilities, testenv: the status issue's host calls on GitHub and both stand-ins (W8-host-1, W8-host-2, W8-host-3, W8-host-4, W8-host-5, W8-host-6, W8-host-8)"
+     },
+     {
+      "sha": "f532769",
+      "subject": "ui tests, testenv tests: two homes read one status issue; a restart starts with no GitHub copy (W8-host-7, W8-host-3)"
+     },
+     {
+      "sha": "afc0ee5",
+      "subject": "docs: the status issue's host calls, the stand-in's noticeboard and the harness restart (W8-host-1..8)"
+     },
+     {
+      "sha": "94eded5",
+      "subject": "ui tests: the two-home issue case joins paths with the platform's join (path lint)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "W8-host-1 (major, never cut): the GitHost port could not keep a noticeboard. It had no list of one issue's comments with authors, no comment get or edit, no pin, no hasIssues and no conditional read. IssueInfo had no author, node id, times or locked flag, and CommentInfo had no updatedAt.",
+      "u_ids": [
+       "W8-host-1"
+      ],
+      "failing_test_before": "packages/capabilities/test/githost-issues.test.ts, \"w8-issue-host, wave 8: issue host contract (http)\" and \"(memory)\". Before the fix: 15 failed and 10 skipped, because neither world could be built (log /tmp/frbench/fix-w8-issue-host-contract-before.log).",
+      "how": "types.ts gained getIssue, listIssues (paged; creator, labels, sort, direction), listIssueComments(repo, n, {etag, since}) returning {notModified, etag, comments}, getIssueComment (null when deleted), updateIssueComment (keeps the agent's mark; there is no delete), pinIssue ('pinned' | 'limit' | 'forbidden'), getRepoPermission and RepoInfo.hasIssues. IssueInfo now carries id, nodeId, stateReason, locked, author, authorAssociation, authorType, createdAt, updatedAt and isPullRequest. The new IssueCommentInfo has exactly the fields of GitHub's REST comment, with no editor field. Helpers: hasWriteAccess, newestCommentPerAuthor, issueRefusalOf, associationOf, accountTypeOf and roleOf. GitHubHost implements all of it. Pinning first reads StatusPinnedIssues over GraphQL, then sends StatusPinIssue with the issue's node id (github-graphql.ts).",
+      "check_in_the_app": "No screen changes: this area builds host calls only, and w8-status-write and w8-status-read are their callers. Live check on real GitHub for the session lead, FORERUNNER_TEST_GITHUB_TOKEN on the sandbox repository only. Use a tsx script with new GitHubHost({token, baseUrl:'https://api.github.com'}) and repo joelwellbournewood/forerunner-sandbox: createIssue {title:'w8 host check'}; commentOnIssue twice; listIssueComments shows author = your login, authorAssociation OWNER, authorType User, and updatedAt equal to createdAt; updateIssueComment on the first comment keeps its id and moves updatedAt, and the issue page says 'edited'; getIssue returns a nodeId starting with 'I_', state open and locked false; pinIssue answers 'pinned' and the issue shows as pinned on the Issues page; a second pinIssue answers 'pinned' again. Then close the issue and unpin it by hand."
+     },
+     {
+      "problem": "W8-host-2 (major, never cut): the adapter read only one page of issues and paid for every poll. It kept no ETag, sent no If-None-Match, and its mappers dropped the author, node id and times.",
+      "u_ids": [
+       "W8-host-2"
+      ],
+      "failing_test_before": "packages/capabilities/test/githost-issues.test.ts: \"a repeated read with the ETag answers not modified ...\", \"issues and comments are read past one page of 100\", and \"the ETag copy is kept per token ...\" (all failed before the fix).",
+      "how": "github.ts has request() support for ifNoneMatch, which answers a 304 through onResponse. conditionalGet keeps an in-memory copy (LRU of 500, ETAG_CACHE_MAX) keyed by the sha256 of the Authorization header plus the URL, and serves a 304 from that copy. pagedConditional follows Link pages, and a list's ETag joins its pages' ETags. getIssue, listIssues, listIssueComments, getIssueComment and getRepoPermission are conditional reads. Nothing is written to disk. A next page on another origin is still refused before the token is sent.",
+      "check_in_the_app": "Live on GitHub with the issue from the step above: call listIssueComments(repo, n), then listIssueComments(repo, n, {etag}). The second answers notModified true, and rateLimit().remaining is the same before and after it (GitHub does not count a 304). Add a comment on GitHub's page, then read again with the old etag: notModified is false."
+     },
+     {
+      "problem": "W8-host-3 (major, never cut): the stand-in GitHub could not test any of this. has_issues was always true and nothing ever answered 410. There was no sort=, no 304, and author_association was always OWNER. There was no GraphQL endpoint, no pin, and no permission read.",
+      "u_ids": [
+       "W8-host-3"
+      ],
+      "failing_test_before": "packages/capabilities/test/githost-issues.test.ts (http world). On the bench before the fix, /tmp/frbench/fix-w8-issue-host-before/steps/issue-probe.json recorded: every author OWNER, no ETag, the conditional read answered 200, the permission route 404, POST /graphql 404, and has_issues could not be turned off.",
+      "how": "fake-git-host.ts: every JSON answer to a GET now carries ETag W/\"sha1\"; If-None-Match gets a 304, which refunds its rate-limit point (RateLimiter.refund); the request log has ifNoneMatch and graphql {operation, kind}; new admin calls setIssuesEnabled, pinnedIssues and setOrgBasePermission; createOrg({basePermission}); and setCollaboratorRole takes admin, maintain, write, triage, read or none. store.ts works out association from the owner, org members and collaborators; a [bot] login is type Bot; roleOf; has_issues comes from the repository. routes-issues.ts: 410 'Issues are disabled for this repo' on every issue route, while pull request comments stay on; sort= and direction; anyone who may read the repository may open an issue or comment, as on GitHub; an author edits their own comment and anyone with write access edits any comment. New routes-collaborators.ts serves GET /collaborators/:login/permission, which answers 404 to a caller without push access. New routes-graphql.ts serves POST /graphql at the stand-in's own base, dispatching on operationName: StatusPinnedIssues and StatusPinIssue, at most three pins (UNPROCESSABLE beyond that), FORBIDDEN, NOT_FOUND, 401 without a token, and an issues 'pinned' event. routes-repos.ts accepts PATCH has_issues.",
+      "check_in_the_app": "Bench (stand-in only): node scripts/bench/start.mjs --name a --daemon-port 49261 --ui-port 2861 --fresh --provider bench --githost 49263 --users ada,bob --org team, then run the probe /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/probe/issue-probe.mjs against that bench. Expected: author_association MEMBER, an ETag and then a 304, permission read write, pin data isPinned true, and with issues off a list of 410 'Issues are disabled for this repo' (as in /tmp/frbench/fix-w8-issue-host/steps/issue-probe.json)."
+     },
+     {
+      "problem": "W8-host-4 (major): MemoryGitHost had no comment edit, no issue author, no pin and no ETag.",
+      "u_ids": [
+       "W8-host-4"
+      ],
+      "failing_test_before": "packages/capabilities/test/githost-issues.test.ts, \"w8-issue-host, wave 8: issue host contract (memory)\" (all 10 cases; before the fix, setOrg was not a function).",
+      "how": "memory.ts implements the same calls on w8-two-homes' per-login view, with these test seams: setOrg(org, {members, basePermission}), setCollaboratorRole(repo, login, role), setIssuesEnabled, pinnedIssues and removeIssueComment. A repository with no roles declared stays open to every login. Association is worked out at each read. A comment edit moves updatedAt. Issue comments are stamped with now(); pull request comments keep their epoch stamp. A comment list's ETag is a sha1 of the comments. updateIssueComment and pinIssue are recorded through wrote() for writesBy.",
+      "check_in_the_app": "Test infrastructure only. In the harness's memory mode, a comment written by Ada's view is listed by Bob's view with author ada and MEMBER, once the test calls two.memory.setOrg('team', ...)."
+     },
+     {
+      "problem": "W8-host-5 (minor, cut line): there was no listIssues by creator or label with paging and sort, and no read of each author's newest comment.",
+      "u_ids": [
+       "W8-host-5"
+      ],
+      "failing_test_before": "packages/capabilities/test/githost-issues.test.ts, \"issues are listed by creator and label and sorted by when they were updated; the newest comment of each author comes from one paged read\" (http and memory).",
+      "how": "listIssues takes creator, labels, sort (created, updated or comments) and direction, on all three hosts. newestCommentPerAuthor(comments) picks each author's newest comment by updatedAt, then by id, from the one paged listIssueComments read.",
+      "check_in_the_app": "Live: listIssues(repo, {creator: <your login>, sort: 'updated'}) lists the check issue first."
+     },
+     {
+      "problem": "W8-host-6 (minor): issues off (410) and a 5xx after retries were both provider_error, and nothing read a 403, or a 404 on a repository the token sees, as 'no permission'.",
+      "u_ids": [
+       "W8-host-6"
+      ],
+      "failing_test_before": "packages/capabilities/test/githost-issues.test.ts, \"the adapter's errors, ETag cache and token\": the 410 case, the no-permission case, and 'GitHub not answering ...' (the stub cases). Also the stand-in's 403 (a read-role edit of another person's comment) and its 410, in the contract.",
+      "how": "There is a new platform ErrorCode, issues_disabled, for GitHub's 410 'Issues are disabled'. A deleted issue's 410 is not_found and keeps status 410. On a 404 when opening an issue, createIssue makes one GET of the repository; if the token sees it, the error is marked details.reason 'no_permission'. issueRefusalOf(e) answers issues_off, no_permission, token_refused, missing, rate_limited or unreachable. details.status is kept, and the older codes are unchanged.",
+      "check_in_the_app": "Live: on a sandbox fork with issues turned off in Settings, createIssue throws code issues_disabled with details.status 410, and issueRefusalOf gives 'issues_off'."
+     },
+     {
+      "problem": "W8-host-7 (minor, never cut): nothing showed that two homes on one host see one issue store, or that a restart keeps no GitHub copy.",
+      "u_ids": [
+       "W8-host-7"
+      ],
+      "failing_test_before": "apps/ui/test/two-installs.test.ts, \"w8-issue-host, wave 8: issue host\" (memory and http). With the harness's old single GitHub client per home, the http restart case read [200, 200, 304, 304] instead of [200, 200, 304, 200] (log /tmp/frbench/fix-w8-issue-host-restart-before.log).",
+      "how": "The harness (two-installs.ts) now builds an http home's GitHubHost at each compose, as fr daemon does, so restart() starts with empty in-memory copies. writesBy counts a GraphQL mutation (the pin, as issue.pin) and no GraphQL query. MEMORY_ACTIONS gains comment.update and issue.pin. The test checks: Ada's comment is listed to Bob with ada / MEMBER / User, and the reverse; each reads the other's role as write; a repeated read is notModified (a 304 on the stand-in); Bob's first read after his restart carries no If-None-Match; neither home holds the ETag on disk.",
+      "check_in_the_app": "F-W8-1 with two homes on forerunner-sandbox: after each daemon restarts once, the first issue read in githost logs or GitHub's audit log is a full 200. No screen changes."
+     },
+     {
+      "problem": "W8-host-8 (major, never cut, security): nothing could tell whether a comment's author has write access. author_association is not write access: MEMBER is any org member, and COLLABORATOR includes the read role.",
+      "u_ids": [
+       "W8-host-8"
+      ],
+      "failing_test_before": "packages/capabilities/test/githost-issues.test.ts, \"a login's role is read from the repository, never from its association; the read is cached with its ETag; a refused read counts as no write access\" (http and memory), plus the stub case \"a permission read that GitHub refuses counts as none\".",
+      "how": "getRepoPermission(repo, login) reads GET /collaborators/:login/permission with the ETag, cached per login and token. It reads role_name, or the legacy permission for a custom role, and anything unknown is none. A refused read (401, 403 or 404) answers none, so it fails closed. GitHub not answering throws. On both stand-ins: the owner reads admin; a write collaborator reads write; a read collaborator reads read; an org member with read base permission reads read although their association is MEMBER; triage and maintain read as themselves; a stranger reads none; a caller without push access reads none for everyone.",
+      "check_in_the_app": "Live: getRepoPermission(sandbox, <your login>) reads admin; getRepoPermission(sandbox, 'octocat') reads none (a public repository answers read; GitHub's answer is the check). With a read-only token, if the owner provides one, every login reads none: confirm that GitHub answers 404 (or 403) there."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "An injection-suite case for the status issue channel (a hostile issue comment), required by the area's security rule.",
+      "why": "This area only returns issue text, as data with its author. No code yet hands that text to a model, so there is no path for the injection runner to exercise; the existing issue_comment ContentSource is unchanged. The contract does have a case in which a comment that gives orders comes back verbatim and nothing moves. The status-issue injection case belongs to w8-status-read's reader, the first code that wraps issue text (wrapUntrusted('issue_comment', url)) for a model. pnpm test:injection passes: 92 of 92."
+     },
+     {
+      "problem": "A 404 'no permission' produced by the stand-in itself (W8-host-6 asks for each reason to come from the stand-in).",
+      "why": "For a missing token permission the stand-in answers 403, as GitHub documents ('Resource not accessible by personal access token'). I found no documented GitHub case that answers 404 on a repository the token can see and that the stand-in could copy honestly. The 403 and 410 reasons are produced by the stand-in. The 404-on-a-seen-repository reason (createIssue, with one GET probe of the repository) is covered by a fetch-stub unit case. The stand-in's permission route does answer 404 to a caller without push access, as GitHub's docs list, and getRepoPermission reads that as none."
+     },
+     {
+      "problem": "CHANGELOG.md [Unreleased], docs/status/UPDATE-LOG.md and docs/requirements.md lines.",
+      "why": "The task forbids editing them. Suggested lines are in notes_for_other_areas."
+     },
+     {
+      "problem": "A docs/user-guide.md paragraph.",
+      "why": "No step a person takes changes: this area builds host calls only."
+     }
+    ],
+    "validation": [
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm check",
+      "result": "exit 0 at 94eded5: lint, lint:paths ok (1643 files), typecheck, unit tests 570 files with 6343 passed and 7 skipped, link-check ok (213 files), secret-scan clean (2299 files). The first run exited 1 on lint:paths (node:path in the new test), which 94eded5 fixed. Log: /tmp/frbench/fix-w8-issue-host-check.log"
+     },
+     {
+      "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (46 files)"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+      "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped (no FORERUNNER_TEST_PG; packages/state is unchanged)"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+      "result": "exit 0: 13 files; 25 passed, 1 skipped"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0: 107 files, 1557 tests passed (including two-installs.test.ts, 6 cases)"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+      "result": "40 passed (1.1 min). The local config was copied in and removed afterwards; it was not committed."
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+      "result": "PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed"
+     },
+     {
+      "command": "pnpm exec vitest run packages/capabilities/test/githost-issues.test.ts testenv/test/githost.test.ts",
+      "result": "25 and 40 passed. Before the fix the contract had 15 failed and 10 skipped."
+     },
+     {
+      "command": "two-person journey: node scripts/bench/journeys/two-people.cjs on base cddbfa3 (benches fix-w8-issue-host-before and -before-bob, run from a git-archive copy) and on fix/w8-issue-host (fix-w8-issue-host and -bob)",
+      "result": "Both runs: 15/30 passed, failed (not known): none, 15 known gaps owned by later areas. The issue probe went from OWNER everywhere, no ETag and 404s (before) to MEMBER, ETag with 304, the permission read, the pin and 410 (after). 0 daemon or GitHub tokens in any steps file. Both benches were stopped with --clean, and the base copy was removed."
+     },
+     {
+      "command": "git grep -n \"^<<<<<<< \"; git status --short",
+      "result": "no matches; working tree clean; fix/w8-issue-host = HEAD = 94eded5; fix/w8-two-homes (cddbfa3) is included"
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/fix-w8-issue-host-before/steps/07-08-pull-requests-ada.png",
+      "/tmp/frbench/fix-w8-issue-host-before-bob/steps/07-08-pull-requests-bob.png",
+      "/tmp/frbench/fix-w8-issue-host-before/steps/issue-probe.json",
+      "/tmp/frbench/fix-w8-issue-host-before/steps/two-people-result.json"
+     ],
+     "after": [
+      "/tmp/frbench/fix-w8-issue-host/steps/07-08-pull-requests-ada.png",
+      "/tmp/frbench/fix-w8-issue-host-bob/steps/07-08-pull-requests-bob.png",
+      "/tmp/frbench/fix-w8-issue-host/steps/issue-probe.json",
+      "/tmp/frbench/fix-w8-issue-host/steps/two-people-result.json"
+     ]
+    },
+    "tests_changed_for_design": [
+     {
+      "test": "testenv/test/githost.test.ts, \"w8-two-homes, wave 8: two users, an organisation and a collaborator's role\"",
+      "why": "On GitHub the read role may open issues and comment, and the threat W8-host-8 guards against (a read-only person's comment on the status issue) needs the stand-in to allow it. Carol's issue now expects 201 instead of 403. The test now also checks that a contents push and a new label are still 403, and that the push is 201 once she has the write role. No assertion was weakened: the refused writes are still asserted."
+     },
+     {
+      "test": "apps/ui/test/two-installs.ts (harness): home.restart() and writesBy",
+      "why": "Not a test assertion. An http home's GitHub client is now built at each compose, as fr daemon builds its own, so the new in-memory ETag and permission copies end with the daemon. writesBy no longer counts a GraphQL query as a write. Without this change, the W8-host-7 restart case read a 304 after the restart. The existing w8-two-homes cases pass unchanged (6/6)."
+     }
+    ],
+    "new_problems": [
+     "Pre-existing in the stand-in: GET /repos/:o/:r/issues/comments (the repository-wide comment list) is registered after GET /issues/:number. Hono runs the :number handler first, and intParam('comments') throws 404, so the repository-wide list always answers 404 (routes-issues.ts, around lines 127 and 241). Nothing uses it today. The fix is to register it before /issues/:number, with a case in testenv/test/githost.test.ts.",
+     "Pre-existing in the stand-in: repoJson's permissions.admin is true for any collaborator with push access and a repo-scoped classic token, because checkRepoAccess(administration, write) passes for anyone affiliated. getBranchRules' 'unreadable' rule and w8-shared-repo's access cases may read that admin flag. getRepoPermission/roleOf gives the true role.",
+     "The real text of GitHub's GraphQL error for a fourth pinned issue is unknown here. The adapter does not depend on it: it reads the pinned count first, and on an UNPROCESSABLE answer it reads the count again. The live check should still confirm that a fourth pinIssue answers 'limit' and that nothing gets unpinned.",
+     "GitHub's documentation for GET /collaborators/{username}/permission lists only 200 and 404. Older behaviour answered 403 'Must have push access to view collaborator permission.' The adapter reads both as none (it fails closed), but the live check should record which one GitHub sends to a read-only token."
+    ],
+    "notes_for_other_areas": [
+     "For w8-status-write, w8-status-read and w8-github-feed: the port (packages/capabilities/src/githost/types.ts). getIssue(repo, n); listIssues(repo, {state, labels, creator, sort, direction}), which is paged and leaves out pull requests; listIssueComments(repo, n, {etag?, since?}) returns {notModified, etag, comments: IssueCommentInfo[]}; getIssueComment(repo, id) returns null when the comment is deleted; updateIssueComment(repo, id, body) adds AGENT_TEXT_MARKER, as commentOnIssue does; pinIssue(repo, n) returns 'pinned' | 'limit' | 'forbidden'; getRepoPermission(repo, login) returns RepoRole; RepoInfo.hasIssues. Helpers: hasWriteAccess(role) is true for write, maintain and admin (D-W8-37: the one source of write access; association is only a first filter); newestCommentPerAuthor(comments) for amendment 3's activity rule; issueRefusalOf(e) returns issues_off | no_permission | token_refused | missing | rate_limited | unreachable, and each caller turns it into its one sentence. The new platform ErrorCode is issues_disabled.",
+     "ETag reads are automatic in GitHubHost for getIssue, listIssues, listIssueComments, getIssueComment and getRepoPermission (an in-memory LRU of 500, per URL and token). Pass the etag from the previous read to get notModified. w8-github-feed: to make listPullRequests conditional as well, swap its request() for conditionalGet/pagedConditional in github.ts. That is a one-line change in this area's file and needs no port change.",
+     "getRepoPermission fails closed: GitHub needs push access to read anyone's permission, so a read-only Forerunner reads every writer as none and counts no announcements. A comment can only make Forerunner more careful.",
+     "MemoryGitHost roles: repositories follow roles only once declared, through setOrg(org, {members, basePermission}) or setCollaboratorRole(repo, login, role). An undeclared repository answers 'write' for every login and NONE association for non-owners. In the harness's memory mode, call two.memory.setOrg('team', {members: ['ada', 'bob'], basePermission: 'write'}) to get MEMBER, as the http stand-in gives. w8-shared-repo owns the per-login permissions and should build them on these same roles (the roles map, roleOn and governed in memory.ts).",
+     "Stand-in (testenv): FakeGitHost.setIssuesEnabled, pinnedIssues, setOrgBasePermission and createOrg({basePermission}). setCollaboratorRole takes admin, maintain, write, triage, read or none (w8-two-homes' setter, extended compatibly). The read role and read-base org members may now open issues and comment, as on GitHub; every other write by them is 403. w8-status-read's read-only collaborator and read-member injection cases rely on this. HostStore.roleOf and associationOf are available. The request log has ifNoneMatch and graphql {operation, kind}, and so do the bench's githost-requests.jsonl lines.",
+     "Harness (apps/ui/test/two-installs.ts, owned by w8-two-homes): home.restart() now builds a new GitHub client for an http home. writesBy excludes GraphQL queries and maps StatusPinIssue to 'issue.pin'. HostWriteAction gains 'issue.pin'. The memory ops updateIssueComment and pinIssue map to 'comment.update' and 'issue.pin'.",
+     "Doc sentences of w8-two-homes changed (old -> new). testing.md: 'is refused every write (403, as GitHub answers a read collaborator; the test writes an issue)' -> 'is refused every write but opening an issue and commenting (403, as GitHub answers a read collaborator; w8-issue-host: the read role opens issues and comments, as on GitHub; the test pushes a file and makes a label)'. apps.md: '`home.restart()` composes it again on the same home and vault;' -> '... on the same home and vault, with a new GitHub client (w8-issue-host: its in-memory ETag and permission copies end with the daemon);'.",
+     "No open owner questions were assigned to this area (wave8-plan owner_questions for w8-issue-host: none). D-W8-13's default 'not locked' holds: there is no lock call on the port.",
+     "Suggested CHANGELOG [Unreleased] line, not written: 'Internal: Forerunner's GitHub client can now keep a noticeboard issue: it lists an issue's comments with their authors, edits a comment in place, pins an issue, reads repeated pages with ETags (a 304 costs no rate-limit point), reads a person's write access on a repository, and tells when issues are turned off. Nothing writes an issue yet.'",
+     "Suggested UPDATE-LOG line: 'w8-issue-host (2026-11-24): W8-host-1..8 done on fix/w8-issue-host (94eded5). The contract runs on the stand-in over HTTP and on MemoryGitHost (25 cases); the two-home case covers memory and http; the stand-in gained ETag and 304, has_issues and 410, associations, roles, the permission read and POST /graphql. Two-person journey unchanged at 15/30 (15 known). Check in the app: none (host calls only); the live steps are in the report.'",
+     "final_check_additions suggestion for F-W8-1: record the real GitHub answers to (a) a fourth pinIssue, (b) the permission read by a read-only token (403 or 404), and (c) a 304 on listIssueComments with rateLimit().remaining unchanged."
+    ]
+   },
+   "review": {
+    "verdict": "fix-needed",
+    "acceptance_walk": "Worktree detached at fix/w8-issue-host (94eded5); pnpm install --frozen-lockfile. This area adds no screens, so I tested its acceptance at the host boundary (the real adapter against the real stand-in, on the bench and in tests), and walked the screens next to it.\n\nBench: `review-w8-issue-host`, daemon on 49271, UI on 2871, stand-in GitHub on 49273 with `--users ada,bob --org team`, `--provider bench`. One bench only, per the machine rule.\n\n(1) The fixer's raw-HTTP probe (`/tmp/frbench/review-w8-issue-host/steps/issue-probe.json`) shows: issue created 201 with MEMBER; comment list with ada and bob both MEMBER and an ETag; the repeat with If-None-Match is a 304; the permission read gives role_name write; POST /graphql StatusPinIssue answers isPinned true; with has_issues false the issue list is 410 'Issues are disabled for this repo'.\n\n(2) My adapter probe (`/tmp/frbench/review-w8-issue-host/steps/adapter-probe.json`) ran the real GitHubHost, Ada through her home's GitHub proxy and Bob direct:\n- Bob reads Ada's comment as ada / MEMBER / User; his repeat read is notModified with the same ETag.\n- After Ada edits her comment, Bob's read is modified and shows the new body. newestCommentPerAuthor picks the right comments.\n- Permission reads: Ada reads bob as write, Bob reads ada as write, 'nobody' reads none.\n- Pins: pinned, pinned again, then a third pinned and the fourth and fifth 'limit'.\n- Issues off: createIssue, listIssueComments and commentOnIssue each give issues_disabled with status 410, and issueRefusalOf gives issues_off.\n- Page boundary: on an issue with exactly 100 comments, Bob adds a 101st (\"I now work on the menu too\"). Ada's same client then answers 100 comments with notModified true; a fresh client reads 101. This is blocking 1.\n\nThe request log (`githost-requests.jsonl`) carries ifNoneMatch and graphql {operation, kind}. A scan of every bench file found no GitHub token outside githost.json.\n\n(3) UI walk of Ada (`/tmp/frbench/review-w8-issue-host/steps/01..07-r*.png/.txt`): Home, Settings, then a project made from a brief on team/shared (the same POST /projects the UI sends). The plan card appeared in the Inbox (`03-r03-inbox-plan.png`); I approved it and the session ran to the end. Overview (`04-r04-project.png`) reads \"Done: all 5 tasks. 5 pull requests wait for you to merge.\" with six pull requests (the docs PR and five task PRs, Merge buttons, the merges-first order). Tasks, Reviews and Updates screens are fine. problems.jsonl was never written. The stand-in log has no unexpected 4xx; the only 410s and 404s came from my probes, plus the app's normal 404 when it checks for .forerunner/project.json.\n\nThe screens next to this area match the core-experience design. This area changes none of them, so it brings no on-screen design violation.\n\n(4) Both people's screens: the fixer's two-bench runs (before at cddbfa3, after at 94eded5) both scored 15/30, with no failures outside the known gaps that later areas own. I checked the result JSONs and Bob's after screenshot (`/tmp/frbench/fix-w8-issue-host-bob/steps/07-08-pull-requests-bob.png`).\n\nFailing first, verified by reverting the fix's sources locally and keeping its tests:\n- At cddbfa3, githost-issues.test.ts had 15 failed and 10 skipped (as claimed), and githost.test.ts had 8 failed.\n- At claude/nifty-knuth-f9udt0 the contract had 5 failed and 20 skipped.\n- With only the harness (two-installs.ts) reverted, the http restart case read [200, 200, 304, 304] instead of [200, 200, 304, 200] (as claimed).\nAll files were restored; the worktree is clean.\n\nSuites at 94eded5:\n- githost-issues + githost tests: 65/65.\n- flock pnpm check: exit 0; 570 files, 6343 passed and 7 skipped; lint:paths ok; secret-scan clean.\n- pnpm docs:check --base claude/nifty-knuth-f9udt0: ok (46 files).\n- UI vitest: 107 files, 1557 passed.\n- pnpm test:e2e: 25 passed, 1 skipped.\n- pnpm test:integration: 30 passed, 83 skipped (no Postgres).\n- pnpm test:injection: passed.\n\nI did not re-run Playwright (no UI code changed; the fixer reports 40 passed).\n\nThe bench is stopped; its home, browser profile, stand-in repositories and githost.json are deleted. Steps and logs are kept in `/tmp/frbench/review-w8-issue-host/`.",
+    "blocking": [
+     {
+      "issue": "W8-host-2 (never cut): the paged ETag read misses an item added after an exactly full last page, and says nothing changed. In pagedConditional, a page answered 304 is served from the copy with the copy's Link header. When the last page held exactly pageSize items and one more is added at the end (comments are oldest first), page 1's body does not change, so its ETag does not either. The stand-in answers 304, the adapter reuses the old Link (no next page), never asks for page 2, and listIssueComments returns notModified: true with the old list. The port promises the opposite: 'notModified says whether anything changed since'. capabilities.md says 'A list's ETag joins its pages' ETags, so it changes when any page changes', which does not hold for an appended page. The contract's paging case uses 105 comments and never hits this boundary.",
+      "evidence": "Stand-in probe (`/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/probe2/page-boundary.mts`, run with pnpm exec tsx):\n- pageSize 3: 'after one more comment, same client: 3 comments, notModified = true'; 'a fresh client reads: 4 comments'; requests [per_page=3 200, per_page=3 304, then the fresh client's per_page=3 200 and page=2 200].\n- pageSize 100 (production default): 'after one more comment, same client: 100 comments, notModified = true'; 'a fresh client reads: 101 comments'.\nOn the bench (`/tmp/frbench/review-w8-issue-host/steps/adapter-probe.json`), the 101st comment was Bob's 'I now work on the menu too'. Ada's GitHubHost, reading through her proxy with the earlier etag, gave {count: 100, notModified: true}; a fresh client gave 101.\nFailure for D9: once a status issue holds a multiple of 100 comments, a new writer's announcement stays invisible to the other Forerunner's poller. Its reader (w8-status-read) skips work on notModified. This lasts until something on page 1 changes, so Bob's work can be done twice. The same holds for listIssues with direction asc, and for any list w8-github-feed moves onto pagedConditional, as the report suggests.",
+      "expected": "A conditional paged read never says not modified while an item exists past its copied last page. For example: when a page is served from the copy, holds a full page (length === pageSize) and the copy has no next link, also read page N+1 (or read the last full page without If-None-Match). Add a contract case on the stand-in over HTTP: a GitHubHost with a small pageSize (2 or 3); exactly pageSize comments, read, add one, read with the etag; expect notModified false and every comment. It should fail before the fix. Correct the capabilities.md sentence.",
+      "where": "packages/capabilities/src/githost/github.ts:470"
+     }
+    ],
+    "claims_checked": [
+     {
+      "claim": "W8-host-1: the port has getIssue, listIssues (paged, creator/labels/sort/direction), listIssueComments with authors and an ETag, getIssueComment (null when deleted), updateIssueComment (keeps the mark, no delete), pinIssue (pinned/limit/forbidden), getRepoPermission and RepoInfo.hasIssues; IssueInfo and IssueCommentInfo carry the fields listed, with no editor field.",
+      "holds": true,
+      "note": "Read in types.ts, github.ts and memory.ts. The contract passes on both stand-ins and fails before the fix. The bench probe confirms pinned → limit at three and the field set."
+     },
+     {
+      "claim": "W8-host-2: ETag reads with If-None-Match; a 304 answered from an in-memory LRU (500) keyed by the token hash and URL; paged lists past 100; nothing on disk; a next page on another origin is refused before the token goes there.",
+      "holds": false,
+      "note": "The ETag, 304, per-token key, other-origin refusal and paging past 100 all hold (tests, and the bench log shows ifNoneMatch). But the paged conditional read gives a false notModified at an exactly full last page (blocking 1), so 'notModified says whether anything changed' does not hold in general."
+     },
+     {
+      "claim": "W8-host-3: the stand-in gives ETags and 304 (with a rate-limit refund), has_issues and 410 on issue routes (pull request comments stay on), sort/direction, associations from owner/org/collaborators, a Bot type for [bot] logins, the permission route (404 without push access), and POST /graphql with StatusPinnedIssues/StatusPinIssue and at most three pins.",
+      "holds": true,
+      "note": "Read routes-graphql.ts, routes-collaborators.ts, routes-issues.ts, store.ts and fake-git-host.ts. githost.test.ts passes (8 cases fail without the fix). The raw probe on my bench reproduces each answer."
+     },
+     {
+      "claim": "W8-host-4: MemoryGitHost implements the same calls with the seams setOrg, setCollaboratorRole, setIssuesEnabled, pinnedIssues and removeIssueComment; association is worked out at each read; an edit moves updatedAt; writes are recorded.",
+      "holds": true,
+      "note": "The memory contract describe passes (10 cases fail before). A repository with no roles declared answers 'write' for every login, as documented."
+     },
+     {
+      "claim": "W8-host-5: listIssues by creator and label, sorted by updated; newestCommentPerAuthor from one paged read.",
+      "holds": true,
+      "note": "Contract case passes on both stand-ins; the bench probe confirms newestCommentPerAuthor."
+     },
+     {
+      "claim": "W8-host-6: a new issues_disabled code for 'Issues are disabled' 410; a deleted issue's 410 is not_found; a 404 on createIssue in a repository the token sees is marked no_permission; issueRefusalOf maps every reason; details.status is kept; older codes are unchanged.",
+      "holds": true,
+      "note": "Stub cases pass, and the stand-in's 410 and 403 cases pass. The stand-in itself never produces the 404-as-no-permission reason; this is in not_done with a reason, and W8-host-6 is not a never-cut item. The 404 probe applies to createIssue only."
+     },
+     {
+      "claim": "W8-host-7: the harness builds an http home's GitHubHost at each compose; the two-home case shows ada/MEMBER to Bob and the reverse; a restart's first read is a full 200 with no If-None-Match; nothing is on disk.",
+      "holds": true,
+      "note": "Verified failing first: with the old harness the case reads [200,200,304,304]. compose.ts builds one GitHubHost per daemon, so the harness change matches production."
+     },
+     {
+      "claim": "W8-host-8: getRepoPermission reads role_name (or the legacy permission), cached per login and token with the ETag; a refused read (401/403/404) answers none; GitHub not answering throws; on both stand-ins an org member with read base permission reads read although their association is MEMBER.",
+      "holds": true,
+      "note": "Contract and stub cases pass. On the bench, permissions read write/write/none."
+     },
+     {
+      "claim": "The tests named fail before the fix.",
+      "holds": true,
+      "note": "Confirmed by reverting the sources locally to cddbfa3 and to claude/nifty-knuth-f9udt0 with the tests kept, then restoring."
+     },
+     {
+      "claim": "No test was weakened: carol's (read role) issue creation in the w8-two-homes case changed from 403 to 201, for a design reason.",
+      "holds": true,
+      "note": "GitHub lets the read role open issues and comment. The changed test now also asserts that a contents push and a label creation stay 403, and that the push is 201 once carol has the write role. That is a real reason, not a weakening."
+     },
+     {
+      "claim": "Validation: pnpm check, test:integration, test:e2e, UI vitest, test:injection and docs:check all pass.",
+      "holds": true,
+      "note": "Re-ran all of them except Playwright; all exit 0 with the same counts."
+     },
+     {
+      "claim": "The status-issue injection case belongs to w8-status-read, not this area.",
+      "holds": true,
+      "note": "wave8-plan.json puts the record-channel status-issue case in w8-status-read (W8-read-8) and w8-status-write. This area hands no issue text to a model; its contract has a case where a comment giving orders comes back verbatim."
+     }
+    ],
+    "non_blocking": [
+     "pinIssue calls getIssue outside its try block, so a 403 or 401 on that read throws tool_not_allowed or provider_auth instead of answering 'forbidden' (github.ts pinIssue). The re-read after UNPROCESSABLE (three pins taken in a race) is never tested: the adapter checks the pin count first, so the contract never reaches it. A fetch-stub case would cover it.",
+     "W8-host-6's 404-as-no_permission probe exists only on createIssue. A 404 on commentOnIssue or updateIssueComment in a repository the token sees reads as 'missing'. On GitHub these are usually 403, so the harm is small; the w8-status-write caller should know about it.",
+     "conditionalGet reads the token for the cache key and request() reads it again. If the vault token changes between the two reads, the answer is stored under the old token's key. The window is tiny and the next read with the new token is a full 200 anyway.",
+     "Stand-in fidelity: HostStore.affiliations(login, 'write') now leaves out orgs whose base permission is read, and canCreateRepo uses those affiliations, so a read-base member can no longer create repositories in the org. On GitHub that is a separate member privilege. No current test depends on it.",
+     "The fixer's new_problems hold. The repository-wide GET /repos/:o/:r/issues/comments is shadowed by /issues/:number, so it is always 404 (this predates the area), and the new issuesOn(repo) on it can never be reached. repoJson's permissions.admin is still loose for collaborators; w8-shared-repo should read the role through roleOf.",
+     "I did not re-run Playwright (no UI code changed in this area; the fixer reports 40 passed). I walked one bench (Ada) because of the one-bench rule; the two-person screens are the fixer's (15/30 both before and after, no failure outside the known gaps).",
+     "Live check for the session lead (in addition to the fixer's steps): on the sandbox issue, post exactly 100 comments, call listIssueComments(repo, n), add a 101st, then call listIssueComments(repo, n, {etag}). Record whether GitHub answers page 1 with a 304 (it would if its ETag covers only the body). That shows how real GitHub behaves at the boundary in blocking 1."
+    ]
+   },
+   "fixup": {
+    "area": "w8-issue-host",
+    "branch": "fix/w8-issue-host",
+    "head_sha": "cfbd69ff285b2a4c491d44b1ccc1f9f2dc48f065",
+    "commits": [
+     {
+      "sha": "1fcb0e2",
+      "subject": "capabilities: a paged ETag read never says not modified while an item sits past a full last page (W8-host-2)"
+     },
+     {
+      "sha": "cfbd69f",
+      "subject": "capabilities, testenv: a refused issue read answers forbidden on a pin; a read-base member still creates a repository (W8-host-1, W8-host-3)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "Review blocking 1 (W8-host-2, never cut): the paged ETag read missed an item added after an exactly full last page and reported that nothing had changed. When a status issue held a multiple of 100 comments, the other Forerunner's next announcement stayed invisible to the poller. Root cause (github.ts pagedConditional, was :470): a page answered 304 was served from the copy together with the copy's Link header. GitHub's ETag, and the stand-in's, covers the page body only, so a full last page keeps its ETag. The old Link named no next page, so the read stopped there and the joined ETag still matched the caller's.",
+      "u_ids": [
+       "W8-host-2"
+      ],
+      "failing_test_before": "packages/capabilities/test/githost-issues.test.ts, describe \"w8-issue-host, wave 8: a paged read with the ETag past an exactly full last page (W8-host-2, http)\": all 3 cases failed before the fix. (1) A page of 3: the 4th and 7th comments, a removed 7th, and a quiet poll that costs no rate-limit point once the page after is a 304. (2) The default page of 100: the 101st comment. (3) Issues listed oldest first: the 4th issue. Also the fetch-stub case \"fixup-w8-issue-host: a full last page answered from the copy under a cursor next link is read again in full ...\", which failed before.",
+      "how": "A page answered from the copy is no longer taken as the end of the list when it is full (as many items as its per_page) and has no next link. On a numbered list the adapter also reads the page after it (page + 1). That read is conditional, so it costs a rate-limit point only the first time; after that it is a free 304. The page after joins the result and its ETag only when it holds items. Under a cursor link (after, before or cursor), where there is no page number, the adapter reads the full page again without If-None-Match and follows the fresh Link. conditionalGet gained {fresh}; the module-private helpers are fullPage and numberedPageAfter. listIssueComments and listIssues both go through this path. The capabilities.md sentence 'it changes when any page changes' is replaced with the real rule.",
+      "check_in_the_app": "No screen changes. Bench (stand-in): node scripts/bench/start.mjs --name <n> --daemon-port <p> --ui-port <u> --fresh --provider bench --githost <g> --users ada,bob --org team, then pnpm exec tsx /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/probe3/bench-adapter.mts /tmp/frbench/<n> <out.json>. Expected pageBoundary: sameClientAfter101st {count: 101, notModified: false} (before the fix: {count: 100, notModified: true}, as in /tmp/frbench/review-w8-issue-host/steps/adapter-probe.json; after: /tmp/frbench/fixup-w8-issue-host/steps/adapter-probe.json). Live check for the session lead, on real GitHub with FORERUNNER_TEST_GITHUB_TOKEN and the sandbox repository only, in a tsx script with new GitHubHost({token, baseUrl:'https://api.github.com'}): (1) Create an issue and post exactly 100 comments. (2) r1 = listIssueComments(repo, n). (3) r2 = listIssueComments(repo, n, {etag: r1.etag}): expect notModified true and 100 comments; this read sends page=2 once. (4) Note rateLimit().remaining, then r3 = the same read again: expect notModified true and remaining unchanged, because both pages answer 304. (5) Add a 101st comment on GitHub's page. (6) r4 = listIssueComments(repo, n, {etag: r1.etag}): expect notModified false and 101 comments, the last one the new comment. (7) Record whether GitHub answered page 1 at step 6 with 304 (the ETag covers the body only) or 200 (it also covers the Link header). Either answer must give step 6's result. (8) Close the issue afterwards."
+     },
+     {
+      "problem": "Review non-blocking: pinIssue read the issue (for its node id) outside its refusal handling. A 401 or 403 on that read threw provider_auth or tool_not_allowed where the port promises 'forbidden'. The re-read of the pins after GitHub refuses a pin as UNPROCESSABLE (three pins taken in a race) was never reached by any test.",
+      "u_ids": [
+       "W8-host-1"
+      ],
+      "failing_test_before": "packages/capabilities/test/githost-issues.test.ts, \"fixup-w8-issue-host: pinning answers forbidden when the issue's own read is refused, and reads the pins again when GitHub refuses the pin as unprocessable\". Before the fix it threw 'GET /repos/o/r/issues/7 -> 401: no'.",
+      "how": "getIssue now runs inside pinIssue's try, so 401 and 403 answer 'forbidden' and nothing is sent to GraphQL. A missing issue still throws not_found. The new fetch-stub case covers the race: the re-read gives 'limit' when three are pinned, 'pinned' when this issue is one of them, and otherwise the validation refusal stands. capabilities.md now says the same.",
+      "check_in_the_app": "No screen changes. Live (final_check F-W8-1): pinIssue with a token that cannot read the sandbox repository answers 'forbidden', not an error. A fourth pinIssue answers 'limit' and unpins nothing."
+     },
+     {
+      "problem": "Review non-blocking, a stand-in fidelity regression from w8-issue-host: HostStore.affiliations(login, 'write') now leaves out organisations whose base permission is read, and canCreateRepo uses those affiliations. As a result, a member of a read-base organisation could no longer create a repository in it. On GitHub that is a separate member privilege and it is on by default.",
+      "u_ids": [
+       "W8-host-3"
+      ],
+      "failing_test_before": "testenv/test/githost.test.ts, \"fixup-w8-issue-host: a member of an organisation whose base permission is read still creates a repository in it, as GitHub's default member privilege allows; a stranger cannot\". Before the fix it got 404 instead of 201.",
+      "how": "testenv/src/githost/auth.ts canCreateRepo also accepts the subject's readOrgs; a stranger still gets 404. docs/maintainers/testing.md now says so.",
+      "check_in_the_app": "Test infrastructure only."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "Review non-blocking: the 404-as-no_permission probe exists only on createIssue. A 404 from commentOnIssue or updateIssueComment in a repository the token can see reads as 'missing'.",
+      "why": "Left as it is, on purpose. On those two routes a 404 can be a deleted issue or comment, and one GET of the repository cannot tell that apart from missing access. Adding the probe there would turn a gone comment into 'no permission'. GitHub usually answers 403 for missing access, and that already reads as no_permission. The note for w8-status-write is in notes_for_other_areas."
+     },
+     {
+      "problem": "Review non-blocking: conditionalGet reads the vault token for the cache key, and request() reads it again, so a token replaced between the two reads is stored under the old token's key.",
+      "why": "Not changed. The window is two awaits wide, and both tokens are the same person's vault token. The next read with the new token misses the cache and is a full 200. Closing it would mean passing explicit headers through request(), a wider change to a shared transport than this fix-up needs."
+     },
+     {
+      "problem": "Review non-blocking (pre-existing): GET /repos/:o/:r/issues/comments (the repository-wide list) is shadowed by /issues/:number on the stand-in, and repoJson's permissions.admin is too loose for collaborators.",
+      "why": "Both predate this area, and nothing uses them yet. They are listed in new_problems for w8-shared-repo and whichever later area first reads the repository-wide list."
+     },
+     {
+      "problem": "Playwright run.",
+      "why": "No UI code changed in this fix-up: only the GitHub adapter, the stand-in and their tests. The UI vitest suite was run (it includes the two-home harness on the stand-in) and passes. The local Playwright config was copied in, then removed unused."
+     },
+     {
+      "problem": "CHANGELOG.md, docs/status/UPDATE-LOG.md, docs/requirements.md, docs/user-guide.md.",
+      "why": "The task forbids editing the first three; suggested lines are in notes_for_other_areas. No step a person takes changed, so the user guide needs nothing."
+     }
+    ],
+    "validation": [
+     {
+      "command": "pnpm exec vitest run packages/capabilities/test/githost-issues.test.ts (before the fix)",
+      "result": "4 failed, 25 passed: the three boundary cases on the stand-in and the cursor stub case. The pin case failed before its own fix (401 thrown), and so did the stand-in's repository-creation case (404 instead of 201)."
+     },
+     {
+      "command": "pnpm exec vitest run packages/capabilities/test/githost-issues.test.ts testenv/test/githost.test.ts",
+      "result": "71 passed (30 + 41)"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm check",
+      "result": "exit 0 at cfbd69f: lint, lint:paths, typecheck; unit tests 570 files, 6349 passed and 7 skipped; link-check ok (213 files); secret-scan clean (2299 files). Log: /tmp/frbench/fixup-w8-issue-host-check.log"
+     },
+     {
+      "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (46 files)"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+      "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped (no FORERUNNER_TEST_PG)"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+      "result": "exit 0: 13 files; 25 passed, 1 skipped"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+      "result": "exit 0: 107 files, 1557 passed (two-installs.test.ts included)"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+      "result": "PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed"
+     },
+     {
+      "command": "Bench fixup-w8-issue-host (daemon 49281, UI 2881, stand-in 49283, --users ada,bob --org team, --provider bench): the reviewer's adapter probe, the fixer's raw probe and the reviewer's UI walk, re-pointed at this worktree",
+      "result": "Adapter probe (/tmp/frbench/fixup-w8-issue-host/steps/adapter-probe.json): Bob reads ada/MEMBER/User and his repeat read is notModified; Ada's edit is modified; permissions read write/write/none; pins pinned, pinned, then pinned, pinned, limit; issues off gives issues_disabled/410/issues_off three times. Page boundary: same client after the 101st comment reads 101 with notModified false (before: 100, true). Stand-in log: page=2 was read twice (the probe and the fresh client), and every 4xx came from the probes or the app's normal .forerunner/project.json check. The raw probe's pin answered UNPROCESSABLE 'This repository already has 3 pinned issues.', which is expected because the adapter probe had already pinned three. UI walk (steps 01-07): the plan card, then the session ran to the end ('Done: all 5 tasks. 5 pull requests wait for you to merge.'), with six PRs and Merge buttons, as in the review. No problems.jsonl. No token in any steps file. Bench stopped with --clean (home, profile, stand-in repositories and githost.json removed; steps kept)."
+     },
+     {
+      "command": "git status --short; git rev-parse HEAD fix/w8-issue-host",
+      "result": "clean; both cfbd69ff285b2a4c491d44b1ccc1f9f2dc48f065"
+     }
+    ],
+    "new_problems": [
+     "Pre-existing, carried from the fixer and confirmed by the reviewer: on the stand-in, GET /repos/:o/:r/issues/comments (the repository-wide list) is registered after /issues/:number, so it always answers 404 (testenv/src/githost/routes-issues.ts). Nothing uses it yet.",
+     "Pre-existing: on the stand-in, repoJson's permissions.admin is true for any collaborator with push access and a repo-scoped classic token. w8-shared-repo should read the role through HostStore.roleOf / getRepoPermission."
+    ],
+    "notes_for_other_areas": [
+     "w8-status-read / w8-github-feed: pagedConditional (github.ts) now reads the page after a full last page that was answered from the copy (page + 1, conditional: one rate-limit point the first time, a free 304 after that). Under a cursor Link it re-reads the full page without If-None-Match, which costs one rate-limit point per poll while the list sits exactly at a page boundary. The joined ETag includes the page after only when that page holds items. notModified from listIssueComments now holds at every page boundary. Moving listPullRequests onto pagedConditional (w8-github-feed) gets this behaviour with no further change.",
+     "w8-status-write: a 404 from commentOnIssue or updateIssueComment reads as 'missing' (issueRefusalOf), never as 'no_permission'. On those routes a 404 can be a deleted issue or comment. When the status comment or issue was read a moment before, treat 'missing' as 'gone or no longer reachable' and re-read before writing again. createIssue alone probes the repository and marks no_permission.",
+     "pinIssue now answers 'forbidden' for a 401 or 403 on any of its reads, the issue's own read included. A missing issue still throws not_found.",
+     "Stand-in: any member of an organisation may create a repository in it, whatever the base permission (canCreateRepo accepts readOrgs).",
+     "Suggested CHANGELOG [Unreleased] addition to the fixer's line: 'A repeated read of an issue's comments notices a new comment even when the earlier list ended exactly at a full page.'",
+     "Suggested UPDATE-LOG addition: 'fixup-w8-issue-host (2026-11-24): the review's blocking finding (a 101st comment unseen by a poller holding 100) is fixed at 1fcb0e2: the ETag read also reads the page after a full last page. Pin refusals on the issue read answer forbidden, and a read-base org member can create repositories on the stand-in (cfbd69f). Head cfbd69f.'",
+     "final_check_additions suggestion for F-W8-1, added to the fixer's (a) to (c): (d) the 100/101-comment boundary steps in this report's first check_in_the_app, recording whether GitHub answers page 1 with 304 after the 101st comment."
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/review-w8-issue-host/steps/adapter-probe.json"
+     ],
+     "after": [
+      "/tmp/frbench/fixup-w8-issue-host/steps/adapter-probe.json",
+      "/tmp/frbench/fixup-w8-issue-host/steps/issue-probe.json",
+      "/tmp/frbench/fixup-w8-issue-host/steps/03-r03-inbox-plan.png",
+      "/tmp/frbench/fixup-w8-issue-host/steps/04-r04-project.png",
+      "/tmp/frbench/fixup-w8-issue-host/steps/05-r05-tasks.png"
+     ]
+    },
+    "tests_changed_for_design": []
+   }
+  },
+  {
+   "key": "w8-repo-guide",
+   "fix": {
+    "area": "w8-repo-guide",
+    "branch": "fix/w8-repo-guide",
+    "head_sha": "7e5009b927bf4165ffdf6aef5890ee9cd082ce41",
+    "commits": [
+     {
+      "sha": "1b633d837e08c469716e516c52cba463d98a1d74",
+      "subject": "runtime, ui tests: a docs pull request this install did not open is nobody's; Try again says what stopped it (L4i-left-2, L4i-left-5, L4i-left-6, L4i-left-7)"
+     },
+     {
+      "sha": "f8ad5df4faba607f94eec3abcf7424587295363c",
+      "subject": "memory, runtime, capabilities: the repository guide, the doc set without docs/status.md, date-named decisions (W8-guide-1, W8-guide-2, W8-guide-3, W8-guide-5, W8-guide-6)"
+     },
+     {
+      "sha": "f5e3f29fc7e518dbd3f8acc5e07eba941c4eebeb",
+      "subject": "runtime, ui tests: the guide is the maker's on two homes; decisions named by the day; recall finds AGENTS.md; a guide change is flagged (W8-guide-1, W8-guide-3, W8-guide-4, W8-guide-6)"
+     },
+     {
+      "sha": "962b932bbf942351aa4479ff19eda0b43897cbed",
+      "subject": "runtime: a take-over's plan docs that failed say so with Try again; the take-over rebuild keeps main's newer file (L4i-left-8, L4i-left-14)"
+     },
+     {
+      "sha": "d2e06d8a67b3a928363cb012ab97be16c29b7fbb",
+      "subject": "docs, bench: ADR 0121 (the repository guide and who writes a project's docs); amendments to 0058, 0117, 0106; maintainer docs and user guide; the journey's guide check passes (W8-guide-1..6, L4i-left-2, -5..-8, -14)"
+     },
+     {
+      "sha": "738cbac2bd70ca638a772d0c76f39306571aca48",
+      "subject": "runtime tests: the docs route lists the guide first and the app's status last; the answers' record is named by the day (W8-guide-1, W8-guide-2, W8-guide-3)"
+     },
+     {
+      "sha": "7e5009b927bf4165ffdf6aef5890ee9cd082ce41",
+      "subject": "ui tests: ten doc rows, the plan's record named by the day, and the brief's added line in the cost figure (W8-guide-1, W8-guide-2, W8-guide-3)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "A docs pull request whose body named no project was taken as the linked project's own when it was the only project on the repository (W15-01's sole-linked fallback), so Ada's scaffold, her take-over and its rebuild, and her Try again wrote onto Bob's pull request, and her Overview offered Merge on it.",
+      "u_ids": [
+       "L4i-left-2"
+      ],
+      "failing_test_before": "apps/ui/test/two-installs.test.ts > w8-repo-guide, wave 8: a docs pull request this install did not open is nobody's (L4i-left-2) > Bob's unmarked fr/docs-scaffold pull request whose branch names Bob's other project / has no marker file / names the project Ada takes over (3 cases); also real-daemon.test.ts L4e-left-1 case (now created with openPullRequestAs and asserting writesBy('alice') is empty on it)",
+      "how": "isProjectDocsPr reads the branch's own .forerunner/project.json (branchMarker) besides the recorded address, the hidden mark and the L-16 line; an unmarked scaffold pull request is the project's only when its branch marker names it. scaffoldInCopy reads each scaffold branch's marker before choosing; docsInPullRequests reads it per pull request. docsPrListing gives own/listed/none; the Overview lists an unmarked one without Merge ('#N names no project, so it is only listed here: open it on GitHub to see whose it is.'). The sole-linked fallback stays only for the status writer.",
+      "check_in_the_app": "Two benches on one stand-in (ada, bob). As Bob on GitHub, push fr/docs-scaffold with a docs file and open a pull request whose body names no project. As Ada, New project on team/shared. Open Ada's Overview: Bob's pull request is listed as '#N names no project, so it is only listed here: open it on GitHub to see whose it is.' with no Merge button, and the pull request on GitHub shows no commit or comment by ada."
+     },
+     {
+      "problem": "Try again on a take-over's no-pull-request line named the repository as typed (a URL), said 'check the token' for any thrown error and 'another project's docs pull request is open' for any run that opened nothing, and a press with nothing to retry answered a generic line.",
+      "u_ids": [
+       "L4i-left-5",
+       "L4i-left-6",
+       "L4i-left-7"
+      ],
+      "failing_test_before": "apps/ui/test/real-daemon.test.ts > w8-repo-guide, wave 8: Try again names the repository as its line does (URL-typed take-over refused names o/kite; an unreachable host says 'GitHub did not answer'; no repository / no take-over answer by the state)",
+      "how": "take-over-retry.ts: locatorOf(project) names owner/name; retryFailureOf maps a thrown error to refused/unreachable; the scaffold's new stopped outcome (pull_request_open, branches_taken) picks 'another docs pull request is open on <repo>; close it on GitHub' or 'its branches on <repo> hold another project's docs; delete fr/docs-scaffold on GitHub'; nothing to try answers TAKE_OVER_NO_REPOSITORY or TAKE_OVER_NOT_TAKEN. The fake daemon mirrors it.",
+      "check_in_the_app": "Take over a repository given as https://github.com/<owner>/<name> while another docs pull request is open on fr/docs-scaffold; on the Overview press Try again: the sentence names <owner>/<name> and says 'another docs pull request is open ...; close it on GitHub, then try again.' With the stand-in stopped (scripts/bench/cut.mjs), Try again says 'GitHub did not answer. Try again in a moment.'"
+     },
+     {
+      "problem": "No guide for agents or people in a repository (no AGENTS.md or CLAUDE.md), nothing telling a second person to link it and choose Work together; every repository got an untrue docs/status.md template that the README pointed to and drift asked for; the unfinished-work rules lived only in the work-in-progress commit.",
+      "u_ids": [
+       "W8-guide-1",
+       "W8-guide-2",
+       "W8-guide-5"
+      ],
+      "failing_test_before": "packages/memory/test/docs.test.ts > the repository guide (W8-guide-1, ADR 0121) (renderGuidePart did not exist); apps/ui/test/two-installs.test.ts > w8-repo-guide, wave 8: the guide is written by the Forerunner that made the project (Ada's docs pull request had no AGENTS.md/CLAUDE.md and carried docs/status.md); bench journey check guide-in-docs-pr (known before, passes after)",
+      "how": "memory/docs.ts: STANDARD_DOCS leads with AGENTS.md and CLAUDE.md and drops docs/status.md; renderGuidePart renders Forerunner's part between forerunner:guide marks from GuideFacts only (Work together line, status issue by its title in each state, Before you start, branches and who merges, checks as exact commands, unfinished work from UNFINISHED_WORK_RULES, do not touch, agents' rules); applyGuide keeps a person's AGENTS.md byte for byte; applyGuideImport adds '@AGENTS.md' once; the untouched status template is taken out, a person's stays; drift no longer asks for status or the guide. runtime/loop/guide.ts: guideFactsOf, guideKeyOf, guideStatusIssueState. ProjectDocs.refreshGuide at the session's end opens one docs pull request per fact change (key recorded on the project), none when nothing changed, none for a together project. Docs tab rows: Guide, Guide for Claude Code first, the app's Status last.",
+      "check_in_the_app": "Bench with a stand-in GitHub: New project 'Team site' on team/shared. Open the docs pull request on the stand-in: it has AGENTS.md (says 'This repository is the Forerunner project \"Team site\". To work on it with Forerunner, link this repository in your own Forerunner and choose Work together; ...'), CLAUDE.md containing '@AGENTS.md', and no docs/status.md. Docs tab lists Guide and Guide for Claude Code first and Status last. Change who merges in Settings, run a session: exactly one new docs pull request whose AGENTS.md says the Forerunner merges after its critic accepted; restart and run another session: no second one."
+     },
+     {
+      "problem": "Who writes the doc set, decisions, marker and guide in a project two Forerunners share was undecided; the first decision was always docs/decisions/0001-<slug>.md, so two homes' decisions collide by number; the Inbox's answers went to docs/decisions/project-decisions.md and the card did not name the file.",
+      "u_ids": [
+       "W8-guide-3"
+      ],
+      "failing_test_before": "apps/ui/test/two-installs.test.ts > w8-repo-guide, wave 8: the guide is written by the Forerunner that made the project (Bob's Docs tab read the guide as from this PC's copy); packages/runtime/test/person-questions-daemon.test.ts > the answers the Inbox form sends go to the decision doc and the task is done (no dated file, no file named on the card); packages/runtime/test/intake.test.ts (0001 name and docs/status.md written as given)",
+      "how": "Only the maker writes the doc set, marker and guide (together projects write none; their Docs tab says 'The other Forerunner of \"<name>\" writes this doc on GitHub; this project does not write docs.' also for a guide the copy has). intake.ts names the first decision docs/decisions/YYYY-MM-DD-<slug>.md by the Today date (a numbered reply is renamed), adds DECISION_RECORD_MARK, tells the model the form, drops a reply's docs/status.md, AGENTS.md, CLAUDE.md. person-questions.ts writes answers to an existing 0001 record, else the marked record, else '<day>-project-decisions.md', and the card says 'Your answers are written to the project's decision record (<file>).' task-context.ts tells specialists a new decision is its own dated file.",
+      "check_in_the_app": "Two benches on one stand-in. Ada makes 'Team site'; Bob chooses Work together. Each runs a task 'Record the hosting choice in docs/decisions/<today>-hosting.md' / '...-domain.md'; both pull requests merge on the stand-in. Bob's Docs tab: Guide and Guide for Claude Code read 'The other Forerunner of \"Team site\" writes this doc on GitHub; this project does not write docs.' In a project with a planned person task, the Inbox card says 'Your answers are written to the project's decision record (docs/decisions/<today>-project-decisions.md).' and the file appears after answering."
+     },
+     {
+      "problem": "Recall and the per-turn doc excerpts did not read AGENTS.md or CLAUDE.md.",
+      "u_ids": [
+       "W8-guide-4"
+      ],
+      "failing_test_before": "packages/memory/test/docs-search.test.ts > W8-guide-4: collects the guide (AGENTS.md, CLAUDE.md) beside README.md, and a question about who merges finds AGENTS.md",
+      "how": "docs-search.ts collects ROOT_DOC_FILES (AGENTS.md, CLAUDE.md, README.md) beside docs/.",
+      "check_in_the_app": "In a repository project whose guide is merged, ask in Chat 'who presses Merge for the pull requests?': the answer cites AGENTS.md."
+     },
+     {
+      "problem": "A task pull request that changed AGENTS.md or CLAUDE.md did not say so, though other people's agents follow those files.",
+      "u_ids": [
+       "W8-guide-6"
+      ],
+      "failing_test_before": "packages/capabilities/test/pr-executor.test.ts > W8-guide-6: a task pull request that changes AGENTS.md says so in its body; packages/runtime/test/loop-critic.test.ts (the guide line in the critic's evidence)",
+      "how": "guideChangeLine(changedFiles) in pr-executor.ts; the pull request body and the critic's evidence carry 'This changes AGENTS.md, the guide other people's agents follow in this repository: read it before merging.'",
+      "check_in_the_app": "Add a task 'Tell agents to run the linter in AGENTS.md' and run it: its pull request body on GitHub starts its notes with 'This changes AGENTS.md, the guide other people's agents follow in this repository: read it before merging.'"
+     },
+     {
+      "problem": "A take-over made with a brief leaves its docs to the intake; when the intake's docs pull request then failed, the Overview said nothing (no scaffold record).",
+      "u_ids": [
+       "L4i-left-8"
+      ],
+      "failing_test_before": "apps/ui/test/two-installs.test.ts > w8-repo-guide, wave 8: a docs pull request this install did not open is nobody's (L4i-left-2) > L4i-left-8: a take-over made with a brief whose plan's docs pull request could not be opened says so on the Overview with Try again, also after her daemon starts again; Try again opens it",
+      "how": "intake.ts recordDocsOutcome writes the intake's docs outcome on summary_cache.docs (intake_at, pr_url or error); scaffoldLeftNoMarker reads either the scaffold's or the intake's record, so the no-pull-request line with Try again shows, also after a restart.",
+      "check_in_the_app": "Bench with a repository whose marker names another project: New project with a brief, Take it over. Before approving the plan, stop the stand-in GitHub (cut.mjs); Approve and start; start GitHub again. Overview reads 'Took over <repo> from \"<old>\" here, but the docs pull request that names this project could not be opened, so GitHub still names \"<old>\".' with Try again; restart the daemon, same line; Try again opens the docs pull request and the line goes."
+     },
+     {
+      "problem": "The take-over's rebuild of its own open scaffold branch carried the branch's version of every file it changed, replacing a newer version main got later (another Forerunner's merged docs).",
+      "u_ids": [
+       "L4i-left-14"
+      ],
+      "failing_test_before": "packages/runtime/test/docs-scaffold.test.ts > L4i-left-14: the take-over's rebuild keeps the default branch's newer version of a file main changed after the scaffold branch left it (verified failing with the fix disabled: the team's docs/overview.md came back as the template)",
+      "how": "rebuildForTakeOver compares each file at the merge-base, on main and on the branch; a file main changed after the fork keeps main's version (logged as keptFromDefaultBranch).",
+      "check_in_the_app": "Make a project on a repository marked by another project (made before the rule), so its scaffold pull request is open; merge a different docs/overview.md into main on GitHub; press Take it over: the scaffold branch's docs/overview.md is main's, and only the marker and the files the branch alone added differ."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "W8-guide-1 acceptance 'the status issue's creation gives none, a change of its state one docs pull request' is not tested end to end.",
+      "why": "The status issue and its switch are w8-status-write's (not built on this base). The guide renders all three states (docs.test.ts cases) and guideStatusIssueState is the one place it plugs in; a state change changes the facts' key, so the next session's end opens one docs pull request. Its two-home case belongs with w8-status-write."
+     }
+    ],
+    "validation": [
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm check",
+      "result": "lint (40 warnings, all present before), lint:paths, typecheck, unit tests 570 files / 6359 passed / 7 skipped, docs:links, secrets:scan: green; docs:check needs a base in a worktree"
+     },
+     {
+      "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (89 files)"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+      "result": "5 passed, 7 skipped files (30 passed, 83 skipped)"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+      "result": "13 files, 25 passed, 1 skipped"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx vitest run --config vitest.config.ts",
+      "result": "104 of 107 files passed; the 5 failing cases pinned the old design (8 doc rows, 0001 record name, 1426%) and were updated in 7e5009b; the three files then rerun: 463 passed; L4-money-112 run twice: same figure"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+      "result": "40 passed"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+      "result": "exit 0, Failures: None"
+     },
+     {
+      "command": "node scripts/bench/journeys/two-people.cjs fix-w8-repo-guide fix-w8-repo-guide-bob (after, --provider bench, stand-in GitHub)",
+      "result": "16/30 passed; failed (not known): none; guide-in-docs-pr passes (before: KNOWN with docs/status.md and docs/decisions/0001-*.md in Ada's docs PR); benches stopped with stop.mjs --clean"
+     },
+     {
+      "command": "git grep -n '^<<<<<<< '",
+      "result": "no conflict markers"
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/fix-w8-repo-guide-before-evidence/09-guide-before-docs-ada.png",
+      "/tmp/frbench/fix-w8-repo-guide-before-evidence/09-guide-before-docs-bob.png",
+      "/tmp/frbench/fix-w8-repo-guide-before-evidence/02-02-project-ada.png"
+     ],
+     "after": [
+      "/tmp/frbench/fix-w8-repo-guide-after-evidence/09-guide-after-docs-ada.png",
+      "/tmp/frbench/fix-w8-repo-guide-after-evidence/09-guide-after-docs-bob.png",
+      "/tmp/frbench/fix-w8-repo-guide-after-evidence/02-02-project-ada.png"
+     ]
+    },
+    "new_problems": [
+     "Until w8-status-write lands, the guide says the status issue is on (guideStatusIssueState returns 'on'): AGENTS.md tells agents to read and announce in a pinned 'Forerunner status: <name>' issue that this base does not create yet. Ship both together or make guideStatusIssueState answer from the real issue state.",
+     "The guide refreshes only at a session's end: a Settings change (merge mode, checks) reaches GitHub after the next session, not at once.",
+     "The fake daemon's together Docs rows mark every row, the app's Status included, as 'The other Forerunner ... writes this doc'; the real daemon shows the Status row as 'Kept in the app: ...'. The mismatch predates this area (the fake's list always included docs/status.md).",
+     "A together project accepts a merge_mode change through PUT /projects/:id/settings (Bob's case did it); the guide's 'who merges' fact is the maker's only, so the setting has no effect on the guide; whether the screen should offer it is w8-together's call.",
+     "The optional status branch (fr/status, off by default) still writes docs/status.md on its own branch; w8-status-write replaces it with the issue."
+    ],
+    "notes_for_other_areas": [
+     "w8-status-write: guideStatusIssueState(project) in packages/runtime/src/loop/guide.ts is the one place the issue's state enters the guide (return 'switched_off' or 'issues_off'); the facts' key (guideKeyOf, recorded at summary_cache.docs.guide_key) then differs and ProjectDocs.refreshGuide opens one docs pull request at the next session's end (call it right after a state change if it must be at once). The issue's number is never a fact.",
+     "w8-status-write: ownsUnmarkedDocs / the sole-linked fallback stays only for the status writer (isProjectStatusPr with soleLinked); docsPrListing(project, pr, {soleLinked}) returns 'own' | 'listed' | null for the Overview; STATUS_TEMPLATE and applyStatusUpdate remain for fr/status until you remove it.",
+     "Decisions: decisionRecordFor(workspace, day) and DECISION_RECORD_MARK (session/person-questions.ts) name the project's decision record; FIRST_DECISION_PATH is docs/decisions/YYYY-MM-DD-<slug>.md.",
+     "capabilities: UNFINISHED_WORK_RULES, WIP_STOPPED_HEADING, WIP_LEFT_HEADING and guideChangeLine(changedFiles) are exported from githost/pr-executor.ts.",
+     "Intake: recordDocsOutcome writes summary_cache.docs {location, branch?, pr_url, intake_at} or {error, failed_at, intake_at}; scaffoldLeftNoMarker reads intake_at or scaffolded_at.",
+     "Docs route: DOC_ROWS = STANDARD_DOCS + docs/status.md; titles 'Guide' (AGENTS.md), 'Guide for Claude Code' (CLAUDE.md); a together project's guide rows carry notWrittenHere with togetherDocNote also when the copy has them.",
+     "Take-over retry: TakeOverRetryFailure = blocked | branches | refused | unreachable; DocsScaffoldOutcome.stopped = pull_request_open | branches_taken; RepositoryUse.locatorOf(project).",
+     "w8-journey: two-people-checks.cjs guide-in-docs-pr no longer carries known: true.",
+     "Suggested lines (not written, files are not mine to edit): UPDATE-LOG/CHANGELOG: 'Every repository now gets AGENTS.md and a one-line CLAUDE.md, the guide for people and their agents, kept current by Forerunner; no docs/status.md in repositories; decisions are named by the day; a docs pull request your Forerunner did not open is only listed (ADR 0121).' requirements G.5: the doc set is AGENTS.md, CLAUDE.md, README.md, docs/overview.md, docs/architecture.md, docs/decisions/, docs/runbook.md, docs/data.md, docs/testing.md; the status is the app's."
+    ],
+    "tests_changed_for_design": [
+     {
+      "test": "packages/memory/test/docs.test.ts (set names, scaffold without guide facts, drift never asks for docs/status.md, missing list without the guide)",
+      "why": "ADR 0121: the guide leads the set and docs/status.md is out (owner's decisions D-W8-2, D-W8-3)."
+     },
+     {
+      "test": "packages/runtime/test/docs-scaffold.test.ts (files already on the branch; L4-github-102 take-over diff now marker + AGENTS.md + CLAUDE.md; unmarked PR nobody's until marked)",
+      "why": "The scaffold writes the guide and no status template; L4i-left-2 makes an unmarked docs PR nobody's."
+     },
+     {
+      "test": "packages/runtime/test/loop-docs.test.ts (status tests now also see the one guide docs PR; empty repository main has the guide and no status.md; folder project has AGENTS.md, no status.md; together/branchMarker cases)",
+      "why": "refreshGuide at the session's end gives a repository without a guide one docs pull request (W8-guide-1); docs/status.md left the set."
+     },
+     {
+      "test": "packages/runtime/test/loop-critic.test.ts (docs-drift case)",
+      "why": "statusDocManaged removed: drift never asks for docs/status.md or the guide; the guide line is asserted (W8-guide-6)."
+     },
+     {
+      "test": "packages/runtime/test/intake.test.ts (fixture without docs/status.md, dated record, problem and cut-off texts)",
+      "why": "W8-guide-3: the first decision is named by the Today date; the model is told the new form."
+     },
+     {
+      "test": "packages/runtime/test/person-questions-daemon.test.ts, packages/runtime/test/continuity-cancel.test.ts",
+      "why": "The answers' record is <day>-project-decisions.md when the project has none; the card names it."
+     },
+     {
+      "test": "packages/runtime/test/queue-docs-routes.test.ts",
+      "why": "Doc rows are the guide first and the app's status last."
+     },
+     {
+      "test": "apps/ui/test/fixtures.ts DOCS, project-tabs.test.tsx, w15-words.test.tsx, client.test.ts, onerepo-link.test.tsx, e2e/project-extras.spec.ts ('9 of 10 present', 10 rows)",
+      "why": "The fixture mirrors the daemon's ten rows."
+     },
+     {
+      "test": "apps/ui/test/real-daemon.test.ts (L4-github-104 problem line and record path; Approve and start's record path; L4-money-112 1426% -> 1427%; L4e-left-1 unmarked PR created as another login)",
+      "why": "Dated decision names; the specialist brief's added decision sentence costs a few stand-in input tokens (deterministic, checked twice); L4i-left-2."
+     }
+    ]
+   },
+   "review": {
+    "verdict": "fix-needed",
+    "acceptance_walk": "I ran two benches on one stand-in GitHub from detached fix/w8-repo-guide (7e5009b): Ada was review-w8-repo-guide (49272/2872, --githost 49274 --users ada,bob --org team) and Bob was review-w8-repo-guide-bob (49273/2873, --githost-shared). Both used --provider bench. Both benches were stopped afterwards with stop.mjs --clean; the steps/ folders are kept.\n\n1. **Two-person journey** (scripts/bench/journeys/two-people.cjs): 16/30 checks pass, no unknown failure, and guide-in-docs-pr passes. Ada's plan docs pull request #1 on team/shared holds .forerunner/project.json, AGENTS.md, CLAUDE.md, the docs set and docs/decisions/2026-11-24-plain-static-page.md. It has no docs/status.md. I fetched AGENTS.md as the stand-in serves it: it has the Work together line, the status issue named by its title, Before you start, branches, who merges, checks, unfinished-work rules, do-not-touch and agents' rules. It has no ids and no money. Result: /tmp/frbench/review-w8-repo-guide/steps/two-people-result.json.\n\n2. **Docs tabs.**\n   - Ada (09-review-docs-tab-ada.png): Guide and Guide for Claude Code come first, each \"waiting in pull request #1\", and Status comes last (\"kept in the app\").\n   - Bob, working together (review-w8-repo-guide-bob/steps/09-review-docs-tab-bob.png): the guide rows read 'The other Forerunner of \"Team site\" writes this doc on GitHub; this project does not write docs.'\n\n3. **Bob's unmarked pull request on team/shared.** As bob I pushed fr/docs-scaffold and opened #12 with a body that names no project. Ada's Overview (10-review-overview-ada-unmarked-pr.png) lists #12 without Merge, with \"#12 names no project, so it is only listed here...\". But it sits under \"Waiting for you to merge\" and \"Forerunner's docs, merge them when you like\", titled '\"The project's standard docs\" · pull request #12' (blocking 1).\n\n4. **Take-over with Try again** (11/12/13-review-takeover-*.png).\n   - Setup: team/old's main is marked \"Old site\", and Bob's unmarked PR is open on fr/docs-scaffold. Ada made the project with the address typed as https://github.com/team/old and Take it over.\n   - The Overview showed the no-pull-request line with Try again. Pressing it gave \"...another docs pull request is open on team/old; close it on GitHub, then try again.\" (L4i-left-5: owner/name, not the URL).\n   - With cut.mjs github off for Ada, Try again gave \"...GitHub did not answer. Try again in a moment.\" (L4i-left-6).\n   - Bob's branch head was unchanged, his PR had no comments, and Ada's only requests on team/old were git-upload-pack fetches.\n\n5. **Guide kept current.**\n   - I merged #1 with Ada's Merge and set merge_mode to after_review.\n   - With Bob's #12 then closed, one session opened exactly one docs PR, #16, on Ada's own branch fr/docs-scaffold-team-site. Its AGENTS.md has the after_review line. Ada never wrote to #12.\n   - After restart-daemon and another session, there was no second PR.\n\n6. **L4i-left-8** (14/15/16-review-l4i8-*.png).\n   - Setup: a take-over of team/club made with a brief. I cut Ada's GitHub, pressed Approve and start, then restored GitHub.\n   - The Overview showed 'Took over team/club from \"Club page\" here, but the docs pull request that names this project could not be opened...' with Try again. The line was still there after a daemon restart.\n   - Try again opened fr/docs-scaffold #1 and the line was replaced by \"Opened #1: once you merge it, GitHub names this project.\"\n\n7. **Failing-first check.** With this area's source files reverted locally to cfbd69f, these failed; they pass at HEAD:\n   - two-installs.test.ts: 5 of the 6 w8-repo-guide cases. In all three L4i-left-2 cases Ada pushed onto Bob's fr/docs-scaffold (the sha changed); L4i-left-8 and the guide case failed too.\n   - real-daemon.test.ts: the w8-repo-guide Try again case.\n   - docs-scaffold.test.ts: L4i-left-14 (the template replaced main's docs/overview.md).\n\n8. **Suites.**\n   - pnpm check: green (570 files, 6359 passed, 7 skipped; 40 lint warnings, as before).\n   - pnpm docs:check --base claude/nifty-knuth-f9udt0: ok (91 files).\n   - UI vitest: 107 files, 1564 passed.\n   - pnpm test:e2e: 13 files, 25 passed.\n   - Playwright project-extras.spec.ts: 5 passed.\n   - The area's unit files: 10 files, 225 passed.\n\n9. **Decision-record probe.** A temporary test, run and then deleted: the card was filed 2026-10-31 and answered the next day. The card named docs/decisions/2026-10-31-project-decisions.md, but the file written was 2026-11-01-project-decisions.md (blocking 2).",
+    "blocking": [
+     {
+      "issue": "Ada's Overview lists another person's unmarked docs pull request under headings and a title that say it is hers to merge, while its own line says it names no project. The area's new 'listed' row reuses the docs row's title and group.",
+      "where": "packages/runtime/src/daemon/pull-requests.ts:531-545 (title: docsTitle(pr.head.ref)); apps/ui/src/pages/project/SummaryTab.tsx:550 (group label)",
+      "evidence": "On the bench, Bob's PR #12 (team/shared) and #1 (team/old) show on Ada's Overview as 'Waiting for you to merge' > 'Forerunner's docs, merge them when you like' > '\"The project's standard docs\" · pull request #1', then '#1 names no project, so it is only listed here: open it on GitHub to see whose it is.' Screenshots: /tmp/frbench/review-w8-repo-guide/steps/12-review-takeover-try-again.png and 10-review-overview-ada-unmarked-pr.png. These are three untrue claims about Bob's pull request on one screen, against design section 5 rule 4 (true now) and rule 9 (no promises the code does not keep). The decision says the sole-linked fallback stays 'only for listing, as information, never with Merge'.",
+      "expected": "Show such a row as information only: in its own group, not under 'Waiting for you to merge' or 'Forerunner's docs, merge them when you like', and not titled \"The project's standard docs\". It could carry its GitHub title quoted as data, or a neutral title, with the existing one-sentence line. Assert the exact title and group text in a UI test and in the real-daemon or two-home case."
+     },
+     {
+      "issue": "W8-guide-3: the Inbox card names the decision record by the day the card was filed, but the answers are written to a file named by the day they were answered. The card's sentence is untrue whenever the person answers on another day, which is common.",
+      "where": "packages/runtime/src/session/person-questions.ts:1079 (card: decisionRecordFor(workspace, clock.nowIso())), :1221 (write: date: row.answered_at), :893 (`${day}-project-decisions.md`)",
+      "evidence": "I ran a probe test with the same compose as person-questions-daemon.test.ts: card filed at 2026-10-31T20:00Z, answer posted after clock.set('2026-11-01T08:00Z'). The card said \"Your answers are written to the project's decision record (docs/decisions/2026-10-31-project-decisions.md).\" but docs/decisions held only 2026-11-01-project-decisions.md (assertion failed). The acceptance asks for 'the person's Inbox answers after a date-named intake decision land in that record, no 0001 file is created, and the card names that file (exact text), also after a compose twice'. Only the same-day, no-record case is tested. The intake-record path and the restart case have no test.",
+      "expected": "Write to the file the card named: record it on the card or row when filed, or create the marked record at filing. Add a case answered on a later day, a case where answers land in the intake's dated, marked record with no 0001 file, and a compose-twice case. Each asserts the card's exact sentence and the file written."
+     },
+     {
+      "issue": "Changed model-facing prompt lines are not asserted as the exact text the model receives.",
+      "where": "packages/runtime/src/session/intake.ts:2130-2138 (first-plan system prompt: 'and docs/decisions/YYYY-MM-DD-<slug>.md for the first decision, named by the Today date;' ... 'write each choice and why in that decision record.'); packages/runtime/src/session/task-context.ts:348 (specialist brief: 'A new decision goes in its own file, docs/decisions/YYYY-MM-DD-<slug>.md named by today's date, never by a number.')",
+      "evidence": "No test in packages, apps or testenv contains 'for the first decision, named by the Today date', 'choice and why in that decision record' or 'A new decision goes in its own file'. The only test touching the new form in the plan prompt is a negative not.toContain for the plan-only form (intake.test.ts:1911). The retry and cut-off problem texts are asserted, but not these lines. The acceptance requires 'the plan prompt's decision lines are asserted as the exact text the model receives'. The round's common rule says model-facing prompts are code whose exact text is asserted.",
+      "expected": "Assert the exact changed lines in the system prompt of the first-plan call and in a specialist's brief, as the model receives them (for example from the FakeProvider's recorded call)."
+     }
+    ],
+    "claims_checked": [
+     {
+      "claim": "L4i-left-2: an unmarked docs pull request this install did not open is nobody's. The scaffold, take-over, rebuild and Try again write nothing to it, and the Overview lists it without Merge.",
+      "holds": true,
+      "note": "two-installs: 3 L4i-left-2 cases fail with the source reverted to cfbd69f (Ada pushed onto Bob's fr/docs-scaffold) and pass at HEAD. On the bench, Ada's take-over and Try again on team/old left Bob's branch and PR untouched. The on-screen words of the listed row are wrong (blocking 1). Caveat in non_blocking: the branch-marker evidence is inherited from main."
+     },
+     {
+      "claim": "L4i-left-5/-6/-7: Try again names owner/name, says what stopped it, and answers by the real state.",
+      "holds": true,
+      "note": "The bench showed team/old for an address typed as a URL, 'another docs pull request is open on team/old', and 'GitHub did not answer. Try again in a moment.' with Ada's GitHub cut. The real-daemon w8-repo-guide case fails before the fix and passes after."
+     },
+     {
+      "claim": "W8-guide-1/-2/-5: AGENTS.md and CLAUDE.md in the docs PR, no docs/status.md, drift no longer asks for it, the guide is kept current, and one docs PR per fact change, none after a restart.",
+      "holds": true,
+      "note": "The journey's guide-in-docs-pr passes. On the bench, merge_mode after_review gave exactly one PR (#16, Ada's own branch) and none after restart-daemon plus another session. Caveats: the guide says the status issue is on (no issue exists on this base), and a CRLF AGENTS.md is not kept byte for byte."
+     },
+     {
+      "claim": "W8-guide-3: date-named decisions; the together project writes no docs; the Inbox card names the record's real file.",
+      "holds": false,
+      "note": "Date naming and the writer rule hold (the two-installs http case passes and failed before). The card names the wrong file when answered on a later day (probe). The intake-record path and the compose-twice case are untested. The changed plan-prompt lines are not asserted exactly."
+     },
+     {
+      "claim": "W8-guide-4: recall finds AGENTS.md.",
+      "holds": true,
+      "note": "Unit level only (docs-search.test.ts). There is no composed recall case and no injection case for the new channel."
+     },
+     {
+      "claim": "W8-guide-6: a task PR changing AGENTS.md says so in its body and in the critic's evidence.",
+      "holds": true,
+      "note": "pr-executor.test.ts and loop-critic.test.ts pass with exact text. Not walked on the bench."
+     },
+     {
+      "claim": "L4i-left-8: a take-over with a brief whose plan docs PR failed shows the no-pull-request line with Try again, after a restart too.",
+      "holds": true,
+      "note": "Bench walk with cut.mjs and restart-daemon confirmed it, and the two-installs case fails before the fix. Try again opens the template doc set, not the plan's drafted docs (non_blocking)."
+     },
+     {
+      "claim": "L4i-left-14: the take-over rebuild keeps main's newer file.",
+      "holds": true,
+      "note": "docs-scaffold.test.ts fails with the source reverted (template replaced 'Written by the team.') and passes at HEAD."
+     },
+     {
+      "claim": "Validation: pnpm check, docs:check, test:integration, test:e2e, UI vitest, Playwright and injection green.",
+      "holds": true,
+      "note": "Re-run here: pnpm check green (570 files, 6359 passed), docs:check ok (91 files), UI vitest 107 files / 1564 passed, test:e2e 25 passed, Playwright project-extras 5 passed. Not re-run: test:integration, test:injection, full Playwright."
+     },
+     {
+      "claim": "Tests changed for design, none weakened.",
+      "holds": true,
+      "note": "Every removed or changed assertion I read (docs-scaffold Delta case, loop-critic drift, loop-docs, intake, queue-docs-routes, fixtures) follows ADR 0121. loop-critic still asserts that docs-drift names other missing docs."
+     }
+    ],
+    "non_blocking": [
+     "Branch-marker ownership is inherited. Once Ada's doc set merges, main carries .forerunner/project.json naming her project, so every branch cut from main carries it too. A person's unmarked PR on a fr/docs-scaffold* branch cut from main then counts as Ada's (isProjectDocsPr branchMarker, loop/docs.ts ~262). Her scaffold and guide refresh would push and comment onto it and her Overview would offer Merge. This follows the session lead's decision wording, but contradicts docs/user-guide.md ('never written to by your Forerunner'). Suggest counting the branch marker only when it differs from the default branch's marker, or not at all without the recorded URL.",
+     "The guide says the status issue is on (guideStatusIssueState returns 'on'), so every AGENTS.md tells agents to read a pinned 'Forerunner status: <name>' issue that this base never creates. This is per the spec and the fixer flagged it: ship with w8-status-write.",
+     "Guide-refresh PR words on GitHub are untrue for an update. PR #16 was titled 'docs: scaffold the standard project doc set' with the body 'written from templates for the files the repository lacked: - AGENTS.md', though AGENTS.md was updated, not missing. The plan PR body also lists 'From the templates: AGENTS.md, CLAUDE.md'. 'spec G.5' is jargon on GitHub (pre-existing).",
+     "applyGuide and applyGuideImport normalise line endings, so a person's CRLF AGENTS.md or CLAUDE.md is rewritten to LF. That is not byte for byte, and docs.test.ts pins the conversion. On a repository that stores CRLF, the whole file shows as changed.",
+     "L4i-left-8: Try again opens the template doc set (fr/docs-scaffold). The plan's drafted docs and its decision record (docs/decisions/2026-11-24-plain-static-page.md) stay only in the app's workspace, though the Overview shows 'Decision record: A plain static page, no build step'.",
+     "The Try again 'blocked' advice ('another docs pull request is open on <repo>; close it on GitHub') tells the person to close a pull request that may be another person's or another Forerunner's (D9). Consider 'ask whoever opened it' wording.",
+     "W8-guide-4: AGENTS.md is a new recall and per-turn-excerpt channel from GitHub text, but there is no composed recall case quoting it as a document, and no test:injection case for it.",
+     "Rule 3, 'same commit': f8ad5df changed GET /projects/:id/docs rows without the fake's fixtures (updated in f5e3f29), and left queue-docs-routes.test.ts failing until 738cbac. The new rows have no real-daemon.test.ts case; they are covered through the two-installs client only.",
+     "The fake daemon answers TAKE_OVER_NOT_TAKEN for a project that took over successfully but was never retried, because it knows a take-over only from a retried line. The real daemon answers TAKE_OVER_NOTHING_TO_RETRY there.",
+     "Bob's (together) Docs tab Status row still reads 'Kept in the app: you work on \"Team site\" together, so GitHub's copy is left as it is.' There is no docs/status.md on GitHub any more, so 'GitHub's copy' no longer exists (pre-existing words, now untrue). The tab header 'Kept by the agent; ...' also reads oddly for a together project.",
+     "From reading scaffoldBranchFor (not walked): while any pull request is open on fr/docs-scaffold, the scaffold always picks fr/docs-scaffold and stops (pull_request_open). A guide refresh after a fact change therefore stays blocked silently, with no line telling Ada why, until that pull request closes.",
+     "The record name and the intake's rename use the UTC day (clock.nowIso().slice(0,10)), not the person's zone. For a repository project the answers' record lives in the app's workspace, not the repository, though the card's 'docs/decisions/...' path reads like a repository path (pre-existing)."
+    ]
+   },
+   "fixup": {
+    "area": "w8-repo-guide",
+    "branch": "fix/w8-repo-guide",
+    "head_sha": "500b564f83b9ca4c99e50f026d0df7f5b8692c02",
+    "commits": [
+     {
+      "sha": "d6e1950fca9e3dd94c38f9831a9b265e9e043050",
+      "subject": "runtime, ui: a docs pull request that names no project is listed apart, under \"Also open on GitHub\", as \"Docs pull request #N\" (L4i-left-2)"
+     },
+     {
+      "sha": "e788fdd317cfa4263a416081f89030e543a341bf",
+      "subject": "runtime: the Inbox answers go to the file the card named, whatever day they come (W8-guide-3)"
+     },
+     {
+      "sha": "500b564f83b9ca4c99e50f026d0df7f5b8692c02",
+      "subject": "runtime tests: the plan's and the specialist's decision lines asserted as the exact text the model receives (W8-guide-3)"
+     }
+    ],
+    "fixed": [
+     {
+      "problem": "Blocking 1 (review): Ada's Overview listed another person's unmarked docs pull request under \"Waiting for you to merge\" > \"Forerunner's docs, merge them when you like\", titled '\"The project's standard docs\" · pull request #12', next to its own line saying it names no project. That is three untrue claims about Bob's pull request (design section 5 rules 4 and 9). The cause: the new \"listed\" row reused the docs row's kind and title.",
+      "u_ids": [
+       "L4i-left-2"
+      ],
+      "failing_test_before": "apps/ui/test/project-overview.test.tsx > w8-repo-guide, wave 8 (2 cases: own group 'Also open on GitHub', title 'Docs pull request #12', no Merge, no Open this version, 'No pull request waits for you.' stays true); apps/ui/test/two-installs.test.ts > the three L4i-left-2 cases (kind 'listed', title, Merge refused with its line); apps/ui/test/real-daemon.test.ts > 'a take-over typed as a web address ...' (kind, title, preview refused). Each failed with the daemon fix set aside (received kind 'docs').",
+      "how": "- api-types.ts: ProjectPullRequestView.kind gains \"listed\".\n- pull-requests.ts: the row is titled by listedDocsTitle(n), \"Docs pull request #N\", and keeps its blocked merge line. Merge is refused with that line. Open this version is refused for it, as for a cancelled task's pull request.\n- SummaryTab.tsx: such rows go into their own section, data-testid prs-listed, headed \"Also open on GitHub\". Each row has its title, Open and its line, and no Merge or preview. They never appear under \"Waiting for you to merge\" or in the docs group.\n- The fake daemon's preview route mirrors this.\n- Docs updated: apps.md, runtime.md, user-guide.md and the ADR 0121 point 8 wording.",
+      "check_in_the_app": "1. Start two benches on one stand-in (ada, bob, org team). As Ada, make 'Team site' on team/shared.\n2. As bob on GitHub, push fr/docs-scaffold-notes without .forerunner/project.json and open a pull request whose body names no project.\n3. Open Ada's Overview. Under 'Your files' there is a separate heading 'Also open on GitHub' with 'Docs pull request #N', Open, and the line '#N names no project, so it is only listed here: open it on GitHub to see whose it is.' It has no Merge and no Open this version.\n4. '#N' is not under 'Waiting for you to merge', and no row is titled \"The project's standard docs\" for it.\n5. On GitHub, Bob's pull request has no commit or comment by ada.\n\nBench result (2026-11-24): /tmp/frbench/fixup-w8-repo-guide/steps/09-fixup-overview-ada-listed-pr.png shows exactly this for #12. Merge through the route was refused with the line, and the stand-in log shows 0 writes by ada on #12. For the live check, do the same on real GitHub with a second account."
+     },
+     {
+      "problem": "Blocking 2 (review): the Inbox card named the decision record by the day it was filed, but the answers went to a file named by the day they were answered. The review's probe: filed 2026-10-31, answered 2026-11-01; the card named 2026-10-31-project-decisions.md and only 2026-11-01-project-decisions.md was written. The intake-record path and a restart case were not tested.",
+      "u_ids": [
+       "W8-guide-3"
+      ],
+      "failing_test_before": "packages/runtime/test/person-questions-daemon.test.ts > w8-repo-guide, wave 8: (1) 'a card filed one evening and answered the next morning ...' failed: expected ['2026-10-31-project-decisions.md'], received ['2026-11-01-project-decisions.md']. (2) 'two person tasks whose cards are filed on two days ...' failed: the second card named 2026-11-01-project-decisions.md. (3) The intake-record case was added as missing coverage; it passed before and after.",
+      "how": "person-questions.ts:\n- The card now keeps the record it names in change_card.decision_doc. namedDecisionRecord accepts only docs/decisions/<name>.md: no other folder, no '..', not README.\n- writeAnswersToDecisionDoc writes to that file whatever day the answers come.\n- decisionRecordForProject picks the record when a card is filed, in this order: the workspace's record (a 0001-*.md file, else the one with the hidden mark); else the record an earlier open or unapplied card of the project already names; else '<filing day>-project-decisions.md'. So cards filed on two days before either is answered share one record.\n- A card that names only the folder (a specialist's, a critic's, an older one) finds the record at write time, as before.\n- No API shape change; the card's sentence is unchanged.\n- Docs updated: runtime.md and ADR 0121 point 5.",
+      "check_in_the_app": "1. In a folder project, add a task for the person ('Me') with a question. The Inbox card reads '... Your answers are written to the project's decision record (docs/decisions/<today>-project-decisions.md). The task is then done.'\n2. Answer it. The file with that exact name appears in the project's folder (Docs tab, decision records) and holds the answer.\n3. Across days: file the card, leave it overnight, answer it the next day. The answer lands in the file named on the card, and no file named by the answer's day appears.\n4. With a plan from a brief, the card names the plan's dated record (docs/decisions/<plan day>-<slug>.md) and the answers land there.\n\nBench result (2026-11-24): the card named docs/decisions/2026-11-24-project-decisions.md, and after answering the folder held only that file and README.md (/tmp/frbench/fixup-w8-repo-guide/steps/10-fixup-inbox-card-names-record.png, fixup-walk-b2-result.json). The cross-day case is covered by the composed tests with a simulated clock, not the bench."
+     },
+     {
+      "problem": "Blocking 3 (review): the changed model-facing lines were not asserted as the exact text the model receives:\n- the first plan's 'and docs/decisions/YYYY-MM-DD-<slug>.md for the first decision, named by the Today date;'\n- 'choice and why in that decision record.'\n- the specialist brief's 'A new decision goes in its own file, docs/decisions/YYYY-MM-DD-<slug>.md named by today's date, never by a number.'",
+      "u_ids": [
+       "W8-guide-3"
+      ],
+      "failing_test_before": "none failed: these tests add the missing coverage. The lines were right and only untested. Each new assertion fails on any change to its line.",
+      "how": "Assertions on the scripted provider's recorded calls, no source change:\n- packages/runtime/test/person-questions-daemon.test.ts (w8-repo-guide, wave 8):\n  - The first-plan system prompt contains both decision blocks word for word (three lines each) and no '0001'.\n  - The plan message carries 'Today: 2026-10-31 (UTC)'.\n  - A reply naming docs/notes.md gets the exact retry message with 'docs may only name the standard doc set (README.md, docs/overview.md, docs/architecture.md, docs/decisions/README.md, docs/runbook.md, docs/data.md, docs/testing.md) or docs/decisions/YYYY-MM-DD-<slug>.md, named by the Today date'.\n- packages/runtime/test/executor-brief.test.ts (w8-repo-guide, wave 8): the brief's Project section word for word, including the decision line, and \"Today's date is <day> (UTC).\" in the same brief.",
+      "check_in_the_app": "Live check by the session lead (real model):\n1. New project from a brief on a repository.\n2. The plan's docs pull request has docs/decisions/<today>-<slug>.md, not 0001-*.\n3. Run a task whose outcome records a choice ('Record the hosting choice'). The task's pull request adds a new docs/decisions/<today>-<slug>.md file and does not use a number."
+     }
+    ],
+    "not_done": [
+     {
+      "problem": "Non-blocking review items were not changed in this fix-up: branch-marker ownership inherited from main once Ada's marker merges, the CRLF rewrite of a person's AGENTS.md, the guide-refresh PR's title and body wording, the Try again 'close it on GitHub' advice, a composed recall and injection case for AGENTS.md, the fake daemon's TAKE_OVER_NOT_TAKEN answer, the together Status row's 'GitHub's copy' wording, a silently blocked guide refresh while fr/docs-scaffold has an open PR, and the UTC day in record names.",
+      "why": "The task was to fix the blocking findings. The branch-marker item is the session lead's decision wording ('its branch's own .forerunner/project.json names this project itself'), so changing it needs the session lead's call. The others are listed in new_problems for routing."
+     }
+    ],
+    "validation": [
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm check",
+      "result": "exit 0: lint (40 warnings, as before), lint:paths, typecheck, unit tests 570 files / 6364 passed / 7 skipped, docs:links, secrets:scan green; docs:check needs a base in a worktree"
+     },
+     {
+      "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+      "result": "docs-check: ok (95 files)"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+      "result": "5 passed, 7 skipped files (30 passed, 83 skipped)"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+      "result": "13 files, 25 passed, 1 skipped"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx vitest run --config vitest.config.ts",
+      "result": "107 files, 1566 passed"
+     },
+     {
+      "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+      "result": "40 passed"
+     },
+     {
+      "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+      "result": "PASS: 92 cases, 92 passed, 0 failed"
+     },
+     {
+      "command": "node scripts/bench/journeys/two-people.cjs fixup-w8-repo-guide fixup-w8-repo-guide-bob (--provider bench, stand-in GitHub, users ada,bob, org team)",
+      "result": "16/30 passed; failed (not known): none; known: 14 (as the fixer and the reviewer saw)"
+     },
+     {
+      "command": "node <scratchpad>/fixup-walk.cjs (Bob's unmarked PR #12 on team/shared; a person task's card in a folder project)",
+      "result": "9/9 checks ok: kind 'listed', title 'Docs pull request #12', Merge refused with its line, Overview section 'Also open on GitHub', not under 'Waiting for you to merge', 0 writes by ada on #12, Bob's head unchanged; card names docs/decisions/2026-11-24-project-decisions.md and the answer lands only there. Both benches stopped with stop.mjs --clean (steps/ kept)."
+     },
+     {
+      "command": "cargo checks",
+      "result": "not run: the desktop shell was not changed"
+     }
+    ],
+    "screenshots": {
+     "before": [
+      "/tmp/frbench/review-w8-repo-guide/steps/10-review-overview-ada-unmarked-pr.png",
+      "/tmp/frbench/review-w8-repo-guide/steps/12-review-takeover-try-again.png"
+     ],
+     "after": [
+      "/tmp/frbench/fixup-w8-repo-guide/steps/09-fixup-overview-ada-listed-pr.png",
+      "/tmp/frbench/fixup-w8-repo-guide/steps/10-fixup-inbox-card-names-record.png"
+     ]
+    },
+    "new_problems": [
+     "Branch-marker ownership is inherited (review non-blocking, still open). Once Ada's doc set merges, every branch cut from main carries .forerunner/project.json naming her project. A person's unmarked fr/docs-scaffold* PR cut from main then counts as Ada's, by the decision's wording. My bench walk had to delete the marker on Bob's branch to get a 'listed' row. Suggest counting the branch marker only when it differs from the default branch's; needs the session lead's call.",
+     "A planned person task that a session reaches before the approvals sync files its card goes through executor.ts filePersonQuestions with no decisionRecord. Its card then names only the folder ('... decision record in docs/decisions.'). That is true, but less precise than the sync-filed card. Could pass decisionRecordForProject there too.",
+     "The Overview header on the bench read 'Done: all 5 tasks. 5 pull requests wait for you to merge.' while 6 rows waited (5 task PRs and the plan's docs PR #1). Is the count of task PRs only intended? Not this area's code; flagged for the words owner.",
+     "The review's other non-blocking items stand as the reviewer wrote them: CRLF AGENTS.md rewrite; guide-refresh PR title and body; 'close it on GitHub' advice on another person's PR; no composed recall or injection case for AGENTS.md; fake daemon TAKE_OVER_NOT_TAKEN versus the real TAKE_OVER_NOTHING_TO_RETRY; together Status row 'GitHub's copy'; guide refresh silently blocked while fr/docs-scaffold is open; UTC day in record names."
+    ],
+    "notes_for_other_areas": [
+     "ProjectPullRequestView.kind has a new value 'listed': a docs pull request that names no project, on the one project here linked to the repository. Its title is listedDocsTitle(n) = 'Docs pull request #N' (daemon/pull-requests.ts) and merge = {state: 'blocked', canMerge: false, sentence: unmarkedDocsSentence(n)}. Merge and preview routes refuse it. The Overview shows it under 'Also open on GitHub' (SummaryTab prs-listed / pr-listed / pr-listed-title / pr-listed-link / pr-listed-sentence). w8-status-write: if the fr/status half ever lists an unmarked status PR, reuse this kind rather than 'docs'.",
+     "New person-facing words (old, then new): Overview heading for such a PR: (none; it sat under 'Waiting for you to merge' > \"Forerunner's docs, merge them when you like\") -> 'Also open on GitHub'. Its title: \"The project's standard docs\" -> 'Docs pull request #N'. The row line is unchanged: '#N names no project, so it is only listed here: open it on GitHub to see whose it is.'",
+     "person-questions.ts: new exports decisionRecordForProject(store, workspace, projectId, day) and namedDecisionRecord(record). A planned person card now stores the named record in change_card.decision_doc, and writeAnswersToDecisionDoc({..., record}) writes there. Any area that files person-questions cards with a named record should pass decisionRecordForProject's answer as decisionRecord.",
+     "Suggested UPDATE-LOG/CHANGELOG line (not written): 'A docs pull request your Forerunner did not open is listed apart on the Overview, under Also open on GitHub, with no Merge; your Inbox answers go to the decision record the card names, on whatever day you answer.'"
+    ],
+    "tests_changed_for_design": [
+     {
+      "test": "apps/ui/test/two-installs.test.ts (three L4i-left-2 cases) and apps/ui/test/real-daemon.test.ts ('a take-over typed as a web address ...')",
+      "why": "The listed row's kind moved from 'docs' to 'listed' and its title from \"The project's standard docs\" to 'Docs pull request #N'. The assertions were tightened to the kind and title, plus Merge or preview refused. None was weakened."
+     }
+    ]
+   }
+  }
+ ],
+ "missing": [],
+ "merge": {
+  "merged": [
+   "fix/w8-two-homes (cddbfa3) as merge commit 417f050",
+   "fix/w8-issue-host (cfbd69f, with fix-up 1fcb0e2 and cfbd69f) as merge commit 84480d1",
+   "fix/w8-repo-guide (500b564, with fix-up d6e1950, e788fdd and 500b564) as merge commit ebc82fe"
+  ],
+  "head_sha": "8299aa3b98e248e8cfb8b20fe6762fde497b8cff",
+  "pushed": true,
+  "conflicts_resolved": [
+   "None. The three branches are stacked: w8-issue-host contains w8-two-homes, and w8-repo-guide contains w8-issue-host. All were based on 8262c31, so each --no-ff merge applied cleanly. git grep -n '^<<<<<<< ' finds nothing."
+  ],
+  "integration_fixes": [
+   "8299aa3, 'live tests: the guide's docs pull request beside the task's (w8-repo-guide, W8-guide-1)'. After the merge, the live harness dry runs failed 3 cases. pnpm check does not run them, and the area did not run them either. Failing cases: tests/live/test/harness.test.ts 'one session completes a task through a PR on the fake host ...' and 'one session runs the task through the SDK driver on the subscription ...' (expected 1 pull request, got 2), and tests/live/test/live-6-researcher.live.test.ts 'one researcher session on the registry default ...' (answer.present false). Root cause: w8-repo-guide's ProjectDocs.refreshGuide (ADR 0121) opens, at a session's end, one docs pull request on fr/docs-scaffold that brings AGENTS.md and CLAUDE.md to a repository without a guide. That is the intended design, and loop-docs.test.ts was already updated for it. The researcher case took the first fr/ branch as the task's branch, and that is now the guide's branch. Fix (tests only, no assertion dropped): the dry runs now assert one task pull request, one guide pull request on DOCS_SCAFFOLD_BRANCH, and that its AGENTS.md names the project. The researcher reads answer.md from the task's own branch, not a docs branch. The live-only siblings (live-1-phase1 and live-4-subscription, which expect 3 fr/ pull requests) now count task pull requests without the guide's, so the session lead's real-model runs follow the same rule. The commit is signed."
+  ],
+  "validation": [
+   {
+    "command": "git merge --no-edit --no-ff fix/w8-two-homes; fix/w8-issue-host; fix/w8-repo-guide",
+    "result": "3 clean merges, no conflicts; no conflict markers"
+   },
+   {
+    "command": "pnpm install --frozen-lockfile",
+    "result": "ok (Done in 2.1s)"
+   },
+   {
+    "command": "flock /tmp/frbench/heavy.lock pnpm check",
+    "result": "exit 0. Lint: 40 warnings, the same count as before. lint:paths and typecheck pass. Unit tests: 570 files, 6364 passed, 7 skipped. docs:links ok (214 files), secrets:scan clean (2301 files). The inner docs:check checks nothing in this checkout because it has no origin/main, so it was run with --base."
+   },
+   {
+    "command": "pnpm docs:check --base origin/claude/nifty-knuth-f9udt0",
+    "result": "docs-check: ok (95 files), both before and after the fix commit"
+   },
+   {
+    "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+    "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped (no FORERUNNER_TEST_PG)"
+   },
+   {
+    "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+    "result": "exit 0: 13 files; 25 passed, 1 skipped"
+   },
+   {
+    "command": "flock /tmp/frbench/heavy.lock env -u FORERUNNER_ANTHROPIC_API_KEY -u FORERUNNER_TEST_GITHUB_TOKEN -u FORERUNNER_LIVE pnpm --filter @forerunner/live test (after the merge)",
+    "result": "exit 1: 3 failed, 60 passed, 17 skipped (the guide docs pull request; see integration_fixes)"
+   },
+   {
+    "command": "same live harness dry runs after 8299aa3",
+    "result": "exit 0: 11 files passed, 4 skipped; 63 passed, 17 skipped. No keys were used."
+   },
+   {
+    "command": "pnpm --filter @forerunner/live typecheck; pnpm exec biome check tests/live",
+    "result": "both clean"
+   },
+   {
+    "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+    "result": "PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed"
+   },
+   {
+    "command": "flock /tmp/frbench/heavy.lock env -u <keys> -u GIT_* HOME=<empty dir> FORCE_COLOR=1 pnpm test (CI style; git has no identity there, checked)",
+    "result": "exit 0: 570 files, 6364 passed, 7 skipped"
+   },
+   {
+    "command": "cd apps/ui && flock /tmp/frbench/heavy.lock env HOME=<empty dir> FORCE_COLOR=1 pnpm vitest run --config vitest.config.ts",
+    "result": "exit 0: 107 files, 1566 passed (two-installs, me-races, real-daemon included)"
+   },
+   {
+    "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+    "result": "40 passed (1.2m)"
+   },
+   {
+    "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+    "result": "not run: no area touched apps/desktop (git diff 8262c31..HEAD names no file there)"
+   },
+   {
+    "command": "signature check over origin/claude/nifty-knuth-f9udt0..HEAD",
+    "result": "29 commits, all carry gpgsig; nothing printed"
+   },
+   {
+    "command": "git push -u origin claude/nifty-knuth-f9udt0",
+    "result": "8262c31..8299aa3 pushed on the first try; the remote head equals the local head (8299aa3)"
+   }
+  ],
+  "smoke": "node scripts/bench/start.mjs --name merge-w34 --daemon-port 49290 --ui-port 2890 --fresh, then node scripts/bench/journeys/smoke.cjs merge-w34: 25/25 checks passed, 0 findings, 0 recorded problems. Model calls: intake 1, specialist 9, critic 6, chat 1. The project's folder now also holds AGENTS.md and CLAUDE.md (W8-guide-1). The journey script needed no change. Result: /tmp/frbench/merge-w34/steps/smoke-result.json (copy at /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/merge-w34-smoke-result.json). The bench was stopped with stop.mjs and its home deleted. Only the logs and steps/ are kept (19 MB under /tmp/frbench/merge-w34).",
+  "problems_left": [
+   "None broken on the merged head: every suite above is green.",
+   "Not re-run here: the live-only tests (live-1-phase1, live-4-subscription, live-6 live half), because they need the real model or GitHub. Their pull-request counts were adjusted in 8299aa3 so the guide's docs pull request does not count as a task's. The session lead should confirm them on the next live run.",
+   "Carried from the area reports, unchanged by this merge: (1) guideStatusIssueState always returns 'on', so every AGENTS.md mentions a pinned status issue that this base never creates. Ship it with w8-status-write. (2) cut.mjs cuts only the REST API proxy; git fetch and push still reach the stand-in. (3) Branch-marker ownership is inherited from main once the maker's marker merges; this needs the session lead's call. (4) On the stand-in, GET /repos/:o/:r/issues/comments is shadowed by /issues/:number. (5) The phone's /me sends no timezone. (6) A Settings change reaches the guide only at the next session's end."
+  ]
+ }
+}

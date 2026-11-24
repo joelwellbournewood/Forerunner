@@ -1,0 +1,95 @@
+{
+ "verdict": "pass",
+ "acceptance_walk": "I set up a worktree detached at fix/w8-two-homes (cddbfa3), ran pnpm install --frozen-lockfile and used --provider bench only. There was no real GitHub and no API key.\n\n1) Two benches on one stand-in GitHub, started exactly as the README describes:\n- Ada: `start.mjs --name review-w8-two-homes --daemon-port 49270 --ui-port 2870 --fresh --provider bench --githost 49272 --users ada,bob --org team`\n- Bob: `--name review-w8-two-homes-bob --daemon-port 49271 --ui-port 2871 --githost-shared review-w8-two-homes --githost-user bob`\n\nI walked it in the browser with my own Playwright scripts, which use recorder.openTwo:\n- Setup assistant, first step on each app: name Ada / Bob, zone Europe/Zurich, then Skip for now and Start using Forerunner. /me answered \"Ada\" and \"Bob\". The device ids differed. Both agents are still called \"Alice\", a known gap owned by w8-shared-repo.\n- Ada pressed New project: \"Team site\", with a brief, on https://github.com/team/shared. The plan card came, and she pressed Approve and start in the Inbox. 5 tasks were done.\n- Bob pressed New project on the same repository. The dialog showed the offer, with Work together and its explanation and no Take it over button (scratchpad/walk-bob-steps/04-bob-offer.png). He pressed Work together and got the same project id. His Overview shows \"Shared on GitHub with another Forerunner: each keeps its own tasks.\" (05-bob-together-overview.png).\n- Bob pressed Approve and start; his session ran 5 tasks. On the stand-in, pull requests #1-#6 are by ada (#1 is her docs PR) and #7-#11 are by bob. The request log gives every call a login. Neither home wrote to the other's PR numbers. Each Overview lists only its own pull requests: Ada 1-6, Bob 7-11.\n- `cut.mjs bob github off`: Bob's GET /projects/:id/pull-requests answered errorKind \"unreachable\", and his Overview shows \"GitHub did not answer, so the pull requests are not listed. Try again later.\" (09-bob-overview-github-off.png). Ada's list still answered. After `on`, Bob's list came back (10-...github-on.png).\n- `restart-daemon.mjs` on Bob, then a hard restart with his page open: the together line, his name and his device id are all kept (11-15-bob-after-*.png).\n- Problems file after the hard restart: steps/problems.jsonl has 4 console and requestfailed lines with `/events?speech=play&token=[REDACTED]`. No file under steps/ holds the old or the new daemon token (L4i-left-54 fixed on the bench).\n- Zone: Ada opened a session page (\"Team site · session at 14:07\"). Settings has no Time zone row. I went Settings → setup assistant → Back to the first step and changed the zone to America/New_York. Without a reload, the same window showed \"session at 08:07\" (walk-ada-steps/15-ada-session-after-zone.png). A second window stayed at 14:07 until it was reloaded.\n- The Updates page shows the baseline model-watch report with nothing to decide, so the button race can only be checked by the UI test and Playwright.\n\n2) Journey script: `journeys/two-people.cjs` on a fresh pair of benches exited 0. Result: 15/30 passed, failed (not known) none, 15 known, each with its owner. This matches the fixer's figure. Screenshots are in /tmp/frbench/review-w8-two-homes-bob/steps/ (for example 03-03-work-together-bob.png and 08-13-github-off-bob.png); the result is saved at scratchpad/two-people-result.json.\n\n3) Single-user stand-in through the new proxy: `--githost 49272` without --users. A project on bench/seeded reached its plan card, and the pull-request route answered with no error. No regression.\n\n4) Cleanup: I ran `stop.mjs --clean` on every bench (once with the owner bench stopped first) and checked every recorded PID with kill -0; none was alive. Homes are removed; only steps/ and bench.json are kept. Disk has 12 GB free.\n\nScreens against the design: the offer, Overview and GitHub-off screens are plain one-sentence states with CHF only and no ids. This area adds no new person-facing sentence.\n\nScratchpad dir: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/",
+ "blocking": [],
+ "claims_checked": [
+  {
+   "claim": "L4i-left-3: the model watch's buttons stay off and nothing is sent until /me answers, then by = me.id",
+   "holds": true,
+   "note": "With apps/ui/src reverted to claude/nifty-knuth-f9udt0, me-races test 1 fails ('Received element is not disabled'). It passes on the branch. e2e/updates.spec.ts --repeat-each 5: 10 passed."
+  },
+  {
+   "claim": "L4i-left-62: setPersonZone is out of the reducer; AppRoutes redraws on a zone change; the setup assistant re-reads /me",
+   "holds": true,
+   "note": "On base all 3 me-races tests fail: the session heading stayed 'session at 21:00' (expected 15:00), and the zone stayed 'Europe/Zurich'. On the bench the same window went from 14:07 to 08:07 without a reload. A second window does not follow (see non_blocking)."
+  },
+  {
+   "claim": "check_in_the_app for L4i-left-62: 'In Settings (or the setup assistant's first step), change Time zone'",
+   "holds": false,
+   "note": "Settings has no Time zone row: human.timezone is not in SETTING_KEYS, so changeableSettings drops it. The only way is Settings → Open the setup assistant → Back to the first step."
+  },
+  {
+   "claim": "L4i-left-18: continuation and hands-off tests count sessions only after nothingMore(rt)",
+   "holds": true,
+   "note": "Only `await nothingMore(...)` lines were added; the expected counts are unchanged. continuation, start-by-itself and onerepo-together passed twice: 15/15 each run."
+  },
+  {
+   "claim": "W8-homes-2: MemoryGitHost.asLogin gives per-login views; every write is recorded with its login",
+   "holds": true,
+   "note": "All 17 write methods call wrote(). githost-memory-views.test.ts passes. In onerepo-together.test.ts only the Object.create lines changed."
+  },
+  {
+   "claim": "W8-homes-1: the harness's failing case is Bob's PR carrying ada through an Object.create view",
+   "holds": true,
+   "note": "I put the Object.create view back into two-installs.ts temporarily: the memory case fails with 'expected 'ada' to be 'bob''. Restored afterwards; on the branch both modes pass."
+  },
+  {
+   "claim": "Harness: 'Four cases in both modes' (GitHub off for Bob in both)",
+   "holds": false,
+   "note": "Only the main case runs on both memory and http. The holds and GitHub-off cases run on memory only, so the http githubOff path is never exercised."
+  },
+  {
+   "claim": "L4i-left-54: the recorder writes no daemon token, console lines included",
+   "holds": true,
+   "note": "Bench hard restart with the page open: the location URLs in problems.jsonl read token=[REDACTED], and 0 files hold the old or new token. The unit tests pass."
+  },
+  {
+   "claim": "W8-homes-3: --users/--org/--githost-shared/--githost-user; a read collaborator gets 403 on every write",
+   "holds": true,
+   "note": "Bench PR authors are correct and the request log names each call's login. testenv githost.test passes."
+  },
+  {
+   "claim": "W8-homes-4: cut.mjs makes GitHub unreachable for one home only",
+   "holds": true,
+   "note": "True for the REST API: bob unreachable, ada lists. Git is not cut: Bob's worktree origin is http://127.0.0.1:49272/team/shared.git, the stand-in's own port, not the proxy (see non_blocking)."
+  },
+  {
+   "claim": "W8-homes-5: the journey reports 15/30, no failure that is not known, 15 known with owners",
+   "holds": true,
+   "note": "Reproduced exactly on fresh benches; exit 0."
+  },
+  {
+   "claim": "W8-homes-6: validation.md rule 11, testing.md and the README; docs:check passes",
+   "holds": true,
+   "note": "`docs:check --base claude/nifty-knuth-f9udt0`: ok (35 files)."
+  },
+  {
+   "claim": "Full validation green",
+   "holds": true,
+   "note": "pnpm check exit 0 (569 files, 6311 passed, 7 skipped; links ok; secrets clean). test:integration: 30 passed, 83 skipped. test:e2e: 25 passed, 1 skipped. UI vitest: 107 files, 1555 passed. Playwright: 40 passed."
+  },
+  {
+   "claim": "No test weakened",
+   "holds": true,
+   "note": "The only lines removed from test files are the two Object.create sites and two import lines; no assertion was removed or changed."
+  },
+  {
+   "claim": "not_done items are listed with reasons",
+   "holds": true,
+   "note": "Listed with reasons: the journey's known gaps, the phone end-to-end check, CHANGELOG (forbidden to edit), and the unchanged user guide."
+  }
+ ],
+ "non_blocking": [
+  "W8-homes-4 fidelity: cut.mjs closes only the REST API proxy. The stand-in builds clone_url from its own baseUrl (testenv/src/githost/store.ts:447), so the daemon's git fetch and push go straight to the stand-in's port while GitHub is 'off'. Bob's worktree .git/config has url = http://127.0.0.1:49272/team/shared.git, not the proxy port. The README says 'a refused connection, as when the network is gone', and the two-installs.ts header says 'the bench's cut.mjs cuts the whole connection'. Both are inaccurate. A session running during a cut would push its branch but fail to open its PR. Either send git through the proxy (clone_url from the request's Host, or have githost-server use the bench's via URL) or document the cut as API-only before w8-status-write relies on it.",
+  "L4i-left-62 check_in_the_app should read: Settings → Open the setup assistant → Back to the first step → Time zone. Settings itself has no Time zone row.",
+  "me-races.test.tsx 'a session page on screen follows…' says a setup-assistant change in another window makes this window read /me again via agent.changed. The real daemon sends agent.changed only on a rename (server.ts:3844), and the test fires it with renameAgent. On the bench a second window kept 'session at 14:07' until reloaded. The redraw mechanism is tested correctly. Fix the comment, or have POST /setup/profile send an event so other windows (and the phone) follow.",
+  "The acceptance asks for 'a screen rendered before /me answers shows times in the person's zone once it arrives'. The zone tests do not hold /me (only the L4i-left-3 test does). They cover a later zone change, which uses the same code path. A held-/me zone case would match the acceptance line exactly.",
+  "In two-installs.test.ts, the check 'Bob's home wrote no docs, marker, guide or status' leaves out the action 'other'. MEMORY_ACTIONS has no entry for ensureProject, ensureFields, upsertItem, setItemFields, archiveItem, createRelease or uploadReleaseAsset, so such writes by Bob, or unmapped stand-in routes, would pass unnoticed. Map them or assert on 'other' too.",
+  "The harness's holds and GitHub-off cases run on the memory host only. The http-mode githubOff (fetch wrapper) path is untested.",
+  "The journey takes screenshots at 8 of its 16 steps. Steps 9 and 16 are walked but have none; the acceptance says both apps at each step. A screenshot after the step-16 restart would show the together line kept.",
+  "The owner of the together-project name gap differs: the test comment says 'a finding for w8-together', while the report's new_problems says w8-shared-repo or w8-repo-guide.",
+  "docs/maintainers/testing.md: the stand-in bullet has a run-on, over-long line ('For w8-shared-repo (the person without write access). Tests: …').",
+  "UpdatesPage: if /me fails, the four model-watch buttons stay off with no explanation. Edge case; the app likely shows a connection error anyway.",
+  "Known D9 gaps also seen on the bench, owned by later areas: both agents are named 'Alice'; the person is 'me' until setup's name step is done; Bob's first plan repeated Ada's 5 tasks, giving 11 PRs; Bob's together project takes the typed name ('Bob's site')."
+ ]
+}

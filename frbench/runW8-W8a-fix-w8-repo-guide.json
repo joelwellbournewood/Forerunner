@@ -1,0 +1,225 @@
+{
+ "area": "w8-repo-guide",
+ "branch": "fix/w8-repo-guide",
+ "head_sha": "7e5009b927bf4165ffdf6aef5890ee9cd082ce41",
+ "commits": [
+  {
+   "sha": "1b633d837e08c469716e516c52cba463d98a1d74",
+   "subject": "runtime, ui tests: a docs pull request this install did not open is nobody's; Try again says what stopped it (L4i-left-2, L4i-left-5, L4i-left-6, L4i-left-7)"
+  },
+  {
+   "sha": "f8ad5df4faba607f94eec3abcf7424587295363c",
+   "subject": "memory, runtime, capabilities: the repository guide, the doc set without docs/status.md, date-named decisions (W8-guide-1, W8-guide-2, W8-guide-3, W8-guide-5, W8-guide-6)"
+  },
+  {
+   "sha": "f5e3f29fc7e518dbd3f8acc5e07eba941c4eebeb",
+   "subject": "runtime, ui tests: the guide is the maker's on two homes; decisions named by the day; recall finds AGENTS.md; a guide change is flagged (W8-guide-1, W8-guide-3, W8-guide-4, W8-guide-6)"
+  },
+  {
+   "sha": "962b932bbf942351aa4479ff19eda0b43897cbed",
+   "subject": "runtime: a take-over's plan docs that failed say so with Try again; the take-over rebuild keeps main's newer file (L4i-left-8, L4i-left-14)"
+  },
+  {
+   "sha": "d2e06d8a67b3a928363cb012ab97be16c29b7fbb",
+   "subject": "docs, bench: ADR 0121 (the repository guide and who writes a project's docs); amendments to 0058, 0117, 0106; maintainer docs and user guide; the journey's guide check passes (W8-guide-1..6, L4i-left-2, -5..-8, -14)"
+  },
+  {
+   "sha": "738cbac2bd70ca638a772d0c76f39306571aca48",
+   "subject": "runtime tests: the docs route lists the guide first and the app's status last; the answers' record is named by the day (W8-guide-1, W8-guide-2, W8-guide-3)"
+  },
+  {
+   "sha": "7e5009b927bf4165ffdf6aef5890ee9cd082ce41",
+   "subject": "ui tests: ten doc rows, the plan's record named by the day, and the brief's added line in the cost figure (W8-guide-1, W8-guide-2, W8-guide-3)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "A docs pull request whose body named no project was taken as the linked project's own when it was the only project on the repository (W15-01's sole-linked fallback), so Ada's scaffold, her take-over and its rebuild, and her Try again wrote onto Bob's pull request, and her Overview offered Merge on it.",
+   "u_ids": [
+    "L4i-left-2"
+   ],
+   "failing_test_before": "apps/ui/test/two-installs.test.ts > w8-repo-guide, wave 8: a docs pull request this install did not open is nobody's (L4i-left-2) > Bob's unmarked fr/docs-scaffold pull request whose branch names Bob's other project / has no marker file / names the project Ada takes over (3 cases); also real-daemon.test.ts L4e-left-1 case (now created with openPullRequestAs and asserting writesBy('alice') is empty on it)",
+   "how": "isProjectDocsPr reads the branch's own .forerunner/project.json (branchMarker) besides the recorded address, the hidden mark and the L-16 line; an unmarked scaffold pull request is the project's only when its branch marker names it. scaffoldInCopy reads each scaffold branch's marker before choosing; docsInPullRequests reads it per pull request. docsPrListing gives own/listed/none; the Overview lists an unmarked one without Merge ('#N names no project, so it is only listed here: open it on GitHub to see whose it is.'). The sole-linked fallback stays only for the status writer.",
+   "check_in_the_app": "Two benches on one stand-in (ada, bob). As Bob on GitHub, push fr/docs-scaffold with a docs file and open a pull request whose body names no project. As Ada, New project on team/shared. Open Ada's Overview: Bob's pull request is listed as '#N names no project, so it is only listed here: open it on GitHub to see whose it is.' with no Merge button, and the pull request on GitHub shows no commit or comment by ada."
+  },
+  {
+   "problem": "Try again on a take-over's no-pull-request line named the repository as typed (a URL), said 'check the token' for any thrown error and 'another project's docs pull request is open' for any run that opened nothing, and a press with nothing to retry answered a generic line.",
+   "u_ids": [
+    "L4i-left-5",
+    "L4i-left-6",
+    "L4i-left-7"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts > w8-repo-guide, wave 8: Try again names the repository as its line does (URL-typed take-over refused names o/kite; an unreachable host says 'GitHub did not answer'; no repository / no take-over answer by the state)",
+   "how": "take-over-retry.ts: locatorOf(project) names owner/name; retryFailureOf maps a thrown error to refused/unreachable; the scaffold's new stopped outcome (pull_request_open, branches_taken) picks 'another docs pull request is open on <repo>; close it on GitHub' or 'its branches on <repo> hold another project's docs; delete fr/docs-scaffold on GitHub'; nothing to try answers TAKE_OVER_NO_REPOSITORY or TAKE_OVER_NOT_TAKEN. The fake daemon mirrors it.",
+   "check_in_the_app": "Take over a repository given as https://github.com/<owner>/<name> while another docs pull request is open on fr/docs-scaffold; on the Overview press Try again: the sentence names <owner>/<name> and says 'another docs pull request is open ...; close it on GitHub, then try again.' With the stand-in stopped (scripts/bench/cut.mjs), Try again says 'GitHub did not answer. Try again in a moment.'"
+  },
+  {
+   "problem": "No guide for agents or people in a repository (no AGENTS.md or CLAUDE.md), nothing telling a second person to link it and choose Work together; every repository got an untrue docs/status.md template that the README pointed to and drift asked for; the unfinished-work rules lived only in the work-in-progress commit.",
+   "u_ids": [
+    "W8-guide-1",
+    "W8-guide-2",
+    "W8-guide-5"
+   ],
+   "failing_test_before": "packages/memory/test/docs.test.ts > the repository guide (W8-guide-1, ADR 0121) (renderGuidePart did not exist); apps/ui/test/two-installs.test.ts > w8-repo-guide, wave 8: the guide is written by the Forerunner that made the project (Ada's docs pull request had no AGENTS.md/CLAUDE.md and carried docs/status.md); bench journey check guide-in-docs-pr (known before, passes after)",
+   "how": "memory/docs.ts: STANDARD_DOCS leads with AGENTS.md and CLAUDE.md and drops docs/status.md; renderGuidePart renders Forerunner's part between forerunner:guide marks from GuideFacts only (Work together line, status issue by its title in each state, Before you start, branches and who merges, checks as exact commands, unfinished work from UNFINISHED_WORK_RULES, do not touch, agents' rules); applyGuide keeps a person's AGENTS.md byte for byte; applyGuideImport adds '@AGENTS.md' once; the untouched status template is taken out, a person's stays; drift no longer asks for status or the guide. runtime/loop/guide.ts: guideFactsOf, guideKeyOf, guideStatusIssueState. ProjectDocs.refreshGuide at the session's end opens one docs pull request per fact change (key recorded on the project), none when nothing changed, none for a together project. Docs tab rows: Guide, Guide for Claude Code first, the app's Status last.",
+   "check_in_the_app": "Bench with a stand-in GitHub: New project 'Team site' on team/shared. Open the docs pull request on the stand-in: it has AGENTS.md (says 'This repository is the Forerunner project \"Team site\". To work on it with Forerunner, link this repository in your own Forerunner and choose Work together; ...'), CLAUDE.md containing '@AGENTS.md', and no docs/status.md. Docs tab lists Guide and Guide for Claude Code first and Status last. Change who merges in Settings, run a session: exactly one new docs pull request whose AGENTS.md says the Forerunner merges after its critic accepted; restart and run another session: no second one."
+  },
+  {
+   "problem": "Who writes the doc set, decisions, marker and guide in a project two Forerunners share was undecided; the first decision was always docs/decisions/0001-<slug>.md, so two homes' decisions collide by number; the Inbox's answers went to docs/decisions/project-decisions.md and the card did not name the file.",
+   "u_ids": [
+    "W8-guide-3"
+   ],
+   "failing_test_before": "apps/ui/test/two-installs.test.ts > w8-repo-guide, wave 8: the guide is written by the Forerunner that made the project (Bob's Docs tab read the guide as from this PC's copy); packages/runtime/test/person-questions-daemon.test.ts > the answers the Inbox form sends go to the decision doc and the task is done (no dated file, no file named on the card); packages/runtime/test/intake.test.ts (0001 name and docs/status.md written as given)",
+   "how": "Only the maker writes the doc set, marker and guide (together projects write none; their Docs tab says 'The other Forerunner of \"<name>\" writes this doc on GitHub; this project does not write docs.' also for a guide the copy has). intake.ts names the first decision docs/decisions/YYYY-MM-DD-<slug>.md by the Today date (a numbered reply is renamed), adds DECISION_RECORD_MARK, tells the model the form, drops a reply's docs/status.md, AGENTS.md, CLAUDE.md. person-questions.ts writes answers to an existing 0001 record, else the marked record, else '<day>-project-decisions.md', and the card says 'Your answers are written to the project's decision record (<file>).' task-context.ts tells specialists a new decision is its own dated file.",
+   "check_in_the_app": "Two benches on one stand-in. Ada makes 'Team site'; Bob chooses Work together. Each runs a task 'Record the hosting choice in docs/decisions/<today>-hosting.md' / '...-domain.md'; both pull requests merge on the stand-in. Bob's Docs tab: Guide and Guide for Claude Code read 'The other Forerunner of \"Team site\" writes this doc on GitHub; this project does not write docs.' In a project with a planned person task, the Inbox card says 'Your answers are written to the project's decision record (docs/decisions/<today>-project-decisions.md).' and the file appears after answering."
+  },
+  {
+   "problem": "Recall and the per-turn doc excerpts did not read AGENTS.md or CLAUDE.md.",
+   "u_ids": [
+    "W8-guide-4"
+   ],
+   "failing_test_before": "packages/memory/test/docs-search.test.ts > W8-guide-4: collects the guide (AGENTS.md, CLAUDE.md) beside README.md, and a question about who merges finds AGENTS.md",
+   "how": "docs-search.ts collects ROOT_DOC_FILES (AGENTS.md, CLAUDE.md, README.md) beside docs/.",
+   "check_in_the_app": "In a repository project whose guide is merged, ask in Chat 'who presses Merge for the pull requests?': the answer cites AGENTS.md."
+  },
+  {
+   "problem": "A task pull request that changed AGENTS.md or CLAUDE.md did not say so, though other people's agents follow those files.",
+   "u_ids": [
+    "W8-guide-6"
+   ],
+   "failing_test_before": "packages/capabilities/test/pr-executor.test.ts > W8-guide-6: a task pull request that changes AGENTS.md says so in its body; packages/runtime/test/loop-critic.test.ts (the guide line in the critic's evidence)",
+   "how": "guideChangeLine(changedFiles) in pr-executor.ts; the pull request body and the critic's evidence carry 'This changes AGENTS.md, the guide other people's agents follow in this repository: read it before merging.'",
+   "check_in_the_app": "Add a task 'Tell agents to run the linter in AGENTS.md' and run it: its pull request body on GitHub starts its notes with 'This changes AGENTS.md, the guide other people's agents follow in this repository: read it before merging.'"
+  },
+  {
+   "problem": "A take-over made with a brief leaves its docs to the intake; when the intake's docs pull request then failed, the Overview said nothing (no scaffold record).",
+   "u_ids": [
+    "L4i-left-8"
+   ],
+   "failing_test_before": "apps/ui/test/two-installs.test.ts > w8-repo-guide, wave 8: a docs pull request this install did not open is nobody's (L4i-left-2) > L4i-left-8: a take-over made with a brief whose plan's docs pull request could not be opened says so on the Overview with Try again, also after her daemon starts again; Try again opens it",
+   "how": "intake.ts recordDocsOutcome writes the intake's docs outcome on summary_cache.docs (intake_at, pr_url or error); scaffoldLeftNoMarker reads either the scaffold's or the intake's record, so the no-pull-request line with Try again shows, also after a restart.",
+   "check_in_the_app": "Bench with a repository whose marker names another project: New project with a brief, Take it over. Before approving the plan, stop the stand-in GitHub (cut.mjs); Approve and start; start GitHub again. Overview reads 'Took over <repo> from \"<old>\" here, but the docs pull request that names this project could not be opened, so GitHub still names \"<old>\".' with Try again; restart the daemon, same line; Try again opens the docs pull request and the line goes."
+  },
+  {
+   "problem": "The take-over's rebuild of its own open scaffold branch carried the branch's version of every file it changed, replacing a newer version main got later (another Forerunner's merged docs).",
+   "u_ids": [
+    "L4i-left-14"
+   ],
+   "failing_test_before": "packages/runtime/test/docs-scaffold.test.ts > L4i-left-14: the take-over's rebuild keeps the default branch's newer version of a file main changed after the scaffold branch left it (verified failing with the fix disabled: the team's docs/overview.md came back as the template)",
+   "how": "rebuildForTakeOver compares each file at the merge-base, on main and on the branch; a file main changed after the fork keeps main's version (logged as keptFromDefaultBranch).",
+   "check_in_the_app": "Make a project on a repository marked by another project (made before the rule), so its scaffold pull request is open; merge a different docs/overview.md into main on GitHub; press Take it over: the scaffold branch's docs/overview.md is main's, and only the marker and the files the branch alone added differ."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "W8-guide-1 acceptance 'the status issue's creation gives none, a change of its state one docs pull request' is not tested end to end.",
+   "why": "The status issue and its switch are w8-status-write's (not built on this base). The guide renders all three states (docs.test.ts cases) and guideStatusIssueState is the one place it plugs in; a state change changes the facts' key, so the next session's end opens one docs pull request. Its two-home case belongs with w8-status-write."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "lint (40 warnings, all present before), lint:paths, typecheck, unit tests 570 files / 6359 passed / 7 skipped, docs:links, secrets:scan: green; docs:check needs a base in a worktree"
+  },
+  {
+   "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (89 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "5 passed, 7 skipped files (30 passed, 83 skipped)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx vitest run --config vitest.config.ts",
+   "result": "104 of 107 files passed; the 5 failing cases pinned the old design (8 doc rows, 0001 record name, 1426%) and were updated in 7e5009b; the three files then rerun: 463 passed; L4-money-112 run twice: same figure"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "40 passed"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "exit 0, Failures: None"
+  },
+  {
+   "command": "node scripts/bench/journeys/two-people.cjs fix-w8-repo-guide fix-w8-repo-guide-bob (after, --provider bench, stand-in GitHub)",
+   "result": "16/30 passed; failed (not known): none; guide-in-docs-pr passes (before: KNOWN with docs/status.md and docs/decisions/0001-*.md in Ada's docs PR); benches stopped with stop.mjs --clean"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "no conflict markers"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-w8-repo-guide-before-evidence/09-guide-before-docs-ada.png",
+   "/tmp/frbench/fix-w8-repo-guide-before-evidence/09-guide-before-docs-bob.png",
+   "/tmp/frbench/fix-w8-repo-guide-before-evidence/02-02-project-ada.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-w8-repo-guide-after-evidence/09-guide-after-docs-ada.png",
+   "/tmp/frbench/fix-w8-repo-guide-after-evidence/09-guide-after-docs-bob.png",
+   "/tmp/frbench/fix-w8-repo-guide-after-evidence/02-02-project-ada.png"
+  ]
+ },
+ "new_problems": [
+  "Until w8-status-write lands, the guide says the status issue is on (guideStatusIssueState returns 'on'): AGENTS.md tells agents to read and announce in a pinned 'Forerunner status: <name>' issue that this base does not create yet. Ship both together or make guideStatusIssueState answer from the real issue state.",
+  "The guide refreshes only at a session's end: a Settings change (merge mode, checks) reaches GitHub after the next session, not at once.",
+  "The fake daemon's together Docs rows mark every row, the app's Status included, as 'The other Forerunner ... writes this doc'; the real daemon shows the Status row as 'Kept in the app: ...'. The mismatch predates this area (the fake's list always included docs/status.md).",
+  "A together project accepts a merge_mode change through PUT /projects/:id/settings (Bob's case did it); the guide's 'who merges' fact is the maker's only, so the setting has no effect on the guide; whether the screen should offer it is w8-together's call.",
+  "The optional status branch (fr/status, off by default) still writes docs/status.md on its own branch; w8-status-write replaces it with the issue."
+ ],
+ "notes_for_other_areas": [
+  "w8-status-write: guideStatusIssueState(project) in packages/runtime/src/loop/guide.ts is the one place the issue's state enters the guide (return 'switched_off' or 'issues_off'); the facts' key (guideKeyOf, recorded at summary_cache.docs.guide_key) then differs and ProjectDocs.refreshGuide opens one docs pull request at the next session's end (call it right after a state change if it must be at once). The issue's number is never a fact.",
+  "w8-status-write: ownsUnmarkedDocs / the sole-linked fallback stays only for the status writer (isProjectStatusPr with soleLinked); docsPrListing(project, pr, {soleLinked}) returns 'own' | 'listed' | null for the Overview; STATUS_TEMPLATE and applyStatusUpdate remain for fr/status until you remove it.",
+  "Decisions: decisionRecordFor(workspace, day) and DECISION_RECORD_MARK (session/person-questions.ts) name the project's decision record; FIRST_DECISION_PATH is docs/decisions/YYYY-MM-DD-<slug>.md.",
+  "capabilities: UNFINISHED_WORK_RULES, WIP_STOPPED_HEADING, WIP_LEFT_HEADING and guideChangeLine(changedFiles) are exported from githost/pr-executor.ts.",
+  "Intake: recordDocsOutcome writes summary_cache.docs {location, branch?, pr_url, intake_at} or {error, failed_at, intake_at}; scaffoldLeftNoMarker reads intake_at or scaffolded_at.",
+  "Docs route: DOC_ROWS = STANDARD_DOCS + docs/status.md; titles 'Guide' (AGENTS.md), 'Guide for Claude Code' (CLAUDE.md); a together project's guide rows carry notWrittenHere with togetherDocNote also when the copy has them.",
+  "Take-over retry: TakeOverRetryFailure = blocked | branches | refused | unreachable; DocsScaffoldOutcome.stopped = pull_request_open | branches_taken; RepositoryUse.locatorOf(project).",
+  "w8-journey: two-people-checks.cjs guide-in-docs-pr no longer carries known: true.",
+  "Suggested lines (not written, files are not mine to edit): UPDATE-LOG/CHANGELOG: 'Every repository now gets AGENTS.md and a one-line CLAUDE.md, the guide for people and their agents, kept current by Forerunner; no docs/status.md in repositories; decisions are named by the day; a docs pull request your Forerunner did not open is only listed (ADR 0121).' requirements G.5: the doc set is AGENTS.md, CLAUDE.md, README.md, docs/overview.md, docs/architecture.md, docs/decisions/, docs/runbook.md, docs/data.md, docs/testing.md; the status is the app's."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/memory/test/docs.test.ts (set names, scaffold without guide facts, drift never asks for docs/status.md, missing list without the guide)",
+   "why": "ADR 0121: the guide leads the set and docs/status.md is out (owner's decisions D-W8-2, D-W8-3)."
+  },
+  {
+   "test": "packages/runtime/test/docs-scaffold.test.ts (files already on the branch; L4-github-102 take-over diff now marker + AGENTS.md + CLAUDE.md; unmarked PR nobody's until marked)",
+   "why": "The scaffold writes the guide and no status template; L4i-left-2 makes an unmarked docs PR nobody's."
+  },
+  {
+   "test": "packages/runtime/test/loop-docs.test.ts (status tests now also see the one guide docs PR; empty repository main has the guide and no status.md; folder project has AGENTS.md, no status.md; together/branchMarker cases)",
+   "why": "refreshGuide at the session's end gives a repository without a guide one docs pull request (W8-guide-1); docs/status.md left the set."
+  },
+  {
+   "test": "packages/runtime/test/loop-critic.test.ts (docs-drift case)",
+   "why": "statusDocManaged removed: drift never asks for docs/status.md or the guide; the guide line is asserted (W8-guide-6)."
+  },
+  {
+   "test": "packages/runtime/test/intake.test.ts (fixture without docs/status.md, dated record, problem and cut-off texts)",
+   "why": "W8-guide-3: the first decision is named by the Today date; the model is told the new form."
+  },
+  {
+   "test": "packages/runtime/test/person-questions-daemon.test.ts, packages/runtime/test/continuity-cancel.test.ts",
+   "why": "The answers' record is <day>-project-decisions.md when the project has none; the card names it."
+  },
+  {
+   "test": "packages/runtime/test/queue-docs-routes.test.ts",
+   "why": "Doc rows are the guide first and the app's status last."
+  },
+  {
+   "test": "apps/ui/test/fixtures.ts DOCS, project-tabs.test.tsx, w15-words.test.tsx, client.test.ts, onerepo-link.test.tsx, e2e/project-extras.spec.ts ('9 of 10 present', 10 rows)",
+   "why": "The fixture mirrors the daemon's ten rows."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts (L4-github-104 problem line and record path; Approve and start's record path; L4-money-112 1426% -> 1427%; L4e-left-1 unmarked PR created as another login)",
+   "why": "Dated decision names; the specialist brief's added decision sentence costs a few stand-in input tokens (deterministic, checked twice); L4i-left-2."
+  }
+ ]
+}

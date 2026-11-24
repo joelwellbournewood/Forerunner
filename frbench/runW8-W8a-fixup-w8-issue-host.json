@@ -1,0 +1,134 @@
+{
+ "area": "w8-issue-host",
+ "branch": "fix/w8-issue-host",
+ "head_sha": "cfbd69ff285b2a4c491d44b1ccc1f9f2dc48f065",
+ "commits": [
+  {
+   "sha": "1fcb0e2",
+   "subject": "capabilities: a paged ETag read never says not modified while an item sits past a full last page (W8-host-2)"
+  },
+  {
+   "sha": "cfbd69f",
+   "subject": "capabilities, testenv: a refused issue read answers forbidden on a pin; a read-base member still creates a repository (W8-host-1, W8-host-3)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Review blocking 1 (W8-host-2, never cut): the paged ETag read missed an item added after an exactly full last page and reported that nothing had changed. When a status issue held a multiple of 100 comments, the other Forerunner's next announcement stayed invisible to the poller. Root cause (github.ts pagedConditional, was :470): a page answered 304 was served from the copy together with the copy's Link header. GitHub's ETag, and the stand-in's, covers the page body only, so a full last page keeps its ETag. The old Link named no next page, so the read stopped there and the joined ETag still matched the caller's.",
+   "u_ids": [
+    "W8-host-2"
+   ],
+   "failing_test_before": "packages/capabilities/test/githost-issues.test.ts, describe \"w8-issue-host, wave 8: a paged read with the ETag past an exactly full last page (W8-host-2, http)\": all 3 cases failed before the fix. (1) A page of 3: the 4th and 7th comments, a removed 7th, and a quiet poll that costs no rate-limit point once the page after is a 304. (2) The default page of 100: the 101st comment. (3) Issues listed oldest first: the 4th issue. Also the fetch-stub case \"fixup-w8-issue-host: a full last page answered from the copy under a cursor next link is read again in full ...\", which failed before.",
+   "how": "A page answered from the copy is no longer taken as the end of the list when it is full (as many items as its per_page) and has no next link. On a numbered list the adapter also reads the page after it (page + 1). That read is conditional, so it costs a rate-limit point only the first time; after that it is a free 304. The page after joins the result and its ETag only when it holds items. Under a cursor link (after, before or cursor), where there is no page number, the adapter reads the full page again without If-None-Match and follows the fresh Link. conditionalGet gained {fresh}; the module-private helpers are fullPage and numberedPageAfter. listIssueComments and listIssues both go through this path. The capabilities.md sentence 'it changes when any page changes' is replaced with the real rule.",
+   "check_in_the_app": "No screen changes. Bench (stand-in): node scripts/bench/start.mjs --name <n> --daemon-port <p> --ui-port <u> --fresh --provider bench --githost <g> --users ada,bob --org team, then pnpm exec tsx /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/probe3/bench-adapter.mts /tmp/frbench/<n> <out.json>. Expected pageBoundary: sameClientAfter101st {count: 101, notModified: false} (before the fix: {count: 100, notModified: true}, as in /tmp/frbench/review-w8-issue-host/steps/adapter-probe.json; after: /tmp/frbench/fixup-w8-issue-host/steps/adapter-probe.json). Live check for the session lead, on real GitHub with FORERUNNER_TEST_GITHUB_TOKEN and the sandbox repository only, in a tsx script with new GitHubHost({token, baseUrl:'https://api.github.com'}): (1) Create an issue and post exactly 100 comments. (2) r1 = listIssueComments(repo, n). (3) r2 = listIssueComments(repo, n, {etag: r1.etag}): expect notModified true and 100 comments; this read sends page=2 once. (4) Note rateLimit().remaining, then r3 = the same read again: expect notModified true and remaining unchanged, because both pages answer 304. (5) Add a 101st comment on GitHub's page. (6) r4 = listIssueComments(repo, n, {etag: r1.etag}): expect notModified false and 101 comments, the last one the new comment. (7) Record whether GitHub answered page 1 at step 6 with 304 (the ETag covers the body only) or 200 (it also covers the Link header). Either answer must give step 6's result. (8) Close the issue afterwards."
+  },
+  {
+   "problem": "Review non-blocking: pinIssue read the issue (for its node id) outside its refusal handling. A 401 or 403 on that read threw provider_auth or tool_not_allowed where the port promises 'forbidden'. The re-read of the pins after GitHub refuses a pin as UNPROCESSABLE (three pins taken in a race) was never reached by any test.",
+   "u_ids": [
+    "W8-host-1"
+   ],
+   "failing_test_before": "packages/capabilities/test/githost-issues.test.ts, \"fixup-w8-issue-host: pinning answers forbidden when the issue's own read is refused, and reads the pins again when GitHub refuses the pin as unprocessable\". Before the fix it threw 'GET /repos/o/r/issues/7 -> 401: no'.",
+   "how": "getIssue now runs inside pinIssue's try, so 401 and 403 answer 'forbidden' and nothing is sent to GraphQL. A missing issue still throws not_found. The new fetch-stub case covers the race: the re-read gives 'limit' when three are pinned, 'pinned' when this issue is one of them, and otherwise the validation refusal stands. capabilities.md now says the same.",
+   "check_in_the_app": "No screen changes. Live (final_check F-W8-1): pinIssue with a token that cannot read the sandbox repository answers 'forbidden', not an error. A fourth pinIssue answers 'limit' and unpins nothing."
+  },
+  {
+   "problem": "Review non-blocking, a stand-in fidelity regression from w8-issue-host: HostStore.affiliations(login, 'write') now leaves out organisations whose base permission is read, and canCreateRepo uses those affiliations. As a result, a member of a read-base organisation could no longer create a repository in it. On GitHub that is a separate member privilege and it is on by default.",
+   "u_ids": [
+    "W8-host-3"
+   ],
+   "failing_test_before": "testenv/test/githost.test.ts, \"fixup-w8-issue-host: a member of an organisation whose base permission is read still creates a repository in it, as GitHub's default member privilege allows; a stranger cannot\". Before the fix it got 404 instead of 201.",
+   "how": "testenv/src/githost/auth.ts canCreateRepo also accepts the subject's readOrgs; a stranger still gets 404. docs/maintainers/testing.md now says so.",
+   "check_in_the_app": "Test infrastructure only."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "Review non-blocking: the 404-as-no_permission probe exists only on createIssue. A 404 from commentOnIssue or updateIssueComment in a repository the token can see reads as 'missing'.",
+   "why": "Left as it is, on purpose. On those two routes a 404 can be a deleted issue or comment, and one GET of the repository cannot tell that apart from missing access. Adding the probe there would turn a gone comment into 'no permission'. GitHub usually answers 403 for missing access, and that already reads as no_permission. The note for w8-status-write is in notes_for_other_areas."
+  },
+  {
+   "problem": "Review non-blocking: conditionalGet reads the vault token for the cache key, and request() reads it again, so a token replaced between the two reads is stored under the old token's key.",
+   "why": "Not changed. The window is two awaits wide, and both tokens are the same person's vault token. The next read with the new token misses the cache and is a full 200. Closing it would mean passing explicit headers through request(), a wider change to a shared transport than this fix-up needs."
+  },
+  {
+   "problem": "Review non-blocking (pre-existing): GET /repos/:o/:r/issues/comments (the repository-wide list) is shadowed by /issues/:number on the stand-in, and repoJson's permissions.admin is too loose for collaborators.",
+   "why": "Both predate this area, and nothing uses them yet. They are listed in new_problems for w8-shared-repo and whichever later area first reads the repository-wide list."
+  },
+  {
+   "problem": "Playwright run.",
+   "why": "No UI code changed in this fix-up: only the GitHub adapter, the stand-in and their tests. The UI vitest suite was run (it includes the two-home harness on the stand-in) and passes. The local Playwright config was copied in, then removed unused."
+  },
+  {
+   "problem": "CHANGELOG.md, docs/status/UPDATE-LOG.md, docs/requirements.md, docs/user-guide.md.",
+   "why": "The task forbids editing the first three; suggested lines are in notes_for_other_areas. No step a person takes changed, so the user guide needs nothing."
+  }
+ ],
+ "validation": [
+  {
+   "command": "pnpm exec vitest run packages/capabilities/test/githost-issues.test.ts (before the fix)",
+   "result": "4 failed, 25 passed: the three boundary cases on the stand-in and the cursor stub case. The pin case failed before its own fix (401 thrown), and so did the stand-in's repository-creation case (404 instead of 201)."
+  },
+  {
+   "command": "pnpm exec vitest run packages/capabilities/test/githost-issues.test.ts testenv/test/githost.test.ts",
+   "result": "71 passed (30 + 41)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0 at cfbd69f: lint, lint:paths, typecheck; unit tests 570 files, 6349 passed and 7 skipped; link-check ok (213 files); secret-scan clean (2299 files). Log: /tmp/frbench/fixup-w8-issue-host-check.log"
+  },
+  {
+   "command": "pnpm docs:check --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (46 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped (no FORERUNNER_TEST_PG)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files; 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 107 files, 1557 passed (two-installs.test.ts included)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "PASS: 92 cases (65 hostile, 27 controls), 92 passed, 0 failed"
+  },
+  {
+   "command": "Bench fixup-w8-issue-host (daemon 49281, UI 2881, stand-in 49283, --users ada,bob --org team, --provider bench): the reviewer's adapter probe, the fixer's raw probe and the reviewer's UI walk, re-pointed at this worktree",
+   "result": "Adapter probe (/tmp/frbench/fixup-w8-issue-host/steps/adapter-probe.json): Bob reads ada/MEMBER/User and his repeat read is notModified; Ada's edit is modified; permissions read write/write/none; pins pinned, pinned, then pinned, pinned, limit; issues off gives issues_disabled/410/issues_off three times. Page boundary: same client after the 101st comment reads 101 with notModified false (before: 100, true). Stand-in log: page=2 was read twice (the probe and the fresh client), and every 4xx came from the probes or the app's normal .forerunner/project.json check. The raw probe's pin answered UNPROCESSABLE 'This repository already has 3 pinned issues.', which is expected because the adapter probe had already pinned three. UI walk (steps 01-07): the plan card, then the session ran to the end ('Done: all 5 tasks. 5 pull requests wait for you to merge.'), with six PRs and Merge buttons, as in the review. No problems.jsonl. No token in any steps file. Bench stopped with --clean (home, profile, stand-in repositories and githost.json removed; steps kept)."
+  },
+  {
+   "command": "git status --short; git rev-parse HEAD fix/w8-issue-host",
+   "result": "clean; both cfbd69ff285b2a4c491d44b1ccc1f9f2dc48f065"
+  }
+ ],
+ "new_problems": [
+  "Pre-existing, carried from the fixer and confirmed by the reviewer: on the stand-in, GET /repos/:o/:r/issues/comments (the repository-wide list) is registered after /issues/:number, so it always answers 404 (testenv/src/githost/routes-issues.ts). Nothing uses it yet.",
+  "Pre-existing: on the stand-in, repoJson's permissions.admin is true for any collaborator with push access and a repo-scoped classic token. w8-shared-repo should read the role through HostStore.roleOf / getRepoPermission."
+ ],
+ "notes_for_other_areas": [
+  "w8-status-read / w8-github-feed: pagedConditional (github.ts) now reads the page after a full last page that was answered from the copy (page + 1, conditional: one rate-limit point the first time, a free 304 after that). Under a cursor Link it re-reads the full page without If-None-Match, which costs one rate-limit point per poll while the list sits exactly at a page boundary. The joined ETag includes the page after only when that page holds items. notModified from listIssueComments now holds at every page boundary. Moving listPullRequests onto pagedConditional (w8-github-feed) gets this behaviour with no further change.",
+  "w8-status-write: a 404 from commentOnIssue or updateIssueComment reads as 'missing' (issueRefusalOf), never as 'no_permission'. On those routes a 404 can be a deleted issue or comment. When the status comment or issue was read a moment before, treat 'missing' as 'gone or no longer reachable' and re-read before writing again. createIssue alone probes the repository and marks no_permission.",
+  "pinIssue now answers 'forbidden' for a 401 or 403 on any of its reads, the issue's own read included. A missing issue still throws not_found.",
+  "Stand-in: any member of an organisation may create a repository in it, whatever the base permission (canCreateRepo accepts readOrgs).",
+  "Suggested CHANGELOG [Unreleased] addition to the fixer's line: 'A repeated read of an issue's comments notices a new comment even when the earlier list ended exactly at a full page.'",
+  "Suggested UPDATE-LOG addition: 'fixup-w8-issue-host (2026-11-24): the review's blocking finding (a 101st comment unseen by a poller holding 100) is fixed at 1fcb0e2: the ETag read also reads the page after a full last page. Pin refusals on the issue read answer forbidden, and a read-base org member can create repositories on the stand-in (cfbd69f). Head cfbd69f.'",
+  "final_check_additions suggestion for F-W8-1, added to the fixer's (a) to (c): (d) the 100/101-comment boundary steps in this report's first check_in_the_app, recording whether GitHub answers page 1 with 304 after the 101st comment."
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-w8-issue-host/steps/adapter-probe.json"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-w8-issue-host/steps/adapter-probe.json",
+   "/tmp/frbench/fixup-w8-issue-host/steps/issue-probe.json",
+   "/tmp/frbench/fixup-w8-issue-host/steps/03-r03-inbox-plan.png",
+   "/tmp/frbench/fixup-w8-issue-host/steps/04-r04-project.png",
+   "/tmp/frbench/fixup-w8-issue-host/steps/05-r05-tasks.png"
+  ]
+ },
+ "tests_changed_for_design": []
+}
