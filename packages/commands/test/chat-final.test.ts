@@ -16,7 +16,7 @@ const PERSONS_LINE = "try the digest page again and tell it to use the old layou
 const PERSONS_NOTE = "Use the old layout.";
 const MODEL_NOTE = "Put on hold by the person.";
 
-async function failedWithCard(w: World) {
+async function failedWithCard(w: World, risk: "medium" | "high" = "medium") {
   const task = await w.store.task.insert({
     project_id: w.pharma.id,
     title: "Write the digest page",
@@ -30,13 +30,16 @@ async function failedWithCard(w: World) {
     human_id: w.human.id,
     project_id: w.pharma.id,
     task_id: task.id,
-    risk: "medium",
+    risk,
     blocking: true,
   });
   w.ports.cardWords = async (r) =>
     r.id === card.id
       ? {
-          title: '"Write the digest page" failed',
+          title:
+            risk === "high"
+              ? '"Write the digest page" failed 4 times'
+              : '"Write the digest page" failed',
           choices: [
             { label: "Try again", explain: "Starts a session that tries again.", input: "note" },
             { label: "Mark done anyway", explain: null, input: null },
@@ -241,5 +244,57 @@ describe("l4-chat-final, run L4: the person's own words in a chat note stay the 
     await m.executor.cancel((model as { pendingId: string }).pendingId, m.ctx().actor);
     expect((await m.store.humanRequest.mustGet(second.card.id)).status).toBe("open");
     await m.store.close();
+  });
+
+  // L4h-left-4: a card that needs this computer's OK is answered on the card only; chat files
+  // nothing. Before, the reply said nothing of the note the person gave, which went nowhere.
+  it("a card that needs this computer's OK: the reply says where the person's note goes, or that it was not kept", async () => {
+    const ask = async (to: "ready" | "cancelled", note: string, words: string) => {
+      const w = await world();
+      const { card } = await failedWithCard(w, "high");
+      const r = await w.executor.execute({
+        name: "task.transition",
+        params: { task: "digest", to, note },
+        ctx: w.ctx({
+          actor: { kind: "agent", id: w.agent.id },
+          source: "chat",
+          onPersonsWords: true,
+          wordsUsed: words,
+        }),
+      });
+      expect((await w.store.humanRequest.mustGet(card.id)).status).toBe("open");
+      expect(await w.store.humanRequest.open({ humanId: w.human.id }, { limit: 10 })).toHaveLength(
+        1,
+      );
+      await w.store.close();
+      return r.status === "refused" ? r.reason : `not refused: ${r.status}`;
+    };
+    expect(await ask("ready", PERSONS_NOTE, PERSONS_LINE)).toBe(
+      'Answer it on its card in the Inbox: "Write the digest page" failed 4 times. Nothing else was filed; type your note there with Try again.',
+    );
+    expect(
+      await ask(
+        "cancelled",
+        "the customer dropped the digest",
+        "cancel the digest page, the customer dropped the digest",
+      ),
+    ).toBe(
+      'Answer it on its card in the Inbox: "Write the digest page" failed 4 times. Nothing else was filed, and your note was not kept.',
+    );
+    expect(await ask("ready", MODEL_NOTE, "try the digest page again")).toBe(
+      'Answer it on its card in the Inbox: "Write the digest page" failed 4 times. Nothing else was filed; type the note there with Try again.',
+    );
+    // No note: as before.
+    const w = await world();
+    await failedWithCard(w, "high");
+    const plain = await w.executor.execute({
+      name: "task.transition",
+      params: { task: "digest", to: "ready" },
+      ctx: w.ctx({ actor: { kind: "agent", id: w.agent.id }, source: "chat" }),
+    });
+    expect(plain.status === "refused" ? plain.reason : plain.status).toBe(
+      'Answer it on its card in the Inbox: "Write the digest page" failed 4 times. Nothing else was filed.',
+    );
+    await w.store.close();
   });
 });

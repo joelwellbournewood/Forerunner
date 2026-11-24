@@ -499,7 +499,10 @@ export async function moveAsCardAnswer(
     // goes with an option that takes one (Try again), read back so the Yes covers it, and
     // reaches the task's next brief as the Inbox's Try again with a note does. Before, the
     // redirect dropped it unsaid.
-    const note = choice?.input === "note" ? params.note?.trim() : undefined;
+    // l4-chat-final (L4h-left-4): a card that needs this computer's OK keeps the note too, so the
+    // chat's reply can say it was not kept (request.answer reads a note only for an option that
+    // takes one, `noteOf`).
+    const note = choice?.input === "note" || r.risk === "high" ? params.note?.trim() : undefined;
     // l4-chat-final (L4h-left-1): the person's own note on an option that takes none (Cancel task)
     // keeps the move, which carries it to the task's brief; a card that needs this computer's OK
     // stays the one way to its answer (the move would not ask for that OK).

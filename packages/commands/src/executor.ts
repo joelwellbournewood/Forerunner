@@ -24,6 +24,7 @@ import {
   removedProjectName,
   removedProjectRefusal,
 } from "./commands/project.ts";
+import { notesPersons } from "./commands/shared.ts";
 import {
   type ConfirmationAnswer,
   type ConfirmationDecision,
@@ -638,24 +639,41 @@ export class CommandExecutor {
     // Design §3.8: an Inbox card answered from chat or voice that needs a device confirmation
     // (a high-risk card) is not filed again as a second card about the first, which no chat
     // yes could confirm: the reply points to the card, which is where it is answered.
-    if (g.card.command === "request.answer" && g.decision === "needs_device")
+    if (g.card.command === "request.answer" && g.decision === "needs_device") {
+      // The card as the Inbox titles it ('"X" failed 3 times'); before, the card's why cut
+      // at 60 characters in quotes of its own ('("\"X\" failed 4 t…")', phase E review).
+      const on = await this.cardTitleOf(g);
+      // l4-chat-final (L4h-left-4): a note said with the answer goes nowhere from here; the reply
+      // says where it goes on the card (an option with a note field), or that it was not kept.
+      const params = g.calls?.[0]?.params as { note?: unknown; answer?: unknown } | undefined;
+      const note = typeof params?.note === "string" ? params.note.trim() : "";
+      const whose = note && notesPersons(g.ctx, note) ? "your" : "the";
+      const filed = !note
+        ? "Nothing else was filed."
+        : on.takesNote
+          ? `Nothing else was filed; type ${whose} note there with ${String(params?.answer ?? "it")}.`
+          : `Nothing else was filed, and ${whose} note was not kept.`;
       return refusal(
         new ForerunnerError(
           "approval_required",
-          // The card as the Inbox titles it ('"X" failed 3 times'); before, the card's why cut
-          // at 60 characters in quotes of its own ('("\"X\" failed 4 t…")', phase E review).
-          `Answer it on its card in the Inbox: ${await this.cardTitleOf(g)}. Nothing else was filed.`,
-          { details: { reason: "answer_on_card" } },
+          `Answer it on its card in the Inbox: ${on.title}. ${filed}`,
+          {
+            details: { reason: "answer_on_card" },
+          },
         ),
         g.card,
       );
+    }
     return this.createPending(g.decision, g.card, g.ctx, g.perform, g.redecide, g.calls, g.undoOf);
   }
 
-  /** The title of the card a `request.answer` answers, as the Inbox shows it. */
-  private async cardTitleOf(g: Gate): Promise<string> {
+  /**
+   * The title of the card a `request.answer` answers, as the Inbox shows it, and whether the
+   * answer's option takes a note there (its card words' `input`).
+   */
+  private async cardTitleOf(g: Gate): Promise<{ title: string; takesNote: boolean }> {
     const fallback = g.card.what.replace(/^the request /, "");
-    const params = g.calls?.[0]?.params as { request?: unknown } | undefined;
+    const params = g.calls?.[0]?.params as { request?: unknown; answer?: unknown } | undefined;
     const id = typeof params?.request === "string" ? params.request : null;
     // The chat's model names a card by the start of its id (`cardReference`).
     const row = id
@@ -665,7 +683,12 @@ export class CommandExecutor {
         ))
       : undefined;
     const words = row ? await g.ctx.ports.cardWords?.(row).catch(() => null) : null;
-    return words?.title?.trim() || fallback;
+    const said = (s: unknown) =>
+      String(s ?? "")
+        .trim()
+        .toLowerCase();
+    const option = words?.choices.find((c) => said(c.label) === said(params?.answer));
+    return { title: words?.title?.trim() || fallback, takesNote: option?.input === "note" };
   }
 
   private async createPending(
