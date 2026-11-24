@@ -33,6 +33,8 @@ import {
 import {
   changedSince,
   composedRefusal,
+  fixListMoved,
+  namedTaskIds,
   subjectsNow,
   TASKS_CHANGED_REPLY,
   taskListFingerprint,
@@ -140,6 +142,21 @@ export interface ExpiredConfirmation {
 }
 
 /**
+ * l4-selftasks-carried (L4f-left-1): a card that left the executor (`ExecutorOptions.onClosed`):
+ * answered yes or no (here, in the Inbox, on the phone or by email), a Yes the app refused because
+ * what it named changed, or one that lapsed. `sessionId` is the conversation session a chat or
+ * voice read-back was said in (its context), so the daemon can tell that conversation's screens.
+ */
+export interface ClosedConfirmation {
+  id: string;
+  humanId: string;
+  projectId: string | null;
+  source: CommandSource;
+  sessionId: string | null;
+  how: "yes" | "no" | "refused" | "expired";
+}
+
+/**
  * The executor's plan of the same request again on the state now: today's decision and the card
  * it would read back now, which the Yes compares with the card as it was read back.
  */
@@ -158,11 +175,16 @@ interface PendingEntry extends PendingConfirmation {
   redecide: () => Promise<Redecided>;
   /** The card as it was read back: what the Yes compares the state now with (L4-selftasks-117). */
   shown: ChangeCard;
-  /** A fix of the task list: the list's fingerprint its check judged (run C decision 53). */
-  fingerprint?: { projectId: string; value: string };
+  /**
+   * A fix of the task list: the list's fingerprint its check judged (run C decision 53), and the
+   * tasks its set names, which the Yes compares (l4-selftasks-carried, L4f-left-2).
+   */
+  fingerprint?: { projectId: string; value: string; named: string[] };
   cancelTimer: () => void;
   /** An answer is being checked (a device lookup is in flight); a second answer is refused. */
   inFlight: boolean;
+  /** l4-selftasks-carried (L4f-left-1): an answer took the card out (`confirm` tells it). */
+  answered?: boolean;
 }
 
 interface Gate {
@@ -341,6 +363,14 @@ export interface ExecutorOptions {
    * tells the open screens and the person (`inbox.changed`, `conversation.changed`, one Update).
    */
   onExpired?: (card: ExpiredConfirmation) => void | Promise<void>;
+  /**
+   * l4-selftasks-carried (L4f-left-1): a card left the executor, however it closed (a yes, a no,
+   * a Yes refused because what it named changed, a lapse), whatever route answered it. The
+   * daemon tells the open screens once (`inbox.changed`, `project.changed`, and the conversation
+   * it was read back in); before, only some routes did, and the header kept "Waiting for you: 1
+   * change to confirm" until a reload.
+   */
+  onClosed?: (card: ClosedConfirmation) => void | Promise<void>;
 }
 
 const NO_RE = /^\s*(no|nope|cancel|stop|nein|non|abbrechen)\b/i;
@@ -364,6 +394,7 @@ export class CommandExecutor {
   private readonly clock: Clock;
   private readonly ttlMs: number;
   private readonly onExpired: ExecutorOptions["onExpired"];
+  private readonly onClosed: ExecutorOptions["onClosed"];
   private readonly logger = log("commands");
   private readonly pendings = new Map<string, PendingEntry>();
   /** The undo of a change made in this process; it returns the sentences its steps added. */
@@ -378,6 +409,7 @@ export class CommandExecutor {
     this.policy = opts.policy ?? new ConfirmationPolicy();
     this.ttlMs = opts.pendingTtlMs ?? PENDING_TTL_MS;
     this.onExpired = opts.onExpired;
+    this.onClosed = opts.onClosed;
   }
 
   // -------------------------------------------------------------------------------------
@@ -734,7 +766,13 @@ export class CommandExecutor {
       perform,
       redecide,
       ...(fingerprint && card.projectId
-        ? { fingerprint: { projectId: card.projectId, value: fingerprint } }
+        ? {
+            fingerprint: {
+              projectId: card.projectId,
+              value: fingerprint,
+              named: namedTaskIds(calls ?? [], card),
+            },
+          }
         : {}),
       cancelTimer,
       inFlight: false,
@@ -789,7 +827,8 @@ export class CommandExecutor {
             emailToken: typeof json.email_token === "string" ? json.email_token : "",
             readback: readbackOf(card, decision, ctx.source),
             wordsUsed: stored.wordsUsed,
-            perform: () => this.performUndo(undoOf, ctx),
+            // l4-selftasks-carried (L4f-left-3): the card as read back says what comes back.
+            perform: () => this.performUndo(undoOf, ctx, card),
             redecide: () => this.redecideUndo(undoOf, card, ctx),
             cancelTimer: () => undefined,
             inFlight: false,
@@ -865,7 +904,13 @@ export class CommandExecutor {
           perform: async (by) => this.perform(await this.prepareAll(commandCalls, ctx), ctx, by),
           redecide: async () => this.redecideAll(commandCalls, ctx),
           ...(print && card.projectId
-            ? { fingerprint: { projectId: card.projectId, value: print } }
+            ? {
+                fingerprint: {
+                  projectId: card.projectId,
+                  value: print,
+                  named: namedTaskIds(commandCalls, shown),
+                },
+              }
             : {}),
           cancelTimer,
           inFlight: false,
@@ -964,6 +1009,14 @@ export class CommandExecutor {
     // agent's, as fix_tasks' own changes are).
     const personsWords = done.length > 0 && done.every((d) => d.step.persons === true);
     const ctx: CommandContext = person && personsWords ? { ...given, actor: person } : given;
+    // l4-selftasks-carried (L4f-left-4): a set that mixes the agent's own fixes with a change the
+    // person named (a merged card) stays the agent's (its post, its session line), and its row
+    // names both: the person's step reads "Changed by you" on the task, the row said the agent
+    // alone. The actor rule still reads the agent (ADR 0030 item 2).
+    const alsoPerson =
+      person && !personsWords && ctx.actor.kind === "agent" && done.some((d) => d.step.persons)
+        ? person.id
+        : null;
     const reversible = done.every((d) => d.outcome.reversible ?? d.step.def.reversible);
     const expiring = done
       .map((d) => d.outcome.expiresAt)
@@ -994,7 +1047,7 @@ export class CommandExecutor {
       undo_state: reversible ? "undoable" : "irreversible",
       source: ctx.source,
       sentence,
-      author_human: ctx.actor.kind === "human" ? ctx.actor.id : null,
+      author_human: ctx.actor.kind === "human" ? ctx.actor.id : alsoPerson,
       author_agent: ctx.actor.kind === "agent" ? ctx.actor.id : null,
     });
     this.cards.set(row.id, card);
@@ -1149,6 +1202,37 @@ export class CommandExecutor {
    * run, because the card may be ten minutes old; a risk that rose since is refused.
    */
   async confirm(pendingId: string, answer: ConfirmationAnswer): Promise<ExecuteResult> {
+    const p = this.pendings.get(pendingId);
+    let r: ExecuteResult | undefined;
+    try {
+      r = await this.answerPending(pendingId, answer);
+      return r;
+    } finally {
+      // l4-selftasks-carried (L4f-left-1): an answer that took the card out (a yes made or
+      // refused, a no) is told once, whatever route gave it. fixup-l4-selftasks-carried: also
+      // when the change after the yes threw (a change-log write that failed): the card is out
+      // all the same, and before, the header kept "Waiting for you" until a reload.
+      if (p?.answered)
+        await this.tellClosed(
+          p,
+          r === undefined
+            ? answer.kind === "no"
+              ? "no"
+              : "yes"
+            : r.status === "cancelled"
+              ? "no"
+              : r.status === "refused"
+                ? "refused"
+                : "yes",
+        );
+    }
+  }
+
+  /** The answer to a pending card (`confirm`): checked, then made, refused or declined. */
+  private async answerPending(
+    pendingId: string,
+    answer: ConfirmationAnswer,
+  ): Promise<ExecuteResult> {
     this.sweepPending();
     const p = this.pendings.get(pendingId);
     if (!p) return noPending(pendingId);
@@ -1181,6 +1265,7 @@ export class CommandExecutor {
     }
     // Nothing has awaited since the check passed: the entry is taken before anyone else can.
     this.pendings.delete(pendingId);
+    p.answered = true;
     p.cancelTimer();
     const by: Actor =
       answer.kind === "device"
@@ -1197,12 +1282,14 @@ export class CommandExecutor {
       return { status: "cancelled", card: p.card, pendingId };
     }
     // Run C decision 53 (L4-selftasks-117): a fix of the task list applies only the set its check
-    // made of the list as it was then.
+    // made of the list as it was then. l4-selftasks-carried (L4f-left-2; session lead decision
+    // 2026-11-23): judged on which tasks the list holds and on the tasks the set names, so a
+    // session finishing a task the set does not name leaves the Yes valid. A failure to read
+    // the list refuses, as before.
     if (p.fingerprint) {
-      const current = await taskListFingerprint(this.store, p.fingerprint.projectId).catch(
-        () => null,
-      );
-      if (current !== p.fingerprint.value) {
+      const { projectId, value, named } = p.fingerprint;
+      const moved = await fixListMoved(this.store, projectId, value, named).catch(() => true);
+      if (moved) {
         const reason = TASKS_CHANGED_REPLY;
         await this.answerRequest(pendingId, { verdict: "refused", reason, ...answered }, by.id);
         return {
@@ -1336,6 +1423,34 @@ export class CommandExecutor {
     }
   }
 
+  /**
+   * l4-selftasks-carried (L4f-left-1): a card that left the executor, told to `onClosed` once,
+   * with where it was read back (its stored context: the source and the conversation session).
+   * A failure to tell never changes the answer.
+   */
+  private async tellClosed(p: PendingEntry, how: ClosedConfirmation["how"]): Promise<void> {
+    if (!this.onClosed) return;
+    try {
+      const row = await this.store.humanRequest.get(p.id).catch(() => undefined);
+      const context = (
+        row?.change_card as { context?: { source?: CommandSource; sessionId?: string | null } }
+      )?.context;
+      await this.onClosed({
+        id: p.id,
+        humanId: p.humanId,
+        projectId: p.card.projectId ?? row?.project_id ?? null,
+        source: context?.source ?? "ui",
+        sessionId: context?.sessionId ?? row?.session_id ?? null,
+        how,
+      });
+    } catch (e) {
+      this.logger.warn("could not tell about the closed card", {
+        id: p.id,
+        error: errorMessage(e),
+      });
+    }
+  }
+
   private sweepPending(): void {
     const now = this.clock.now();
     for (const [id, p] of this.pendings) {
@@ -1359,22 +1474,28 @@ export class CommandExecutor {
     } catch (e) {
       this.logger.warn("could not expire the request", { id, error: errorMessage(e) });
     }
+    if (!expired) return;
     // L4-selftasks-117: an expiry that remains is told (before, the card left the Inbox with
-    // no event, no message and a Yes still drawn in the open chat).
-    if (!expired || !this.onExpired) return;
-    try {
-      await this.onExpired({
-        id,
-        humanId: p.humanId,
-        projectId: p.card.projectId ?? row?.project_id ?? null,
-        what: p.card.what,
-        change: cardChange(p.card),
-        source: ((row?.change_card as { context?: { source?: CommandSource } } | null)?.context
-          ?.source ?? "ui") as CommandSource,
-      });
-    } catch (e) {
-      this.logger.warn("could not tell about the lapsed card", { id, error: errorMessage(e) });
+    // no event, no message and a Yes still drawn in the open chat). fixup-l4-selftasks-carried:
+    // its Update first, then the close (`onClosed`), so the screens told of the close read the
+    // Inbox once with the Update in it (before, the close came first and the daemon told the
+    // Inbox a second time after the Update).
+    if (this.onExpired) {
+      try {
+        await this.onExpired({
+          id,
+          humanId: p.humanId,
+          projectId: p.card.projectId ?? row?.project_id ?? null,
+          what: p.card.what,
+          change: cardChange(p.card),
+          source: ((row?.change_card as { context?: { source?: CommandSource } } | null)?.context
+            ?.source ?? "ui") as CommandSource,
+        });
+      } catch (e) {
+        this.logger.warn("could not tell about the lapsed card", { id, error: errorMessage(e) });
+      }
     }
+    await this.tellClosed(p, "expired");
   }
 
   // -------------------------------------------------------------------------------------
@@ -1544,8 +1665,15 @@ export class CommandExecutor {
     };
   }
 
-  /** The undo itself, once confirmed: the row is read again, since the card may be minutes old. */
-  private async performUndo(changeLogId: string, ctx: CommandContext): Promise<ExecuteResult> {
+  /**
+   * The undo itself, once confirmed: the row is read again, since the card may be minutes old.
+   * `shown` is the Undo's own card as it was read back (armed again after a restart).
+   */
+  private async performUndo(
+    changeLogId: string,
+    ctx: CommandContext,
+    shown?: ChangeCard,
+  ): Promise<ExecuteResult> {
     const row = await this.store.changeLog.get(changeLogId);
     const card = this.cards.get(changeLogId) ?? null;
     if (!row) return { status: "refused", card, reason: "no such change", code: "not_found" };
@@ -1575,7 +1703,13 @@ export class CommandExecutor {
           ? each
           : card
             ? `Undone: ${card.what} is back to ${card.oldValue}.`
-            : `Undone: ${row.sentence.replace(/\s*Undo\.$/, "")}`,
+            : // l4-selftasks-carried (L4f-left-3): after a restart the change's card is gone, but
+              // the Undo read back in chat kept what it puts back ("the monthly cap" back to
+              // "CHF 150.00"), so the confirmation says it as it does without a restart. Before:
+              // "Undone: Lowered the monthly cap from CHF 150.00 to CHF 100.00."
+              shown && shown.newValue !== UNDO_UNKNOWN_BEFORE
+              ? `Undone: ${shown.what} is back to ${shown.newValue}.`
+              : `Undone: ${row.sentence.replace(/\s*Undo\.$/, "")}`,
       ...added,
     ].join(" ");
     const undoRow = await this.store.changeLog.record({
@@ -1823,6 +1957,9 @@ function stepWords(
  * Before, `what` was "undo: <what>" with no question, so the Inbox and Home titled the card
  * "undo" (the first sentence ended at the colon) with raw "yes"/"no".
  */
+/** An Undo card's value when the change's own card was not at hand (`undoCardOf`). */
+const UNDO_UNKNOWN_BEFORE = "as it was before this change";
+
 function undoCardOf(
   row: ChangeLogRow,
   card: ChangeCard | null,
@@ -1840,7 +1977,7 @@ function undoCardOf(
     command: "undo",
     what,
     oldValue: card?.newValue ?? "as it is now",
-    newValue: card?.oldValue ?? "as it was before this change",
+    newValue: card?.oldValue ?? UNDO_UNKNOWN_BEFORE,
     scope: row.scope,
     risk,
     sentence: `Undo ${restores}.`,

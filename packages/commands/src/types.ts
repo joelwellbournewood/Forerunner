@@ -305,7 +305,11 @@ export interface CommandPorts {
    */
   cardWords?(request: HumanRequestRow): Promise<{
     title: string;
-    choices: { label: string; explain: string | null }[];
+    /**
+     * `input: "note"`: the option takes a note for the next attempt (Try again, Send it back),
+     * as the Inbox's note field does (fixup-l4-selftasks-carried); absent or null: none.
+     */
+    choices: { label: string; explain: string | null; input?: "note" | "text" | null }[];
     outcome: string | null;
   } | null>;
   /**
@@ -343,6 +347,11 @@ export interface CommandPorts {
     capabilities(): ProviderCapabilities;
     /** A runnable specialist's `max_effort` from its registry file: no effort above it is stored. */
     maxEffort?(specialist: string): EffortLevel | undefined;
+    /**
+     * l4-selftasks-carried (L4-other-1 D-6): whether a specialist writes no file (none of its
+     * tools writes one: the reviewer), so chat's read-back of a task for it says so.
+     */
+    writesNoFile?(specialist: string): boolean;
   };
   /**
    * Sets an agent's email sending mode through the capability's settings store (ADR 0081):

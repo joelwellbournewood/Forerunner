@@ -87,6 +87,8 @@ export function AppProvider({
     const clearTimer =
       streamOptions?.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
     let retryHandle: unknown = null;
+    // The open cards the last poll read (`inbox.changed`'s `openCards`, polling only).
+    let polledCards: string | null = null;
     // The window plays what the daemon reads aloud on its own (voice alerts, summary.speak by
     // chat; ADR 0063) and says so on /events, so the daemon knows someone can hear it.
     const announcer: SpeechAnnouncer | null =
@@ -118,7 +120,12 @@ export function AppProvider({
             } else if (event.event === "inbox.changed") {
               // The header counts every card that needs you (design §3.8).
               const count = event.data.needsYouCount ?? event.data.blockingCount;
-              const changed = count !== store.getState().blockingCount;
+              // fixup-l4-selftasks-carried: while polling, a card that closed as another came
+              // leaves the count as it was; the open cards the poll read say it moved.
+              const cards = event.data.openCards;
+              const swapped = cards !== undefined && polledCards !== null && cards !== polledCards;
+              if (cards !== undefined) polledCards = cards;
+              const changed = count !== store.getState().blockingCount || swapped;
               store.dispatch({ type: "blockingCount", count });
               // A card came or went: the projects' status sentences follow (design §3.2: Home
               // follows inbox.changed without a reload).
@@ -126,11 +133,15 @@ export function AppProvider({
               if (changed || store.getState().connection.streamMode === "sse")
                 liveProjects.refresh();
               // l4-selftasks-chat (L4-selftasks-117): a card answered in the Inbox (or one that
-              // lapsed) leaves the open chat at once: a conversation showing a Yes/No card is
-              // read again, so its Yes and No and the header's count follow without a reload.
-              for (const [key, conversation] of Object.entries(store.getState().conversations))
-                if (conversation?.view?.waiting)
-                  void loadConversation(client, store, key === "" ? null : key);
+              // lapsed) leaves the open chat at once. l4-selftasks-carried (L4f-left-6): on the
+              // live stream the daemon names the conversation of a card that closed
+              // (conversation.changed, below), so only polling, which has no such event, reads
+              // a conversation showing a Yes/No card again, and only when the count moved (its
+              // periodic count read it again every few seconds while a card waited).
+              if (changed && store.getState().connection.streamMode !== "sse")
+                for (const [key, conversation] of Object.entries(store.getState().conversations))
+                  if (conversation?.view?.waiting)
+                    void loadConversation(client, store, key === "" ? null : key);
             } else if (event.event === "session.activity") {
               // A session began or ended (or Stop all): the running chip, Home's Working now
               // and the project headers follow (design §3.2).

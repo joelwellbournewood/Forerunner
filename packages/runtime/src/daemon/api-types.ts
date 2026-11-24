@@ -3027,6 +3027,12 @@ export const ChangeLogView = z.object({
    * list, in a session or from chat): the row names the agent, never the person.
    */
   byAgent: z.boolean().optional(),
+  /**
+   * l4-selftasks-carried (L4f-left-4): the agent's own fixes and a change the person named, read
+   * back on one card and made at their yes: the row names both ("J and Alice"). Absent from an
+   * older daemon.
+   */
+  byYouAndAgent: z.boolean().optional(),
 });
 export type ChangeLogView = z.infer<typeof ChangeLogView>;
 

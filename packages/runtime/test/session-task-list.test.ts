@@ -898,11 +898,11 @@ describe("l4-selftasks-check, run L4: two missing steps from one report (L4-self
     const view = eventView(row, 1);
     expect(view.audience).toBe("detail");
     expect(view.text).toBe(
-      'Left out (and 1 more): the add of "Write book.html": "Write the menu" is no task of Quote page.',
+      'Left out (and 1 more): adding "Write book.html": "Write the menu" is no task of Quote page.',
     );
     expect((row.payload as { refused?: string[] }).refused).toEqual([
-      'the add of "Write book.html": "Write the menu" is no task of Quote page',
-      'the add of "Write thanks.html": "Write book.html" was not added',
+      'adding "Write book.html": "Write the menu" is no task of Quote page',
+      'adding "Write thanks.html": "Write book.html" was not added',
     ]);
   });
 });

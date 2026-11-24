@@ -87,9 +87,98 @@ export function writesNoFile(allowedTools: readonly string[]): boolean {
   });
 }
 
-/** D-2: New task's and Edit's line under Who does it for such a specialist (design §5). */
-export function writesNoFileLine(specialist: string): string {
-  return `The ${specialist} writes no file: its findings are its report, which you read in the task's drawer.`;
+/**
+ * D-2: New task's and Edit's line under Who does it for such a specialist (design §5).
+ * l4-selftasks-carried (L4-other-1 D-5): when the task's words ask for a file to be written
+ * (`fileTheWordsWrite`), the line names it: "The reviewer writes no file, so review.md is not
+ * written: its findings are its report, which you read in the task's drawer."
+ */
+export function writesNoFileLine(specialist: string, file: string | null = null): string {
+  return file
+    ? `The ${specialist} writes no file, so ${file} is not written: its findings are its report, which you read in the task's drawer.`
+    : `The ${specialist} writes no file: its findings are its report, which you read in the task's drawer.`;
+}
+
+/**
+ * A dotted word as task words write a file: a path ending in an extension ("review.md"). Whether
+ * it is a file is `isFileName`'s to say: "Node.js", "ASP.NET" and "example.com" are dotted too.
+ */
+const FILE = String.raw`[\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,7}(?![\w-])`;
+/** Every dotted word of a clause, to tell the files from the names that only look like one. */
+const DOTTED = new RegExp(FILE, "g");
+/**
+ * fixup-l4-selftasks-carried (the review's blocking item): the endings of files a task may ask
+ * for, in lower case. A dotted word ending otherwise is no file: a technology ("ASP.NET",
+ * "Socket.IO"), a site ("example.com"), an abbreviation ("e.g").
+ */
+const FILE_EXTENSIONS = new Set(
+  (
+    "md markdown mdx txt text rst adoc csv tsv json jsonl yaml yml toml xml ini cfg conf " +
+    "html htm css scss sass less js mjs cjs jsx ts mts cts tsx vue svelte py ipynb rb go rs " +
+    "java kt swift cs php sh bash ps1 sql pdf doc docx odt rtf xls xlsx ods ppt pptx odp " +
+    "png jpg jpeg gif svg webp log diff patch tex bib mmd graphql proto tf"
+  ).split(" "),
+);
+/**
+ * A technology's name, not a file in the folder: a capitalised one-word name with ".js" or ".ts"
+ * ("Node.js", "Vue.js", "D3.js", as the bench's stand-in critic reads them) and the well-known
+ * ones in lower case ("node.js"). A path ("src/App.js") is still a file.
+ */
+const TECHNOLOGY =
+  /^(?:[A-Z][A-Za-z0-9]*\.(?:[jJ][sS]|[tT][sS])|(?:node|vue|next|nuxt|express|react|angular|ember|backbone|alpine|svelte|three|chart|d3|p5|moment|socket|knockout|meteor|deno|nest|solid|preact|jquery)\.(?:js|ts))$/;
+
+/** Whether a dotted word of a task's words is a file ("review.md") rather than a name. */
+function isFileName(word: string): boolean {
+  const ext = word.slice(word.lastIndexOf(".") + 1).toLowerCase();
+  return FILE_EXTENSIONS.has(ext) && (word.includes("/") || !TECHNOLOGY.test(word));
+}
+/** "<file> lists|holds|... ": the file is the subject the outcome describes, so it is written. */
+const FILE_AS_SUBJECT = new RegExp(
+  String.raw`^\s*(?:(?:a|an|the|new)\s+)*(?:file\s+)?` +
+    "`?(" +
+    FILE +
+    ")`?" +
+    String.raw`(?:\s+file)?\s+(?:lists?|holds?|contains?|has|have|shows?|says|describes?|summari[sz]es|records?|exists|is written|gives|names)\b`,
+  "i",
+);
+/** "write|create|produce|save ... <file>" in one clause: the file is what the task writes. */
+const FILE_WRITTEN = new RegExp(
+  String.raw`\b(?:write|writes|written|create|creates|created|produce|produces|save|saves|saved)\b[^.;,]*?(?:\b(?:to|into|in|as)\s+)?` +
+    "`?(" +
+    FILE +
+    ")`?",
+  "i",
+);
+/** A file the words only read ("found in notes/plan.md", "from data.csv"): never one written. */
+const FILE_READ = new RegExp(
+  String.raw`\b(?:(?:found|listed|named|described|mentioned|given|stated|kept)\s+in|from|of|on|about|read|reads|review|reviews|check|checks|against)\s+` +
+    "`?(" +
+    FILE +
+    ")`?",
+  "gi",
+);
+
+/**
+ * l4-selftasks-carried (L4-other-1 D-5): the file a task's words ask to be written, if any: the
+ * outcome's or a criterion's subject ("review.md lists the gaps ..."), or what a write verb
+ * makes ("write the findings to review.md", "create review.md"). A file the words only read
+ * ("the gaps found in notes/plan.md", "Review README.md") is never it, nor is a dotted name
+ * that is no file ("Node.js", "ASP.NET", "example.com"; `isFileName`).
+ */
+export function fileTheWordsWrite(texts: readonly string[]): string | null {
+  for (const text of texts) {
+    for (const words of text.split(/(?<=[.;])\s+|\n/)) {
+      // A dotted name that is no file loses its dots, so it is neither taken for the file nor
+      // ends the clause a later file is written in ("a review of the Node.js setup to review.md").
+      const clause = words.replace(DOTTED, (w) => (isFileName(w) ? w : w.replaceAll(".", "_")));
+      const subject = FILE_AS_SUBJECT.exec(clause);
+      if (subject?.[1]) return subject[1];
+      const written = FILE_WRITTEN.exec(clause);
+      const read = new Set([...clause.matchAll(FILE_READ)].map((m) => m[1]));
+      if (written?.[1] && !read.has(written[1])) return written[1];
+    }
+  }
+  return null;
 }
 
 /** The loop driver's built-in for one Claude Code tool name (without the prefix), if any. */

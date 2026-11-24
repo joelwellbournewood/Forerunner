@@ -381,9 +381,11 @@ describe("fixup-l4-selftasks-chat: an Undo read back in chat waits until it is a
     const r = done(
       await again.confirmFromDevice(p.pendingId, { deviceId: w.desktop.id, biometric: false }),
     );
-    // After a restart the undo is told from the change log row (the card of the change itself
-    // lived in the process that made it), as the Changes screen's Undo after a restart is.
-    expect(r.sentence).toBe("Undone: Lowered the monthly cap from CHF 150.00 to CHF 100.00.");
+    // l4-selftasks-carried (L4f-left-3): after a restart the Undo read back in chat is told as
+    // it is without one, from what its card puts back (the card of the change itself lived in
+    // the process that made it). Before: "Undone: Lowered the monthly cap from CHF 150.00 to
+    // CHF 100.00.", the change log row's sentence.
+    expect(r.sentence).toBe("Undone: the monthly cap is back to CHF 150.00.");
     expect((await w.store.human.mustGet(w.human.id)).monthly_cap_usd_micro).toBe(0);
     expect((await w.store.changeLog.mustGet(lowered.changeLogId)).undo_state).toBe("undone");
     await w.store.close();

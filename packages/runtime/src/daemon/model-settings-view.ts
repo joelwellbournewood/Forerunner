@@ -23,7 +23,7 @@ import {
 } from "../models/run-settings.ts";
 import { DEFAULT_PROVIDER_CAPABILITIES, type ProviderCapabilities } from "../provider/types.ts";
 import { needsWeb } from "../registry/alternates.ts";
-import { writesNoFile, writesNoFileLine } from "../registry/tools.ts";
+import { fileTheWordsWrite, writesNoFile, writesNoFileLine } from "../registry/tools.ts";
 import type { SpecialistDef } from "../registry/types.ts";
 import type {
   CredentialRunsOn,
@@ -64,6 +64,11 @@ export interface ModelSettingsViewInput {
    * the specialist's name. Absent: no `runsOn`.
    */
   runsOn?: ReadonlyMap<string, CredentialRunsOn | null>;
+  /**
+   * l4-selftasks-carried (L4-other-1 D-5): the words New task or Edit typed (the outcome, then the
+   * criteria), so the line of a specialist that writes no file names a file they ask for.
+   */
+  words?: readonly string[];
   /** Settings' "What each can do here" (`RuntimeApp.chooser.table`). */
   credentials?: CredentialTableView | null;
 }
@@ -194,8 +199,11 @@ export function buildModelSettingsView(input: ModelSettingsViewInput): ModelSett
           ? NO_WEB_LIMITATION
           : null,
       ...(input.runsOn ? { runsOn: input.runsOn.get(d.name) ?? null } : {}),
-      // L4-other-1 (D-2, D-3): said under Who does it for a specialist that writes no file.
-      writesNoFile: writesNoFile(d.allowed_tools ?? []) ? writesNoFileLine(d.name) : null,
+      // L4-other-1 (D-2, D-3): said under Who does it for a specialist that writes no file;
+      // l4-selftasks-carried (D-5): naming the file the typed words ask for, if any.
+      writesNoFile: writesNoFile(d.allowed_tools ?? [])
+        ? writesNoFileLine(d.name, fileTheWordsWrite(input.words ?? []))
+        : null,
       settings: settingsView(
         resolveRunSettings({
           mode: specialistMode(d.name),

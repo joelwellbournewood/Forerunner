@@ -41,7 +41,19 @@ export interface RestartRequested {
 
 export type DaemonEvent =
   | { event: "session.event"; data: EventView }
-  | { event: "inbox.changed"; data: { blockingCount: number; needsYouCount?: number } }
+  | {
+      event: "inbox.changed";
+      data: {
+        blockingCount: number;
+        needsYouCount?: number;
+        /**
+         * Polling only (fixup-l4-selftasks-carried): the open cards the poll read, as their ids
+         * in order, so a card that closed while another arrived is told although the count is
+         * the same. The live stream names the closed card's conversation instead.
+         */
+        openCards?: string;
+      };
+    }
   | { event: "session.changed"; data: SessionView }
   /**
    * Something happened in a session (a task began, a step, the session ended): the install-wide
@@ -406,6 +418,11 @@ export function subscribeDaemonEvents(
         data: {
           blockingCount: inbox.blockingCount,
           ...(inbox.needsYouCount !== undefined ? { needsYouCount: inbox.needsYouCount } : {}),
+          openCards: inbox.requests
+            .filter((r) => r.status === "open")
+            .map((r) => r.id)
+            .sort()
+            .join(","),
         },
       });
       const running = await client.sessions({ status: "running" });

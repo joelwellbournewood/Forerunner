@@ -166,6 +166,31 @@ function replyOf(p: Record<string, unknown>): TranscriptReply {
   };
 }
 
+/** How far back `conversationOfCard` looks for the reply that read a card back. */
+const CARD_REPLY_SCAN = 400;
+
+/**
+ * l4-selftasks-carried (L4f-left-1): the conversation a change card was read back in: the
+ * project of the newest `chat.reply` row of the conversation session that carries the card's id
+ * (`pendingId`), null for the conversation outside any project, undefined when no reply there
+ * read it back (a card from a settings screen, or one older than the rows looked at).
+ */
+export async function conversationOfCard(
+  store: Pick<StateStore, "event">,
+  sessionId: string,
+  cardId: string,
+): Promise<string | null | undefined> {
+  const rows = await store.event.ofTypes(sessionId, ["chat.reply"], { limit: CARD_REPLY_SCAN });
+  for (const row of rows) {
+    const p = obj(row.payload);
+    if (p.pendingId !== cardId) continue;
+    const own = conversationOf(p);
+    if (own !== undefined) return own;
+    return typeof p.projectId === "string" && p.projectId ? p.projectId : null;
+  }
+  return undefined;
+}
+
 /**
  * fixup-l4-cred-screens (L4-creds-19): whether a reply is the app's own hold reply, which no
  * model wrote: marked `hold`, or, on a row written before the mark, a notice with the one-off

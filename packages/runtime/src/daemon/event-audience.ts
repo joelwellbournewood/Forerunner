@@ -56,7 +56,7 @@ export const PROMISED_EVENT_TYPE = "session.promised";
  */
 export const TASK_CHECKED_EVENT = "session.task_checked";
 /**
- * l4-selftasks-104: what a check left out, in words ('Left out (and 1 more): the add of "X":
+ * l4-selftasks-104: what a check left out, in words ('Left out (and 1 more): adding "X":
  * …'), a Details line beside the check's own.
  */
 export const TASK_CHECK_LEFT_OUT_EVENT = "session.task_check_left_out";

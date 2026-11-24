@@ -91,8 +91,23 @@ export function evaluate(changed, waiverText) {
 }
 
 function changedFiles(base) {
-  const out = execFileSync("git", ["diff", "--name-only", `${base}...HEAD`], { encoding: "utf8" });
+  const out = execFileSync("git", ["diff", "--name-only", `${base}...HEAD`], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   return out.split(/\r?\n/).filter(Boolean);
+}
+
+/** Whether `ref` names a commit in this checkout (git's own error stays out of the output). */
+function hasRef(ref) {
+  try {
+    execFileSync("git", ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function waiverText(base, bodyFile) {
@@ -100,7 +115,10 @@ function waiverText(base, bodyFile) {
   if (bodyFile && existsSync(bodyFile)) text += readFileSync(bodyFile, "utf8");
   if (process.env.PR_BODY) text += `\n${process.env.PR_BODY}`;
   try {
-    text += `\n${execFileSync("git", ["log", "--format=%B", `${base}..HEAD`], { encoding: "utf8" })}`;
+    text += `\n${execFileSync("git", ["log", "--format=%B", `${base}..HEAD`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    })}`;
   } catch {
     // no range available
   }
@@ -110,8 +128,19 @@ function waiverText(base, bodyFile) {
 const isMain =
   process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/").split("/").pop());
 if (isMain) {
-  const base = arg("--base") ?? process.env.DOCS_CHECK_BASE ?? "origin/main";
+  const base = arg("--base") || process.env.DOCS_CHECK_BASE || "origin/main";
   const filesArg = arg("--files");
+  // l4-selftasks-carried (L4-selftasks-125's rest): without the base (a worktree, or a clone
+  // without origin/main) the check printed git's own error and passed; it says now that nothing
+  // was checked and what it needs.
+  if (!filesArg && !hasRef(base)) {
+    console.log(
+      base === "origin/main"
+        ? "docs-check: nothing was checked: origin/main is not in this checkout (a worktree, or a clone without that branch). Name the branch this work started from: pnpm docs:check --base <branch>, or set DOCS_CHECK_BASE."
+        : `docs-check: nothing was checked: ${base} is not a branch or commit in this checkout. Name the branch this work started from: pnpm docs:check --base <branch>.`,
+    );
+    process.exit(0);
+  }
   let changed;
   try {
     changed = filesArg
@@ -126,7 +155,7 @@ if (isMain) {
     console.log(
       res.waived
         ? "docs-check: waived by 'docs: none needed: <reason>'."
-        : `docs-check: ok (${changed.length} files).`,
+        : `docs-check: ok (${changed.length} ${changed.length === 1 ? "file" : "files"}).`,
     );
     process.exit(0);
   }

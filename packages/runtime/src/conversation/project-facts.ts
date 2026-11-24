@@ -18,6 +18,7 @@ import {
   runOrder,
   taskDisplay,
 } from "../daemon/task-display.ts";
+import { TASK_PROPOSAL_KEY } from "../daemon/task-proposal-words.ts";
 import { parseRepoRef } from "../loop/docs.ts";
 import { type MergeMode, mergeModeOf } from "../loop/merge-mode.ts";
 import type { IntakeState } from "../session/intake.ts";
@@ -440,6 +441,9 @@ export function quotesOthersWords(r: Pick<HumanRequestRow, "change_card" | "step
   const said = (k: string) => typeof card[k] === "string" && (card[k] as string).trim() !== "";
   if (said("context") || said("said") || said("description")) return true;
   if (card.source === "specialist" || card.source === "critic") return true;
+  // l4-selftasks-carried (L4b-left-4): the agent's suggested changes to the tasks quote a run's
+  // report or a review (its `quotes`, the new tasks' titles from the check's reply).
+  if (card.key === TASK_PROPOSAL_KEY) return true;
   return (
     typeof card.key === "string" && card.key.startsWith("person_questions:") && r.steps.length > 0
   );

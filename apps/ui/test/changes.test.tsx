@@ -157,3 +157,48 @@ describe("d1109-selftasks-chat, run C: Changes says the agent made it (SC-7)", (
     expect(voice && within(voice).getByTestId("change-source")).toHaveTextContent("Voice");
   });
 });
+
+describe("l4-selftasks-carried, run L4: a merged card's row on Changes names both (L4f-left-4)", () => {
+  it("the agent's fixes with the person's own change, made at one yes, read 'Robin and Alice'; the agent's own row still reads the agent alone", async () => {
+    const harness = createHarness();
+    const first = harness.daemon.state.changes[0];
+    if (!first) throw new Error("no change fixture");
+    harness.daemon.state.changes.unshift(
+      {
+        ...first,
+        id: "chg_both",
+        source: "chat",
+        wordsUsed: "tidy the list and make Publish the page less important",
+        sentence:
+          'Split "Style the page" into "Style the page: layout" and "Style the page: colours". Changed "Publish the page": priority to Low.',
+        undoState: "undoable",
+        expiresAt: null,
+        byAgent: false,
+        byYouAndAgent: true,
+        agentName: "Alice",
+        humanName: "Robin",
+      },
+      {
+        ...first,
+        id: "chg_agent_only",
+        source: "chat",
+        wordsUsed: "fix the tasks",
+        sentence: 'Added "Check the links".',
+        undoState: "undoable",
+        expiresAt: null,
+        byAgent: true,
+        byYouAndAgent: false,
+        agentName: "Alice",
+        humanName: "Robin",
+      },
+    );
+    renderApp("/changes", harness);
+    const rows = await screen.findAllByTestId("change");
+    const both = rows.find((r) => r.getAttribute("data-change-id") === "chg_both");
+    const agent = rows.find((r) => r.getAttribute("data-change-id") === "chg_agent_only");
+    if (!both || !agent) throw new Error("rows missing");
+    expect(both).toHaveTextContent("Robin and Alice");
+    expect(agent).toHaveTextContent("Alice");
+    expect(agent).not.toHaveTextContent("Robin");
+  });
+});

@@ -339,12 +339,24 @@ export type TaskCheckReply =
     }
   | { ok: false; reason: string };
 
-/** What a change asked for, as Details names it. */
+/**
+ * What a change asked for, as Details names it ('Left out: adding "Write thanks.html": ...').
+ * l4-selftasks-carried (L4b-left-3): in words, not the kind as a noun ("the add of", "the edit
+ * of"), and "a change" for a kind the check does not know (it read "a settings").
+ */
+const CHANGE_WHAT: Readonly<Record<string, (t: string) => string>> = {
+  add: (t) => `adding "${t}"`,
+  split: (t) => `splitting "${t}"`,
+  drop: (t) => `dropping "${t}"`,
+  edit: (t) => `the change to "${t}"`,
+  order: (t) => `the order of "${t}"`,
+};
 function changeWhat(c: unknown): string {
   const o = (c && typeof c === "object" ? c : {}) as Record<string, unknown>;
   const t = typeof o.task === "string" ? o.task : typeof o.title === "string" ? o.title : "";
-  const kind = typeof o.kind === "string" ? o.kind : "change";
-  return t ? `the ${kind} of "${t}"` : `a ${kind}`;
+  const words = typeof o.kind === "string" ? CHANGE_WHAT[o.kind] : undefined;
+  if (!t) return "a change";
+  return words ? words(t) : `the change to "${t}"`;
 }
 
 /** The first field of a change the schema does not know (a budget, a review level, a setting). */

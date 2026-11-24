@@ -75,6 +75,11 @@ export interface CommandLoopDeps {
    * email card; chat read-backs wait until answered). The daemon tells the screens and the person.
    */
   onExpired?: ExecutorOptions["onExpired"];
+  /**
+   * l4-selftasks-carried (L4f-left-1): a card left the executor (a yes, a no, a refused Yes, a
+   * lapse), whatever route answered it. The daemon tells the open screens once.
+   */
+  onClosed?: ExecutorOptions["onClosed"];
 }
 
 /**
@@ -130,6 +135,7 @@ export class CommandLoop implements ConversationCommands {
         store: deps.store,
         clock: deps.clock,
         ...(deps.onExpired ? { onExpired: deps.onExpired } : {}),
+        ...(deps.onClosed ? { onClosed: deps.onClosed } : {}),
       });
     this.parser = new IntentParser(this.registry, deps.model ? { model: deps.model } : {});
   }

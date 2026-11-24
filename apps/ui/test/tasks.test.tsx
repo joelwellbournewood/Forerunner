@@ -2301,7 +2301,12 @@ describe("l4-selftasks-chat, run L4: a reviewer task says the reviewer writes no
       within(dialog).getByTestId("task-outcome"),
       "review.md lists the gaps and risks found in README.md",
     );
-    expect(within(dialog).getByTestId("task-who-writes-no-file")).toHaveTextContent(LINE);
+    // l4-selftasks-carried (L4-other-1 D-5): once the words ask for review.md, the line names it.
+    await waitFor(() =>
+      expect(within(dialog).getByTestId("task-who-writes-no-file")).toHaveTextContent(
+        "The reviewer writes no file, so review.md is not written: its findings are its report, which you read in the task's drawer.",
+      ),
+    );
     await user.click(within(dialog).getByTestId("create-task"));
     await waitFor(() => expect(postedCalls(harness, "/projects/proj_atlas/tasks")).toHaveLength(1));
     expect(postedCalls(harness, "/projects/proj_atlas/tasks")[0]?.body).toMatchObject({
@@ -2330,5 +2335,70 @@ describe("l4-selftasks-chat, run L4: a reviewer task says the reviewer writes no
     expect(postedCalls(harness, "/tasks/task_review")[0]?.body).toMatchObject({
       specialist: "reviewer",
     });
+  });
+});
+
+describe("l4-selftasks-carried, run L4: the reviewer's line names a file the words ask for; Edit asks with its words (L4-other-1 D-3, D-5)", () => {
+  const NAMED =
+    "The reviewer writes no file, so review.md is not written: its findings are its report, which you read in the task's drawer.";
+  const PLAIN =
+    "The reviewer writes no file: its findings are its report, which you read in the task's drawer.";
+
+  it("New task: an outcome that asks for review.md names it; one that only reads a file keeps the plain line", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await user.click(await screen.findByTestId("new-task"));
+    const dialog = await screen.findByTestId("new-task-dialog");
+    const who = within(dialog).getByTestId("task-who") as HTMLSelectElement;
+    await waitFor(() => expect([...who.options].map((o) => o.value)).toContain("reviewer"));
+    await user.selectOptions(who, "reviewer");
+    const outcome = within(dialog).getByTestId("task-outcome");
+    await user.type(outcome, "review.md lists the gaps and risks found in notes/plan.md");
+    await waitFor(() =>
+      expect(within(dialog).getByTestId("task-who-writes-no-file")).toHaveTextContent(NAMED),
+    );
+    await user.clear(outcome);
+    await user.type(outcome, "The gaps and risks found in notes/plan.md are listed");
+    await waitFor(() =>
+      expect(within(dialog).getByTestId("task-who-writes-no-file")).toHaveTextContent(PLAIN),
+    );
+    // fixup-l4-selftasks-carried (the review's blocking item, bench walk D): a technology's
+    // dotted name is no file (before: "so Node.js is not written"). Pasted whole, so the line
+    // changes only when the daemon answered for these words (the words are asked again 400 ms
+    // after typing stops).
+    await user.clear(outcome);
+    await user.paste("Write a review of the Node.js setup to review.md");
+    await waitFor(() =>
+      expect(within(dialog).getByTestId("task-who-writes-no-file").textContent).toBe(NAMED),
+    );
+    await user.clear(outcome);
+    await user.paste("Write a review of the Node.js setup");
+    await waitFor(() =>
+      expect(within(dialog).getByTestId("task-who-writes-no-file").textContent).toBe(PLAIN),
+    );
+  });
+
+  it("Edit: the task's own words ask for review.md, so choosing reviewer names it (Edit asks with the project and the words)", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    addTask(harness, "task_review_md", "Review the plan", {
+      status: "ready",
+      specialist: "coder",
+      outcome: "review.md lists the gaps and risks found in notes/plan.md",
+    });
+    renderApp("/projects/proj_atlas/tasks", harness);
+    await user.click(within(await rowOf("task_review_md")).getByTestId("task-title"));
+    const drawer = await screen.findByTestId("task-drawer");
+    await user.click(await within(drawer).findByTestId("drawer-action-edit"));
+    const form = await within(drawer).findByTestId("edit-task-form");
+    const who = within(form).getByTestId("edit-who") as HTMLSelectElement;
+    await waitFor(() => expect([...who.options].map((o) => o.value)).toContain("reviewer"));
+    await user.selectOptions(who, "reviewer");
+    await waitFor(() =>
+      expect(within(form).getByTestId("edit-who-writes-no-file")).toHaveTextContent(NAMED),
+    );
+    const asked = harness.daemon.state.gets.filter((p) => p === "/settings/models");
+    expect(asked.length).toBeGreaterThan(0);
   });
 });

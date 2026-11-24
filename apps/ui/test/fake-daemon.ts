@@ -185,6 +185,7 @@ import {
   mergesAfterSentence,
 } from "@forerunner/runtime/loop/merge-mode";
 import { fastModeDescription, fastModeEffect } from "@forerunner/runtime/models/fast-mode";
+import { fileTheWordsWrite, writesNoFileLine } from "@forerunner/runtime/registry/tools";
 import {
   SANDBOX_WHY,
   type SandboxPullEntryView,
@@ -788,6 +789,8 @@ export interface FakeDaemonState {
   messages: MessageView[];
   killActive: boolean;
   calls: RecordedCall[];
+  /** l4-selftasks-carried (L4f-left-6): the paths of the GET requests, in order. */
+  gets: string[];
   pendingConfirmation: { id: string; readback: string } | null;
   /**
    * As the daemon (review of l4-chat-answers): the line the parser's "Which project: …?" asked
@@ -1504,6 +1507,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     messages: clone(MESSAGES),
     killActive: false,
     calls: [],
+    gets: [],
     pendingConfirmation: null,
     askedProjectLine: null,
     nextChatReply: null,
@@ -1766,7 +1770,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         body = null;
       }
       state.calls.push({ method: c.req.method, path: c.req.path, body });
-    }
+    } else if (c.req.method === "GET") state.gets.push(c.req.path);
     return next();
   });
   // A hidden route answers a typed 404 "no route ..." body. The real daemon registers no
@@ -1821,6 +1825,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.messages = clone(MESSAGES);
     state.killActive = false;
     state.calls = [];
+    state.gets = [];
     state.pendingConfirmation = null;
     state.nextChatReply = null;
     state.nextChatActions = null;
@@ -4487,7 +4492,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         emitExtension("extension.denied", ext);
       }
     }
+    // l4-selftasks-carried (L4f-left-1), as the daemon's close of a card (`onClosed`): a chat
+    // read-back's card is its Inbox request (the same id); answered here, the read-back leaves
+    // the chat and its conversation is told (conversation.changed), with the project's line.
+    const readBack = state.pendingConfirmation?.id === r.id ? state.pendingConfirmation : null;
+    if (readBack) state.pendingConfirmation = null;
     emit("inbox.changed", { blockingCount: blockingCount() });
+    if (r.projectId) emit("project.changed", { id: r.projectId });
+    if (readBack) emit("conversation.changed", { projectId: r.projectId ?? null });
     return c.json(worded(r));
   });
   app.post("/messages/:id/read", (c) => {
@@ -4976,9 +4988,26 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
 
   // As the daemon (W15-29): what a chat turn changed is heard by the screens, its project as
   // `project.changed` and a card waiting for a yes as `inbox.changed`.
-  const heardChat = (reply: ChatReplyView, projectId: string | null | undefined) => {
-    if (reply.actions.length && projectId) emit("project.changed", { id: projectId });
-    if (reply.pendingConfirmation) emit("inbox.changed", { blockingCount: blockingCount() });
+  const heardChat = (
+    reply: ChatReplyView,
+    projectId: string | null | undefined,
+    closed: string | null = null,
+    said = "",
+  ) => {
+    // l4-selftasks-carried (L4f-left-1), as the daemon's close of a card: a yes or a no in chat
+    // answers the read-back's Inbox request (the same id), and the screens hear it at once.
+    const card = closed
+      ? state.requests.find((r) => r.id === closed && r.status === "open")
+      : undefined;
+    if (card) {
+      card.status = "answered";
+      // As the daemon's executor (verdict "no" for a cancel): the answer is what chat said.
+      card.answer = /^\s*(?:no|nein)\b/i.test(said) ? "no" : "yes";
+      card.version += 1;
+    }
+    if ((reply.actions.length || card) && projectId) emit("project.changed", { id: projectId });
+    if (reply.pendingConfirmation || card)
+      emit("inbox.changed", { blockingCount: blockingCount() });
   };
   app.post("/chat", async (c) => {
     const parsed = ChatRequestBody.safeParse(await c.req.json());
@@ -4987,7 +5016,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.nextChatTurn = null;
     state.chatPosts.push({ text: parsed.data.text, oneOff: parsed.data.oneOff === true });
     dropHeldTurn(parsed.data);
+    const waitingBefore = state.pendingConfirmation?.id ?? null;
     const base = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
+    const closedNow =
+      waitingBefore && state.pendingConfirmation?.id !== waitingBefore ? waitingBefore : null;
     const reply = keepTurn(
       parsed.data,
       {
@@ -5000,7 +5032,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       },
       extra?.failed === true,
     );
-    heardChat(reply, parsed.data.projectId);
+    heardChat(reply, parsed.data.projectId, closedNow, parsed.data.text);
     return c.json(reply);
   });
   // d1109-chat-depth: Stop and Answer now on the turn being answered, as the daemon answers them.
@@ -5029,7 +5061,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.nextChatTurn = null;
     state.chatPosts.push({ text: parsed.data.text, oneOff: parsed.data.oneOff === true });
     dropHeldTurn(parsed.data);
+    const waitingBefore = state.pendingConfirmation?.id ?? null;
     const base = chatReply(parsed.data.text, parsed.data.projectId, parsed.data.projectTab);
+    const closedNow =
+      waitingBefore && state.pendingConfirmation?.id !== waitingBefore ? waitingBefore : null;
     const key = parsed.data.projectId ?? "";
     const startedAt = new Date().toISOString();
     // d1109-chat-depth: a held turn is in its conversation without a reply (the daemon wrote the
@@ -5082,7 +5117,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         );
       }
       keepTurn(parsed.data, reply, extra?.failed === true && !stopped);
-      heardChat(reply, parsed.data.projectId);
+      heardChat(reply, parsed.data.projectId, closedNow, parsed.data.text);
       emit("conversation.changed", { projectId: parsed.data.projectId ?? null });
       return reply;
     };
@@ -5360,6 +5395,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     };
     const words = typed.title || typed.outcome || typed.acceptance_criteria.length ? typed : null;
     for (const sp of view.specialists) sp.runsOn = runsOnFor(sp.name, projectId, words);
+    // l4-selftasks-carried (L4-other-1 D-5), as the daemon: the line of a specialist that writes
+    // no file names a file the typed words ask for.
+    const file = fileTheWordsWrite([typed.outcome, ...typed.acceptance_criteria]);
+    for (const sp of view.specialists)
+      if (sp.writesNoFile) sp.writesNoFile = writesNoFileLine(sp.name, file);
     view.credentials = abilityTable(chooserFactsNow(), savedKinds());
     return c.json(view);
   });
@@ -7934,6 +7974,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         agentName: ch.agentName ?? agent?.name ?? null,
         // d1109-selftasks-chat (SC-7), as the daemon: the agent's own change says so.
         byAgent: ch.byAgent ?? false,
+        // l4-selftasks-carried (L4f-left-4), as the daemon: a set of the agent's fixes with the
+        // person's own change names both.
+        byYouAndAgent: ch.byYouAndAgent ?? false,
       };
     };
     const rows = state.changes

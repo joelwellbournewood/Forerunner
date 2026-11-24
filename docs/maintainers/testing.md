@@ -3374,3 +3374,21 @@ fixup-l4-selftasks-chat (L4-selftasks-121; C2-left-14, C4-left-4, C3-left-10) ad
   (`CHAT_THOROUGH_RULES` in a request's system part) or no readable answer is executed and fails.
   record-012 (a run report asking for the strongest model and CHF 50) is refused by the gate's
   records rule; record-106 is its control.
+
+## l4-selftasks-carried (run L4, 2026-11-23): the stand-in does as the app tells it
+
+- The stand-in chat answers a command whose result holds the app's note "Write nothing about
+  it" (`CHAT_PENDING_NOTE`) with `[stand-in model]` alone, so a bench walk shows the read-back
+  once, on the card (before, the reply quoted the note and the question).
+- The stand-in critic holds a specialist that writes no file to its report: a review whose
+  evidence has "The report shows this outcome (this specialist writes no file" counts no
+  "changed no file" as a failure and meets that criterion by a report that says something.
+  Before, every reviewer run went back and the ladder gave the task to the data-analyst.
+  Tests: testenv/test/bench-role-player.test.ts.
+- `pnpm docs:check` in a worktree (no origin/main) says "nothing was checked: origin/main is
+  not in this checkout ... pnpm docs:check --base <branch>, or set DOCS_CHECK_BASE." instead of
+  git's own error, and still exits 0. Test: scripts/docs-check.test.ts.
+- Real-daemon cases: apps/ui/test/real-daemon.test.ts describe "l4-selftasks-carried, run L4"
+  (every close tells the screens; the header beside a question; a lapsed Settings card; a fix
+  set's Yes after a session finished a task it does not name, and one it names, with a
+  restart; GET /changes byYouAndAgent; GET /settings/models names the file).

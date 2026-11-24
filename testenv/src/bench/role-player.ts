@@ -1388,6 +1388,12 @@ export function judgeCriterion(
   };
 }
 
+/**
+ * The criterion the app gives a task for a specialist that writes no file (runtime
+ * `outcomeCriterion` with `writesNoFile`, L4-other-1 D-4): its report stands for any file named.
+ */
+const REPORT_CRITERION = /The report shows this outcome \(this specialist writes no file/i;
+
 function criticAnswer(
   req: ModelRequest,
   opts: BenchOptions,
@@ -1424,7 +1430,16 @@ function criticAnswer(
   // FORERUNNER_BENCH_CRITIC_REJECT matches the task's title, as FAIL and ASK do.
   const title = reviewedTitle(brief, workerReport, known) || subject;
   const rejectHit = matchesAny(title, opts.reject);
-  const workerFailed = /could not complete this task|changed no file/i.test(workerReport);
+  // l4-selftasks-carried (L4f-left-7; ADR 0109): a specialist that writes no file (the reviewer)
+  // is held to its report, as its brief and the review's evidence say ("The report shows this
+  // outcome (this specialist writes no file, ..."). Its "changed no file" is no failure, and such
+  // a criterion is met by a report that says something. Before, the stand-in sent every reviewer
+  // run back ("the worker reports it could not do the work"), and after two tries the ladder gave
+  // the task to the data-analyst, so U-098's reviewer run could not be walked on the bench.
+  const writesNoFile = REPORT_CRITERION.test(evidence);
+  const workerFailed =
+    /could not complete this task/i.test(workerReport) ||
+    (!writesNoFile && /changed no file/i.test(workerReport));
   // FORERUNNER_BENCH_MISSING plays the live critic, which accepted a report that made nothing.
   const missingHit = matchesAny(title, opts.missing ?? []);
   const judged = criteria.map((c) =>
@@ -1434,7 +1449,13 @@ function criticAnswer(
           met: true,
           evidence: `not checked by the stand-in: FORERUNNER_BENCH_MISSING=${missingHit} plays the live critic, which accepted`,
         }
-      : judgeCriterion(c, changed, calls),
+      : REPORT_CRITERION.test(c)
+        ? {
+            text: c,
+            met: workerReport.trim().length > 0,
+            evidence: "the report stands for it: this specialist writes no file",
+          }
+        : judgeCriterion(c, changed, calls),
   );
   const unmet = judged.filter((c) => !c.met);
   const reject =
@@ -1790,10 +1811,17 @@ function chatAnswer(req: ModelRequest, alone = false, noLook = false): Answer {
     lastMsg &&
     typeof lastMsg.content !== "string" &&
     lastMsg.content.some((b) => b.type === "tool_result")
-  )
+  ) {
+    // l4-selftasks-carried (L4f-left-7): a change waiting for the person's yes comes back with
+    // the app's note "The app shows this question under your reply with Yes and No. Write
+    // nothing about it: ..." (CHAT_PENDING_NOTE). The stand-in does as told, as the real model
+    // does: it writes nothing about the card (before, it echoed the note and the question, so
+    // every bench read-back was said twice).
+    if (/Write nothing about it/.test(lastCall.result ?? "")) return text(STAND_IN);
     return text(
       `${STAND_IN} The command tool ${lastCall.name} answered${lastCall.isError ? " with an error" : ""}: ${(lastCall.result ?? "").slice(0, 400)}`,
     );
+  }
   // l3-chat-claims (live check 3, L3-run-1): "say: <text>" answers with that text and calls no
   // tool, every call of the turn, as the live chat model did when it claimed "I've asked for
   // confirmation" with no card; read from the turn's own line, so a nudge after it is answered

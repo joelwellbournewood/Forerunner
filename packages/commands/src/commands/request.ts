@@ -6,6 +6,13 @@ import type { CommandContext, CommandDef } from "../types.ts";
 import { quote } from "./shared.ts";
 
 /**
+ * fixup-l4-selftasks-carried: what the model is told of `note` (model-facing: the exact text is
+ * asserted, packages/commands/test/selftasks-carried.test.ts).
+ */
+export const ANSWER_NOTE_DESCRIPTION =
+  "Only with an option that takes a note (Try again, Send it back): words the person gave for the next attempt, quoted as they said them; leave it out when they gave none.";
+
+/**
  * request.answer (spec J human requests): answer an open request by id or id prefix. The
  * risk is the request's own risk, so a high-risk approval still needs a paired device.
  */
@@ -13,6 +20,11 @@ const params = z.object({
   /** Request id or a prefix of at least four characters. */
   request: z.string().min(4),
   answer: z.string().min(1),
+  /**
+   * The note an option that takes one carries to the task's next brief (`{ choice, note }`, as
+   * the Inbox sends it); a move said in chat carries its note here (`moveAsCardAnswer`).
+   */
+  note: z.string().trim().max(2000).optional().describe(ANSWER_NOTE_DESCRIPTION),
 });
 export type RequestAnswerParams = z.infer<typeof params>;
 
@@ -67,12 +79,39 @@ const word = (s: string) =>
  * (Plan for "Bakery": 3 tasks)? Writes these 3 tasks and starts working on them now." An answer
  * that is no option (free text) reads 'Answer "<title>" with "<words>"?'.
  */
-async function askOf(r: HumanRequestRow, answer: string, ctx: CommandContext): Promise<string> {
+async function askOf(
+  r: HumanRequestRow,
+  answer: string,
+  ctx: CommandContext,
+  note: string | null = null,
+): Promise<string> {
   const words = await ctx.ports.cardWords?.(r).catch(() => null);
   if (!words) return `Answer ${quote(r.why, 60)} with ${quote(answer)}?`;
   const option = words.choices.find((c) => word(c.label) === word(answer));
   if (!option) return `Answer ${quote(words.title, 80)} with ${quote(answer)}?`;
-  return `${option.label} (${words.title})?${option.explain ? ` ${option.explain}` : ""}`;
+  const ask = `${option.label} (${words.title})?${option.explain ? ` ${option.explain}` : ""}`;
+  return note ? `${ask} ${noteForBrief(note)}` : ask;
+}
+
+/** 'Note for its next brief: "…"', as a move's read-back shows a note the model passed. */
+function noteForBrief(note: string): string {
+  return `Note for its next brief: ${quote(note)}${/[.!?]$/.test(note) ? "" : "."}`;
+}
+
+/**
+ * fixup-l4-selftasks-carried: the note an answer carries, when its option takes one (the card's
+ * words say `input: "note"`); null otherwise, so an option that takes none keeps no note.
+ */
+async function noteOf(
+  r: HumanRequestRow,
+  p: RequestAnswerParams,
+  ctx: CommandContext,
+): Promise<string | null> {
+  const note = p.note?.trim();
+  if (!note) return null;
+  const words = await ctx.ports.cardWords?.(r).catch(() => null);
+  const option = words?.choices.find((c) => word(c.label) === word(p.answer));
+  return option?.input === "note" ? note : null;
 }
 
 export const requestAnswer: CommandDef<RequestAnswerParams> = {
@@ -106,13 +145,21 @@ export const requestAnswer: CommandDef<RequestAnswerParams> = {
       reversible: false,
       projectId: r.project_id,
       projectName: project?.name ?? null,
-      ask: await askOf(r, p.answer, ctx),
+      ask: await askOf(r, p.answer, ctx, await noteOf(r, p, ctx)),
     });
   },
   async run(p, ctx) {
     const r = await findRequest(p, ctx);
     if (r.status === "open") ctx.ports.checkAnswer?.(r, p.answer);
-    await ctx.store.humanRequest.answer(r.id, r.version, p.answer, ctx.humanId);
+    // An option with a note is answered as the Inbox answers it (`{ choice, note }`), so the
+    // card's handler queues the note for the task's next brief (`answerNote`).
+    const note = await noteOf(r, p, ctx);
+    await ctx.store.humanRequest.answer(
+      r.id,
+      r.version,
+      note ? { choice: p.answer, note } : p.answer,
+      ctx.humanId,
+    );
     await ctx.ports.requestAnswered?.(r.id);
     // What came of it, as the card's Done line says it ("Plan approved: 3 tasks written;
     // working on them."), once the answer was applied; else the plain sentence.

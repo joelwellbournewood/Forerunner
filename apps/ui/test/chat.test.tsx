@@ -541,10 +541,14 @@ describe("l4-selftasks-chat, run L4: the open chat follows a card answered in th
     const card = await screen.findByTestId("pending-confirmation");
     expect(within(card).getByTestId("confirm-yes")).toBeEnabled();
     // The card is answered in the Inbox: the daemon's conversation no longer shows it waiting,
-    // and the stream says the Inbox changed (no conversation.changed for this one).
+    // and the stream says the Inbox changed and names the card's conversation, as the daemon's
+    // close of a card does (l4-selftasks-carried, L4f-left-1 and -6: the chat is read again for
+    // the conversation the daemon names, no longer for every inbox.changed).
     harness.daemon.state.pendingConfirmation = null;
-    for (const l of harness.daemon.state.listeners)
+    for (const l of harness.daemon.state.listeners) {
       l("inbox.changed", { blockingCount: 0, needsYouCount: 0 });
+      l("conversation.changed", { projectId: "proj_atlas" });
+    }
     await waitFor(() => expect(screen.queryByTestId("confirm-yes")).toBeNull());
   });
 });

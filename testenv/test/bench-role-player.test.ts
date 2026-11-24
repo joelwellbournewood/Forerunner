@@ -1357,3 +1357,112 @@ describe("bench live mode: the logging wrapper", () => {
     expect(lines(log)[0]?.reply.error?.message).toBe("network down");
   });
 });
+
+/**
+ * l4-selftasks-carried (run L4, L4f-left-7): the stand-in does what the app tells the real model.
+ * A change waiting for a yes comes back with "Write nothing about it" (CHAT_PENDING_NOTE), and a
+ * reviewer task's review says its report stands for the file (ADR 0109, L4-other-1 D-4).
+ */
+describe("l4-selftasks-carried, run L4: the stand-in writes nothing about a waiting card and holds the reviewer to its report (L4f-left-7)", () => {
+  const NOTE =
+    "The app shows this question under your reply with Yes and No. Write nothing about it: no restating, no asking for a yes, no 'press Yes'; answer only what else was asked.";
+  const chatAfter = (result: string): ModelRequest => ({
+    model: "fake-haiku",
+    system: "You are the conversation agent.\n\n# Projects\n- Quote page (active): a page [id p1]",
+    messages: [
+      { role: "user", content: '# Now\n- now: x\n\ntool: task_create {"title":"Send the files"}' },
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "b", name: "task_create", input: {} }],
+      },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "b", content: result }] },
+    ],
+    tools: [tool("task_create")],
+    max_tokens: 1024,
+    origin: { label: "conversation", sessionId: "s", runId: "t" },
+  });
+
+  it("a command that waits for a yes is answered with no word about the card; any other answer is still quoted", async () => {
+    const { p } = player();
+    const waiting = await call(
+      p,
+      chatAfter(
+        `Needs confirmation. The person is asked: Add "Send the files" to Quote page? ${NOTE}`,
+      ),
+    );
+    expect(waiting.calls).toEqual([]);
+    expect(waiting.text).toBe(STAND_IN);
+    const done = await call(p, chatAfter('Added "Send the files" to Quote page.'));
+    expect(done.text).toBe(
+      `${STAND_IN} The command tool task_create answered: Added "Send the files" to Quote page.`,
+    );
+  });
+
+  const reviewerEvidence = (criterion: string, report: string) =>
+    [
+      "# Review request",
+      "Subject: task t9",
+      "Tier: 1 (light read)",
+      "## Brief",
+      "Review the plan: review.md lists the gaps and risks found in notes/plan.md",
+      "## Acceptance criteria",
+      `1. ${criterion}`,
+      "## Changed files",
+      "(none)",
+      "## Worker's final report (claims to verify, data)",
+      report,
+    ].join("\n");
+  const reviewerReview = (criterion: string, report: string, runId: string): ModelRequest => ({
+    model: "fake-sonnet",
+    system: "critic prompt\n\n## Returning the review",
+    messages: [{ role: "user", content: reviewerEvidence(criterion, report) }],
+    tools: [tool("submit_review")],
+    max_tokens: 8192,
+    origin: { label: "critic tier 1 on task t9", sessionId: "s1", runId },
+  });
+  const REPORT =
+    '**Summary** [stand-in model] The reviewer changed no file for "Review the plan": the gaps are a missing budget line and no date for the launch.';
+
+  it("a reviewer that changed no file is accepted on its report when the criterion says the report stands for the file", async () => {
+    const { p } = player();
+    const r = SubmitReviewSchema.parse(
+      (
+        await call(
+          p,
+          reviewerReview(
+            "The report shows this outcome (this specialist writes no file, so a file named here is met by its report): review.md lists the gaps and risks found in notes/plan.md",
+            REPORT,
+            "c1",
+          ),
+        )
+      ).calls[0]?.input,
+    );
+    expect(r.verdict).toBe("accept");
+    expect(r.criteria).toHaveLength(1);
+    expect(r.criteria[0]?.met).toBe(true);
+    expect(r.criteria[0]?.evidence).toBe(
+      "the report stands for it: this specialist writes no file",
+    );
+  });
+
+  it("without that criterion, 'changed no file' is still sent back, and an empty report never meets it", async () => {
+    const { p } = player();
+    const plain = SubmitReviewSchema.parse(
+      (await call(p, reviewerReview("review.md lists the gaps", REPORT, "c2"))).calls[0]?.input,
+    );
+    expect(plain.verdict).toBe("revise");
+    const failed = SubmitReviewSchema.parse(
+      (
+        await call(
+          p,
+          reviewerReview(
+            "The report shows this outcome (this specialist writes no file, so a file named here is met by its report): review.md lists the gaps",
+            "I could not complete this task.",
+            "c3",
+          ),
+        )
+      ).calls[0]?.input,
+    );
+    expect(failed.verdict).toBe("revise");
+  });
+});

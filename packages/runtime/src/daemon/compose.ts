@@ -91,6 +91,7 @@ import { ContextManager } from "../context/manager.ts";
 import { contextSettingsFrom } from "../context/pipeline.ts";
 import { ConversationAgent } from "../conversation/agent.ts";
 import { ChatTurns } from "../conversation/chat-turns.ts";
+import { conversationOfCard } from "../conversation/transcript.ts";
 import { DataAssets } from "../data/assets.ts";
 import { DataImporter } from "../data/import.ts";
 import { registerDataTools } from "../data/tools.ts";
@@ -4970,12 +4971,31 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     store,
     clock,
     startUndoState,
-    // l4-selftasks-chat (L4-selftasks-117): a confirmation that still lapses (a settings-screen or
-    // email card; a chat read-back waits until it is answered) is told: the Inbox count and the
-    // open conversations follow at once, and one Update says nothing changed.
-    onExpired: async (card) => {
+    // l4-selftasks-carried (L4f-left-1): every card that leaves the executor (a yes, a no, a Yes
+    // refused because what it named changed, a lapse), whatever route answered it (chat, the
+    // Inbox, Changes, a settings screen, the phone, an email), is told once: the Inbox count,
+    // the project's status line, and the conversation it was read back in. That conversation's
+    // own turn tells it when the card was answered there (no second event).
+    onClosed: async (card) => {
       events.emit("inbox", {});
-      conversation.turnsOf().touched(card.projectId);
+      if (card.projectId) events.emit("project", { id: card.projectId });
+      // A chat or voice read-back's own conversation (Home's Talk may read back a card of a
+      // project); any other card's project conversation, as before.
+      const said = card.source === "chat" || card.source === "voice";
+      const where =
+        said && card.sessionId
+          ? await conversationOfCard(store, card.sessionId, card.id).catch(() => undefined)
+          : undefined;
+      const shown = where === undefined ? card.projectId : where;
+      const turns = conversation.turnsOf();
+      if (!turns.inFlight(shown)) turns.touched(shown);
+    },
+    // l4-selftasks-chat (L4-selftasks-117): a confirmation that still lapses (a settings-screen or
+    // email card; a chat read-back waits until it is answered) leaves one Update that says nothing
+    // changed. The screens hear it through onClosed, which the executor tells after this
+    // (fixup-l4-selftasks-carried: with the Update in the Inbox already, so they read it once;
+    // before, this emitted inbox.changed a second time).
+    onExpired: async (card) => {
       await store.message.send({
         from_agent_id: agent.id,
         to_human_id: card.humanId,
@@ -5137,7 +5157,11 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
         return view
           ? {
               title: view.title ?? request.why,
-              choices: (view.choices ?? []).map((c) => ({ label: c.label, explain: c.explain })),
+              choices: (view.choices ?? []).map((c) => ({
+                label: c.label,
+                explain: c.explain,
+                input: c.input ?? null,
+              })),
               outcome: view.outcome ?? null,
             }
           : null;
@@ -5214,6 +5238,13 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       modelSettings: {
         specialists: () => registry.runnableSpecialists().map((d) => d.name),
         maxEffort: (name) => registry.specialists.get(name)?.max_effort,
+        // l4-selftasks-carried (L4-other-1 D-6): chat's read-back of a task for it says so.
+        writesNoFile: (name) => {
+          const d =
+            registry.specialists.get(name) ??
+            registry.specialists.get(canonicalSpecialistName(name));
+          return d ? writesNoFile(d.allowed_tools ?? []) : false;
+        },
         capabilities: () =>
           provider ? providerCapabilities(provider) : { ...DEFAULT_PROVIDER_CAPABILITIES },
       },

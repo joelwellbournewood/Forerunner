@@ -25,6 +25,7 @@ import {
   priorityLevel,
   TaskPrioritySchema,
 } from "@forerunner/runtime/priority";
+import { fileTheWordsWrite, writesNoFileLine } from "@forerunner/runtime/registry/tools";
 import {
   canTransition,
   type JsonObject,
@@ -126,6 +127,15 @@ const noteParam = z.string().trim().max(2000).optional().describe(NOTE_PARAM_DES
  */
 function personsNote(ctx: CommandContext): boolean {
   return ctx.actor.kind === "human" && ctx.onPersonsWords !== true;
+}
+
+/**
+ * l4-selftasks-carried (L4-selftasks-120): a note the person wrote themselves (`personsNote`), as
+ * the redirect guards of task.transition and task.resume judge it: before, any note kept a move
+ * off the card whose answer it is, the chat model's own included.
+ */
+function ownNote(ctx: CommandContext, note: string | undefined): boolean {
+  return !!note?.trim() && personsNote(ctx);
 }
 
 /** The note a read-back shows when the model passed it ('Note for its next brief: "…"'). */
@@ -457,9 +467,12 @@ const optionWord = (s: string) =>
  */
 export async function moveAsCardAnswer(
   ctx: CommandContext,
-  params: { task: string; project?: string | undefined },
+  params: { task: string; project?: string | undefined; note?: string | undefined },
   option: string,
-): Promise<{ name: "request.answer"; params: { request: string; answer: string } } | null> {
+): Promise<{
+  name: "request.answer";
+  params: { request: string; answer: string; note?: string };
+} | null> {
   if (ctx.source !== "chat" && ctx.source !== "voice") return null;
   if (!ctx.ports.cardWords) return null;
   const task = await findTask(params, ctx).catch(() => null);
@@ -471,7 +484,16 @@ export async function moveAsCardAnswer(
   for (const r of open) {
     const words = await ctx.ports.cardWords(r).catch(() => null);
     const choice = words?.choices.find((c) => optionWord(c.label) === optionWord(option));
-    if (choice) return { name: "request.answer", params: { request: r.id, answer: choice.label } };
+    // fixup-l4-selftasks-carried (the review of L4-selftasks-120): the note the move carried
+    // goes with an option that takes one (Try again), read back so the Yes covers it, and
+    // reaches the task's next brief as the Inbox's Try again with a note does. Before, the
+    // redirect dropped it unsaid.
+    const note = choice?.input === "note" ? params.note?.trim() : undefined;
+    if (choice)
+      return {
+        name: "request.answer",
+        params: { request: r.id, answer: choice.label, ...(note ? { note } : {}) },
+      };
   }
   return null;
 }
@@ -917,6 +939,43 @@ const createParams = z.object({
 });
 export type TaskCreateParams = z.infer<typeof createParams>;
 
+/**
+ * l4-selftasks-carried (L4-other-1 D-6; ADR 0109 decision 1 covers New task, Edit and chat): a
+ * task for a specialist that writes no file is read back, and told, with the line New task and
+ * Edit show ("The reviewer writes no file, so review.md is not written: ..."), naming a file the
+ * task's words ask for. Empty for every other specialist, or without the port.
+ */
+function noFileClause(
+  ctx: CommandContext,
+  specialist: string | null | undefined,
+  words: readonly string[],
+): string {
+  if (!specialist || specialist === PERSON_SPECIALIST) return "";
+  if (ctx.ports.modelSettings?.writesNoFile?.(specialist) !== true) return "";
+  return ` ${writesNoFileLine(specialist, fileTheWordsWrite(words))}`;
+}
+
+/**
+ * l4-selftasks-carried (L4-other-1 D-6): the line for an edit that gives a task to a specialist
+ * that writes no file, or changes such a task's words; empty for any other edit (a priority).
+ */
+function editNoFile(
+  ctx: CommandContext,
+  patch: { specialist?: string | null; outcome?: string; acceptance_criteria?: string[] },
+  task: Pick<TaskRow, "specialist" | "outcome" | "acceptance_criteria">,
+): string {
+  if (
+    patch.specialist === undefined &&
+    patch.outcome === undefined &&
+    patch.acceptance_criteria === undefined
+  )
+    return "";
+  return noFileClause(ctx, patch.specialist !== undefined ? patch.specialist : task.specialist, [
+    patch.outcome ?? task.outcome,
+    ...(patch.acceptance_criteria ?? task.acceptance_criteria ?? []),
+  ]);
+}
+
 function createSentence(
   p: TaskCreateParams,
   projectName: string,
@@ -962,6 +1021,10 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
     const { project, usedActive } = await resolveProject(ctx, params.project);
     const count = await ctx.store.task.count({ project_id: project.id });
     const beforeTitles = (await stepBefore(ctx, project, params)).map((t) => t.title);
+    const noFile = noFileClause(ctx, params.specialist, [
+      params.outcome,
+      ...params.acceptance_criteria,
+    ]);
     return buildCard({
       command: "task.create",
       what: `the tasks of ${project.name}`,
@@ -969,11 +1032,13 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
       newValue: `+ ${quote(params.title)}`,
       scope: "project",
       risk: "low",
-      sentence: createSentence(params, project.name, beforeTitles),
+      sentence: `${createSentence(params, project.name, beforeTitles)}${noFile}`,
       // The one-line read-back when it waits for a yes (d1109-chat-guard: after a record).
-      ask: beforeTitles.length
-        ? `Add ${quote(params.title)} before ${namesList(beforeTitles)}?`
-        : `Add ${quote(params.title)} to ${project.name}?`,
+      ask: `${
+        beforeTitles.length
+          ? `Add ${quote(params.title)} before ${namesList(beforeTitles)}?`
+          : `Add ${quote(params.title)} to ${project.name}?`
+      }${noFile}`,
       reversible: true,
       projectId: project.id,
       projectName: project.name,
@@ -1033,11 +1098,13 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
         title: task.title,
         ...(waitedBefore.length ? { before_tasks: waitedBefore } : {}),
       },
-      sentence: createSentence(
+      // l4-selftasks-carried (L4-other-1 D-6): a task made at once says the line too (the
+      // done sentence is this one, not the card's).
+      sentence: `${createSentence(
         params,
         project.name,
         comesBefore.map((t) => t.title),
-      ),
+      )}${noFileClause(ctx, params.specialist, [params.outcome, ...params.acceptance_criteria])}`,
       projectId: project.id,
     };
     // S-9: a task made ready (Make this a task too, ADR 0093) is prepared and its line says so.
@@ -1308,7 +1375,9 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
     if (params.duplicate_of) return null;
     const option = cardOptionFor(params.to);
     // A person's note goes with the move; a card's answer has no room for it: as said.
-    return option && !params.note?.trim() ? moveAsCardAnswer(ctx, params, option) : null;
+    // l4-selftasks-carried (L4-selftasks-120): only the person's own note does; one the chat's
+    // model wrote no longer keeps the move off the card.
+    return option && !ownNote(ctx, params.note) ? moveAsCardAnswer(ctx, params, option) : null;
   },
   async plan(params, ctx) {
     const task = await findTask(params, ctx);
@@ -1507,7 +1576,9 @@ export const taskResume: CommandDef<TaskResumeParams> = {
   reversible: true,
   undoStrategy: "pause the task again",
   async redirect(params, ctx) {
-    if (params.note?.trim()) return null;
+    // l4-selftasks-carried (L4-selftasks-120): the person's own note keeps the resume (a card's
+    // answer has no room for it); one the chat's model wrote does not.
+    if (ownNote(ctx, params.note)) return null;
     return moveAsCardAnswer(ctx, params, params.without_answers ? "Go ahead without" : "Try again");
   },
   async plan(params, ctx) {
@@ -1863,6 +1934,9 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
     const task = await findTask(params, ctx);
     const patch = editPatch(params, task);
     const project = await ctx.store.project.mustGet(task.project_id);
+    // l4-selftasks-carried (L4-other-1 D-6): an edit that gives the task to a specialist that
+    // writes no file, or changes such a task's words, says what New task and Edit say.
+    const noFile = editNoFile(ctx, patch, task);
     return buildCard({
       command: "task.update",
       what: `the task ${quote(task.title)}`,
@@ -1875,7 +1949,7 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
       projectId: project.id,
       projectName: project.name,
       usesActiveProject: !params.project && !(await ctx.store.task.get(params.task)),
-      ask: `Change ${quote(task.title)}: ${(await editWords(ctx, patch)) || "nothing"}?${noteClause(ctx, params.note)}`,
+      ask: `Change ${quote(task.title)}: ${(await editWords(ctx, patch)) || "nothing"}?${noFile}${noteClause(ctx, params.note)}`,
     });
   },
   async run(params, ctx) {
@@ -1920,7 +1994,7 @@ export const taskUpdate: CommandDef<TaskUpdateParams> = {
         fields: fieldsOf(updated, fields),
         ...(noteId ? { note_id: noteId } : {}),
       },
-      sentence: `${fields.length ? `Changed ${quote(task.title)}: ${words}.` : `Noted for ${quote(task.title)}.`}${
+      sentence: `${fields.length ? `Changed ${quote(task.title)}: ${words}.${editNoFile(ctx, patch, task)}` : `Noted for ${quote(task.title)}.`}${
         noteId ? noteGoes(ctx) : ""
       }`,
       projectId: task.project_id,

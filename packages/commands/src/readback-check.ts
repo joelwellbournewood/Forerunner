@@ -171,12 +171,53 @@ export async function subjectsNow(
 export const TASKS_CHANGED_REPLY =
   'The tasks changed since I checked them; say "fix the tasks" to check again.';
 
+/** A short hash of a text (FNV-1a, no dependency). */
+function fnv1a(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16);
+}
+
+/** The mark of a fingerprint that keeps each task apart (l4-selftasks-carried, L4f-left-2). */
+const FINGERPRINT_V2 = "v2|";
+
 /**
- * The task list as the check judged it: every task's id, status, title, outcome, criteria,
- * priority, what it waits for and who does it (not its spend or claims, which move while a
- * session runs), as a short hash (FNV-1a, no dependency).
+ * The task list as the check judged it (run C decision 53), task by task: each task's id with a
+ * short hash of what a fix of the list reads and changes of it (status, title, outcome and what
+ * it waits for; not its spend or claims, which move while a session runs). At the Yes,
+ * `fixListMoved` compares which tasks the list holds and the tasks the set names.
+ *
+ * l4-selftasks-carried (L4f-left-2; session lead decision 2026-11-23): before, one hash of every
+ * task's fields, so a session finishing a task the set did not name made almost every Yes
+ * answered while a session ran say "The tasks changed since I checked them".
  */
 export async function taskListFingerprint(
+  store: Pick<StateStore, "task">,
+  projectId: string,
+): Promise<string> {
+  const tasks = await store.task.forProject(projectId, {}, { limit: 1000 });
+  return `${FINGERPRINT_V2}${[...tasks]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((t) => `${t.id}=${fnv1a(JSON.stringify(fixFields(t)))}`)
+    .join(",")}`;
+}
+
+/** What a fix of the task list reads and changes of one task (L4f-left-2). */
+function fixFields(task: TaskRow): Record<string, string> {
+  const f = taskSubject(task).fields;
+  return {
+    status: f.status ?? "",
+    title: f.title ?? "",
+    outcome: f.outcome ?? "",
+    waits_for: f.waits_for ?? "",
+  };
+}
+
+/** The fingerprint before L4f-left-2 (one hash of every task), for a card stored with it. */
+async function wholeListFingerprint(
   store: Pick<StateStore, "task">,
   projectId: string,
 ): Promise<string> {
@@ -185,12 +226,63 @@ export async function taskListFingerprint(
     .sort((a, b) => a.id.localeCompare(b.id))
     .map((t) => JSON.stringify(taskSubject(t).fields))
     .join("\n");
-  let h = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
+  return `${tasks.length}:${fnv1a(text)}`;
+}
+
+function entriesOf(print: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const e of print.slice(FINGERPRINT_V2.length).split(",")) {
+    const at = e.lastIndexOf("=");
+    if (at > 0) out.set(e.slice(0, at), e.slice(at + 1));
   }
-  return `${tasks.length}:${h.toString(16)}`;
+  return out;
+}
+
+/**
+ * l4-selftasks-carried (L4f-left-2): whether the task list moved, since `was` was taken, in a
+ * way that voids a fix of it: a task added or removed, or one of the tasks the set names
+ * (`named`, task ids) changed its status, title, outcome or what it waits for. A status move of
+ * a task the set does not name (a session finishing other work) leaves its Yes valid. A card
+ * stored before tasks were kept apart is judged as it was then, on the whole list.
+ */
+export async function fixListMoved(
+  store: Pick<StateStore, "task">,
+  projectId: string,
+  was: string,
+  named: readonly string[],
+): Promise<boolean> {
+  if (!was.startsWith(FINGERPRINT_V2))
+    return (await wholeListFingerprint(store, projectId)) !== was;
+  const then = entriesOf(was);
+  const now = entriesOf(await taskListFingerprint(store, projectId));
+  if (then.size !== now.size) return true;
+  for (const id of then.keys()) if (!now.has(id)) return true;
+  return named.some((id) => then.get(id) !== now.get(id));
+}
+
+/** The parameters of a fix's calls that name a task of the list (ADR 0119's five commands). */
+const NAMING_PARAMS = ["task", "depends_on", "before", "duplicate_of"] as const;
+
+/**
+ * l4-selftasks-carried (L4f-left-2): the tasks a fix set names, as ids: each call's task and the
+ * tasks it waits for, comes before or is the same as, and every task the card names
+ * (`subjects`). A name that is no id names no task of the list here.
+ */
+export function namedTaskIds(
+  calls: readonly { params?: unknown }[],
+  card?: ChangeCard | null,
+): string[] {
+  const out = new Set<string>();
+  const add = (v: unknown) => {
+    if (typeof v === "string" && v.trim()) out.add(v.trim());
+    else if (Array.isArray(v)) for (const x of v) add(x);
+  };
+  for (const c of calls) {
+    const p = (c.params ?? {}) as Record<string, unknown>;
+    for (const k of NAMING_PARAMS) add(p[k]);
+  }
+  for (const part of card ? partsOf(card) : []) for (const s of part.subjects ?? []) out.add(s.id);
+  return [...out];
 }
 
 /**

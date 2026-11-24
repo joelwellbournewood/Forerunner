@@ -246,3 +246,36 @@ is replaced only while its first part has not run in the session (draft or ready
 sent back or paused); once it ran it is measured as it ran. A task dropped as the same as another
 stays replaced. The session page's line names the count: "Session review measured: 1 of 1 planned
 task done, 1 replaced; …", or "1 planned task replaced; …" when that was the whole plan.
+
+## Amendment 2026-11-23 (l4-selftasks-carried, run L4): what a fix set's Yes is judged on
+
+Session lead decision 2026-11-23 (L4f-left-2), after the owner's 2026-11-17 answer that every
+chat read-back waits until it is answered: a "fix the tasks" read-back's Yes is judged on the
+tasks its set names (present, status, title, outcome, what they wait for) and on which tasks the
+list holds. A session that finishes, or reprioritises, a task the set does not name leaves the
+Yes valid; a named task that changed, or a task added to or removed from the list, gives "The
+tasks changed since I checked them; say "fix the tasks" to check again." and changes nothing.
+The fingerprint keeps each task apart (`v2|<id>=<hash>,...`, readback-check.ts); a card stored
+with the older whole-list form is judged on the whole list, as then. The named task's priority
+is compared by the card's own read-back (`changedSince`).
+
+Every close of a chat read-back (a Yes or No in chat or the Inbox, a refused Yes, the phone,
+email, a lapse) tells the screens once from the executor (`onClosed`): inbox.changed,
+project.changed and, when no turn of that conversation is running, conversation.changed for the
+conversation the card was read back in, so no header or Inbox badge keeps a stale "Waiting for
+you" (L4f-left-1). The redirect guards judge a note by who wrote it, the person or the model,
+also after a restart (L4-selftasks-120).
+
+## Amendment 2026-11-24 (fixup-l4-selftasks-carried, run L4): a note goes with the card's answer
+
+The review of the amendment above found that a move said in chat with a note, on a task whose
+card offers the move, became the card's answer and lost the note unsaid, while the card's Try
+again reads "Tries again with your note, if any". The note now goes with an option that takes
+one (Try again, Send it back: the card's words say `input: "note"`): `moveAsCardAnswer` passes
+it to `request.answer`'s new `note`, the read-back ends 'Note for its next brief: "Use the old
+layout."' so the Yes covers it, and the card is answered `{ choice, note }` as the Inbox answers
+it, so its handler queues the note for the task's next brief (the same queued note, quoted as
+data in the brief, that the Inbox's Try again with a note gives). An option that takes no note
+(Mark done anyway, Cancel task) answers with the option alone and its read-back names no note.
+A card that needs the paired device is still answered on its card in the Inbox, whose Try
+again has the note field.
