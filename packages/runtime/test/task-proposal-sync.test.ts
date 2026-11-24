@@ -193,3 +193,93 @@ describe("l4-chat-final, run L4: a suggestion card is settled once (L4h-left-5)"
     await store.close();
   });
 });
+
+/**
+ * l4-chat-final, run L4 (L4h-left-4; the review of l4-chat-carried, C4-left-5's words): the Done
+ * line read the card's proposed changes, not the applied ones, so a set whose split was left out
+ * and whose drop applied still said "your next Start runs it"; and it said so when what changed
+ * waits for a task only the person can do, which no Start runs (design section 5 rules 4 and 9).
+ */
+describe("l4-chat-final, run L4: the suggestion card's Done line follows what was applied (L4h-left-4)", () => {
+  const split = {
+    line: 'Split "Style the page" into "Style the page: layout" and "Style the page: colours".',
+    calls: [{ name: "task.split", params: { task: "t1" } }],
+  };
+  const drop = {
+    line: 'Drop "Style the page (copy)": same as "Style the page".',
+    calls: [
+      { name: "task.transition", params: { task: "t2", to: "cancelled", duplicate_of: "t1" } },
+    ],
+  };
+
+  it("a set whose split was left out and whose drop applied promises no Start", () => {
+    expect(
+      proposalOutcome({
+        outcome: "applied",
+        changed: 1,
+        running: false,
+        changes: [split, drop],
+        left_out: [
+          'Split "Style the page" into "Style the page: layout" and "Style the page: colours": "Style the page" is running now',
+        ],
+      }),
+    ).toBe(
+      'Changed 1 task. Left out: Split "Style the page" into "Style the page: layout" and "Style the page: colours": "Style the page" is running now.',
+    );
+  });
+
+  it("what changed waits for a task only the person can do: the line names it and promises no Start", async () => {
+    expect(
+      proposalOutcome({
+        outcome: "applied",
+        changed: 1,
+        running: false,
+        changes: [split],
+        waits_for_you: "Send the logo",
+      }),
+    ).toBe('Changed 1 task; it waits for "Send the logo", which is yours to do.');
+    expect(
+      proposalOutcome({
+        outcome: "applied",
+        changed: 2,
+        running: false,
+        changes: [split, split],
+        waits_for_you: "Send the logo",
+      }),
+    ).toBe('Changed 2 tasks; they wait for "Send the logo", which is yours to do.');
+    // At the apply: the card records the person's task the changed tasks wait for.
+    const h = harness();
+    const store = await openStore({ url: "sqlite::memory:", clock: h.clock });
+    const seeded = await seedWorld(store, {}, { session: false });
+    const logo = await store.task.insert({
+      project_id: seeded.project,
+      title: "Send the logo",
+      outcome: "The logo is here.",
+      status: "needs_human",
+      specialist: "person",
+    } as never);
+    const style = await store.task.insert({
+      project_id: seeded.project,
+      title: "Style the page",
+      outcome: "Styled.",
+      status: "ready",
+      depends_on: [logo.id],
+    } as never);
+    const c = await card(store, seeded, [{ line: 'Change "Style the page".', task: style.id }]);
+    await answer(store, c.id, seeded.human);
+    await syncTaskProposals({
+      store,
+      clock: h.clock,
+      humanId: seeded.human,
+      check: async () => null,
+      apply: async () => ({ changeLogId: "change-1" }),
+      admit: async () => false,
+    });
+    const settled = (await store.humanRequest.mustGet(c.id)).change_card as Record<string, unknown>;
+    expect(settled.waits_for_you).toBe("Send the logo");
+    expect(proposalOutcome(settled)).toBe(
+      'Changed 1 task; it waits for "Send the logo", which is yours to do.',
+    );
+    await store.close();
+  });
+});

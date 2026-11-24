@@ -428,6 +428,7 @@ async function settleProposal(
         .map((c) => (c.params as { task?: unknown } | null)?.task)
         .filter((t): t is string => typeof t === "string");
       const running = await deps.admit(projectId, [...ids, ...touched]).catch(() => false);
+      const waits = await waitsForYou(store, projectId, [...ids, ...touched]);
       await store.humanRequest.patch(marked.id, {
         change_card: {
           ...card,
@@ -437,6 +438,7 @@ async function settleProposal(
           approved_task_ids: ids,
           running,
           ...(leftOut.length ? { left_out: leftOut } : {}),
+          ...(waits ? { waits_for_you: waits } : {}),
         },
       });
       return "applied";
@@ -503,6 +505,7 @@ async function applyMarked(
   const running = projectId
     ? await deps.admit(projectId, [...made, ...touched]).catch(() => false)
     : false;
+  const waits = projectId ? await waitsForYou(store, projectId, [...made, ...touched]) : null;
   await store.humanRequest.patch(marked.id, {
     change_card: {
       ...card,
@@ -512,7 +515,49 @@ async function applyMarked(
       approved_task_ids: made,
       running,
       ...(leftOut.length ? { left_out: leftOut } : {}),
+      ...(waits ? { waits_for_you: waits } : {}),
     },
   });
   return "applied";
+}
+
+/**
+ * l4-chat-final (L4h-left-4): the title of a task only the person can do that every changed task
+ * still to run waits for (directly or through the tasks it waits for), or null when one of them
+ * can run without the person. The Done line then names it instead of promising a Start that
+ * would not run them (design section 5 rules 4 and 9). Tasks are named by id or exact title.
+ */
+async function waitsForYou(
+  store: StateStore,
+  projectId: string,
+  named: readonly string[],
+): Promise<string | null> {
+  const all = await store.task.forProject(projectId, {}, { limit: 10_000 });
+  const byId = new Map(all.map((t) => [t.id, t]));
+  const of = (n: string) => byId.get(n) ?? all.find((t) => t.title === n);
+  const open = (s: string) => s !== "done" && s !== "cancelled";
+  const toRun = [...new Set(named.map(of).filter((t) => t !== undefined))].filter(
+    (t) => t.status === "ready" || t.status === "draft",
+  );
+  if (!toRun.length) return null;
+  const personOf = (id: string, seen = new Set<string>()): string | null => {
+    const t = byId.get(id);
+    if (!t || seen.has(id)) return null;
+    seen.add(id);
+    for (const d of t.depends_on) {
+      const dep = byId.get(d);
+      if (!dep || !open(dep.status)) continue;
+      if (dep.specialist === "person") return dep.title;
+      const deeper = personOf(d, seen);
+      if (deeper) return deeper;
+    }
+    return null;
+  };
+  let first: string | null = null;
+  for (const t of toRun) {
+    const p = personOf(t.id);
+    if (!p) return null;
+    first ??= p;
+  }
+  return first;
 }
