@@ -390,3 +390,10 @@ listed nowhere after the join when the kept project's own Status pull request se
    the outcome line; Docs shows that line with its Try again and nothing else. OR-07's offer
    ("o/kite is also the Forerunner project ...") stays on the Overview with Take it over, never
    repeated on Docs (design §5 rule 10).
+
+3. **The join's words after a join and before one (L4e-left-8).** The refusal for a held
+   hands-off start reads 'A session of "Kite club" waits to start by itself: make one project
+   after it ran.' (before: "starts by itself soon", untrue when quiet hours hold the start for
+   hours; the held start keeps no time to name). A project closed into another drops its stored
+   "Left N reviewed pull requests for you to merge." from its last result: the join moved those
+   pull requests, and "Its tasks went on in ..." says where.

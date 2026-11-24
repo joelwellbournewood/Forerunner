@@ -1017,3 +1017,14 @@ reads. Every body is read through `json()`, which maps an abort to the same retr
 "unreachable", never with the token. `PrTaskExecutor.reachedBase(task, sha)` (read-only, under the
 task folder's lock) tells whether a commit is on the default branch; `takeOut` with `through`
 reverts only the task's own commits that another pull request's merge brought in (`throughPlan`).
+
+## l4-github-carried (run L4, 2026-11-24): branch segments and the merge that brought a change
+
+- `branchSegment(text, fallback, max)` (`githost/pr-executor.ts`) is the one slug of a task's,
+  intake's or scaffold's branch name: lower case, safe characters, dots as dashes, at most 40
+  characters, no trailing dash (L4e-left-2: "Update yarn.lock" pushed a branch git refused).
+- `Git.mergeThatBrought(sha, into)` returns the first-parent merge commit of `into` that brought
+  `sha` in (two parents, `sha` not in the first, in the second), or null for a fast-forward or a
+  squash. `takeOut` uses it when the record has no merge commit (a change merged through another
+  pull request), and answers `no_merge_commit` when there is none (L4e-left-3).
+- Tests: `test/pr-executor.test.ts` "l4-github-carried, run L4".

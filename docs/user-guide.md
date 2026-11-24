@@ -1882,3 +1882,23 @@ words ask for ("The reviewer writes no file, so review.md is not written: ..."),
 Chat when it reads back a task for the reviewer; to have a file written, pick another
 specialist or let the agent choose. The name of a tool or a site, such as Node.js, ASP.NET or
 example.com, is never taken for a file, so a review of "the Node.js setup" gets the plain line.
+
+### Pull requests you close, a docs pull request tried again, and branch names (2026-11-24)
+
+- A cancelled task's pull request that is still open on GitHub has **Close** on the Overview:
+  it closes the pull request on GitHub (you can reopen it there) and keeps its branch. If GitHub
+  refuses the saved token, the token cannot write to the repository or GitHub does not answer,
+  the row says so and nothing changes.
+- When you took over a repository and its docs pull request could not be opened, the Overview
+  and Docs say so with **Try again**. It opens the docs pull request that names this project, or
+  says why it still could not (the token cannot push, or another project's docs pull request is
+  open; close that one on GitHub first).
+- A task with a dot in its title, such as "Update yarn.lock", gets a branch GitHub accepts.
+- **Take this work out** on a task whose change reached main through another pull request works
+  at once; if that change came in without a merge commit, it says you undo it by hand or ask in
+  Chat for a task that does it.
+- After a pull request you closed reached main through a later one, the Overview's last result
+  and Chat say exactly that ("#47's change reached main through #48."), never that #47 was
+  merged.
+- A pull request rebuilt without the one it built on is listed under "Rebuilt since the
+  critic's review": look at it before you merge.
