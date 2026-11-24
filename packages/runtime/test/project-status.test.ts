@@ -675,3 +675,89 @@ describe("l4-starts-sessions, run L4: the working line in the bar's words (L4-mo
     expect(line(null).text).toBe('Working on "Create index.html" (1 of 3 done)');
   });
 });
+
+describe("l4-github-carried, run L4", () => {
+  it("L4e-left-8: a project closed into another says neither 'Left 5 reviewed pull requests for you to merge.' nor what merges by itself: the join moved them, and its tasks went on there", async () => {
+    const clock = new SimulatedClock("2026-11-01T09:00:00Z");
+    const store = await openStore({ url: "sqlite::memory:", clock });
+    try {
+      const human = (
+        await store.human.insert({
+          name: "Robin",
+          email: "robin@example.test",
+          timezone: "Europe/Zurich",
+          notify_prefs: {},
+          default_autonomy: 2,
+          monthly_cap_usd_micro: 150_000_000,
+          locale: "en",
+        })
+      ).id;
+      const agent = (
+        await store.agent.insert({
+          name: "Alice",
+          owner_human_id: human,
+          model_config: {},
+          memory_location: "local",
+          status: "active",
+          kind: "principal",
+        })
+      ).id;
+      const row = (name: string, extra: Record<string, unknown> = {}) =>
+        store.project.insert({
+          name,
+          goal: "The club's pages",
+          repos: ["o/kite"],
+          stage: "building",
+          status: "active",
+          budget_usd_micro: 0,
+          autonomy_level: 2,
+          summary_cache: {},
+          data_assets: [],
+          settings: {},
+          ...extra,
+        } as never);
+      const site = await row("Site");
+      const kite = await row("Kite club");
+      const session = await store.session.insert({
+        agent_id: agent,
+        project_id: kite.id,
+        trigger: "manual",
+        plan: {},
+        budget_cap_usd_micro: 1,
+        step_cap: 10,
+        spent_usd_micro: 0,
+        steps: 0,
+        status: "completed",
+        summary: "",
+        handoff: {},
+        runner: "pc",
+      });
+      const stored =
+        'Done: 5 tasks. Left 5 reviewed pull requests for you to merge. 1 reviewed pull request merges by itself once its checks pass. "Write the notes" is ready to continue.';
+      await store.project.patch(kite.id, {
+        status: "archived",
+        settings: { joined_into: { project: site.id, name: "Site", at: "2026-11-01T09:00:00Z" } },
+        summary_cache: {
+          last_session: {
+            id: session.id,
+            ended_at: "2026-11-01T08:00:00Z",
+            summary: stored,
+            stop_reason: "done",
+          },
+        },
+      } as never);
+      const s = await projectSummary(store, kite.id, 0.8);
+      // Before: "Done: 5 tasks. Left 5 reviewed pull requests for you to merge. 1 reviewed pull
+      // request merges by itself once its checks pass."
+      expect(s.lastSession?.summary).toBe("Done: 5 tasks.");
+      expect(s.lastSession?.since).toEqual(['Its tasks went on in "Site".']);
+      // A project not closed into another keeps its result as stored.
+      await store.project.patch(kite.id, { status: "active", settings: {} } as never);
+      expect((await projectSummary(store, kite.id, 0.8)).lastSession?.summary).toContain(
+        "Left 5 reviewed pull requests for you to merge.",
+      );
+    } finally {
+      await store.close();
+    }
+  });
+});

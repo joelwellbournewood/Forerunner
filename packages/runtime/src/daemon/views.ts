@@ -443,6 +443,9 @@ export function tasksWentOnLine(kept: string): string {
 /**
  * L4-github-125: a stored result without its "… is ready to continue." sentence (its tasks moved
  * to the kept project): written at the session's end, untrue once Make one project moved them.
+ * L4e-left-8 (l4-github-carried): nor its "Left 5 reviewed pull requests for you to merge." or
+ * "... merge by themselves once their checks pass.": the join moved those pull requests too (they
+ * wait on the kept project's Overview), and "Its tasks went on in ..." says where.
  */
 export function withoutReadyClause(text: string): string {
   return text
@@ -450,6 +453,11 @@ export function withoutReadyClause(text: string): string {
     .map((line) =>
       line
         .replace(/(?:^|\s)[^.]*\b(?:is|are) ready to continue\.(?=\s|$)/g, "")
+        .replace(/(?:^|\s)Left \d+ reviewed pull requests? for you to merge\.(?=\s|$)/g, "")
+        .replace(
+          /(?:^|\s)\d+ reviewed pull requests? merges? by (?:itself|themselves) once (?:its|their) checks pass\.(?=\s|$)/g,
+          "",
+        )
         .replace(/\s{2,}/g, " ")
         .trim(),
     )
