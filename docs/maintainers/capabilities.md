@@ -1028,3 +1028,22 @@ reverts only the task's own commits that another pull request's merge brought in
   squash. `takeOut` uses it when the record has no merge commit (a change merged through another
   pull request), and answers `no_merge_commit` when there is none (L4e-left-3).
 - Tests: `test/pr-executor.test.ts` "l4-github-carried, run L4".
+
+## w8-two-homes (wave 8, 2026-11-24): one in-memory GitHub, one view per account
+
+- `MemoryGitHost.asLogin(login)` gives another GitHub account's view of the same host: one
+  shared state (repositories, pull requests, issues, comments, ids, the `now` clock,
+  `mergeableByDefault`, `merges`, `projectCalls`), with `whoAmI` and the author of every write
+  (`authorLogin` on a pull request, `author` on a comment or review) the view's own. Two composed
+  homes each get their own view, so a pull request Bob's Forerunner opens carries bob (W8-homes-2:
+  `Object.create(host)` with `whoAmI` overridden wrote as alice). `openPullRequestAs` writes
+  through that account's view.
+- `writes` lists every write any view made, in order, as `{ login, op, repo, number?, detail? }`
+  (`createRepo`, `putFile`, `createPullRequest`, `updatePullRequest`, `mergePullRequest`,
+  `commentOnPullRequest`, `reviewPullRequest`, `createIssue`, `updateIssue`, `commentOnIssue`,
+  the release and Projects writes); `writesBy(login)` reads one account's. The two-home harness
+  (`apps/ui/test/two-installs.ts`) asserts with it that neither Forerunner wrote to the other's
+  pull requests. Area ownership (wave 8): the per-login view is w8-two-homes'; the issue and
+  comment methods are w8-issue-host's (which records its new writes the same way); the
+  permissions per login are w8-shared-repo's.
+- Tests: `test/githost-memory-views.test.ts` (describe "w8-two-homes, wave 8").

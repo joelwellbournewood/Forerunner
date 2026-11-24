@@ -122,8 +122,12 @@ export function registerRepoRoutes(app: HostApp, ctx: RouteContext): void {
             ? matchesAllowlist(token.repos, r)
             : token.kind === "fine_grained"
               ? matchesAllowlist(token.repos, r) &&
-                (isAffiliated(auth.subject, r) || r.collaborators.has(token.owner.toLowerCase()))
-              : isAffiliated(auth.subject, r) || r.collaborators.has(token.owner.toLowerCase()),
+                (isAffiliated(auth.subject, r) ||
+                  r.collaborators.has(token.owner.toLowerCase()) ||
+                  r.readers.has(token.owner.toLowerCase()))
+              : isAffiliated(auth.subject, r) ||
+                r.collaborators.has(token.owner.toLowerCase()) ||
+                r.readers.has(token.owner.toLowerCase()),
         ),
       ),
     );

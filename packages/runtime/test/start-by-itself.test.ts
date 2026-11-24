@@ -133,6 +133,16 @@ async function until(what: string, fn: () => Promise<boolean>): Promise<void> {
 const sessionsOf = async (rt: RuntimeApp, projectId: string) =>
   (await rt.store.session.forProject(projectId, { limit: 50 })).reverse();
 
+/**
+ * w8-two-homes (L4i-left-18, L4-money-211): a count of sessions is read only once the agent's
+ * session ended and no start waits in the scheduler's queue; counting right after "task done"
+ * passed while a mistaken second start could still be queued.
+ */
+async function nothingMore(rt: RuntimeApp): Promise<void> {
+  await settleSessions(rt);
+  expect(rt.scheduler.pendingFor(rt.agent.id), "a start still waits in the queue").toBeUndefined();
+}
+
 /** Make ready on the Tasks row, as the app sends it. */
 async function makeReady(w: World, taskId: string) {
   const task = await w.rt.store.task.mustGet(taskId);
@@ -199,6 +209,7 @@ describe("d1109-starts-engine S-5: the project's 'When work is ready'", () => {
       "the task to be done",
       async () => (await w.rt.store.task.mustGet(task.id)).status === "done",
     );
+    await nothingMore(w.rt);
     const all = await sessionsOf(w.rt, project.id);
     expect(all).toHaveLength(1);
     expect((all[0]?.plan as { startedBy?: unknown } | null)?.startedBy).toEqual({
@@ -206,6 +217,7 @@ describe("d1109-starts-engine S-5: the project's 'When work is ready'", () => {
     });
     await w.rt.scheduler.tick();
     await w.rt.scheduler.tick();
+    await nothingMore(w.rt);
     expect(await sessionsOf(w.rt, project.id)).toHaveLength(1);
   }, 60_000);
 
@@ -311,6 +323,7 @@ describe("d1109-starts-engine S-5: the project's 'When work is ready'", () => {
       "the task to be done",
       async () => (await w2.rt.store.task.mustGet(task.id)).status === "done",
     );
+    await nothingMore(w2.rt);
     const all = await sessionsOf(w2.rt, project.id);
     expect(all).toHaveLength(1);
     expect((all[0]?.plan as { startedBy?: unknown } | null)?.startedBy).toEqual({
@@ -318,6 +331,7 @@ describe("d1109-starts-engine S-5: the project's 'When work is ready'", () => {
     });
     expect(startPendingOf(await w2.rt.store.project.mustGet(project.id))).toBeNull();
     await w2.rt.scheduler.tick();
+    await nothingMore(w2.rt);
     expect(await sessionsOf(w2.rt, project.id)).toHaveLength(1);
   }, 90_000);
 });

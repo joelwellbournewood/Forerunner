@@ -110,6 +110,7 @@ export class RepoOps {
       hooks: new Map(),
       projects: [],
       collaborators: new Set(),
+      readers: new Set(),
       allowMergeCommit: true,
       allowSquashMerge: true,
       allowRebaseMerge: true,

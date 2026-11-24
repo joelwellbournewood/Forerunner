@@ -1,5 +1,16 @@
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { createServer as createHttpServer } from "node:http";
+import { createRequire } from "node:module";
+import { type AddressInfo, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { join } from "@forerunner/platform";
@@ -568,3 +579,343 @@ describe("bench: the smoke journey's checks on structure and states", () => {
     ).toEqual({ css: [], js: [], missing: ["css/main.css", "main.js"] });
   });
 });
+
+describe("w8-two-homes, wave 8: the bench recorder writes no daemon token (L4i-left-54)", () => {
+  // The UI puts the daemon token in the query of its streams (apps/ui/src/api/client.ts), so a
+  // "Failed to load resource" after a daemon restart carries the old token in its text and its
+  // location's URL; the recorder wrote console lines raw into steps/problems.jsonl.
+  const recorder = createRequire(import.meta.url)("./bench/recorder.cjs") as {
+    redactRecord: (rec: unknown, tokens: string[]) => unknown;
+    recordProblem: (name: string, rec: unknown, afterStep?: string | null) => void;
+  };
+  const OLD = "fr-bench-token-old-0123456789";
+  const NEW = "fr-bench-token-new-9876543210";
+
+  it("a console line's text and location, a page error's stack and a body lose ?token= and every known token", () => {
+    const out = JSON.stringify(
+      recorder.redactRecord(
+        {
+          kind: "console",
+          text: `Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:49260/events?token=${OLD}`,
+          location: { url: `http://127.0.0.1:49260/events?token=${OLD}&x=1`, lineNumber: 0 },
+          stack: [`at http://127.0.0.1:2860/assets/index.js (token ${NEW})`],
+          body: `{"message":"bad token ${NEW}"}`,
+        },
+        [OLD, NEW],
+      ),
+    );
+    expect(out).not.toContain(OLD);
+    expect(out).not.toContain(NEW);
+    expect(out).toContain("/events?token=[REDACTED]&x=1");
+  });
+
+  it("across a daemon restart: an old page's line with the old token is written without it", () => {
+    const root = mkdtempSync(join(tmpdir(), "fr-bench-redact-"));
+    const prev = process.env.FRBENCH_ROOT;
+    process.env.FRBENCH_ROOT = root;
+    try {
+      const benchDir = join(root, "ada");
+      mkdirSync(benchDir, { recursive: true });
+      const benchFile = join(benchDir, "bench.json");
+      writeFileSync(benchFile, JSON.stringify({ name: "ada", token: OLD }));
+      recorder.recordProblem("ada", { kind: "http", status: 500, url: "/projects" });
+      // The daemon restarted: bench.json names the new token; the old page still says the old.
+      writeFileSync(benchFile, JSON.stringify({ name: "ada", token: NEW }));
+      recorder.recordProblem("ada", {
+        kind: "console",
+        text: `Failed to load resource: the server responded with a status of 401 (${OLD})`,
+        location: { url: `http://127.0.0.1:49260/events?token=${OLD}` },
+      });
+      recorder.recordProblem("ada", { kind: "console", text: `stream with token ${NEW}` });
+      const written = readFileSync(join(benchDir, "steps", "problems.jsonl"), "utf8");
+      expect(written.trim().split("\n")).toHaveLength(3);
+      expect(written).not.toContain(OLD);
+      expect(written).not.toContain(NEW);
+    } finally {
+      if (prev === undefined) delete process.env.FRBENCH_ROOT;
+      else process.env.FRBENCH_ROOT = prev;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("w8-two-homes, wave 8: two people's benches on one GitHub (W8-homes-3, -4, -5)", () => {
+  const checks = createRequire(import.meta.url)("./bench/journeys/two-people-checks.cjs") as {
+    STEPS: {
+      n: number;
+      walked?: boolean;
+      checks: { id: string; known?: boolean; owner?: string }[];
+    }[];
+    allChecks: () => { id: string; step: number; known: boolean; owner?: string }[];
+    privateOnGithub: (text: string) => string[];
+    summarize: (c: { id: string; ok: boolean; known?: boolean; owner?: string }[]) => unknown;
+  };
+  // The wave 8 areas a known gap can belong to (wave8-plan.json): a gap with no owner would
+  // never lose its mark.
+  const AREAS = [
+    "w8-shared-repo",
+    "w8-repo-guide",
+    "w8-status-read",
+    "w8-status-write",
+    "w8-github-feed",
+    "w8-issue-host",
+  ];
+
+  it("the journey names the 16 steps in order; each known gap names its area; an unwalked step holds only known gaps", () => {
+    expect(checks.STEPS.map((s) => s.n)).toEqual(Array.from({ length: 16 }, (_, i) => i + 1));
+    const all = checks.allChecks();
+    expect(new Set(all.map((c) => c.id)).size).toBe(all.length);
+    for (const c of all.filter((c) => c.known)) expect(AREAS, c.id).toContain(c.owner);
+    for (const s of checks.STEPS.filter((s) => s.walked === false))
+      expect(
+        s.checks.every((c) => c.known),
+        `step ${s.n}`,
+      ).toBe(true);
+    // The checks this area is built to pass are not marked known (W8-homes-5).
+    const byId = new Map(all.map((c) => [c.id, c]));
+    for (const id of [
+      "install-ids-differ",
+      "together-same-id",
+      "press-writes-nothing",
+      "own-prs-only",
+      "no-write-to-other",
+      "cut-only-bob",
+      "restart-keeps-together",
+    ])
+      expect(byId.get(id)?.known, id).toBe(false);
+  });
+
+  it("text bound for GitHub: a money figure, an email address and an @mention are found; a noreply address is not", () => {
+    expect(checks.privateOnGithub("Spent CHF 3.20 so far")).toEqual(["a money figure"]);
+    expect(checks.privateOnGithub("costs $4")).toEqual(["a money figure"]);
+    expect(checks.privateOnGithub("ask ada@example.com")).toEqual(["an email address"]);
+    expect(checks.privateOnGithub("thanks @bob for the review")).toEqual(["an @mention"]);
+    expect(checks.privateOnGithub("Co-authored-by: Ada <1+ada@users.noreply.github.com>")).toEqual(
+      [],
+    );
+    expect(checks.privateOnGithub("Adds the contact page (2 files)")).toEqual([]);
+  });
+
+  it("the summary: a failing known gap is not a failure; a passing known gap is named so its mark goes", () => {
+    expect(
+      checks.summarize([
+        { id: "a", ok: true },
+        { id: "b", ok: false },
+        { id: "c", ok: false, known: true, owner: "w8-status-read" },
+        { id: "d", ok: true, known: true, owner: "w8-github-feed" },
+      ]),
+    ).toEqual({
+      checks: 4,
+      passed: 2,
+      failed: ["b"],
+      known: ["c (w8-status-read)"],
+      knownPassing: ["d"],
+      ok: false,
+    });
+    expect(checks.summarize([{ id: "c", ok: false, known: true, owner: "x" }])).toMatchObject({
+      ok: true,
+    });
+  });
+
+  it("start.mjs refuses GitHub options that do not fit, before it starts anything", () => {
+    const root = mkdtempSync(join(tmpdir(), "fr-bench-flags-"));
+    try {
+      const env = { ...process.env, FRBENCH_ROOT: root };
+      const cases: [string[], string][] = [
+        [["--githost", "3", "--githost-shared", "ada"], "pick one"],
+        [["--githost-shared"], "needs the other bench's name"],
+        [["--githost-shared", "bob"], "names this bench itself"],
+        [["--users", "ada,bob"], "--users shapes the stand-in"],
+        [["--org", "team"], "--org shapes the stand-in"],
+        [["--githost-user", "bob"], "--githost-user <login> needs"],
+      ];
+      for (const [extra, words] of cases) {
+        const r = node(
+          [
+            join(BENCH, "start.mjs"),
+            "--name",
+            "bob",
+            "--daemon-port",
+            "1",
+            "--ui-port",
+            "2",
+            ...extra,
+          ],
+          env,
+        );
+        expect(r.status, extra.join(" ")).toBe(1);
+        expect(r.stderr, extra.join(" ")).toContain(words);
+      }
+      // Nothing was started: no bench.json was written.
+      expect(existsSync(join(root, "bob", "bench.json"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("cut.mjs: GitHub off for one bench refuses its connections while the other bench still reaches GitHub; on again, it answers", async () => {
+    const root = mkdtempSync(join(tmpdir(), "fr-bench-cut-"));
+    const github = createHttpServer((_req, res) => res.end("ok"));
+    await new Promise<void>((r) => github.listen(0, "127.0.0.1", () => r()));
+    const target = `http://127.0.0.1:${(github.address() as AddressInfo).port}`;
+    const proxies: ChildProcess[] = [];
+    const env = { ...process.env, FRBENCH_ROOT: root };
+    try {
+      const urls = new Map<string, string>();
+      for (const name of ["ada", "bob"]) {
+        const dir = join(root, name);
+        mkdirSync(dir, { recursive: true });
+        const port = await freePortHere();
+        const child = spawn(
+          process.execPath,
+          [
+            join(BENCH, "github-proxy.mjs"),
+            "--port",
+            String(port),
+            "--target",
+            target,
+            "--dir",
+            dir,
+          ],
+          { stdio: "ignore" },
+        );
+        proxies.push(child);
+        writeFileSync(
+          join(dir, "bench.json"),
+          JSON.stringify({ name, pids: { githubProxy: child.pid } }),
+        );
+        urls.set(name, `http://127.0.0.1:${port}`);
+        await waitUntil(() => proxyState(dir) === "on");
+      }
+      const reach = (name: string) =>
+        fetch(urls.get(name) as string, { signal: AbortSignal.timeout(3000) }).then(
+          (r) => r.status,
+          () => "refused",
+        );
+      expect(await reach("ada")).toBe(200);
+      expect(await reach("bob")).toBe(200);
+
+      const off = await nodeAsync([join(BENCH, "cut.mjs"), "bob", "github", "off"], env);
+      expect(off.code, off.err).toBe(0);
+      expect(off.out).toContain("GitHub unreachable for this home only");
+      expect(await reach("bob")).toBe("refused");
+      expect(await reach("ada")).toBe(200);
+
+      const on = await nodeAsync([join(BENCH, "cut.mjs"), "bob", "github", "on"], env);
+      expect(on.code, on.err).toBe(0);
+      expect(await reach("bob")).toBe(200);
+    } finally {
+      for (const p of proxies) p.kill("SIGTERM");
+      await new Promise<void>((r) => github.close(() => r()));
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("stop.mjs --clean: with every recorded process gone it removes the home, logs and stand-in data, keeps steps/ and bench.json, and keeps a home outside the bench root", () => {
+    const root = mkdtempSync(join(tmpdir(), "fr-bench-clean-"));
+    const elsewhere = mkdtempSync(join(tmpdir(), "fr-bench-home-elsewhere-"));
+    try {
+      const env = { ...process.env, FRBENCH_ROOT: root };
+      const dir = join(root, "ada");
+      for (const sub of ["home/data", "githost/team", "steps", "profile"])
+        mkdirSync(join(dir, sub), { recursive: true });
+      for (const f of ["daemon.log", "ui.log", "githost.json", "github-proxy.json", "steps/01.png"])
+        writeFileSync(join(dir, f), "x");
+      writeFileSync(
+        join(dir, "bench.json"),
+        JSON.stringify({ name: "ada", home: join(dir, "home"), pids: {} }),
+      );
+      const r = node([join(BENCH, "stop.mjs"), "--name", "ada", "--clean"], env);
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toContain("cleaned: no process left");
+      expect(readdirSync(dir).sort()).toEqual(["bench.json", "steps"]);
+      expect(readdirSync(join(dir, "steps"))).toEqual(["01.png"]);
+
+      const other = join(root, "bob");
+      mkdirSync(other, { recursive: true });
+      writeFileSync(join(elsewhere, "keep.txt"), "mine");
+      writeFileSync(
+        join(other, "bench.json"),
+        JSON.stringify({ name: "bob", home: elsewhere, pids: {} }),
+      );
+      const kept = node([join(BENCH, "stop.mjs"), "--name", "bob", "--clean"], env);
+      expect(kept.status, kept.stderr).toBe(0);
+      expect(kept.stdout).toContain("kept the home");
+      expect(readFileSync(join(elsewhere, "keep.txt"), "utf8")).toBe("mine");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("stop.mjs --clean removes nothing while a recorded process still runs, and says which", async () => {
+    const root = mkdtempSync(join(tmpdir(), "fr-bench-clean-alive-"));
+    // A process this test started, recorded under a label stop.mjs does not end.
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], {
+      stdio: "ignore",
+    });
+    try {
+      const env = { ...process.env, FRBENCH_ROOT: root };
+      const dir = join(root, "ada");
+      mkdirSync(join(dir, "home"), { recursive: true });
+      writeFileSync(join(dir, "daemon.log"), "x");
+      writeFileSync(
+        join(dir, "bench.json"),
+        JSON.stringify({ name: "ada", home: join(dir, "home"), pids: { helper: child.pid } }),
+      );
+      const r = await nodeAsync([join(BENCH, "stop.mjs"), "--name", "ada", "--clean"], env);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(`not cleaned: still running helper ${child.pid}`);
+      expect(readdirSync(dir).sort()).toEqual(["bench.json", "daemon.log", "home"]);
+    } finally {
+      child.kill("SIGTERM");
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+function proxyState(dir: string): string | null {
+  try {
+    return JSON.parse(readFileSync(join(dir, "github-proxy.json"), "utf8")).state ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function waitUntil(check: () => boolean, ms = 10_000): Promise<void> {
+  const until = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > until) throw new Error("timed out");
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+function freePortHere(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createNetServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const p = (srv.address() as AddressInfo).port;
+      srv.close(() => resolve(p));
+    });
+  });
+}
+
+/** A node script run without blocking this process (the test's own servers keep answering). */
+function nodeAsync(
+  args: string[],
+  env: NodeJS.ProcessEnv,
+): Promise<{ code: number | null; out: string; err: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, args, { env });
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (d) => {
+      out += d;
+    });
+    child.stderr.on("data", (d) => {
+      err += d;
+    });
+    child.on("close", (code) => resolve({ code, out, err }));
+  });
+}

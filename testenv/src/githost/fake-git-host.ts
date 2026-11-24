@@ -174,9 +174,23 @@ export class FakeGitHost {
   }
 
   addCollaborator(repo: string, login: string): void {
+    this.setCollaboratorRole(repo, login, "write");
+  }
+
+  /**
+   * A collaborator's role on one repository, as its Settings -> Collaborators sets it
+   * (w8-two-homes, for the access cases of a second person): `write` pushes, opens and merges
+   * pull requests; `read` sees and reads a private repository and every write answers 403;
+   * `none` removes the person (a private repository is 404 again). Org membership is separate.
+   */
+  setCollaboratorRole(repo: string, login: string, role: "write" | "read" | "none"): void {
     const r = this.requireRepo(repo);
     if (!this.store.user(login)) throw new ForerunnerError("not_found", `user ${login} not found`);
-    r.collaborators.add(login.toLowerCase());
+    const key = login.toLowerCase();
+    r.collaborators.delete(key);
+    r.readers.delete(key);
+    if (role === "write") r.collaborators.add(key);
+    else if (role === "read") r.readers.add(key);
   }
 
   createToken(input: CreateTokenInput): IssuedToken {

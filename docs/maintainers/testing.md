@@ -3412,3 +3412,40 @@ fixup-l4-selftasks-chat (L4-selftasks-121; C2-left-14, C4-left-4, C3-left-10) ad
   that refuses the push; another project's open docs pull request is marked with
   `forerunnerMarker({ project })`, since an unmarked one reads as this project's own when it is
   the only one linked (W15-01).
+
+## w8-two-homes (wave 8, 2026-11-24): two homes, one GitHub; the recorder's redaction
+
+- **The recorder writes no daemon token** (L4i-left-54). `scripts/bench/recorder.cjs` passes every
+  record it writes to `steps/problems.jsonl` through `redactRecord`: every string, nested ones
+  included (a console line's `text` and `location.url`, a page error's message and stack, a URL,
+  a body), loses `?token=` (`stripToken`) and every daemon token the bench has had in this
+  process (`bench.json`'s token at `openApp`, at each `followDaemon` reconnect and at each write).
+  Before, console lines were written raw, and a "Failed to load resource" after a daemon restart
+  carried the old token. Tests: `scripts/bench-scripts.test.ts` "w8-two-homes, wave 8: the bench
+  recorder writes no daemon token".
+- **Two homes, composed** (W8-homes-1, -2, -4): `apps/ui/test/two-installs.ts` composes Ada's and
+  Bob's whole runtimes, each on its own home, store, vault, device row and GitHub login, against
+  one GitHub (a `MemoryGitHost` with a per-login view, `asLogin`, or the testenv stand-in over
+  HTTP), and drives each only through the UI's client. It is described in `apps.md` ("The
+  two-home harness"); the per-login views of the in-memory host are in `capabilities.md`. Every
+  wave 8 area that changes what two Forerunners do on one GitHub adds its case there
+  (`validation.md`, the wave 8 rule).
+- **The stand-in GitHub: users, an organisation and a collaborator's role** (testenv). A repository
+  record has `readers` beside `collaborators`; `FakeGitHost.setCollaboratorRole(repo, login,
+  "write" | "read" | "none")` sets one (`addCollaborator` is `write`). A reader can see and clone
+  the repository (`GET /user/repos` lists it, `checkRepoAccess` lets reads through) and is refused
+  every write (403, as GitHub answers a read collaborator; the test writes an issue); `none`
+  takes both away (404, as for any private repository the login cannot see). For w8-shared-repo (the person without write access). Tests: `testenv/test/githost.test.ts`
+  "w8-two-homes, wave 8: two users, an organisation and a collaborator's role".
+- **Two benches on one GitHub, GitHub off for one, the two-person journey** (W8-homes-3, -4, -5):
+  `start.mjs --githost <port> --users ada,bob --org team` and, for the second bench,
+  `--githost-shared <bench> --githost-user bob`; each home reaches the stand-in through a proxy of
+  its own (`scripts/bench/github-proxy.mjs`), which `cut.mjs <bench> github off|on` closes and
+  opens; the stand-in's request log names the login of each call; `stop.mjs --clean` removes a
+  stopped bench's files by its recorded PIDs, keeping `steps/`. The two-person journey
+  (`journeys/two-people.cjs`, its steps and checks in `journeys/two-people-checks.cjs`) walks
+  w8-journey's 16 steps on two benches; a check marked `known` is a D9 gap with the wave 8 area
+  that builds it as `owner`, and that area removes the mark. All in `scripts/bench/README.md`.
+  Tests: `scripts/bench-scripts.test.ts` "w8-two-homes, wave 8: two people's benches on one
+  GitHub" (the 16 steps and their owners, the private-text check, the summary, the refused
+  options, `cut.mjs` against two real proxies, `stop.mjs --clean`).

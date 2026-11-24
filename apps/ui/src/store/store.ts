@@ -217,8 +217,9 @@ export function reduce(state: UiState, action: UiAction): UiState {
         connection: { ...state.connection, attempt: state.connection.attempt + 1 },
       };
     case "me":
-      // l4-cred-screens (L4-creds-20): every time on the screen is written in the person's zone.
-      setPersonZone(action.me?.timezone);
+      // l4-cred-screens (L4-creds-20): every time on the screen is written in the person's zone;
+      // the store's dispatch sets it from `me.timezone` before any screen reads the new state
+      // (w8-two-homes, L4i-left-62: never from inside this reducer).
       return { ...state, me: action.me };
     case "agents":
       return { ...state, agents: action.agents };
@@ -334,10 +335,19 @@ export function createStore(config: DaemonConfig, storage: KeyValueStore): UiSto
       if (next.voiceReply !== state.voiceReply) {
         storage.set(storageKey(config.installId, STORAGE_NAMES.voiceReply), next.voiceReply);
       }
+      // w8-two-homes (L4i-left-62): the person's zone, for every time on the screen, is set here
+      // and not in the reducer, before the listeners run: `AppRoutes` reads `personZoneOf` and
+      // draws every route again when it changes, so a screen already on show follows it.
+      if (personZoneOf(next) !== personZoneOf(state)) setPersonZone(personZoneOf(next));
       state = next;
       for (const l of listeners) l();
     },
   };
+}
+
+/** The person's time zone from `GET /me` (null until it answers, or when it names none). */
+export function personZoneOf(state: UiState): string | null {
+  return state.me?.timezone ?? null;
 }
 
 /** The project shown in the header, or null. */

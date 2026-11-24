@@ -3249,3 +3249,38 @@ L4 (fixup)").
   `pullRequestCloseFails`, `takeOverRetryFails`) and its import refuses a link on another host
   with cause `other_host`, as the daemon does (`test/contracts.test.ts` "l4-github-carried, run
   L4").
+
+## w8-two-homes (wave 8, 2026-11-24): state read from `/me` before it answers
+
+- **The model watch's answer waits for `/me`** (L4i-left-3). `UpdatesPage.tsx` sent
+  `me?.id ?? "human"` as the answer's `by`, so a press before `GET /me` answered recorded the
+  decision for nobody (one `e2e/updates.spec.ts` failure). Adopt selected, Run evaluations,
+  Ignore and Remind me later stay off (`answerOff`) until `/me` has answered, and `answer()`
+  sends nothing without the person's id. The daemon never fills in a person for a missing actor.
+- **The person's zone redraws every screen** (L4i-left-62). `setPersonZone` no longer runs
+  inside the store's reducer: the store's `dispatch` sets it from `personZoneOf(state)`
+  (`me.timezone`) before the listeners run, and `AppRoutes` reads `personZoneOf`, so every route
+  draws its times again when the zone arrives or changes (pages keep their state; nothing is
+  mounted again). The phone's store keeps `personZone` in its state and `MobileRoutes` reads it
+  the same way. The setup assistant's profile step (`SetupPage.tsx`, Continue) reads `/me` again
+  after `POST /setup/profile` (`refreshIdentity`), so a new zone or name reaches the app without
+  a restart.
+- Tests: `test/me-races.test.tsx` (describe "w8-two-homes, wave 8: state read from /me before it
+  answers": a harness whose `fetch` holds `GET /me` back until the test lets it go; the answer
+  sends nothing until `/me` answers, then `human_alice`; a session page on screen goes from
+  21:00 to 15:00 when the person's zone moves from Zurich to New York; the setup assistant's
+  zone reaches the store). No route or shape changed, so the fake daemon is unchanged.
+- **The two-home harness** (W8-homes-1, -2, -4): `test/two-installs.ts` composes two whole
+  runtimes, Ada's and Bob's, each on its own home with its own SQLite store, vault, identity,
+  agent name, device row (`remote: { enabled: true }` beside `startServices: false`) and GitHub
+  login, against one GitHub with the users ada and bob and the organisation team (team/shared
+  with one commit, team/empty): `composeTwo({ host: "memory" })` (one `MemoryGitHost`, a
+  per-login view for each home, bare repositories as clone URLs) or `{ host: "http" }` (the
+  testenv stand-in GitHub, one classic token each). Each home is driven only through the UI's
+  client (`home.client`); `home.restart()` composes it again on the same home and vault;
+  `home.githubOff()` / `githubOn()` make that home's GitHub calls fail as a refused connection
+  does; `home.holdModelCalls(when)` holds its model calls; `two.writesBy(login)` lists that
+  login's writes on the host with a normalised `action` (`pull_request.create`, `comment`,
+  `push`, ...); `two.close()` settles, closes, stops and removes everything. Tests:
+  `test/two-installs.test.ts` (describe "w8-two-homes, wave 8: harness"; later wave 8 areas
+  append their own describe blocks and helpers, never change these).

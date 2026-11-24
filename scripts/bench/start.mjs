@@ -2,7 +2,12 @@
 // Start a test bench: the real daemon on an isolated home plus the real UI dev server.
 //   node scripts/bench/start.mjs --name <n> --daemon-port <p> --ui-port <u>
 //        [--provider bench|fake|bench-live|bench-api|none] [--api-key refused|limited|ok] [--subscription] [--home <dir>] [--fresh] [--env KEY=VAL ...]
-//        [--githost <port> [--githost-in-setup]]
+//        [--githost <port> [--users ada,bob[,carol]] [--org team] [--members ada,bob]
+//                          [--collaborators carol=write|read|none] [--githost-in-setup]]
+//        [--githost-shared <bench>] [--githost-user <login>]
+// Two people (w8-two-homes): the first bench starts the stand-in with users and an
+// organisation, the second uses it (--githost-shared) with its own login (--githost-user);
+// each home reaches GitHub through a proxy of its own that cut.mjs can close.
 // Writes <bench root>/<n>/bench.json { daemonUrl, uiUrl, home, token, pids, ... } and prints it.
 // See README.md. Stop with stop.mjs, restart only the daemon with restart-daemon.mjs. The daemon
 // runs under supervise.mjs, which starts it again when it asks to restart (exit 86), as the
@@ -14,6 +19,7 @@ import {
   benchFile,
   envPairs,
   fail,
+  githostLogin,
   isAlive,
   killTree,
   LIVE_KEY_MISSING,
@@ -22,9 +28,11 @@ import {
   portFree,
   REPO,
   readBench,
+  sharedGithost,
   spawnLogged,
   startDaemon,
   startGithost,
+  startGithubProxy,
   storeBenchKey,
   storeGithubToken,
   storeLiveKey,
@@ -69,7 +77,18 @@ if (existsSync(benchFile(name))) {
 }
 const home = path.resolve(typeof args.home === "string" ? args.home : path.join(dir, "home"));
 if (args.fresh) {
-  for (const sub of ["home", "steps", "daemon.log", "ui.log", "githost", "githost.json"])
+  for (const sub of [
+    "home",
+    "steps",
+    "daemon.log",
+    "ui.log",
+    "githost",
+    "githost.json",
+    "githost-requests.jsonl",
+    "github-cut",
+    "github-proxy.json",
+    "github-proxy.log",
+  ])
     rmSync(path.join(dir, sub), { recursive: true, force: true });
   if (typeof args.home === "string") rmSync(home, { recursive: true, force: true });
 }
@@ -79,6 +98,19 @@ mkdirSync(path.join(dir, "steps"), { recursive: true });
 const githostPort = args.githost === undefined ? null : Number(args.githost);
 if (githostPort !== null && !Number.isInteger(githostPort))
   fail("--githost <port> needs the port of the stand-in for GitHub");
+// w8-two-homes (wave 8): two people's benches meet on one GitHub. `--githost-shared <bench>`
+// uses the stand-in another bench started (with --githost --users ada,bob --org team);
+// `--githost-user <login>` stores that login's token (default: the stand-in's first user).
+const githostShared = typeof args["githost-shared"] === "string" ? args["githost-shared"] : null;
+if (args["githost-shared"] === true) fail("--githost-shared <bench> needs the other bench's name");
+if (githostShared && githostPort !== null)
+  fail("--githost <port> starts a stand-in; --githost-shared <bench> uses another's: pick one");
+if (githostShared === name) fail("--githost-shared names this bench itself");
+for (const flag of ["users", "org", "members", "collaborators"])
+  if (args[flag] !== undefined && githostPort === null)
+    fail(`--${flag} shapes the stand-in --githost <port> starts`);
+if (args["githost-user"] !== undefined && githostPort === null && !githostShared)
+  fail("--githost-user <login> needs --githost <port> or --githost-shared <bench>");
 for (const [label, port] of [
   ["daemon", daemonPort],
   ["ui", uiPort],
@@ -94,12 +126,34 @@ let githost = null;
 // `githost.token`) in the setup assistant's GitHub step, which checks it against the stand-in,
 // and finishing setup then restarts the daemon (supervise.mjs starts it again).
 const githostInSetup = args["githost-in-setup"] === true;
-if (githostInSetup && githostPort === null) fail("--githost-in-setup needs --githost <port>");
+if (githostInSetup && githostPort === null && !githostShared)
+  fail("--githost-in-setup needs --githost <port> or --githost-shared <bench>");
+// This home's GitHub login and its way to the stand-in: a proxy of its own, so `cut.mjs <bench>
+// github off` makes GitHub unreachable for this home only (w8-two-homes, W8-homes-4).
+let githubLogin = null;
+let githubProxy = null;
 if (githostPort !== null) {
   console.log(`bench ${name}: starting the stand-in for GitHub on port ${githostPort} ...`);
-  githost = await startGithost({ dir, port: githostPort });
-  if (githostInSetup) extra.FORERUNNER_GITHUB_API ??= githost.url;
-  else storeGithubToken({ dir, home, githost });
+  githost = await startGithost({
+    dir,
+    port: githostPort,
+    users: args.users,
+    org: args.org,
+    members: args.members,
+    collaborators: args.collaborators,
+  });
+} else if (githostShared) {
+  githost = sharedGithost(githostShared);
+  console.log(
+    `bench ${name}: using the stand-in for GitHub of bench ${githostShared} (${githost.url})`,
+  );
+}
+if (githost) {
+  githubLogin = githostLogin(githost, args["githost-user"]);
+  githubProxy = await startGithubProxy({ dir, target: githost.url });
+  const through = { url: githubProxy.url, token: githubLogin.token };
+  if (githostInSetup) extra.FORERUNNER_GITHUB_API ??= githubProxy.url;
+  else storeGithubToken({ dir, home, githost: through });
 }
 if (provider === "bench-live") {
   console.log(`bench ${name}: storing the key in the home's vault (fr setup checks it first) ...`);
@@ -161,14 +215,26 @@ const bench = {
   env: extra,
   daemonPort,
   uiPort,
-  pids: { daemon: daemon.pid, ui: uiPid, ...(githost ? { githost: githost.pid } : {}) },
+  pids: {
+    daemon: daemon.pid,
+    ui: uiPid,
+    // Only a stand-in this bench started is its own to stop; a shared one is the other bench's.
+    ...(githost && !githostShared ? { githost: githost.pid } : {}),
+    ...(githubProxy ? { githubProxy: githubProxy.pid } : {}),
+  },
   ...(githost
     ? {
         githost: {
           url: githost.url,
+          // The daemon's way to it (GitHub off for this home: cut.mjs closes it).
+          via: githubProxy?.url,
+          login: githubLogin?.login,
           repos: githost.repos,
+          ...(githost.users ? { users: Object.keys(githost.users) } : {}),
+          ...(githost.org ? { org: githost.org } : {}),
+          ...(githostShared ? { shared: githostShared } : {}),
           // The token to paste in the setup assistant (a stand-in's token, never a real one).
-          ...(githostInSetup ? { token: githost.token, inSetup: true } : {}),
+          ...(githostInSetup ? { token: githubLogin?.token, inSetup: true } : {}),
         },
       }
     : {}),
@@ -184,6 +250,12 @@ const bench = {
   startedAt: new Date().toISOString(),
 };
 writeBench(name, bench);
+// The bench whose stand-in this one uses knows it, so its stop says who else loses GitHub.
+if (githostShared) {
+  const owner = readBench(githostShared);
+  const sharedWith = [...new Set([...(owner.githost?.sharedWith ?? []), name])];
+  writeBench(githostShared, { ...owner, githost: { ...owner.githost, sharedWith } });
+}
 writeFileSync(
   path.join(dir, "README.txt"),
   "A Forerunner test bench. See scripts/bench/README.md in the repository.\n",

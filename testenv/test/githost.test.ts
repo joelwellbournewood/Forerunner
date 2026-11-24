@@ -1206,6 +1206,57 @@ describe("FakeGitHost", () => {
   });
 });
 
+describe("w8-two-homes, wave 8: two users, an organisation and a collaborator's role", () => {
+  it("ada and bob of the organisation team push to team/shared; carol's role is write, read or none", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fr-githost-roles-"));
+    const host = await FakeGitHost.start({ rootDir: root });
+    try {
+      for (const login of ["ada", "bob", "carol"]) host.createUser({ login });
+      host.createOrg({ login: "team", members: ["ada", "bob"] });
+      await host.createRepo({
+        owner: "team",
+        name: "shared",
+        private: true,
+        initialFiles: { "README.md": "# shared\n" },
+      });
+      const token = (owner: string) =>
+        host.createToken({ owner, kind: "classic", scopes: ["repo"] }).token;
+      const [ada, bob, carol] = [token("ada"), token("bob"), token("carol")];
+      const repo = (t: string) => api(host.baseUrl, "GET", "/repos/team/shared", { token: t });
+      const write = (t: string) =>
+        api(host.baseUrl, "POST", "/repos/team/shared/issues", {
+          token: t,
+          body: { title: "Forerunner status: Team site" },
+        });
+      for (const t of [ada, bob]) {
+        const seen = await repo(t);
+        expect(seen.status).toBe(200);
+        expect(seen.json.permissions).toMatchObject({ pull: true, push: true });
+      }
+      expect((await write(bob)).status).toBe(201);
+      // Not a member, not a collaborator: the private repository is not there for carol.
+      expect((await repo(carol)).status).toBe(404);
+      host.setCollaboratorRole("team/shared", "carol", "read");
+      const read = await repo(carol);
+      expect(read.status).toBe(200);
+      expect(read.json.permissions).toMatchObject({ pull: true, push: false });
+      expect((await write(carol)).status).toBe(403);
+      host.setCollaboratorRole("team/shared", "carol", "write");
+      expect((await repo(carol)).json.permissions).toMatchObject({ pull: true, push: true });
+      expect((await write(carol)).status).toBe(201);
+      host.setCollaboratorRole("team/shared", "carol", "none");
+      expect((await repo(carol)).status).toBe(404);
+      // Each call names its token's login in the request log, never the token.
+      const logins = host.requests().map((r) => r.auth?.login);
+      expect(new Set(logins)).toEqual(new Set(["ada", "bob", "carol"]));
+      expect(JSON.stringify(host.requests())).not.toContain(carol);
+    } finally {
+      await host.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("FakeGitHost rate limiting", () => {
   it("returns 403 with rate-limit headers when exhausted and resets on the clock", async () => {
     const root = await mkdtemp(join(tmpdir(), "fr-githost-rl-"));

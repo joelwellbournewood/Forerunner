@@ -60,34 +60,135 @@ interface MemoryItem extends ProjectItemInfo {
   projectId: string;
 }
 
+/**
+ * One write a login made on the host (w8-two-homes): what the two-home harness reads to prove
+ * that neither Forerunner wrote to the other's pull requests, marker, guide or comment.
+ */
+export interface MemoryHostWrite {
+  /** The GitHub login of the view that wrote it. */
+  login: string;
+  op: string;
+  /** "owner/name", or the project id for a Projects call. */
+  repo: string;
+  /** The pull request or issue it wrote to, when there is one. */
+  number?: number;
+  /** The branch, path or other detail of the write, when there is one. */
+  detail?: string;
+}
+
+/** What every login's view of one host shares: one GitHub, seen by several accounts. */
+interface MemoryHostWorld {
+  repos: Map<string, Repo>;
+  projects: Map<string, MemoryProject>;
+  nextId: number;
+  nextRepoId: number;
+  mergeableByDefault: boolean;
+  merges: { repo: string; number: number; method: MergeMethod; sha: string | null }[];
+  projectCalls: { op: string; projectId?: string; detail?: string }[];
+  writes: MemoryHostWrite[];
+  now: () => string;
+}
+
 export class MemoryGitHost implements GitHost {
   readonly kind = "github" as const;
   readonly baseUrl = "memory://";
   readonly login: string;
-  private repos = new Map<string, Repo>();
-  private readonly projects = new Map<string, MemoryProject>();
-  private nextId = 1;
-  mergeableByDefault = true;
+  /**
+   * The host's state, shared by every view `asLogin` makes (w8-two-homes, W8-homes-2): two
+   * Forerunners with two GitHub accounts meet on one GitHub, and each write carries the login of
+   * the view that made it.
+   */
+  private readonly world: MemoryHostWorld;
+
+  private get repos(): Map<string, Repo> {
+    return this.world.repos;
+  }
+  private get projects(): Map<string, MemoryProject> {
+    return this.world.projects;
+  }
+  private get nextId(): number {
+    return this.world.nextId;
+  }
+  private set nextId(n: number) {
+    this.world.nextId = n;
+  }
+  /** GitHub's numeric repository ids, given in creation order (`RepoInfo.id`). */
+  private get nextRepoId(): number {
+    return this.world.nextRepoId;
+  }
+  private set nextRepoId(n: number) {
+    this.world.nextRepoId = n;
+  }
+  get mergeableByDefault(): boolean {
+    return this.world.mergeableByDefault;
+  }
+  set mergeableByDefault(v: boolean) {
+    this.world.mergeableByDefault = v;
+  }
   /** Every merge made, in order, with its method (tests assert merge commits only). */
-  readonly merges: { repo: string; number: number; method: MergeMethod; sha: string | null }[] = [];
+  get merges(): MemoryHostWorld["merges"] {
+    return this.world.merges;
+  }
   /** Every project call, in order (tests assert how many outward calls a sync made). */
-  readonly projectCalls: { op: string; projectId?: string; detail?: string }[] = [];
+  get projectCalls(): MemoryHostWorld["projectCalls"] {
+    return this.world.projectCalls;
+  }
+  /** Every write any view made, in order, with the view's login (w8-two-homes). */
+  get writes(): readonly MemoryHostWrite[] {
+    return this.world.writes;
+  }
 
   /**
    * The time a pull request is stamped with when it is opened or changed (`updatedAt`); tests
-   * set it to say when a project was last worked on (d1109-onerepo-link).
+   * set it to say when a project was last worked on (d1109-onerepo-link). Shared by every view.
    */
-  now: () => string = () => new Date().toISOString();
-  /** GitHub's numeric repository ids, given in creation order (`RepoInfo.id`). */
-  private nextRepoId = 1001;
+  get now(): () => string {
+    return this.world.now;
+  }
+  set now(fn: () => string) {
+    this.world.now = fn;
+  }
 
-  constructor(login = "alice") {
+  constructor(login = "alice", sharedWith?: MemoryGitHost) {
     this.login = login;
+    this.world = sharedWith
+      ? sharedWith.world
+      : {
+          repos: new Map(),
+          projects: new Map(),
+          nextId: 1,
+          nextRepoId: 1001,
+          mergeableByDefault: true,
+          merges: [],
+          projectCalls: [],
+          writes: [],
+          now: () => new Date().toISOString(),
+        };
+  }
+
+  /**
+   * The same GitHub seen by another account (w8-two-homes, W8-homes-2): one shared state, and
+   * `whoAmI` and the author of every write are `login`'s. Two composed homes each get their own
+   * view, so a pull request or comment Bob's Forerunner writes carries bob, never alice.
+   */
+  asLogin(login: string): MemoryGitHost {
+    return new MemoryGitHost(login, this);
+  }
+
+  /** The writes `login` made, in order (the harness's `writesBy`). */
+  writesBy(login: string): MemoryHostWrite[] {
+    return this.world.writes.filter((w) => w.login === login);
+  }
+
+  private wrote(op: string, repo: RepoRef | string, extra: Partial<MemoryHostWrite> = {}): void {
+    const name = typeof repo === "string" ? repo : this.key(repo);
+    this.world.writes.push({ login: this.login, op, repo: name, ...extra });
   }
 
   /**
    * Opens a pull request as another GitHub account would (tests: a project of another
-   * Forerunner on the same repository). `updatedAt` defaults to `now()`.
+   * Forerunner on the same repository), through that account's view. `updatedAt` defaults to
+   * `now()`.
    */
   async openPullRequestAs(
     repo: RepoRef,
@@ -103,13 +204,12 @@ export class MemoryGitHost implements GitHost {
     },
   ): Promise<PullRequestInfo> {
     const r = this.repo(repo);
-    const pr = await this.createPullRequest(repo, {
+    const pr = await this.asLogin(author).createPullRequest(repo, {
       title: opts.title,
       body: opts.body,
       head: opts.head,
       base: opts.base ?? r.defaultBranch,
     });
-    pr.authorLogin = author;
     if (opts.state === "closed" || opts.merged) pr.state = "closed";
     if (opts.merged) pr.merged = true;
     if (opts.updatedAt) pr.updatedAt = opts.updatedAt;
@@ -203,6 +303,7 @@ export class MemoryGitHost implements GitHost {
       id: this.nextRepoId++,
     };
     this.repos.set(fullName.toLowerCase(), repo);
+    this.wrote("createRepo", fullName);
     return this.getRepo(repo);
   }
 
@@ -223,6 +324,7 @@ export class MemoryGitHost implements GitHost {
     const r = this.repo(repo);
     if (!r.files.has(opts.branch)) r.files.set(opts.branch, new Map(r.files.get(r.defaultBranch)));
     r.files.get(opts.branch)?.set(opts.path, opts.content);
+    this.wrote("putFile", repo, { detail: `${opts.branch}:${opts.path}` });
     return { sha: `sha-${opts.branch}-${opts.path}` };
   }
 
@@ -248,6 +350,7 @@ export class MemoryGitHost implements GitHost {
       authorLogin: this.login,
     };
     r.prs.push(pr);
+    this.wrote("createPullRequest", repo, { number: pr.number, detail: opts.head });
     return pr;
   }
 
@@ -268,6 +371,10 @@ export class MemoryGitHost implements GitHost {
     if (patch.state === "closed" && pr.state === "open") pr.state = "closed";
     else if (patch.state === "open" && pr.state === "closed" && !pr.merged) pr.state = "open";
     pr.updatedAt = this.now();
+    this.wrote("updatePullRequest", repo, {
+      number,
+      detail: Object.keys(patch).sort().join(","),
+    });
     return pr;
   }
 
@@ -320,6 +427,7 @@ export class MemoryGitHost implements GitHost {
     pr.merged = true;
     pr.mergeCommitSha = `${method}-${number}`;
     this.merges.push({ repo: this.key(repo), number, method, sha: opts.sha ?? null });
+    this.wrote("mergePullRequest", repo, { number, detail: method });
     const head = r.files.get(pr.head.ref);
     if (head)
       r.files.set(pr.base.ref, new Map([...(r.files.get(pr.base.ref) ?? new Map()), ...head]));
@@ -327,6 +435,12 @@ export class MemoryGitHost implements GitHost {
   }
 
   async commentOnPullRequest(repo: RepoRef, number: number, body: string): Promise<CommentInfo> {
+    this.wrote("commentOnPullRequest", repo, { number });
+    return this.comment(repo, number, body);
+  }
+
+  /** A comment on a pull request or an issue (they share numbers), as this view's login. */
+  private comment(repo: RepoRef, number: number, body: string): CommentInfo {
     const r = this.repo(repo);
     const c: CommentInfo = {
       id: this.nextId++,
@@ -390,6 +504,7 @@ export class MemoryGitHost implements GitHost {
       htmlUrl: `memory://${r.fullName}/r/${id}`,
     };
     r.reviews.set(number, [...(r.reviews.get(number) ?? []), review]);
+    this.wrote("reviewPullRequest", repo, { number, detail: opts.event });
     return { id };
   }
 
@@ -407,6 +522,7 @@ export class MemoryGitHost implements GitHost {
       htmlUrl: `memory://${r.fullName}/issues/${r.nextNumber - 1}`,
     };
     r.issues.push(issue);
+    this.wrote("createIssue", repo, { number: issue.number });
     return issue;
   }
 
@@ -418,6 +534,7 @@ export class MemoryGitHost implements GitHost {
     const issue = this.repo(repo).issues.find((i) => i.number === number);
     if (!issue) throw new ForerunnerError("not_found", `issue ${number} not found`);
     Object.assign(issue, patch);
+    this.wrote("updateIssue", repo, { number, detail: Object.keys(patch).sort().join(",") });
     return issue;
   }
 
@@ -431,7 +548,8 @@ export class MemoryGitHost implements GitHost {
   }
 
   async commentOnIssue(repo: RepoRef, number: number, body: string): Promise<CommentInfo> {
-    return this.commentOnPullRequest(repo, number, body);
+    this.wrote("commentOnIssue", repo, { number });
+    return this.comment(repo, number, body);
   }
 
   async listCheckRuns(repo: RepoRef, ref: string): Promise<CheckRunInfo[]> {
@@ -490,6 +608,7 @@ export class MemoryGitHost implements GitHost {
       assets: [],
     };
     r.releases.push(rel);
+    this.wrote("createRelease", repo, { detail: opts.tagName });
     return rel;
   }
 
@@ -502,6 +621,7 @@ export class MemoryGitHost implements GitHost {
     const rel = this.repo(repo).releases.find((x) => x.id === releaseId);
     if (!rel) throw new ForerunnerError("not_found", `release ${releaseId} not found`);
     rel.assets.push({ name, size: data.byteLength, downloadUrl: `${rel.htmlUrl}/${name}` });
+    this.wrote("uploadReleaseAsset", repo, { detail: name });
     return { name, downloadUrl: `${rel.htmlUrl}/${name}` };
   }
 
@@ -524,6 +644,7 @@ export class MemoryGitHost implements GitHost {
 
   async ensureProject(owner: string, title: string): Promise<ProjectInfo> {
     this.projectCalls.push({ op: "ensureProject", detail: `${owner}:${title}` });
+    this.wrote("ensureProject", owner, { detail: title });
     const existing = [...this.projects.values()].find(
       (p) => p.owner === owner && p.title === title && !p.closed,
     );
@@ -557,6 +678,7 @@ export class MemoryGitHost implements GitHost {
 
   async ensureFields(projectId: string, specs: ProjectFieldSpec[]): Promise<ProjectFieldInfo[]> {
     this.projectCalls.push({ op: "ensureFields", projectId });
+    this.wrote("ensureFields", projectId);
     const p = this.project(projectId);
     for (const spec of specs) {
       let field = p.fields.find((f) => f.name.toLowerCase() === spec.name.toLowerCase());
@@ -597,6 +719,7 @@ export class MemoryGitHost implements GitHost {
 
   async upsertItem(projectId: string, input: ProjectItemInput): Promise<UpsertItemResult> {
     this.projectCalls.push({ op: "upsertItem", projectId, detail: input.forerunnerTaskId });
+    this.wrote("upsertItem", projectId, { detail: input.forerunnerTaskId });
     const p = this.project(projectId);
     let item = p.items.find((i) => i.forerunnerTaskId === input.forerunnerTaskId);
     let created = false;
@@ -630,6 +753,7 @@ export class MemoryGitHost implements GitHost {
 
   async setItemFields(projectId: string, itemId: string, values: ProjectItemFields): Promise<void> {
     this.projectCalls.push({ op: "setItemFields", projectId, detail: itemId });
+    this.wrote("setItemFields", projectId, { detail: itemId });
     const p = this.project(projectId);
     const item = p.items.find((i) => i.id === itemId);
     if (!item) throw new ForerunnerError("not_found", `project item ${itemId} not found`);
@@ -667,6 +791,7 @@ export class MemoryGitHost implements GitHost {
 
   async archiveItem(projectId: string, itemId: string): Promise<void> {
     this.projectCalls.push({ op: "archiveItem", projectId, detail: itemId });
+    this.wrote("archiveItem", projectId, { detail: itemId });
     const item = this.project(projectId).items.find((i) => i.id === itemId);
     if (!item) throw new ForerunnerError("not_found", `project item ${itemId} not found`);
     item.archived = true;

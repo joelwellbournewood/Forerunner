@@ -71,6 +71,22 @@ These are rules, not advice. A change that breaks one is not done, whatever else
    and what to do next.
 10. **No release without the owner trying the build.** CI proves the installers start. Only a
     person proves the fixes work. See "Release" below.
+11. **Two people's Forerunners are tested as two people run them** (wave 8, D9: each person runs
+    their own Forerunner, and the two meet only on GitHub). A change to what a Forerunner reads
+    from or writes to GitHub, or to what a project shared with another Forerunner does, is
+    tested with two composed homes, Ada's and Bob's (each its own home, store, vault, device row
+    and GitHub login), against one stand-in GitHub with two users and an organisation, each
+    driven only through the UI's client (`apps/ui/test/two-installs.ts`, `composeTwo`, in
+    `apps.md`). The test asserts what each person sees and what each login wrote on the host
+    (`two.writesBy(login)`: never a write to the other's pull requests); anything persisted gets
+    a restart case (`home.restart()`), and GitHub out of reach is tested for one home while the
+    other carries on (`home.githubOff()`). The two-person bench journey
+    (`scripts/bench/journeys/two-people.cjs` on two benches sharing one stand-in;
+    `scripts/bench/README.md`) is walked before and after the change; the area removes the
+    `known` mark of each check it makes pass, and every check without the mark passes. The
+    stand-in model only (`--provider bench`). Postgres (`FORERUNNER_TEST_PG`) is needed only by
+    an area that changes `packages/state`; the 2026-11-02 rule to run Postgres every time went
+    with the shared store.
 
 ## Bug classes that reached people, and the check that catches each
 
@@ -95,7 +111,8 @@ Add a row when a new class reaches a release.
 ### The author, before asking for review
 
 - [ ] The person's report (or the requirement) is a test that failed before the change.
-- [ ] Rules 1 to 9: each one that applies is covered, or the PR says why not.
+- [ ] Rules 1 to 9, and 11 for a change two people's Forerunners meet in: each one that applies
+      is covered, or the PR says why not.
 - [ ] Siblings searched (rule 8), with the search named in the PR.
 - [ ] `pnpm check` is green locally, and so are `pnpm test:integration` (the stand-ins and
       the phase 1 gate; tests that need Postgres skip without `FORERUNNER_TEST_PG`),
@@ -130,6 +147,9 @@ A review that only reads the diff is not a review of a person-facing change. The
 - [ ] Asks what happens after a restart, after Quit, on Windows, and as a non-administrator.
 - [ ] Asks whether a person can do every step the change expects of them, and whether a
       specialist can do every step given to it.
+- [ ] For a change two people's Forerunners meet in (rule 11): asks what the other person's
+      Forerunner sees and writes, and checks that a two-home case asserts it, after a restart
+      where something is kept.
 - [ ] Rejects tests that assert internal shapes only, answer with words the UI never sends,
       or were weakened to pass.
 
