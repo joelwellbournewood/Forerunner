@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join } from "@forerunner/platform/paths";
 import { afterAll, describe, expect, it } from "vitest";
 import { ModelCallLog } from "../../../testenv/src/bench/call-log.ts";
 import { benchOptionsFromEnv, createRolePlayer } from "../../../testenv/src/bench/role-player.ts";
