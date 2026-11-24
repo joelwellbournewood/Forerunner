@@ -1175,15 +1175,21 @@ describe("w8-status-write, wave 8: one pinned status issue, one comment per Fore
       const guidePrs = async () =>
         (await two.pullRequests()).filter((p) => p.head.ref.startsWith("fr/docs-scaffold"));
       const before = await guidePrs();
+      const atOff = two.writesBy("ada").length;
       await off(ada);
       await runOneTask(ada, two, made.id, "Write the news page in news.md");
       await ada.rt.statusBoard.settled();
-      const docsWrites = two
-        .writesBy("ada")
-        .filter(
+      // Exactly one docs pull request carries it: the intake's, still open, gets the guide and
+      // one comment; no second docs pull request is opened.
+      expect(before.map((p) => [p.number, p.state])).toEqual([[1, "open"]]);
+      expect((await guidePrs()).map((p) => p.number)).toEqual([1]);
+      const sinceOff = two.writesBy("ada").slice(atOff);
+      expect(
+        sinceOff.filter(
           (w) => w.action === "pull_request.create" && w.detail?.startsWith("fr/docs-scaffold"),
-        );
-      expect(docsWrites.length).toBeLessThanOrEqual(before.length + 1);
+        ),
+      ).toEqual([]);
+      expect(sinceOff.filter((w) => w.action === "comment" && w.number === 1)).toHaveLength(1);
       const bare = (await two.memory?.getRepo(repo))?.cloneUrl ?? "";
       const branch = (await guidePrs()).at(-1)?.head.ref ?? "fr/docs-scaffold";
       const guide = (

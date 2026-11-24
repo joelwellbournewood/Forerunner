@@ -103,7 +103,7 @@ describe("every setting is visible in Settings (U-060)", () => {
     expect(within(row).getByTestId("setting-label")).toHaveTextContent("Status issue on GitHub");
     expect(within(row).getByTestId("setting-value-cell")).toHaveTextContent("on");
     expect(row).toHaveTextContent(
-      "The status of Atlas on GitHub: this Forerunner's own comment on the project's pinned status issue, with no costs (off: it stays in the app, under Docs, Status). Status on GitHub: issue #12 (pinned) Everyone who can see this repository can read it.",
+      "The status of Atlas on GitHub: this Forerunner's own comment on the project's pinned status issue, with no costs (off: it stays in the app, under Docs, Status). Status on GitHub: issue #12 (pinned). Everyone who can see this repository can read it.",
     );
     const rows = await screen.findAllByTestId("setting-row");
     expect(rows.filter((r) => r.dataset.key === "project.status_issue")).toHaveLength(1);

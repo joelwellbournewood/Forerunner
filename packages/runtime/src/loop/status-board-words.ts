@@ -604,7 +604,9 @@ export function statusIssueRowWords(
 ): string {
   const what = `The status of ${p.name} on GitHub: this Forerunner's own comment on the project's pinned status issue, with no costs (off: it stays in the app, under Docs, Status).`;
   const parts = [what];
-  if (now?.sentence) parts.push(now.sentence);
+  // Each part a sentence of its own: "Status on GitHub: issue #12 (pinned)" has no full stop
+  // where it stands alone (the Docs note), so the row adds one.
+  if (now?.sentence) parts.push(/[.!?]$/.test(now.sentence) ? now.sentence : `${now.sentence}.`);
   if (now?.public === true && statusIssuePolicy(p).on) parts.push(PUBLIC_REPOSITORY_SENTENCE);
   return parts.join(" ");
 }

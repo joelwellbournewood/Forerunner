@@ -23,6 +23,7 @@ import {
   renderWriterComment,
   STATUS_BODY_LEAD,
   type StatusPlace,
+  statusIssueRowWords,
   statusPlaceSentence,
   type WriterCommentFacts,
 } from "../src/loop/status-board-words.ts";
@@ -257,6 +258,23 @@ describe("w8-status-write, wave 8: the status issue's words", () => {
     expect(docsStatusNote({ kind: "on", issue: 12, pinned: true, lastAt: null }, null)).toBe(
       "In the app; also on GitHub: issue #12",
     );
+    // fixup-w8-status-write: the Settings row ends each of its sentences with a full stop.
+    const what =
+      "The status of Team site on GitHub: this Forerunner's own comment on the project's pinned status issue, with no costs (off: it stays in the app, under Docs, Status).";
+    expect(
+      statusIssueRowWords(
+        { name: "Team site", settings: {} },
+        { sentence: "Status on GitHub: issue #12 (pinned)", public: true },
+      ),
+    ).toBe(
+      `${what} Status on GitHub: issue #12 (pinned). Everyone who can see this repository can read it.`,
+    );
+    expect(
+      statusIssueRowWords(
+        { name: "Team site", settings: {} },
+        { sentence: issuesOffSentence("team/shared"), public: false },
+      ),
+    ).toBe(`${what} Status stays in the app: issues are turned off on team/shared.`);
   });
 
   it("the writer key is 16 hex characters, one per install and project, never the device id", () => {
@@ -1055,6 +1073,116 @@ describe("w8-status-write, wave 8: the writer", () => {
     expect((await github.listIssues(REPO, { state: "all" })).map((i) => i.number)).toEqual([1]);
     expect(board.place(ada.project)).toMatchObject({ kind: "on", issue: 1 });
     expect(board.read(K).commentId).toBe(own[0]?.id);
+  });
+
+  it("fixup-w8-status-write: a task whose pull request was closed on GitHub is not under Waiting for Merge; one that waits is", async () => {
+    const { github, make } = await world();
+    const ada = await make("ada", "dev-ada", "Ada's agent");
+    const agentId = (await ada.store.agent.list({}))[0]?.id as string;
+    const record = async (title: string, pr: number, state: string, outcome: string | null) => {
+      const t = await ada.store.task.insert({ project_id: K, title, status: "done" });
+      await ada.store.mergeRecord.insert({
+        task_id: t.id,
+        project_id: K,
+        agent_id: agentId,
+        pr_number: pr,
+        pr_url: `https://github.test/team/shared/pull/${pr}`,
+        reviewed_head_sha: "a".repeat(40),
+        state,
+        approval: "none",
+        last_outcome: outcome,
+      } as never);
+    };
+    await record("Write the notes page", 7, "queued", null);
+    await record("Write the old page", 8, "left_to_you", "closed");
+    ada.board.sessionEnded(K, { endedAt: "2026-11-24T21:10:00.000Z", done: [], next: [] });
+    await ada.board.settled();
+    const text = (await commentsOn(github, 1))[0]?.body ?? "";
+    expect(text).toContain('\nWaiting for Merge\n- #7 "Write the notes page"\n');
+    expect(text).not.toContain("#8");
+  });
+
+  it("fixup-w8-status-write: an open issue with this project's title whose marker names another project is never this project's status issue", async () => {
+    const { github, make } = await world();
+    const ada = await make("ada", "dev-ada", "Ada's agent");
+    const other = "0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c";
+    const bobs = await github.asLogin("bob").createIssue(REPO, {
+      title: "Forerunner status: Team site",
+      body: renderIssueBody(other, []),
+    });
+    ada.board.sessionEnded(K, { endedAt: "2026-11-24T21:10:00.000Z", done: [], next: [] });
+    await ada.board.settled();
+    const mine = ada.board.read(K).issue as number;
+    expect(mine).not.toBe(bobs.number);
+    expect((await github.getIssue(REPO, mine)).body.split("\n")[0]).toBe(
+      `<!-- forerunner:status v1 key=${K} -->`,
+    );
+    expect(await commentsOn(github, bobs.number)).toEqual([]);
+    expect((await github.getIssue(REPO, bobs.number)).state).toBe("open");
+  });
+
+  it("fixup-w8-status-write: the old status pull request is looked for again at the next write when GitHub did not answer the first look", async () => {
+    const { make } = await world();
+    const ada = await make("ada", "dev-ada", "Ada's agent");
+    let lists = 0;
+    const host = new Proxy(ada.host, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop);
+        if (typeof value !== "function") return value;
+        if (prop === "listPullRequests")
+          return (...args: unknown[]) => {
+            lists++;
+            return lists === 1
+              ? Promise.reject(
+                  new ForerunnerError("provider_error", "GitHub API unreachable", {
+                    retryable: true,
+                  }),
+                )
+              : (value as (...a: unknown[]) => unknown).apply(target, args);
+          };
+        return (...args: unknown[]) => (value as (...a: unknown[]) => unknown).apply(target, args);
+      },
+    }) as unknown as GitHost;
+    // A status pull request this install recorded, so the look reads the open pull requests.
+    const session = await ada.store.session.insert({
+      agent_id: (await ada.store.agent.list({}))[0]?.id as string,
+      project_id: K,
+      trigger: "manual",
+      plan: {},
+      budget_cap_usd_micro: 1,
+      step_cap: 1,
+      spent_usd_micro: 0,
+      steps: 0,
+      status: "completed",
+      summary: "",
+      handoff: {},
+      runner: "pc",
+    });
+    await ada.store.event.append(session.id, "docs.status_written", {
+      location: "repo",
+      branch: "fr/status",
+      prUrl: "https://github.test/team/shared/pull/99",
+    } as never);
+    const board = new StatusBoard({
+      store: ada.store,
+      clock: new SimulatedClock("2026-11-24T21:00:00.000Z"),
+      host: async () => host,
+      writerId: () => ada.device,
+      agentName: async () => "Ada's agent",
+      projectsRoot: join(ada.root, "projects"),
+      bodyIntervalMs: 0,
+    });
+    board.sessionEnded(K, { endedAt: "2026-11-24T21:10:00.000Z", done: [], next: [] });
+    await board.settled();
+    expect(lists).toBe(1);
+    expect(board.read(K).oldPrChecked).toBe(false);
+    board.sessionEnded(K, { endedAt: "2026-11-24T21:20:00.000Z", done: ["One"], next: [] });
+    await board.settled();
+    expect(lists).toBe(2);
+    expect(board.read(K).oldPrChecked).toBe(true);
+    board.sessionEnded(K, { endedAt: "2026-11-24T21:30:00.000Z", done: ["Two"], next: [] });
+    await board.settled();
+    expect(lists).toBe(2);
   });
 
   it("W8-write-8: a deleted issue gets one new issue and the person is told once", async () => {

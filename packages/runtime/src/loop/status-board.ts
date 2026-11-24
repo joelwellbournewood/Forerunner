@@ -20,6 +20,7 @@ import { extractPathHints } from "../session/peers.ts";
 import { INSTALL_MARKER_FILE, parseInstallMarker } from "../sources/marker.ts";
 import { markerNameOf } from "../sources/repository-use.ts";
 import { isTogether, togetherOf } from "../sources/repository-words.ts";
+import { isClosedRecord } from "./merge-mode.ts";
 import {
   type BodyWriter,
   commentChangedUpdate,
@@ -523,7 +524,8 @@ export class StatusBoard implements StatusBoardPort {
     const waitingIds = new Set<string>();
     for (const r of records) {
       const t = byId.get(r.task_id);
-      if (!t || r.state === "merged" || !r.pr_number) continue;
+      // A pull request closed on GitHub (left to the person, outcome closed) waits for nobody.
+      if (!t || r.state === "merged" || isClosedRecord(r) || !r.pr_number) continue;
       if (t.status === "cancelled" || t.status === "failed") continue;
       waiting.push({ number: r.pr_number, title: t.title, files: filesOf(t) });
       waitingIds.add(t.id);
@@ -672,16 +674,22 @@ export class StatusBoard implements StatusBoardPort {
         return;
       }
       if (!before.oldPrChecked) {
-        // W8-write-5: an old status pull request this install opened for the project is closed.
-        await this.closeOwnStatusPullRequest(project).catch((e: unknown) =>
-          logger.warn("old status pull request not checked", {
-            projectId,
-            error: errorMessage(e),
-          }),
+        // W8-write-5: an old status pull request this install opened for the project is closed;
+        // a look GitHub did not answer is made again at the next write.
+        const looked = await this.closeOwnStatusPullRequest(project).then(
+          () => true,
+          (e: unknown) => {
+            logger.warn("old status pull request not checked", {
+              projectId,
+              error: errorMessage(e),
+            });
+            return false;
+          },
         );
-        this.update(projectId, (s) => {
-          s.oldPrChecked = true;
-        });
+        if (looked)
+          this.update(projectId, (s) => {
+            s.oldPrChecked = true;
+          });
       }
       const issue = await this.issueOf(project, repo, host, login, want.create);
       if (!issue) {
@@ -838,7 +846,12 @@ export class StatusBoard implements StatusBoardPort {
       try {
         const known = await host.getIssue(repo, s.issue);
         if (!known.isPullRequest && readStatusIssueKey(known.body) === key) return known;
-        if (!known.isPullRequest && known.title === statusIssueTitle(nameOf(project))) return known;
+        if (
+          !known.isPullRequest &&
+          readStatusIssueKey(known.body) === null &&
+          known.title === statusIssueTitle(nameOf(project))
+        )
+          return known;
       } catch (e) {
         if (issueRefusalOf(e) !== "missing") throw e;
         deleted = s.issue;
@@ -932,7 +945,14 @@ export class StatusBoard implements StatusBoardPort {
     };
     return (
       (await byWriter(open.filter((i) => readStatusIssueKey(i.body) === project.id))) ??
-      (await byWriter(open.filter((i) => i.title === statusIssueTitle(nameOf(project)))))
+      // The title alone only for an issue with no marker: one keyed to another project (two
+      // projects of one name on one repository) is never this project's (W8-write-9).
+      (await byWriter(
+        open.filter(
+          (i) =>
+            i.title === statusIssueTitle(nameOf(project)) && readStatusIssueKey(i.body) === null,
+        ),
+      ))
     );
   }
 

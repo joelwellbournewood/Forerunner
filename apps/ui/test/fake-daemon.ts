@@ -111,6 +111,7 @@ import {
   STATUS_ISSUE_EFFECT,
   STATUS_NOT_YET_SENTENCE,
   statusIssueRowWords,
+  statusSwitchedOffSentence,
 } from "@forerunner/runtime/loop/status-board-words";
 import { openPlanSentence } from "@forerunner/runtime/session/intake-words";
 import {
@@ -5675,7 +5676,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           on
             ? (state.statusIssue[p.id] ?? { sentence: STATUS_NOT_YET_SENTENCE, public: null })
             : {
-                sentence: `Status stays in the app: the status issue is turned off for "${p.name}" in Settings.`,
+                sentence: statusSwitchedOffSentence(p.name),
                 public: null,
               },
         ),
