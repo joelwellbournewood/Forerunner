@@ -120,11 +120,8 @@ example 'o/kite is already the Forerunner project "Kite club", which is not on t
 last active on GitHub on 3 Nov. Work on it together, or take it over if nobody works on it any
 more.' **Work together** makes "Kite club" here as the same project: nothing on GitHub changes,
 each of you keeps your own tasks and merges your own pull requests, this computer never touches
-the other Forerunner's pull requests, and your project's status stays in the app (the Docs tab
-says 'Kept in the app: you work on "Kite club" together, so GitHub's copy is left as it is.'),
-so Settings has no Status pull request switch for it; asking chat to turn one on answers 'You
-work on "Kite club" together with another Forerunner, so its status stays in the app (Docs,
-Status); no status pull request is opened.'
+the other Forerunner's pull requests, and each Forerunner keeps its own comment on the project's
+pinned status issue on GitHub (below, "The status issue").
 Its Overview says 'Shared on GitHub with another Forerunner: each keeps its own tasks.'
 **Take it over** is for a project nobody works on any more: the repository then names your
 project (its next docs pull request replaces the other project's marker and says so in one line;
@@ -535,14 +532,11 @@ repository just created on GitHub, with nothing in it, gets a first commit from 
 default branch (the project's docs, or a README), so its tasks have something to start from; if
 that cannot be done, the task says so ("… is empty and Forerunner could not make its first commit
 …") and what to do. The project's status file (`docs/status.md`) stays in the app: each
-session's update is under **Docs**, Status ("kept in the app"), named by when the session
-started ("Session started 2026-11-15 05:46 UTC") with how it ended and what it spent ("Done.
-Spent CHF 0.09."), and no pull request is opened for it. After every merge (in the app or on GitHub) and at the end of each session Forerunner
+session's update is under **Docs**, Status, named by when the session started ("Session started
+2026-11-15 05:46 UTC") with how it ended and what it spent ("Done. Spent CHF 0.09."); on GitHub
+the status is the project's pinned status issue (below), never with what it cost. After every merge (in the app or on GitHub) and at the end of each session Forerunner
 brings this computer's copy of the repository up to date, so **Docs** and **Files** show what
-is merged on GitHub, including what you merged a minute ago. To have it on GitHub instead, turn on **Status pull request** for the project (Settings,
-Advanced, Other settings): each session then adds its update to one pull request of its own,
-"docs: project status", which you merge when you like; it never goes into a task's reviewed
-pull request. Docs that wait in a pull request say so on the Docs tab, with the link; only this
+is merged on GitHub, including what you merged a minute ago. Docs that wait in a pull request say so on the Docs tab, with the link; only this
 project's docs pull requests are listed, never one another project left on the same
 repository. Two projects on one repository share that status branch: while one project's
 status pull request is open, the other project never adds to it, comments on it or lists it,
@@ -1975,3 +1969,28 @@ the next time it starts.
   GitHub), GitHub did not answer (try again in a moment), or the saved token cannot push. A
   take-over you made with a brief whose plan's docs pull request could not be opened shows the
   same line with Try again.
+
+**The status issue (2026-11-24).** Each repository project has one pinned issue on GitHub,
+"Forerunner status: <project>". Your Forerunner keeps one comment there and edits it in place:
+what it works on now (each task's title, the files it names, since when and until when), which
+of its pull requests wait for Merge, what is paused (what is done and left, and whether the
+checks pass on the kept work) and what its last session did. Another person's Forerunner on the
+same project keeps its own comment beside yours; neither edits the other's, and the issue's
+summary at the top is rebuilt from the comments. Nothing about money, no email address and no
+@mention is ever written there. The issue is opened by the first Forerunner that starts a task or
+ends a session on the repository, never when you link it or press Work together. Settings,
+Advanced, Other settings, **Status issue on GitHub** shows where it is ("Status on GitHub: issue
+#12 (pinned)") and turns it off for the project ("Status stays in the app: the status issue is
+turned off for "Team site" in Settings."); on a public repository the row says "Everyone who can
+see this repository can read it." The Docs tab's Status row says "In the app; also on GitHub:
+issue #12". When GitHub cannot take it, the status stays in the app with one sentence: "Status
+stays in the app: issues are turned off on owner/repo.", "Status stays in the app: Forerunner may
+not write issues on owner/repo (the GitHub key needs Issues: read and write).", or "Status on
+GitHub: last updated 14:05; it updates when GitHub answers." A repository whose
+`.forerunner/project.json` names another Forerunner project gets no status from a project of
+yours that is not worked on together with it ("Status stays in the app: o/kite is the Forerunner
+project "Kite club"; Work together on the Overview shares its status issue."). If someone edits
+your comment on GitHub, you get one Update and your Forerunner writes its own text there again; a
+closed issue is never reopened ("The status issue #12 was closed on GitHub; reopen it there to
+use it again."). The status pull request of earlier versions is gone: one your Forerunner opened
+for the project is closed with one line.

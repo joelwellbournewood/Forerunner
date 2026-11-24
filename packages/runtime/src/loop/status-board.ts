@@ -283,7 +283,7 @@ export class StatusBoard implements StatusBoardPort {
     if (s.pending === null) return;
     const slot = this.slots.get(projectId);
     if (slot?.running) return;
-    this.schedule(projectId, { create: false, body: false, force: true });
+    this.schedule(projectId, { create: false, body: true, force: true });
   }
 
   /** Every project with a pending write (compose calls it once its services start). */
