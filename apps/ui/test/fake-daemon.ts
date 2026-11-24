@@ -4983,6 +4983,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     reply: ChatReplyView,
     projectId: string | null | undefined,
     closed: string | null = null,
+    said = "",
   ) => {
     // l4-selftasks-carried (L4f-left-1), as the daemon's close of a card: a yes or a no in chat
     // answers the read-back's Inbox request (the same id), and the screens hear it at once.
@@ -4991,7 +4992,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       : undefined;
     if (card) {
       card.status = "answered";
-      card.answer = "yes";
+      // As the daemon's executor (verdict "no" for a cancel): the answer is what chat said.
+      card.answer = /^\s*(?:no|nein)\b/i.test(said) ? "no" : "yes";
       card.version += 1;
     }
     if ((reply.actions.length || card) && projectId) emit("project.changed", { id: projectId });
@@ -5021,7 +5023,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       },
       extra?.failed === true,
     );
-    heardChat(reply, parsed.data.projectId, closedNow);
+    heardChat(reply, parsed.data.projectId, closedNow, parsed.data.text);
     return c.json(reply);
   });
   // d1109-chat-depth: Stop and Answer now on the turn being answered, as the daemon answers them.
@@ -5106,7 +5108,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         );
       }
       keepTurn(parsed.data, reply, extra?.failed === true && !stopped);
-      heardChat(reply, parsed.data.projectId, closedNow);
+      heardChat(reply, parsed.data.projectId, closedNow, parsed.data.text);
       emit("conversation.changed", { projectId: parsed.data.projectId ?? null });
       return reply;
     };
