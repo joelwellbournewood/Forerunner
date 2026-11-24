@@ -101,6 +101,12 @@ export async function syncPrAnswers(deps: PrAnswersDeps): Promise<PrAnswersResul
     redone: 0,
     skipped: 0,
   };
+  // l4-chat-final (L4h-left-5): a take-out a crash cut short is finished first.
+  const finished = await finishTakeOuts(deps).catch((e: unknown) => {
+    logger.warn("take-outs cut short were not looked at", { error: errorMessage(e) });
+    return 0;
+  });
+  if (finished) out.takenOut = (out.takenOut ?? 0) + finished;
   for (const row of await unappliedPrAnswers(deps.store, deps.humanId)) {
     try {
       const outcome = isRebaseConflictRequest(row)
@@ -381,13 +387,74 @@ async function applyTakeOut(
   row: HumanRequestRow,
   task: TaskRow,
 ): Promise<string> {
-  await markMerge(deps, row, "taken_out");
-  if (!deps.takeOut)
+  takingOutNow.add(row.id);
+  try {
+    await markMerge(deps, row, "taken_out");
     return markMerge(deps, row, "taken_out", {
-      take_out_result: `Not taken out here: press Take this work out on the row of "${task.title}" in Tasks.`,
+      take_out_result: await takeOutSentence(deps, task),
     });
-  const answer = await deps.takeOut.takeOut(task.id);
-  return markMerge(deps, row, "taken_out", { take_out_result: answer.sentence });
+  } finally {
+    takingOutNow.delete(row.id);
+  }
+}
+
+/** What a Take this work out came to, as the card's Answered line says it. */
+async function takeOutSentence(deps: PrAnswersDeps, task: TaskRow): Promise<string> {
+  if (!deps.takeOut)
+    return `Not taken out here: press Take this work out on the row of "${task.title}" in Tasks.`;
+  return (await deps.takeOut.takeOut(task.id)).sentence;
+}
+
+/** The cards whose Take this work out this process runs now (l4-chat-final, L4h-left-5). */
+const takingOutNow = new Set<string>();
+
+/**
+ * l4-chat-final (L4h-left-5; the review of l4-chat-carried): a Take this work out that a crash cut
+ * between its mark and its answer is finished at the next sync (the daemon's start runs one). Its
+ * card read "Taking the work out: the answer comes in a moment." for good, with nothing to settle
+ * it. The take-out is asked again (`TaskTakeOut.takeOut` reads the task's merge record first: one
+ * already opened answers "is being taken out in #N", a merged one "was taken out in #N"), and the
+ * card's Answered line gets that answer. A take-out this process runs now is left to it.
+ */
+async function finishTakeOuts(deps: PrAnswersDeps): Promise<number> {
+  let finished = 0;
+  for (let offset = 0; ; offset += PAGE) {
+    const page = await deps.store.humanRequest.list(
+      { kind: "decision", human_id: deps.humanId, status: "answered" } as never,
+      {
+        orderBy: [
+          { column: "created_at", direction: "asc" },
+          { column: "id", direction: "asc" },
+        ],
+        limit: PAGE,
+        offset,
+      },
+    );
+    for (const row of page) {
+      const card = (row.change_card ?? {}) as JsonObject;
+      if (!isLeftOpenRequest(row) || card.outcome !== "taken_out" || !card.applied_at) continue;
+      if (typeof card.take_out_result === "string" && card.take_out_result.trim()) continue;
+      if (takingOutNow.has(row.id) || !row.task_id) continue;
+      const task = await deps.store.task.get(row.task_id);
+      if (!task) continue;
+      takingOutNow.add(row.id);
+      try {
+        const take_out_result = await takeOutSentence(deps, task);
+        await deps.store.humanRequest.patch(row.id, {
+          change_card: { ...card, take_out_result },
+        });
+        finished++;
+      } catch (e) {
+        log("pr-answers").warn("a take-out cut short was not finished", {
+          requestId: row.id,
+          error: errorMessage(e),
+        });
+      } finally {
+        takingOutNow.delete(row.id);
+      }
+    }
+    if (page.length < PAGE) return finished;
+  }
 }
 
 /**
