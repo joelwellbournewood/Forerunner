@@ -119,6 +119,43 @@ describe("a session stopped at an outer limit names it (budget-stop)", () => {
   });
 });
 
+describe("w8-l4-leftovers, wave 8: no 'budget used' sentence while room is left (L4i-left-30)", () => {
+  const facts = (stopReason: string, workLeftChfMicro: number) => ({
+    outcome: {
+      done: [],
+      failed: [],
+      needsYou: [],
+      leftOver: [],
+      waiting: [],
+      waitingForDocker: [],
+      stopReason,
+      spentChfMicro: 300_000,
+    },
+    inReview: [],
+    leftOutForBudget: [
+      { id: "t4", title: "About page", estimateChfMicro: 430_000, reason: "after_others" as const },
+    ],
+    sessionCapChfMicro: 5_000_000,
+    workBudgetChfMicro: 4_000_000,
+    workLeftChfMicro,
+    openTasks: 2,
+  });
+
+  it("a larger task's pause that ended the session with room left never says the budget was used", () => {
+    const text = sessionResultLines(facts("budget_project", 3_700_000)).join("\n");
+    expect(text).toContain(
+      'Left for next time: "About page" (about CHF 0.43); it did not fit this session\'s work budget after the tasks before it.',
+    );
+    expect(text).not.toMatch(/was used/);
+  });
+
+  it("a session its own budget ended still says so", () => {
+    expect(sessionResultLines(facts("budget_exceeded", 3_700_000)).join("\n")).toContain(
+      'Left for next time: "About page" (about CHF 0.43); this session\'s CHF 5.00 was used.',
+    );
+  });
+});
+
 describe("w8-l4-leftovers, wave 8: one wording for a task whose review waits (L4i-left-31)", () => {
   it("a session that ended with a done task whose review waits says so, never 'paused'", () => {
     const handoff = { blocked: ["t1", "t2"], paused: ["t1", "t2"], review_waits: ["t2"] };

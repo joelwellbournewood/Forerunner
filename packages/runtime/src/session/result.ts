@@ -536,8 +536,19 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
           )
           .join(", ");
         const more = fitting.length > 3 ? ` and ${fitting.length - 3} more` : "";
+        // w8-l4-leftovers (L4i-left-30, the 'budget used' sibling of L4-money-102): "was used"
+        // only when the session's own budget ended it or its work budget has less than a centime
+        // left; a larger task's pause (or an outer limit) that ended it with room left says why
+        // the task was left out when the session was planned.
+        const used =
+          o.stopReason === "budget_exceeded" ||
+          o.stopReason === "budget_finish_current" ||
+          (work > 0 && leftChf < 5_000);
+        const one = fitting.length === 1 && !more;
         return [
-          `Left for next time: ${named}${more}; this session's ${moneyWords(formatChf(f.sessionCapChfMicro), f.sessionCapChfMicro)} was used.`,
+          used
+            ? `Left for next time: ${named}${more}; this session's ${moneyWords(formatChf(f.sessionCapChfMicro), f.sessionCapChfMicro)} was used.`
+            : `Left for next time: ${named}${more}; ${one ? "it" : "they"} did not fit this session's work budget after the tasks before ${one ? "it" : "them"}.`,
           ...why,
         ];
       }
