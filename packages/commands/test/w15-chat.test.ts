@@ -706,3 +706,66 @@ describe("l3-small, run L3: same-title words keep picking after a change (L3-run
     await w.store.close();
   });
 });
+
+/**
+ * w8-together (L4i-left-20, live check 4's L4-money-215): "pause Write the guide (the older one)"
+ * with two tasks of that title read back 'Pause "Write the guide"? ...' and the line after Yes
+ * named the title only, so the person could not tell which of the two moved. A move's read-back
+ * and its sentence name the task as the same-title words do: its pull request when each has
+ * its own, else its age (a state word would change with the move itself).
+ */
+describe("w8-together, wave 8: a move names which of two same-titled tasks it moves (L4i-left-20)", () => {
+  it("chat's pause of 'the older one' reads back and says '\"Write the guide\" (the older one)'; a task whose title is its own is named as before", async () => {
+    const w = await world();
+    const human = { kind: "human" as const, id: w.human.id };
+    const older = await w.store.task.insert({
+      project_id: w.game.id,
+      title: "Write the guide",
+      status: "ready",
+    } as never);
+    w.clock.advance(60_000);
+    const newer = await w.store.task.insert({
+      project_id: w.game.id,
+      title: "Write the guide",
+      status: "ready",
+    } as never);
+    await w.store.task.insert({
+      project_id: w.game.id,
+      title: "Write the FAQ",
+      status: "ready",
+    } as never);
+    const pause = (task: string) =>
+      w.executor.execute({
+        name: "task.pause",
+        params: { task, project: "Game" },
+        ctx: w.ctx({ source: "chat", wordsUsed: `pause ${task}` }),
+      });
+    const asked = await pause("Write the guide (the older one)");
+    if (asked.status !== "pending") throw new Error(`expected pending, got ${asked.status}`);
+    expect(asked.readback).toBe(
+      'Pause "Write the guide" (the older one)? No session runs it until you press Resume.',
+    );
+    const yes = done(await w.executor.confirmByText(asked.pendingId, "yes", human));
+    expect(yes.sentence).toBe(
+      'Paused "Write the guide" (the older one): no session runs it until you press Resume.',
+    );
+    expect((await w.store.task.mustGet(older.id)).status).toBe("needs_human");
+    expect((await w.store.task.mustGet(newer.id)).status).toBe("ready");
+    // Each with its own pull request: the number tells them apart.
+    await w.store.task.update(newer.id, (await w.store.task.mustGet(newer.id)).version, {
+      pr_url: "https://github.com/o/game/pull/18",
+    } as never);
+    await w.store.task.update(older.id, (await w.store.task.mustGet(older.id)).version, {
+      pr_url: "https://github.com/o/game/pull/17",
+    } as never);
+    const byNumber = await pause("Write the guide #18");
+    if (byNumber.status !== "pending") throw new Error(`expected pending, got ${byNumber.status}`);
+    expect(byNumber.readback).toBe(
+      'Pause "Write the guide" (#18)? No session runs it until you press Resume.',
+    );
+    // A title no other task has: named by its title alone.
+    const own = await pause("Write the FAQ");
+    if (own.status !== "pending") throw new Error(`expected pending, got ${own.status}`);
+    expect(own.readback).toBe('Pause "Write the FAQ"? No session runs it until you press Resume.');
+  });
+});

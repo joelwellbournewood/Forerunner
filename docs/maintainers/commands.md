@@ -628,7 +628,12 @@ among them.
   a third task of that title came without one. The kinds' words never overlap. `sameTitleTags`,
   `sameTitlePickers`, `pickSameTitled` and `pickWord` are exported for the chat's own task reads
   (run C, d1109-chat-recall CR-2); cases in `w15-chat.test.ts` and `conversation-memory.test.ts`
-  ("l3-small, run L3").
+  ("l3-small, run L3"). A move's read-back and its sentence say which one moved (w8-together,
+  L4i-left-20, live check 4's L4-money-215): `moveAsk` and `moveSentence` take the task with
+  `apart` (`namedForMove`/`apartWords`: its pull request when each of the group has its own,
+  else its age; never its state, which the move changes) and write '"Write the guide" (the older
+  one)'; a title no other task has is quoted alone, as before (case in `w15-chat.test.ts`
+  'w8-together, wave 8: a move names which of two same-titled tasks it moves').
 - **Money with two decimals (W15-44).** budget.set's sentences, read-backs, card values and its
   "already" refusal write amounts with `chfExact` (shared.ts), "from CHF 3.00 to CHF 12.00"
   (design §5 rule 7; before, `chf`'s whole francs, "from CHF 3 to CHF 12"). A session start's
