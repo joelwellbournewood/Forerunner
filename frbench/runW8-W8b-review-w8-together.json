@@ -1,0 +1,99 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "Worktree detached at fix/w8-together (aef2f10); stand-in model and stand-in GitHub only. Two benches: review-w8-together (Ada, ports 49311/2911, owns the stand-in GitHub on 49313, users ada and bob, org team) and review-w8-together-bob (Bob, 49312/2912, shares it). Walk scripts: /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk1.cjs and walk3.cjs, log in .../scratchpad/walk/walk3.log. Screenshots: /tmp/frbench/review-w8-together-bob/steps/ and /tmp/frbench/review-w8-together/steps/.\n\nW8-join-1/2, the never-cut journey:\n- Ada makes \"Team site\" on team/shared and merges her docs pull request #1, so the marker is on main.\n- Bob makes \"Site\" on team/shared while his GitHub is cut (cut.mjs), then adds two tasks. Bob wrote nothing.\n- Bob's Overview (02-bob-site-overview.png) shows 'team/shared is also the Forerunner project \"Team site\", which is not on this computer; another GitHub account worked on it on 25 Nov.', a primary \"Work together\" button and the line 'This project's tasks, plan and cards move into \"Team site\"; both Forerunners work on it.' There is no Take it over, which is right because another account worked on it recently. The line appears only once Bob's copy has followed main; that was already so before this branch.\n- GitHub cut for Bob, press Work together: the dialog shows the refusal 'GitHub did not answer, so the project cannot be checked. Try again.' and its button is disabled. The same press sent through POST /commands/execute is refused with that sentence. Bob wrote 0 times.\n- GitHub on again: the dialog loads in 84 ms (04-bob-together-dialog.png). It shows the sentence, Site's facts, 'Nothing on GitHub changes now.' and the stays line.\n- Press Work together: Bob lands on Ada's project id with the name \"Team site\" (05-bob-after-work-together.png). The page says 'Shared on GitHub with another Forerunner: each keeps its own tasks.' and 'Includes the work of \"Site\".' Bob wrote nothing at the press, and the pull requests are the same before and after.\n- Two daemon restarts, then the Changes page (06-bob-changes-after-two-restarts.png) shows the join row with Undo. Pressing Undo (07-bob-after-undo.png) gives '\"Site\" is its own project again.' Site is back with its 2 tasks and the line, Bob wrote 0 times, and the only project left is Site.\n- Work together a second time (09, 10): the removed together row comes back under the name \"Team site\", with 0 writes.\n- I started a session on Bob's together project. Bob created status issue #2 'Forerunner status: Team site' (Ada had none yet) and wrote one comment there, edited only by him, with no money and no ids besides the hidden marker. He opened his two task pull requests (#3, #4). There was no fr/docs-scaffold or fr/status pull request from Bob, and nothing touched Ada's pull request #1.\n\nL4i-left-48/65 (Ada's bench with FORERUNNER_BENCH_DELAY_MS=2500):\n- New project on team/empty, then Add to it: Ada lands in 45 ms, and the banner 'Drafting the plan from your brief… This usually takes about a minute, then it waits in your Inbox for you to approve.' is visible at 0.4 s and at 1.5 s (04-ada-add-to-team-empty-landed.png).\n- A second brief afterwards: the dialog says 'A plan for \"Club\" waits for your answer. Answer it first.' The intake status is pending, not failed.\n\nW8-join-4 (Bob's chat, 11-13):\n- 'tool: project_create … team/empty' is refused with '... Say \"work on it together\" to join it here.'\n- The same call with together true gives the read-back 'Work on \"Club\" together: this Forerunner joins it as the same project. Nothing on GitHub changes now.' with Yes and No. Nothing was made before Yes.\n- Yes makes \"Club\" with Ada's project id and shows the row 'Working on \"Club\" together with the other Forerunner now.' with Undo. Bob wrote 0 times.\n\nL4i-left-4 (Bob's bench with FORERUNNER_BENCH_CHAT_OUTCOME):\n- 'add a task: Write the FAQ' is added at once.\n- A task_create whose description the model wrote is read back: 'Add \"Write the FAQ page\" to Team site?'. Nothing is added before Yes, and it is added on Yes.\n\nL4i-left-20: with two tasks titled 'Write the guide', the read-back is 'Pause \"Write the guide\" (the older one)? No session runs it until you press Resume.' and after Yes the line is 'Paused \"Write the guide\" (the older one): ...'.\n\nTwo-person journey (scripts/bench/journeys/two-people.cjs) on fresh benches: 19 of 31 checks pass, no failure outside the known list, 12 known gaps. Both benches are stopped and their homes deleted.\n\nWhat I saw matches design sections 3.4, 3.9 and 5 for this area.\n\nSuites at aef2f10, each under flock:\n- UI vitest: 107 files, 1593 tests, all pass.\n- Playwright (local config): 40 pass.\n- test:integration: pass.\n- test:injection: pass.\n- typecheck: pass.\n- docs-check: ok.\n- No conflict markers.\n- pnpm test (unit) fails 9 tests, and test:e2e fails the phase 7 gate (see blocking).\n\nChecked against the pre-fix code: two-installs 'http: W8-join-1, -2' fails with project.join's pre-fix project-join.ts ('keep: … expected string, received object'). The real-daemon race case fails with the pre-fix intake.ts (two request ids, so two cards). The 9 unit failures pass at 8e158a7, and also pass at head with only the pre-fix packages/commands/src/commands/task.ts swapped in. The tree was restored afterwards.",
+ "blocking": [
+  {
+   "issue": "pnpm test is red: 9 runtime unit tests fail at the fix head. All are siblings of L4i-left-4 (model-worded task_create is now read back) and L4i-left-20 (the move read-back adds what tells two same-titled tasks apart). None was updated (validation rule 8: siblings). The fixer's own final run already showed 7 of them (scratchpad/final/check.log) but did not report them.",
+   "where": "packages/commands/src/commands/task.ts:1100 (askFromChatWhen), :626 (apartWords); failing: packages/runtime/test/conversation-memory.test.ts:819, :1300, :1431, :1463; chat-depth.test.ts:269, :1086; chat-recall.test.ts:1426; chat-guard.test.ts:683; closeout-conversation.test.ts:299",
+   "evidence": "`npx vitest run --project unit` at aef2f10: Test Files 5 failed | 566 passed, Tests 9 failed | 6392 passed (/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/rv-w8t-unit2.log). Examples: chat-recall:1426 now gets pendingConfirmation {readback: 'Add \"Write the FAQ\" to Quote Page?'} where null was expected. conversation-memory:819 now gets 'Redo \"Write the guide\" (#18)?' against /^Redo \"Write the guide\"\\?/. chat-depth:269 expects the task added with an Undo token and gets no action. closeout-conversation O.8: the chat's draft task handoff now waits for a Yes. The same 5 files pass at 8e158a7, and pass at head with only the pre-fix task.ts swapped in (177/177).",
+   "expected": "Update each sibling to the new rule and keep its intent. Either the person's line carries the task's words (as the fixer did for real-daemon L3-run-1), or the test answers the read-back with Yes and then asserts the old outcome. W15-37 asserts the new exact read-back 'Redo \"Write the guide\" (#18)?'. For O.8, the chat's handoff of real work as a draft task needs a stated decision: read back, or acting at once as the person's request. Then pnpm check must be green."
+  },
+  {
+   "issue": "pnpm test:e2e is red: the phase 7 release gate fails. Its plain-language UI change now gets a read-back instead of a task (L4i-left-4), and the gate's two later cases fail in cascade.",
+   "where": "tests/e2e/scenarios/phase7-gate.integration.test.ts:214",
+   "evidence": "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/rv-w8t-suites/e2e.log: 'expected { …(5) } to be null' with received {commands:['task.create'], decision:'needs_yes', readback:'Add \"Inbox badge shows the blocking count\" to Forerunner?'}. Then 'expected \\'1.0.0\\' to be \\'1.1.0\\'' and the model-watch case fail. Test Files 1 failed | 12 passed, Tests 3 failed | 22 passed. The baseline (/tmp/frbench/baseline/e2e.log) passed. The fixer's validation list has no test:e2e result.",
+   "expected": "Update the release scenario to the decided rule and keep its intent (the person answers the read-back with Yes, or the line names the task in the person's words). pnpm test:e2e must be green before the merge."
+  },
+  {
+   "issue": "The acceptance restart case for Add to it in the background ('a compose twice while drafting leaves no plan half-recorded') is not tested. The real-daemon case named 'a daemon closed while it drafts ...' waits for the draft to finish before it closes the daemon. In the code, the Add-to brief is kept only in memory while it drafts, so a Quit while drafting loses the brief and the page says nothing. This is validation rule 4, and the fixer's claim does not hold.",
+   "where": "apps/ui/test/real-daemon.test.ts:31041-31044 (`await rt.intake.inFlight(other.id)` before `rt.close()`); packages/runtime/src/session/intake.ts:1484-1512 (proposeInBackground passes opts.brief only to enqueue)",
+   "evidence": "The test calls proposeIntakeInBackground, then awaits rt.intake.inFlight(other.id), then settleSessions, then rt.close(). The job is finished before the close, so the 'either filed whole or nothing' branch only ever sees a filed card. IntakeService.status() after a restart has no job and no failure record, so a project with no earlier intake row reads 'none'. The person who landed on 'Drafting the plan…' gets no plan, no 'Planning failed' and no Try again. Before this branch the call was synchronous, the dialog stayed open with the brief and showed the error.",
+   "expected": "A case that closes the daemon while the stand-in is held mid-draft, composes again and asserts what the project page and intake status say. Plus a fix so the lost draft is said and can be retried in one press. For example, record the brief before drafting and show the failed state with Try again, as 'Change the plan' already does (changeLost)."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "W8-join-1/-2: Work together on an Overview line makes the repository's project (its id and name), moves Site's work, writes only the close of Site's own old status pull request, and has an Undo after restarts",
+   "holds": true,
+   "note": "Walked on the bench: the line, the dialog, the press, two restarts, Undo from Changes, and the press again with the removed row coming back, with 0 GitHub writes. The old-status-pull-request close is covered by the composed http case: writes [comment, pull_request.update] on Site's own pull request only. That case fails with the pre-fix project-join.ts."
+  },
+  {
+   "claim": "W8a-left-6: GitHub off at the press is refused in words with nothing moved, on memory and http, and across a restart",
+   "holds": true,
+   "note": "The bench showed the refusal sentence, the disabled button, the refused press and 0 writes. The two-host case is in two-installs.test.ts:1466, and the UI suite is green."
+  },
+  {
+   "claim": "W8a-left-5 and W8a-left-7: every write is named in the harness log; the together project takes the marker name from the docs pull request's head before it merges",
+   "holds": true,
+   "note": "Tests present and green (two-installs.test.ts:1334, :1501). The 'other' action was removed from the no-write filters at :160 and :753."
+  },
+  {
+   "claim": "W8a-left-22/-27: a branch taken by someone else's pull request is passed over; an inherited branch marker counts for nothing; a 'branches_taken' line shows on the Overview",
+   "holds": true,
+   "note": "Code read (docs.ts scaffoldBranchFor and branchMarkerNames) and tests green. The changed assertions keep 'nothing written to the other pull request' and the restart checks, and the docs pull request now goes on the project's own branch by design."
+  },
+  {
+   "claim": "W8-join-4: chat's Work together through project.create together:true, read back once, with a scanned name and no GitHub write",
+   "holds": true,
+   "note": "Bench: the refusal hint, the read-back, Yes made 'Club' with Ada's id, 0 writes. The exact definition text and record-013 are covered by the real-daemon suite and test:injection, both green."
+  },
+  {
+   "claim": "L4i-left-4: the model's task words are read back and the person's words act at once",
+   "holds": false,
+   "note": "The behaviour works on the bench, but 8 sibling unit tests and the phase 7 e2e gate fail because of it (blocking 1 and 2)."
+  },
+  {
+   "claim": "L4i-left-20: a move names which of two same-titled tasks it moves",
+   "holds": false,
+   "note": "Works on the bench ('(the older one)'), but the W15-37 unit test was not updated: conversation-memory.test.ts:819 fails."
+  },
+  {
+   "claim": "L4i-left-48/-65: Add to it answers at once with drafting; two requests at once give one model call and one card",
+   "holds": true,
+   "note": "Bench: landed in 45 ms with the drafting banner, and a later brief got the 409 sentence. The race case fails with the pre-fix intake.ts."
+  },
+  {
+   "claim": "L4i-left-48 restart case: 'a daemon closed while it drafts leaves no plan half-recorded'",
+   "holds": false,
+   "note": "The test closes the daemon only after the draft has finished (blocking 3)."
+  },
+  {
+   "claim": "Validation: route changes come with a real-daemon case and the fake in the same commit",
+   "holds": true,
+   "note": "cf09c55 (join-preview?together=1) and 2bbd38f (intake background) each change server.ts, client.ts, real-daemon.test.ts and fake-daemon.ts together."
+  },
+  {
+   "claim": "not_done W8-join-3, a cut-line item",
+   "holds": true,
+   "note": "Allowed by the spec. Confirmed that projectIdsOf (repository-words.ts:28) adds joined_from."
+  },
+  {
+   "claim": "Final validation was running at report time",
+   "holds": false,
+   "note": "The fixer's partial check.log (scratchpad/final/check.log) already showed 7 unit failures when the report was written; my full run found 9, plus the e2e gate failure."
+  }
+ ],
+ "non_blocking": [
+  "Acceptance clause 'afterwards B writes no docs or status pull request and its status goes to its own comment on A's issue' is not asserted in the composed two-home case (two-installs.test.ts:1370 ends after Undo). On the bench it holds: Bob's session after the join wrote status issue #2 'Forerunner status: Team site' (he wrote first because Ada had none) and one comment edited only by him with no money or ids, plus his two task pull requests, and no fr/docs-scaffold or fr/status pull request. Worth adding to the case.",
+  "L4i-left-4's read-back 'Add \"Write the FAQ page\" to Team site?' does not show the description the model wrote, though that description is the reason it asks, so the Yes covers words the person never sees (compare L4-selftasks-120's 'Note for its next brief: …' clause). The rule tests the title, the outcome and every criterion word for word against the person's line (saidInLine), so with the real model nearly every task added from chat will be read back. Live check for the lead: at Assisted, ask the chat in natural words to add a task and see whether it asks; then type 'add a task: …' and see that it acts at once.",
+  "The together dialog's GitHub line says 'On GitHub only the old status pull request #N of \"Site\" is closed …', but closeOwnStatusPullRequest also posts OLD_STATUS_PR_LINE as a comment on that pull request (the composed case asserts [comment, pull_request.update]). The sentence promises slightly less than the app writes.",
+  "After Undo, the Changes rows of the join are labelled with the project 'Team site (removed)' (freedName), the other Forerunner's project name plus '(removed)' (07-bob-after-undo.png). This follows the W15-36 pattern but may puzzle the person.",
+  "The together dialog's facts block for Site shows 'Status issue: On' (Site writes no status issue, W8-write-9) and 'Spent so far: CHF 0.00' (a zero figure). These come from the shared projectFacts lines that predate this branch.",
+  "The Undo sentence when no old status pull request existed is '\"Site\" is its own project again.'. It does not say that the together project left this computer, which the person sees only in the project switcher.",
+  "The fixer's concern that the together dialog showed 'Loading the repository's project…' 2 s after opening did not reproduce: it loaded in 84 ms on my bench.",
+  "W8a-left-22 makes the 'blocked' Try again sentence ('another docs pull request is open on o/kite; close it on GitHub') reachable only in rare cases, and the real-daemon case that asserted it was rewritten. That path now has no real-daemon coverage until W8a-left-12 (W8d).",
+  "The onerepo-link UI test 'a second brief meanwhile is refused with the open-plan sentence' asserts only status 409, not the sentence.",
+  "The two-person journey was not reported by the fixer (rule 11). I ran it at head on fresh benches: 19 of 31 pass, no failure outside the known list, 12 known gaps, none owned by w8-together.",
+  "Suggested live checks for the lead (real model): (1) on a computer where a project uses a repository that another person's Forerunner already made its project, press Work together on its Overview line and confirm that only your own old status pull request (if any) is closed on GitHub; (2) in chat say 'add <repo>' and then 'work on it together', and check that the model calls project_create with together true and the read-back appears; (3) Add to it with a real brief, then quit the app while the page says 'Drafting the plan…' and reopen it, and see what the page says."
+ ]
+}

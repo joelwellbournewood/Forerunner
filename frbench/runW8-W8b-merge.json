@@ -1,0 +1,81 @@
+{
+ "merged": [
+  "fix/w8-status-write (8e158a7) -> merge 8de866c, clean",
+  "fix/w8-together (bb7756c, already contains w8-status-write) -> merge 785c6d1, clean",
+  "fix/w8-l4-leftovers (f53c68e) -> merge 25010cf, four conflicts resolved"
+ ],
+ "head_sha": "25010cfc96342743e27b817fc4bbf4acb15a33a8",
+ "pushed": true,
+ "conflicts_resolved": [
+  "Only the third merge (fix/w8-l4-leftovers) had conflicts, and only in the append-only files that the wave 8 shared_files rule names. The fixup report had predicted these conflicts. runner.ts, server.ts, compose.ts, views.ts and api-types.ts merged automatically.",
+  "apps/ui/test/real-daemon.test.ts: both sides appended new describe blocks after the base file's last line (base line 30493), and git split the two appends into three interleaved hunks. I rebuilt the file in three parts: the auto-merged body up to the base's last line (merged lines 1-30654, which includes w8-l4-leftovers' nested describes), then HEAD's appended blocks (w8-together's 'w8-together, wave 8' describes), then w8-l4-leftovers' appended block ('w8-l4-leftovers, wave 8: a review that waits is said one way ...'). That keeps key order. Checks: diff from ours to the result is exactly +296/-5, which matches base to fix/w8-l4-leftovers; diff from theirs to the result is +967/-177, which matches base to HEAD. Every added line of both sides is present.",
+  "docs/maintainers/apps.md, docs/maintainers/runtime.md, docs/user-guide.md: each conflict was two appended dated sections at the same spot. I kept both, HEAD's w8-status-write/w8-together section first and the w8-l4-leftovers section after it. Every added line of both sides is present.",
+  "After resolving, git grep -n '^<<<<<<< ' finds nothing."
+ ],
+ "integration_fixes": [],
+ "validation": [
+  {
+   "command": "git merge --no-edit --no-ff fix/w8-status-write; fix/w8-together; fix/w8-l4-leftovers",
+   "result": "The first two merged cleanly. The third had conflicts in 4 append-only files, resolved by keeping both sides (see conflicts_resolved). No conflict markers are left."
+  },
+  {
+   "command": "pnpm install --frozen-lockfile",
+   "result": "ok (Done in 1.5s)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock env DOCS_CHECK_BASE=origin/claude/nifty-knuth-f9udt0 pnpm check",
+   "result": "exit 0. Lint: 1905 files, 40 warnings, the same count as before. lint:paths and typecheck pass. Unit tests: 573 files, 6417 passed, 7 skipped. docs-check ok (117 files) against origin/claude/nifty-knuth-f9udt0. docs:links ok. secret-scan clean (2309 files)."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration (live keys unset)",
+   "result": "exit 0: 5 files passed, 7 skipped; 30 tests passed, 83 skipped (no FORERUNNER_TEST_PG, as expected)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e (live keys unset)",
+   "result": "exit 0: 13 files; 25 passed, 1 skipped (phase 7 gate green)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock env -u FORERUNNER_ANTHROPIC_API_KEY -u FORERUNNER_TEST_GITHUB_TOKEN -u FORERUNNER_LIVE pnpm --filter @forerunner/live test",
+   "result": "exit 0: 11 files passed, 4 skipped; 63 passed, 17 skipped. Same as the baseline; no keys used."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "exit 0: PASS, 93 cases (66 hostile, 27 controls), 93 passed, 0 failed. This includes w8-together's new record-013-marker-work-together."
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock env -u GIT_* -u <live keys> HOME=<empty dir> FORCE_COLOR=1 pnpm test (CI style; git user.email checked to be unset)",
+   "result": "exit 0: 573 files, 6417 passed, 7 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock env -u GIT_* -u <live keys> HOME=<empty dir> FORCE_COLOR=1 pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 108 files, 1602 passed (real-daemon, two-installs and w8-l4-leftovers included)"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 40 passed (1.3m). The local config is excluded through .git/info/exclude and is not committed."
+  },
+  {
+   "command": "cargo fmt --check / clippy / test in apps/desktop/src-tauri",
+   "result": "Not run, as the step allows: git diff origin/claude/nifty-knuth-f9udt0..HEAD names no file under apps/desktop."
+  },
+  {
+   "command": "node scripts/bench/start.mjs --name merge-w35 --daemon-port 49330 --ui-port 2930 --fresh --provider bench && node scripts/bench/journeys/smoke.cjs merge-w35; node scripts/bench/stop.mjs --name merge-w35 --clean",
+   "result": "smoke 25/25 checks passed, 0 findings, 0 recorded problems; model calls intake 1, specialist 9, critic 6, chat 1. Bench stopped, home removed, steps kept (/tmp/frbench/merge-w35/steps/smoke-result.json)."
+  },
+  {
+   "command": "for c in $(git rev-list origin/claude/nifty-knuth-f9udt0..HEAD); do git cat-file commit $c | grep -q '^gpgsig' || echo unsigned $c; done",
+   "result": "45 commits checked, nothing printed: every commit is signed, the 3 merge commits included"
+  },
+  {
+   "command": "git push -u origin claude/nifty-knuth-f9udt0",
+   "result": "8299aa3..25010cf pushed on the first try; after a fetch, the remote head equals the local head (25010cfc96342743e27b817fc4bbf4acb15a33a8)"
+  }
+ ],
+ "smoke": "25/25 checks passed on bench merge-w35 (stand-in model, --provider bench), 0 findings, 0 recorded problems. The journey script did not need any change. Result: /tmp/frbench/merge-w35/steps/smoke-result.json",
+ "problems_left": [
+  "The merge broke nothing: every suite above is green on 25010cf, and no fix commit was needed after the merge.",
+  "Not run here: the two-person bench journey (scripts/bench/journeys/two-people.cjs) on the merged head. Each area ran it on its own branch (19 of 31, 12 known gaps owned by later areas, none outside the known list), but no one has run it on 25010cf.",
+  "Not run here: the live-only tests and the real-GitHub or real-model checks. The session lead's live checks are in the areas' check_in_the_app steps: the status issue on real GitHub (Quit while a task runs with the network off, lost token access), Work together and chat's 'work on it together' with the real model, Add to it with a Quit mid-draft, L4i-left-59's three policy walks with a low plan allowance, L4i-left-32's key-first walk, and L4i-left-28's 'paused before the project's budget ran out' with a real run.",
+  "Carried from the area reports, unchanged by this merge. w8-status-write: the 'Waiting for Claude' line is not fed by the runner, the 30-minute refresh has no dedicated test, the cloud runner has no status board, and the change dialog's title is lowercased. w8-together: W8-join-3 is not built (a joined project's docs pull requests are not listed as information only); Change the plan or Reject then Draft a new plan on an Add-to plan still drafts from the project's first brief; a Quit mid-draft reads 'planning was stopped before it finished' rather than the crash sentence. w8-l4-leftovers: L4-money-105 (a review-only pass is priced at the whole remaining estimate) and the cut-line items L4i-left-17/19/21/22/23/24/25/26/29/33/49 are open; budget cards filed before the fix keep their old 'paused at' titles; runner.ts was changed outside the two regions the area owns (data lines only)."
+ ]
+}

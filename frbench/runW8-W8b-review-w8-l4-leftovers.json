@@ -1,0 +1,96 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "I ran bench \"review-w8-l4-leftovers\" with the stand-in model (--provider bench, FORERUNNER_BENCH_USAGE=heron:40000), daemon on 49312 and UI on 2912, started from my worktree at fix/w8-l4-leftovers (93b2137). I drove it with a Playwright script in my scratchpad (walk-a.cjs) through the project page's \"Start session\" button and its Start dialog. Screenshots are in /tmp/frbench/review-w8-l4-leftovers/steps/ and a copy is in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/steps-a/. The bench is stopped and its home removed (stop.mjs --clean).\n\n(1) L4i-left-64 and L4i-left-31, project \"Pond notes\":\n- Two ready tasks; \"Write the pond notes\" has a CHF 0.01 budget of its own.\n- Before Start (01-rv-pond-tasks-before-start.png): the plain task's Cost cell has no \"CHF 0.00\". The budgeted task's cell now reads only \"of CHF 0.01 budget\", a fragment; before the fix it read \"CHF 0.00 of CHF 0.01 budget\".\n- After the session, the row, card and log line say '\"Write the pond notes\" is done; its review waits for room in its budget of CHF 0.01'.\n- The session page badge still says \"Ended: 1 paused\" (04-rv-pond-session-page.png), and the log's end line says \"Session over: 1 done, 1 paused. CHF 0.02.\".\n- The Sessions tab row says \"1 done, 1 paused · Ended: 1 paused\" (05-rv-pond-sessions-tab.png).\n- GET /sessions/:id gives statusText \"Ended: 1 paused\". The fixer's own check_in_the_app step (\"Ended: 1 review waits for room\") fails.\n\n(2) L4i-left-28, project \"Bird notes\" with a project budget of CHF 0.06:\n- The heron task stopped hard: CHF 0.03 spent, CHF 0.03 kept for its review.\n- The badge reads \"Ended before the project's budget ran out\" (good).\n- In the same result (09-rv-bird-session-page.png, the Overview's Last result in 11-rv-bird-overview.png) the two lines contradict each other: '\"Write the heron page\" paused at the project's budget of CHF 0.06: ...' and then 'Ended before the project's budget of CHF 0.06 ran out. ... CHF 0.03.'\n- The Sessions row's first line (10-rv-bird-sessions-tab.png) and the Inbox card still say \"paused at the project's budget of CHF 0.06\" with half of it unspent.\n- The notification title is still \"Bird notes: stopped at the project's budget\".\n\n(3) L4i-left-27, project \"Fern notes\" (Assisted mode, autonomy 1):\n- Start files the plan card. It shows \"Approve\" (with \"Starts the session with these tasks, in this order.\") and \"Reject\" (with \"Nothing runs; the tasks stay ready and your next session asks again.\") (14-rv-fern-inbox-plan-card.png).\n- Clicking Approve was accepted (\"Done: You answered \"Approve\".\"), and the session ran to Done (15-rv-fern-after-approve.png).\n\nNot walked on the bench:\n- L4i-left-59 (the three share policies) and L4i-left-32 (the Start dialog and plan card with the API key resting): the bench README says the subscription path is not on the stand-in. I checked both at the composed and real-daemon boundaries instead, see claims.\n- No two-person walk: nothing in this area touches GitHub.\n\nTests:\n- The fixer's runtime tests pass on the branch (9 files, 172 tests).\n- With the src/ files of the branch put back to claude/nifty-knuth-f9udt0 (tests kept), these fail as claimed: the 3 policy cases of critic-review-share.test.ts, the session-status-words cases for -28, -30 and -31, the plan-card test in w8-l4-leftovers.test.ts, and the oversize-pause 'continued' case. The task-own-budget case passes on the base too, as a no-regression case should.\n- The two real-daemon \"w8-l4-leftovers, wave 8\" cases fail on the base daemon code and pass on the fix.\n- The UI w8-l4-leftovers.test.tsx fails on the base TasksTab.\n- A temporary probe added to task-budget-all BA-3 (reverted) shows GET /sessions/:id statusText \"Ended: 1 paused\" and the Sessions row endedWords \"Ended: 1 paused\" for a review-waits task.\n- flock pnpm check: exit 0 (572 files, 6373 passed). UI vitest: 108 files, 1569 passed. docs-check --base claude/nifty-knuth-f9udt0: ok.\n- git merge-tree onto fix/w8-together: only conflicts in the appended docs sections (apps.md, runtime.md, user-guide.md); runner.ts, server.ts and compose.ts merge cleanly.",
+ "blocking": [
+  {
+   "issue": "L4i-left-31 is claimed fixed, but the person still reads 'paused' everywhere the session's end is shown. Only a unit test of blockedOfHandoff and endedStatusText asserts the new words (validation rules 1 and 2). GET /sessions/:id and the Sessions list pass `stillBlocked(rt.store, s.handoff)` as blockedNow (server.ts:2362, :1928, :1949). `stillBlocked` (views.ts:693-712) does not read handoff.review_waits, so endedStatusText gets {needYou, paused} with no reviewWaits. The Sessions row's count words ('1 done, 1 paused'), stillWaitsText and the log's end line 'Session over: 1 done, 1 paused.' were not changed either. The user guide's new paragraph promises that a task whose review waits 'says so in every place', which is not true.",
+   "where": "packages/runtime/src/daemon/views.ts:693",
+   "evidence": "Bench: 04-rv-pond-session-page.png has badge 'Ended: 1 paused' and log 'Session over: 1 done, 1 paused. CHF 0.02.', beside the row 'Done; its review waits for room in its budget of CHF 0.01'. 05-rv-pond-sessions-tab.png has '1 done, 1 paused · Ended: 1 paused'. GET /sessions/:id statusText = 'Ended: 1 paused'. Composed probe on task-budget-all BA-3 (reverted): s.statusText 'Ended: 1 paused', the list row's endedWords 'Ended: 1 paused', countsWords '1 done, 1 paused'.",
+   "expected": "Either the session page badge, the Sessions row (end words and counts) and the log's end line say the review waits ('Ended: 1 review waits for room' or one chosen form), with stillBlocked and stillWaitsText counting review_waits apart and a composed or real-daemon case that asserts GET /sessions/:id statusText and the Sessions row as exact text. Or the item moves to not_done and the user-guide sentence is withdrawn."
+  },
+  {
+   "issue": "L4i-left-28 (never cut) does not meet its acceptance for a hard stop at an outer limit, and the fix makes the result contradict itself. Only the session-level sentence changed. The task-level words for a run that hit its cap under the project's budget (less the review's reserve) still say 'paused at the project's budget of CHF 0.06' with half of it unspent. That is the same false impression the item names ('Stopped at the project's budget of CHF 0.06. CHF 0.04.'). It shows in the result's first line, the session's task row, the Sessions row's first line, the Overview's Needs you and Next, and the Inbox card. The result now reads '... paused at the project's budget of CHF 0.06 ... Ended before the project's budget of CHF 0.06 ran out. ... CHF 0.03.' The notification title (notifications/producers.ts:423) still says 'stopped at the project's budget'. The fixer's tests cover only the wrap-up path (the month's cap, where the task line already said 'paused before ... ran out'). The acceptance asks for 'exact text, real-daemon and UI', and there is no UI case.",
+   "where": "packages/runtime/src/session/result.ts:276 (session line changed); the task 'paused at <limit>' words in the budget-pause, session-list and notification producers",
+   "evidence": "Bench project 'Bird notes' (budget CHF 0.06). Log: '\"Write the heron page\" stopped at the project's budget of CHF 0.06, less the CHF 0.03 kept for its review: it spent CHF 0.03 ...'. Summary: '\"Write the heron page\" paused at the project's budget of CHF 0.06: it is ready again once you raise that budget, for your next Start.\\nEnded before the project's budget of CHF 0.06 ran out. \"Write the owl page\" is ready to continue. CHF 0.03.' Screens 09-rv-bird-session-page.png and 11-rv-bird-overview.png. Sessions row in 10-rv-bird-sessions-tab.png: '\"Write the heron page\" paused at the project's budget of CHF 0.06. · 1 paused · Ended before the project's budget ran out · CHF 0.03'. Notification: 'Bird notes: stopped at the project's budget'.",
+   "expected": "Under an outer limit with budget unspent, the result, the Sessions row (its first line included), the task row, the card and the notification say the run stopped before the limit, in one wording. For example, the hard stop names what was left after the review's reserve rather than 'paused at the project's budget of CHF 0.06'. Each needs an exact-text composed case for the hard-stop path, the real-daemon case and a UI assertion, as the acceptance says."
+  },
+  {
+   "issue": "Regression from the L4i-left-64 fix: a task with its own budget that has spent nothing now shows a fragment in the Cost cell. TasksTab now hides <Money> at zero, but TaskCap's text ('of ${budget} budget', TasksTab.tsx:97) was written to follow the amount. The new UI test uses a fixture task without a budget, so it does not see this.",
+   "where": "apps/ui/src/pages/project/TasksTab.tsx:97 (and :565-570)",
+   "evidence": "Bench 01-rv-pond-tasks-before-start.png: the row 'Write the pond notes' (Ready, budget CHF 0.01) has the Cost cell 'of CHF 0.01 budget'. Before the fix it read 'CHF 0.00 of CHF 0.01 budget'.",
+   "expected": "A budgeted task that has spent nothing shows a cap line that reads on its own, for example 'CHF 0.01 budget' (design section 5: one sentence read at a glance), with a UI test on a budgeted, unspent task. The task drawer's 'spent CHF 0.00' (TaskDrawer.tsx:158) is the sibling (validation rule 8)."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "L4i-left-59: a critic review that meets the subscription's share follows the policy: 'then the API key' goes on on the key, 'ask' gives one card and holds through a restart, 'wait' waits for 1 Dec through a restart, and the task's own budget binds first",
+   "holds": true,
+   "note": "critic-review-share.test.ts: 3 policy cases fail on base src and pass on the fix; the task-budget case passes on both, as a no-regression case should. Not walkable on the bench (no subscription on the stand-in). The 'then the API key' case checks the task's and session's spend but not the person's spend line or Costs the acceptance names. Untested edge: key first with the key resting and the subscription's share met. shareGoesOn's peek returns 'subscription', so if waitNow returns null the old budget pause comes back."
+  },
+  {
+   "claim": "L4i-left-28: outer-limit status and result say 'Ended before <limit> ran out'",
+   "holds": false,
+   "note": "The session badge and result line changed and are tested (unit, composed, real-daemon month's cap). The hard-stop path still says 'paused at the project's budget of CHF 0.06' in the result, Sessions row, task row and card, and now contradicts the next sentence. The notification title still says 'stopped at'. No UI test."
+  },
+  {
+   "claim": "L4i-left-30: no 'this session's CHF X was used' while room is left",
+   "holds": true,
+   "note": "session-status-words case fails on base and passes on the fix. The 'completed with room' stop reason is covered by the same condition but not tested."
+  },
+  {
+   "claim": "L4i-left-32: Start dialog and plan card name what waits for the resting key and give no figure for it",
+   "holds": true,
+   "note": "Both real-daemon cases fail on base daemon code and pass on the fix. The plan-card test branches on the plan's make-up and only takes the all-tasks-wait branch, so the mixed foot line ('... meanwhile. \"X\" waits for your API key.') is untested. Not walked on the bench."
+  },
+  {
+   "claim": "L4i-left-58 / L4-money-110: the run that goes on after a pause keeps its person line with its CHF",
+   "holds": true,
+   "note": "oversize-pause case fails on base and passes on the fix. session-log-person.test.ts stays green. continuesPause does not leak to critic retries, which are rebuilt by the re-plan."
+  },
+  {
+   "claim": "L4i-left-31: 'Ended: 1 review waits for room'; one wording for a done task whose review waits",
+   "holds": false,
+   "note": "Only the unit function changed. GET /sessions/:id, the Sessions row and the log's end line still say 'paused' (bench and composed probe)."
+  },
+  {
+   "claim": "L4i-left-27: the plan card says Approve and Reject, each with one line; the stored answers stay",
+   "holds": true,
+   "note": "Unit test fails on base. Bench: both buttons with their lines; clicking Approve is accepted by POST /requests/:id/answer and the session ran."
+  },
+  {
+   "claim": "L4i-left-64: a task that spent nothing shows no CHF 0.00",
+   "holds": false,
+   "note": "Holds for a task without a budget (UI test fails on base, passes on the fix). A budgeted task now shows the fragment 'of CHF 0.01 budget'. The drawer still says 'spent CHF 0.00'."
+  },
+  {
+   "claim": "W8a-left-9: testing.md bullet split into whole sentences",
+   "holds": true,
+   "note": "Read; docs-check --base passes."
+  },
+  {
+   "claim": "Validation: pnpm check, UI vitest suite and docs-check pass",
+   "holds": true,
+   "note": "Rerun here. pnpm check exit 0 (6373 passed, 7 skipped); UI 1569 passed; docs-check ok. I did not rerun integration, e2e or Playwright."
+  },
+  {
+   "claim": "Tests changed only for design, none weakened",
+   "holds": true,
+   "note": "Every removed assertion is replaced by the new exact text with the same intent. Nothing is skipped or deleted."
+  },
+  {
+   "claim": "not_done items each have a reason",
+   "holds": true,
+   "note": "All 20 items are covered (fixed or not_done). L4-money-105 was not on the spec's cut line ('-105 and -110 ... do them first'), but its reason (runner.ts priceNow is outside this area's regions) holds under the wave 8 shared_files rule."
+  }
+ ],
+ "non_blocking": [
+  "runner.ts was changed outside the two regions shared_files gives this area. The wave 8 rule says 'w8-l4-leftovers owns reviewStopSource (:1071-1088) and the critic review's budget stop (:3295-3340) for L4i-left-59, the one exception to the rule that the run L4 leftovers areas change words only through stop-words.ts and result.ts, never runner'. The branch adds PlanItem.continuesPause, the task.finished 'continued' field, the in-session continue's queue item, handoff.review_waits and endedNote's reviewWaits. It auto-merges onto fix/w8-together, but the report gives this same rule as the reason for not doing L4i-left-24 and L4-money-105. The L4i-left-59 fix itself is in loop/critic.ts and review-refusal.ts, not in reviewStopSource.",
+  "The real-daemon plan-card case asserts one of two exact texts depending on the stand-in's plan, so the mixed foot line is untested. Pin the plan, for example a writer task plus a coder task.",
+  "waitingTasksNow (compose.ts:4391) now runs eagerly on every GET start-check and calls taskBilling.pick for every ready task. The old waitsNow probe ran lazily, only in the 'next' branch. pick only reads, but it logs 'billing source picked' once per ready task on every Start dialog open.",
+  "The new user-guide paragraph ('says so in every place') overstates L4i-left-31 until blocking item 1 is fixed.",
+  "Task drawer 'spent CHF 0.00' for an unspent task (TaskDrawer.tsx:158): a sibling of L4i-left-64.",
+  "The fixer made no BEFORE bench walk and one AFTER screenshot. The area's acceptance asks for walks before and after.",
+  "L4i-left-31's only test asserts internal functions (blockedOfHandoff, endedStatusText) without a visible-result assertion (validation rule 2).",
+  "For final_check_additions: the L4i-left-59 policy walks and the L4i-left-32 key-first walk need the real subscription and key. The fixer's check_in_the_app steps for them read correctly, but the L4i-left-31 step ('Ended: 1 review waits for room') would fail today."
+ ]
+}

@@ -1,0 +1,124 @@
+diff --git a/apps/ui/test/real-daemon.test.ts b/apps/ui/test/real-daemon.test.ts
+index e2be3df..b08fce8 100644
+--- a/apps/ui/test/real-daemon.test.ts
++++ b/apps/ui/test/real-daemon.test.ts
+@@ -30957,10 +30957,16 @@ describe("w8-together, wave 8: Add to it answers at once and plans in the backgr
+   const homes: string[] = [];
+   afterAll(() => removeHomes(homes));
+ 
++  /** The stand-in model on `dir`'s call log. */
++  const playerOn = (dir: string) =>
++    createRolePlayer(
++      benchOptionsFromEnv(
++        { FORERUNNER_BENCH_DELAY_MS: "0" },
++        new ModelCallLog({ file: join(dir, "model-calls.jsonl") }),
++      ),
++    );
+   /** A daemon on `dir` with the stand-in model, composed again on the same home for a restart. */
+-  async function open(dir: string) {
+-    const log = new ModelCallLog({ file: join(dir, "model-calls.jsonl") });
+-    const provider = createRolePlayer(benchOptionsFromEnv({ FORERUNNER_BENCH_DELAY_MS: "0" }, log));
++  async function open(dir: string, provider: ReturnType<typeof createRolePlayer> = playerOn(dir)) {
+     const rt = await composeRuntime({
+       env: { FORERUNNER_HOME: dir },
+       dirs: appDirs({ env: { FORERUNNER_HOME: dir } }),
+@@ -31070,4 +31076,99 @@ describe("w8-together, wave 8: Add to it answers at once and plans in the backgr
+       await rt.close();
+     }
+   }, 90_000);
++
++  // fixup-w8-together (review blocking 3; validation rule 4): Quit while the plan of an Add to
++  // brief is drafted. Before, the brief lived only in memory: after the restart the page said
++  // nothing ('none'), no plan came and no Try again was offered, where the old synchronous
++  // dialog had kept the brief and shown the error.
++  it("a daemon closed while the plan of an Add to brief is drafted: after a restart, twice, the page says it was not drafted and Try again drafts it from the same brief", async () => {
++    const dir = mkdtempSync(join(tmpdir(), "fr-ui-real-w8-intake-lost-"));
++    homes.push(dir);
++    const BRIEF = "A shop page with three products and a contact form.";
++    const LOST = "Forerunner closed before the plan from your brief was drafted.";
++    // The planning call is held until the daemon is gone, then fails as a dead process would.
++    let reached!: () => void;
++    const atModel = new Promise<void>((r) => {
++      reached = r;
++    });
++    let gone!: () => void;
++    const closed = new Promise<void>((r) => {
++      gone = r;
++    });
++    const held = playerOn(dir);
++    const stream = held.stream.bind(held);
++    held.stream = (req) =>
++      detectRole(req).role !== "intake"
++        ? stream(req)
++        : {
++            [Symbol.asyncIterator]: () => ({
++              next: async (): Promise<IteratorResult<never>> => {
++                reached();
++                await closed;
++                throw new Error("the daemon is gone");
++              },
++            }),
++          };
++    let { rt, client } = await open(dir, held);
++    let projectId = "";
++    try {
++      const project = await client.createProject({ name: "Shop", goal: "A shop" });
++      projectId = project.id;
++      const at = await client.proposeIntakeInBackground(project.id, { brief: BRIEF });
++      expect(at.state).toBe("drafting");
++      await atModel;
++      expect((await client.intakeStatus(project.id)).state).toBe("drafting");
++      await rt.close();
++    } finally {
++      gone();
++    }
++    // Composed twice: the brief's lost draft is said each time, and nothing is half-recorded.
++    for (let i = 0; i < 2; i++) {
++      ({ rt, client } = await open(dir));
++      try {
++        const status = await client.intakeStatus(projectId);
++        expect(status.state, `compose ${i + 2}`).toBe("failed");
++        expect(status.error, `compose ${i + 2}`).toBe(LOST);
++        expect(await intakeCards(rt, projectId)).toHaveLength(0);
++        // The project's card (Home, the project list) says the same.
++        const card = (await client.projects()).find((p) => p.id === projectId);
++        expect(card?.plan).toBe("failed");
++        expect(card?.planError).toBe(LOST);
++      } finally {
++        await settleSessions(rt);
++        await rt.close();
++      }
++    }
++    // Try again drafts it from the person's brief, in one press.
++    const asked: ModelRequest[] = [];
++    const player = playerOn(dir);
++    const plain = player.stream.bind(player);
++    player.stream = (req) => {
++      if (detectRole(req).role === "intake") asked.push(req);
++      return plain(req);
++    };
++    ({ rt, client } = await open(dir, player));
++    try {
++      const again = await client.retryIntake(projectId);
++      expect(again.state).toBe("drafting");
++      await rt.intake.inFlight(projectId)?.catch(() => undefined);
++      const after = await client.intakeStatus(projectId);
++      expect(after.state).toBe("pending");
++      expect(after.error).toBeNull();
++      expect(await intakeCards(rt, projectId)).toHaveLength(1);
++      expect(asked).toHaveLength(1);
++      expect(JSON.stringify(asked[0]?.messages)).toContain(BRIEF);
++    } finally {
++      await settleSessions(rt);
++      await rt.close();
++    }
++    // Filed: a restart now says the plan waits, not the lost draft.
++    ({ rt, client } = await open(dir));
++    try {
++      expect((await client.intakeStatus(projectId)).state).toBe("pending");
++    } finally {
++      await settleSessions(rt);
++      await rt.close();
++    }
++  }, 120_000);
+ });

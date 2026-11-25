@@ -1,31 +1,14 @@
-// Screenshot pages as a person sees them. Usage: node shot.cjs <repo> <bench> <label> <path> [<path> ...]
-// A path may end with "#details" to press Details on the page first, or "#answered" to open the
-// Inbox's Answered list.
-const path = require("node:path");
-const [repo, n, label, ...paths] = process.argv.slice(2);
-const R = require(path.join(repo, "scripts/bench/recorder.cjs"));
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// node shot.cjs <bench> <path> <label>
+const R = require(process.env.REPO + "/scripts/bench/recorder.cjs");
 (async () => {
-  const { browser, page } = await R.openApp(n, { freshProfile: true });
+  const [name, p, label] = process.argv.slice(2);
+  const { browser, page } = await R.openApp(name);
   try {
-    await R.skipSetup(page).catch(() => {});
-    let i = 0;
-    for (const p of paths) {
-      i++;
-      const [route, hash] = p.split("#");
-      await page.goto(`${R.bench(n).uiUrl}${route}`);
-      await sleep(3000);
-      if (hash === "details") {
-        await page.getByRole("button", { name: "Details" }).first().click().catch(() => {});
-        await sleep(1500);
-      }
-      if (hash === "answered") {
-        await page.getByText(/^Answered \(/).first().click().catch(() => {});
-        await sleep(1000);
-      }
-      const text = await R.step(page, `${label}-${i}`);
-      console.log(`===== ${p}\n${text}`);
-    }
+    await page.goto(`${R.bench(name).uiUrl}${p}`, { waitUntil: "domcontentloaded" });
+    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => undefined);
+    await R.skipSetup(page).catch(() => undefined);
+    const text = await R.step(page, label, { settleMs: 3000 });
+    console.log(text.slice(0, 2500));
   } finally {
     await browser.close();
   }

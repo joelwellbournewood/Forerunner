@@ -1,0 +1,172 @@
+{
+ "area": "w8-together",
+ "branch": "fix/w8-together",
+ "head_sha": "bb7756c779c977edf34eca009160f404699eee01",
+ "commits": [
+  {
+   "sha": "710b412",
+   "subject": "test: the chat-task siblings and the phase 7 gate follow the person's-words rule (L4i-left-4, L4i-left-20) [left by the interrupted first fix-up; verified here, not redone]"
+  },
+  {
+   "sha": "c404a02",
+   "subject": "intake: a plan drafted in the background survives a Quit and keeps its brief (L4i-left-48)"
+  },
+  {
+   "sha": "0b5bf85",
+   "subject": "together: the dialog's GitHub line names the closing line; the afterwards clause and the 409 sentence are asserted (W8-join-1, W8-join-2, L4i-left-48)"
+  },
+  {
+   "sha": "7328438",
+   "subject": "docs: a plan drafted in the background survives a Quit, as the bench walk showed both paths (L4i-left-48)"
+  },
+  {
+   "sha": "bb7756c",
+   "subject": "test: chat-depth's person-words line formatted as biome prints it (L4i-left-4)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Review blocking 1: pnpm test was red. Nine runtime unit tests were siblings of L4i-left-4 (a task the model worded is now read back) and L4i-left-20 (a move read-back now tells two same-titled tasks apart), and none had been updated.",
+   "u_ids": [
+    "L4i-left-4",
+    "L4i-left-20"
+   ],
+   "failing_test_before": "packages/runtime/test/conversation-memory.test.ts (:819 W15-37, :1300, :1431, :1463), chat-depth.test.ts (:269, :1086), chat-recall.test.ts:1426, chat-guard.test.ts:683, closeout-conversation.test.ts:299 (O.8)",
+   "how": "Commit 710b412 was left by the interrupted first fix-up. I checked it and did not redo it. Each case keeps its intent. Where the change must act at once, the person's line now gives the task in the person's own words. W15-37 asserts the exact new read-back 'Redo \"Write the guide\" (#18)?'. In O.8 a hand-over of real work as a draft task is read back first, as the L4h-left-1 rule says; the test answers Yes and keeps its old asserts. task.create's read-back for a draft says so: 'Add \"Compare the three renderers\" to Game as a draft (no session picks it up)?'. My commit bb7756c only formats chat-depth.test.ts, which lint failed on at 7328438. After it, the 5 files pass 177/177 and pnpm check passes (unit tests 571 files, 6402 tests).",
+   "check_in_the_app": "At Assisted, type a task in your own words in chat (for example 'add a task: Write the FAQ'): it is added at once with Undo. Ask the chat in ordinary words to add a task it has to word itself: the card asks 'Add \"...\" to <project>?', and nothing is added before Yes. Make two tasks both called 'Write the guide' and say 'pause Write the guide (the older one)': the read-back is 'Pause \"Write the guide\" (the older one)? ...'."
+  },
+  {
+   "problem": "Review blocking 2: pnpm test:e2e was red. In the phase 7 release gate, the plain-language UI change now got a read-back instead of a task, and the gate's two later cases failed after it.",
+   "u_ids": [
+    "L4i-left-4"
+   ],
+   "failing_test_before": "tests/e2e/scenarios/phase7-gate.integration.test.ts (3 cases)",
+   "how": "Done in 710b412, verified here. J now answers the read-back Yes, the task is J's ('Added by you'), and the later clause counts approval rows from its own start. pnpm test:e2e passes: 13 files, 25 tests.",
+   "check_in_the_app": "Same as L4i-left-4 above."
+  },
+  {
+   "problem": "Review blocking 3: Add to it's brief lived only in memory while its plan was drafted. After a crash, the page said nothing ('none': no plan, no 'Planning failed', no Try again). After the app's Quit, the page showed 'Planning failed: planning was stopped before it finished.', or an older failure, and Try again drafted from the project's first brief. The old synchronous dialog had kept the brief and shown the error. The real-daemon case named 'a daemon closed while it drafts' only closed the daemon after the draft had finished.",
+   "u_ids": [
+    "L4i-left-48"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'a daemon closed while the plan of an Add to brief is drafted: after a restart, twice, the page says it was not drafted and Try again drafts it from the same brief' (compose 2: received 'none', expected 'failed'). I checked it by putting the pre-fix intake.ts back.",
+   "how": "IntakeService.enqueue now writes summary_cache.intake = {drafting_at, brief?} before the planning call and before the repository copy, for any draft from a brief (a draft with changes is left alone: its answered card keeps the changes). The write is draftRecord: one store transaction, read again on a version conflict, and it never throws. A filed card, or an open card that stands for the draft, removes the record (draftEnded, also called in proposeNow). A failure or a credential wait keeps the brief (recordFailure). status() answers 'failed' with DRAFT_LOST_WORDS when a record has drafting_at, no job of this daemon runs it, and no card was filed after it. DRAFT_LOST_WORDS is 'Forerunner closed before the plan from your brief was drafted.' (session/intake-words.ts). The banner then reads 'Planning failed: Forerunner closed before the plan from your brief was drafted.' with Try again, and a project with no tasks gets the planning_failed line with Try again. retry() drafts from the kept brief. In the test, the stand-in holds the planning call until the daemon is gone; after two restarts it asserts the status, the banner line, the project line and that no card exists; then Try again drafts from the brief (not from the first one) and files one card, and a further restart reads pending. The misnamed earlier case is renamed and now asserts the one card exactly.",
+   "check_in_the_app": "Live check. Make a project here on a repository with a brief. Then New project on the same repository with a different brief, press Add to it, and the page says 'Drafting the plan from your brief…'. Quit Forerunner from the tray and open it again: the project page says 'Planning failed: planning was stopped before it finished.' with Try again. Press Try again: the plan card in the Inbox is planned from the Add to brief (its tasks fit that brief, not the first one). Repeat, but end the process in Task Manager while it drafts: the page says 'Planning failed: Forerunner closed before the plan from your brief was drafted.' with Try again, and Try again drafts from the Add to brief."
+  },
+  {
+   "problem": "Siblings of blocking 3, same root cause (validation rule 8). (a) An Add to brief whose plan failed was drafted again by Try again from the project's first brief. (b) An Add to brief whose plan waited at a usage limit, or for a refused key, was drafted from the first brief when the credential served again, also after a restart. (c) A new project's plan (New project with a brief) cut off by a crash left 'No tasks yet', and the plan never came.",
+   "u_ids": [
+    "L4i-left-48"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'an Add to brief whose plan failed, and a new project's plan cut off by a Quit, are each drafted again from their own brief by Try again' (Try again's planning call carried the first brief); packages/runtime/test/credential-limits.test.ts 'an Add to brief whose plan waits at a usage limit is drafted from that brief at the reset, after a restart too' (the call at the reset carried the first brief)",
+   "how": "The same record. recordFailure keeps the brief beside failed_at, error and wait. retry() uses the kept brief, and the compose wake for a credential wait goes through retry. Because enqueue writes the record, a POST /projects draft with intake: true is covered as well. In credential-limits.test.ts, world() now also returns its ScriptedProvider ('scripted') so the test can read what the model was asked.",
+   "check_in_the_app": "Live check: Add to it with a brief while the key has hit its limit. The page says planning waits until the reset, and at the reset the plan card is planned from the Add to brief. On the bench: FORERUNNER_BENCH_INTAKE=error, then Add to it, then Try again; in the model-call log, the second intake call carries the Add to brief."
+  },
+  {
+   "problem": "Review non-blocking items for this area. (1) The together dialog's GitHub line said only that Site's old status pull request is closed, but closeOwnStatusPullRequest also posts a comment on it. (2) The acceptance clause 'afterwards B writes no docs or status pull request and its status goes to its own comment on A's issue' was asserted nowhere. (3) The UI test of a second brief while Add to it drafts asserted only the 409, not its sentence.",
+   "u_ids": [
+    "W8-join-1",
+    "W8-join-2",
+    "L4i-left-48"
+   ],
+   "failing_test_before": "The three assertions of the GitHub line (apps/ui/test/two-installs.test.ts, real-daemon.test.ts, onerepo-join.test.tsx) failed until the words changed. The new two-home case passed at once: the behaviour was already right, only unasserted.",
+   "how": "togetherGithubLine now reads 'On GitHub only the old status pull request #N of \"Site\" is closed, with one line saying why; nothing of the other Forerunner is touched.' (old: '... is closed; nothing of the other Forerunner is touched.'). The user guide follows. New http case in two-installs 'w8-together, wave 8': Ada's session opens the status issue, Bob presses Work together and runs a session in the together project. It asserts that Bob's new pull requests are only that project's task pull requests (none on fr/docs-scaffold*, fr/status or fr/intake), that he opens no issue, that his status is one comment of his on Ada's issue, and that Ada's comment and pull requests are untouched. onerepo-link asserts the 409 sentence 'A plan for \"Atlas\" is being drafted; answer it once it waits in your Inbox.'",
+   "check_in_the_app": "Live check, two installs on one repository. Bob has a project with an old status pull request from an earlier version. Press Work together: the dialog's GitHub line names the pull request and says 'with one line saying why'. After the join, Bob's session leaves one comment on Ada's status issue and opens only task pull requests."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "W8-join-3: docs pull requests of a project joined into a together project are not listed as information only (from the fixer's not_done).",
+   "why": "A cut-line item, out of this fix-up's scope (the review's blocking findings only). projectIdsOf (packages/runtime/src/sources/repository-words.ts:28) still counts joined_from's pull requests as the together project's own."
+  },
+  {
+   "problem": "Review non-blocking items not taken: L4i-left-4's read-back does not show the description the model wrote; after Undo, the Changes rows are labelled 'Team site (removed)'; the facts block shows 'Status issue: On' and 'Spent so far: CHF 0.00'; the Undo sentence does not say that the together project left this computer; the 'blocked' Try again sentence has no real-daemon coverage.",
+   "why": "These are design and words choices beyond the blocking findings, and most predate this branch (shared projectFacts lines, the W15-36 pattern). Changing the L4i-left-4 read-back would change every task read-back assertion. They are listed under new_problems for the session lead."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock heavy.lock env DOCS_CHECK_BASE=claude/nifty-knuth-f9udt0 pnpm check (at bb7756c)",
+   "result": "exit 0, 653 s: lint, lint:paths, typecheck, unit tests (571 files, 6402 passed, 7 skipped), docs-check ok (85 files), docs:links, secret-scan clean"
+  },
+  {
+   "command": "flock heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped (no FORERUNNER_TEST_PG, expected); 30 passed, 83 skipped"
+  },
+  {
+   "command": "flock heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files, 25 passed, 1 skipped (the phase 7 gate is green)"
+  },
+  {
+   "command": "flock heavy.lock pnpm test:injection",
+   "result": "exit 0"
+  },
+  {
+   "command": "flock heavy.lock (cd apps/ui && npx vitest run --config vitest.config.ts)",
+   "result": "107 files, 1596 tests passed"
+  },
+  {
+   "command": "flock heavy.lock (cd apps/ui && npx playwright test --config playwright.local.config.ts)",
+   "result": "40 passed"
+  },
+  {
+   "command": "failing first: the pre-fix intake.ts (710b412) put back over the new tests",
+   "result": "real-daemon lost-draft case failed (compose 2: 'none', expected 'failed'); sibling case failed (Try again planned from the first brief); credential-limits case failed (the call at the reset carried the first brief). With the fix: 4 of 4 in the real-daemon describe and 82 of 82 in credential-limits plus the intake tests pass."
+  },
+  {
+   "command": "flock heavy.lock npx vitest run --project unit on the 5 sibling files named in blocking 1",
+   "result": "177 passed"
+  },
+  {
+   "command": "bench walk BEFORE (pre-fix intake.ts) and AFTER, stand-in model and stand-in GitHub, FORERUNNER_BENCH_DELAY_MS=7000, script scratchpad/fixup-b3-walk.cjs: Add to it from New project, then a daemon restart while it drafts, a second restart, then Try again",
+   "result": "BEFORE, Quit: 'Planning failed: planning was stopped before it finished.' BEFORE, crash: the page showed the earlier failure, and Try again's planning call did not carry the Add to brief (false). AFTER, Quit: the same sentence, and Try again carries the Add to brief (true). AFTER, crash: 'Planning failed: Forerunner closed before the plan from your brief was drafted.' with Try again, also after the second restart; Try again carries the Add to brief, and the plan waits in the Inbox. Bench stopped and cleaned."
+  },
+  {
+   "command": "two-person journey (scripts/bench/journeys/two-people.cjs) on fresh benches fixup-w8-together and fixup-w8-together-bob",
+   "result": "exit 0: 19 of 31 pass, no failure outside the known list, 12 known gaps, none passing that was marked known. Benches stopped, homes removed."
+  },
+  {
+   "command": "cargo checks",
+   "result": "not run: the desktop shell did not change"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/b3walk/shots/03-before-3-after-restart.png",
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/b3walk/shots/07-before-hard-3-after-restart.png",
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/b3walk/shots/11-before-hard-7-inbox-plan-card.png",
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/b3walk/before-hard.log"
+  ],
+  "after": [
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/b3walk/shots/02-after-2-landed-drafting.png",
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/b3walk/shots/03-after-3-after-restart.png",
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/b3walk/shots/10-after-hard-3-after-restart.png",
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/b3walk/shots/11-after-hard-4-after-second-restart.png",
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/b3walk/shots/13-after-hard-6-plan-waits.png",
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/b3walk/after-hard.log"
+  ]
+ },
+ "new_problems": [
+  "The app's Quit (POST /shutdown, kill.stop(\"all\", QUIT_REASON)) stops the planning call before the store closes. The page after a Quit therefore reads 'Planning failed: planning was stopped before it finished.', not the crash sentence; this is the 'killed' words of intakeFailureWords, which cannot tell a Quit from Stop now. Bench evidence: scratchpad/b3walk/after.log. The brief is kept and Try again works either way. Whether a Quit should read 'Forerunner closed before the plan from your brief was drafted.' is a words choice for the session lead.",
+  "Pre-existing, not caused by this branch: Change the plan, and Reject followed by Draft a new plan, on a plan drafted from an Add to brief still draft from the project's first brief. A filed card does not keep its brief. proposeNow uses opts.brief ?? summary_cache.brief; Change the plan's enqueue (intake.ts, the 'changed' answer) passes only {changes, read}; retry from 'rejected' passes {}. A fix would keep the brief on the card (change_card.brief) and draft from it.",
+  "The stand-in's plan does not depend on the brief, so on the bench the right brief shows only in the model-call log, never on the card. The live check should confirm the card's tasks fit the Add to brief.",
+  "Suggested CHANGELOG/UPDATE-LOG line (not edited here): 'A plan Add to it drafts in the background survives a Quit or a crash: the project page says it was not drafted, with Try again, and Try again (or the draft after a Claude limit) uses the brief you gave, not the project's first one.'"
+ ],
+ "notes_for_other_areas": [
+  "summary_cache.intake now also holds drafting_at (ISO; written by IntakeService.enqueue before the planning call for a draft from a brief, removed once a card is filed) and brief (the brief a background draft was given; kept with failed_at/error/wait on a failure or a wait). Only IntakeService reads it (status, retry). w8-status-read: the GitHub read you add before planning in the background path runs after this record is written, so a failure or Quit during it is said and retried the same way. Use draftRecord/draftEnded, never a plain overwrite of summary_cache.intake.",
+  "New sentence: DRAFT_LOST_WORDS = 'Forerunner closed before the plan from your brief was drafted.' (packages/runtime/src/session/intake-words.ts); the banner reads 'Planning failed: Forerunner closed before the plan from your brief was drafted.' and the project line reads 'Planning failed: Forerunner closed before the plan from your brief was drafted' with Try again.",
+  "Changed sentence: togetherGithubLine (join-words.ts). Old: 'On GitHub only the old status pull request #N of \"Site\" is closed; nothing of the other Forerunner is touched.' New: 'On GitHub only the old status pull request #N of \"Site\" is closed, with one line saying why; nothing of the other Forerunner is touched.'",
+  "packages/runtime/test/credential-limits.test.ts world() now also returns scripted (the ScriptedProvider behind the Messages API stand-in) so a test can read what a credential-served call asked.",
+  "ADR 0117 has a dated amendment (2026-11-25, w8-together fix-up) for the draft record. docs/maintainers/runtime.md (Add to it paragraph) and docs/user-guide.md (the Add to it paragraph) describe both the Quit and the crash path."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'two first-plan requests at once make one model call and one card; a daemon closed while it drafts leaves no plan half-recorded'",
+   "why": "Renamed to '... a plan filed before a restart is the one card after it'. It waited for the draft to finish before closing, so its either-or branch never saw a Quit mid-draft. It now asserts exactly one card and pending after the restart, which is stronger. The mid-draft Quit has its own case."
+  },
+  {
+   "test": "apps/ui/test/two-installs.test.ts 'http: W8-join-1, -2 ...', apps/ui/test/real-daemon.test.ts (W8-join-2 preview), apps/ui/test/onerepo-join.test.tsx (the together dialog)",
+   "why": "The together dialog's GitHub line now also says that one closing comment is posted, which the app does. The intent is kept: only Site's own old status pull request is written to."
+  }
+ ]
+}

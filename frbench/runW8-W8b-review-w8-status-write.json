@@ -1,0 +1,129 @@
+{
+ "verdict": "fix-needed",
+ "acceptance_walk": "Worktree detached at fix/w8-status-write c93e6e4, pnpm install, local Playwright config copied (not committed). Two benches from this worktree on one stand-in GitHub, provider bench only: review-w8-status-write (Ada, daemon 49310, UI 2910, stand-in on 49312, --users ada,bob --org team) and review-w8-status-write-bob (Bob, 49311/2911, sharing that stand-in). Both are stopped now, and their home and browser-profile folders are deleted. Steps and screens are kept under /tmp/frbench/review-w8-status-write{,-bob}/steps/.\n\n1) Two-person journey (scripts/bench/journeys/two-people.cjs): 19 of 31 checks pass, no failure outside the known list, 12 known gaps owned by later areas (/tmp/frbench/review-w8-status-write/steps/two-people-result.json). This matches the fixer's count. 'one-status-issue', 'two-status-comments' and 'status-words-offline' pass.\n\n2) I read the stand-in directly. There is one open issue, #2 'Forerunner status: Team site', with the label forerunner:status. Its body starts with the K marker and holds the lead sentence plus both writers' lines between the status-quote markers. Ada wrote comment 1019 and Bob wrote 1022. Each has its own 16-hex writer key, a header '**Alice (Forerunner)** · ada|bob · updated 24 Nov 21:21 UTC', 'Waiting for Merge' lines (#3..#9 for Ada, #6..#12 for Bob) and a Last session line. Nothing on the issue shows CHF/USD, an email address or a device id. Bob's Last session reads 'finished no task.', which is correct: it describes his step-13 offline session.\n\n3) Screens. Bob's Docs tab (08-13-github-off-bob.png) during the cut shows 'Status on GitHub: last updated 21:21; it updates when GitHub answers.'. After the journey, Bob's and Ada's Docs Status rows (10-rv-docs-bob.png, 10-rv-docs-ada.png) read 'In the app; also on GitHub: issue #2'. The rest of Bob's rows say the other Forerunner writes them. Bob's Docs header still says 'Kept by the agent; on a task with a full review the critic also checks they match the work.', which is W8a-left-4(c), not changed. Settings > Advanced > 'Status issue on GitHub' (09-rv-settings-status-row-ada.png, same on Bob's screen) reads 'on: The status of Team site on GitHub: this Forerunner's own comment on the project's pinned status issue, with no costs (off: it stays in the app, under Docs, Status). Status on GitHub: issue #2 (pinned)'. There is no Status pull request row.\n\n4) W8-write-10 through the UI. On Ada's screen I pressed Change, chose Off, then Preview and apply (12-, 13-, 14-rv-status-issue-*.png). The card reads 'Set the status issue on GitHub for Team site from on to off: this Forerunner writes no status issue or comment for the project; its status stays in the app (Docs, Status).' with Undo, and the change is logged in Changes. The row then reads off with 'Status stays in the app: the status issue is turned off for \"Team site\" in Settings.'. I added a task and ran a session. The stand-in's request log shows only Ada's git traffic and POST /pulls for the task, with no issue or comment write. The Docs Status row now shows the off sentence (15-rv-docs-off-ada.png). No guide write followed, because refreshGuide returns early while the intake's docs PR #1 is open.\n\n5) Failure injection across a restart (my own script). I cut Bob's GitHub with cut.mjs and ran a session for a new task: no issue writes reached the stand-in. I then ran restart-daemon.mjs, turned GitHub back on and waited 100 s with no screen open: still no write by bob. One GET /settings then sent 'PATCH /repos/team/shared/issues/comments/1022' and 'PATCH .../issues/2' at 21:28:41. The pending text is only sent after a restart when a screen reads the status words or when the runner sends a new event (see the first blocking item).\n\nTests. status-board.test.ts plus testenv githost.test.ts: 63 passed. apps/ui two-installs.test.ts: 16 passed. To check that the new tests fail without the fix, I put the base sources back (testenv/src, packages/runtime/src, commands/src, capabilities/src, apps/ui/src) and kept the new tests:\n- the two W8a-left-2 githost cases, 2 projects-mirror no-cost cases and 3 loop-docs status cases failed;\n- the 4 new two-installs status-issue cases failed, together with 3 harness and guide cases whose filters changed.\nI then put the branch sources back; the worktree is clean at c93e6e4.\n\nThree scratch cases on the board, added and then deleted:\n- close() clears a running task's Working on now line: passes. The branch has no such test.\n- updateIssueComment answering 404 after a good read keeps one issue and one comment: passes.\n- a token that lost access (404 on every call) gives place 'waiting' and 'Status on GitHub: last updated 21:10; it updates when GitHub answers.', not the no-permission sentence: fails.\n\nFull runs at c93e6e4: pnpm check exit 0 (571 files, 6385 passed, 7 skipped; lint, typecheck, link check, secret scan clean), and pnpm docs:check --base claude/nifty-knuth-f9udt0 ok (51 files). The UI vitest suite passed 107 files and 1570 tests, and Playwright (local config) passed 40. pnpm test:integration passed 30 with 83 skipped (Postgres). pnpm test:e2e passed 25 with 1 skipped, and pnpm test:injection passed all 92 cases. The live harness dry run without keys, as W8a-left-31 asks (env -u FORERUNNER_ANTHROPIC_API_KEY -u FORERUNNER_TEST_GITHUB_TOKEN -u FORERUNNER_LIVE pnpm --filter @forerunner/live test), gave 11 files passed and 4 skipped, 63 tests passed and 17 skipped. That equals the 8299aa3 baseline.",
+ "blocking": [
+  {
+   "issue": "A status write that waits for GitHub is not sent after a restart until a screen asks (resumeAll is never called), and Quit's clearing of Working on now has no test. If the person quits while GitHub is unreachable, the comment keeps a stale Working on now line until they open Settings or Docs or start new work. w8-status-read will read that line as announced work.",
+   "where": "packages/runtime/src/loop/status-board.ts:290 (resumeAll, documented 'compose calls it once its services start'); packages/runtime/src/daemon/compose.ts (no caller: grep for resumeAll finds only its definition); apps/ui/test/two-installs.test.ts:921",
+   "evidence": "Bench: cut.mjs review-w8-status-write-bob github off, then a session for a new task (no bob issue write), then restart-daemon.mjs, then GitHub on, then 100 s with no screen open: no bob write. A single GET /settings then sent PATCH /repos/team/shared/issues/comments/1022 and PATCH /repos/team/shared/issues/2 at 21:28:41. The memory two-home case 'a write that waits while GitHub is off is kept across a restart and sent once' only passes because it reads Settings ('Opening Settings (or the Docs tab) sends what waited'). The status-board unit case calls board.resume(K) by hand. No committed test runs close() or POST /shutdown with a running task, which acceptance line 7 asks for ('Quit clears them; nothing of the writer runs after POST /shutdown'). A scratch case showed close() does clear the line. The user guide and ADR 0122 point 5 promise 'it updates when GitHub answers'.",
+   "expected": "compose calls statusBoard.resumeAll() once the runtime starts (services or not) and the board's retry timer covers a later GitHub answer, so a pending text goes out without any screen read. Add a two-home case through the client: a task runs, GitHub is off at Quit (POST /shutdown / home.restart), GitHub comes back, the comment loses its Working on now line with no Settings or Docs read, exactly one comment.update, and no write after shutdown. Also add a case where Quit happens while a task runs with GitHub up."
+  },
+  {
+   "issue": "W8a-left-4(c), never cut, is neither fixed nor listed in not_done: a together project's Docs tab header still says 'Kept by the agent; on a task with a full review the critic also checks they match the work.' even though 8 of its 10 docs are written by the other Forerunner.",
+   "where": "apps/ui/src/pages/project/DocsTab.tsx:77",
+   "evidence": "Bob's Docs tab on the bench (/tmp/frbench/review-w8-status-write-bob/steps/10-rv-docs-bob.png): the header shows that sentence above eight rows that read 'The other Forerunner of \"Team site\" writes this doc on GitHub; this project does not write docs.' The diff does not touch DocsTab.tsx, and there is no UI test with an exact header text for a together project. The fixer's report mentions neither W8a-left-4 nor W8a-left-19 nor W8a-left-3.",
+   "expected": "For a together project the header says who keeps the docs, in a design §5 sentence. Add exact-text tests in the UI suite (fake daemon) and, if the daemon supplies the words, in real-daemon.test.ts, as W8a-left-4's 'Done' asks for (b) to (d)."
+  },
+  {
+   "issue": "W8a-left-3 is unaddressed. A token that lost access (404 on every call, as GitHub answers for a private repository the token no longer sees) leaves the status in 'waiting', with a sentence that promises an update that never comes. The two status-board cases W8a-left-3 asks for were not written.",
+   "where": "packages/runtime/src/loop/status-board.ts:732 (every non-issues_off, non-no_permission refusal becomes 'waiting' with a 60 s retry); packages/capabilities/src/githost/types.ts:276-277",
+   "evidence": "Scratch case, with the board's host answering ForerunnerError('not_found') on every call after a first good write: board.place() = {kind:'waiting'}, and Settings and Docs would read 'Status on GitHub: last updated 21:10; it updates when GitHub answers.' The board retries every 60 s indefinitely, and the no-permission sentence is never shown. The second scenario (404 on updateIssueComment after a good read) did keep one issue and one comment. The branch has no case for either.",
+   "expected": "On 'missing' right after a successful read, re-read the repository, issue and comment. When the re-read is refused (getRepo/getIssue 404 on a repository that answered before), show the no-permission sentence and stop retrying. Recreate the comment only when the issue is readable and the comment is gone. Add the two status-board cases W8a-left-3 names: one issue, no new comment and the no-permission sentence for lost access; exactly one comment recreated for a deleted comment."
+  },
+  {
+   "issue": "W8a-left-19 is not done as specified: the journey's 'one-status-issue' check still counts closed issues with the same title. It reads ?state=all and counts every non-PR issue titled 'Forerunner status: Team site', so the closed duplicate the area's own rule leaves behind ('two writers opening at once leave one open issue') makes it fail.",
+   "where": "scripts/bench/journeys/two-people.cjs:355-365",
+   "evidence": "The check filters out pull requests and titles but not state. status-board.test.ts 'two writers opening at once...' shows that a race leaves a closed issue with the same title (commented 'Closed: #N is this project's status issue.'). In that case statusIssues.length is 2 and the not-known check fails, failing the journey. My run happened to have no race (1 issue). W8a-left-19's Done says 'the check counts open issues titled ... with no pull_request and passes on exactly one'.",
+   "expected": "Count only issues with state === 'open' (or read ?state=open) that have the title and no pull_request. Keep the detail line printing that count, so a simultaneous first write still passes with one open issue."
+  }
+ ],
+ "claims_checked": [
+  {
+   "claim": "W8-write-1: one pinned issue 'Forerunner status: <project>' with marker and label, one comment per Forerunner edited in place across sessions and restarts; body lists both",
+   "holds": true,
+   "note": "Bench: issue #2 pinned with the label and marker, comments 1019 (ada) and 1022 (bob). two-installs http case passes now and fails on base sources."
+  },
+  {
+   "claim": "W8-write-2: no money, email or @mention on GitHub; Projects mirror writes no cost field",
+   "holds": true,
+   "note": "Nothing of that kind on the bench issue or comments. The projects-mirror no-cost cases fail on base and pass now. The 400-draw property test passes."
+  },
+  {
+   "claim": "W8-write-3: writer key is 16 hex of sha256(device id, K); device id never on GitHub; device row registered whenever the board is wired",
+   "holds": true,
+   "note": "Bench comments carry writer=c05f5df03912505c and 6acdbf3b301f6f2a. The two-installs case checks GET /me desktopDeviceId is non-empty and absent from every text. The one-login, two-computers case exists only as a status-board unit case."
+  },
+  {
+   "claim": "W8-write-4: Working on now and Paused lines; Waiting for Claude in not_done",
+   "holds": true,
+   "note": "Covered by unit tests. The Waiting for Claude line and the 30-minute refresh are on the allowed cut line and listed in not_done."
+  },
+  {
+   "claim": "W8-write-5: no status pull request or fr/status branch; this install's old marked status PR closed with one line; others untouched",
+   "holds": true,
+   "note": "loop-docs cases fail on base and pass now. The closeOwnStatusPullRequest unit case covers another project's PR, an unmarked PR and a PR without a record. Bench: no fr/status anywhere."
+  },
+  {
+   "claim": "W8-write-6: together project writes its own comment on issue K; Docs row 'In the app; also on GitHub: issue #N'; Details line names the status issue",
+   "holds": true,
+   "note": "Bench Bob Docs row 'In the app; also on GitHub: issue #2'; the real-daemon and two-installs exact texts pass."
+  },
+  {
+   "claim": "W8-write-7: each failure place has its sentence (issues off, no permission, GitHub down, pin limit)",
+   "holds": false,
+   "note": "Issues off, 403 and the pin limit are covered, and GitHub off was seen on the bench. A token that lost access (404) reads 'waiting' indefinitely instead of the no-permission sentence (W8a-left-3)."
+  },
+  {
+   "claim": "A write GitHub did not take is kept and 'a new daemon sends it once'",
+   "holds": false,
+   "note": "Kept across a restart, but sent only after a Settings or Docs read or a new runner event; resumeAll is never called (bench walk, first blocking item)."
+  },
+  {
+   "claim": "close() clears this install's Working on now lines on Quit",
+   "holds": true,
+   "note": "A scratch case confirms the behaviour, but the branch has no test for it."
+  },
+  {
+   "claim": "W8-write-8: tamper rules (edit found by comparing with the text last sent, told once; copy of the writer key never edited; deleted comment rewritten; closed issue not reopened; deleted issue gives one new issue)",
+   "holds": true,
+   "note": "Unit cases pass. Restoring the edited text on every write is an interpretation on the cut line."
+  },
+  {
+   "claim": "W8-write-9: a project whose default-branch marker names another project writes no issue or comment and says why",
+   "holds": true,
+   "note": "The two-installs memory case (session plus restart) and the unit case pass. The pair-made-before-the-rule case is in not_done."
+  },
+  {
+   "claim": "W8-write-10: per-project switch, on by default, off writes nothing, card and row words, survives a restart",
+   "holds": true,
+   "note": "Walked through Settings > Change > Off on the bench. The card and row texts are as claimed, and no issue or comment write followed a session."
+  },
+  {
+   "claim": "W8a-left-1: guide fact is the real state; switch-off refreshes the guide",
+   "holds": true,
+   "note": "In the harness the switched-off guide goes onto the open fr/docs-scaffold PR #1 with a comment. On the bench, while the intake docs PR was open, no refresh happened (w8-repo-guide's rule). The test assertion is loose (non-blocking)."
+  },
+  {
+   "claim": "W8a-left-2: stand-in repository-wide comment list and admin flag",
+   "holds": true,
+   "note": "Both githost cases fail on base and pass now."
+  },
+  {
+   "claim": "Validation: pnpm check, integration, e2e, UI suite, Playwright, injection all green",
+   "holds": true,
+   "note": "Re-run here at c93e6e4: all exit 0. The live harness dry run without keys matches baseline (63 passed, 17 skipped)."
+  },
+  {
+   "claim": "bench two-person journey 19 of 31, no unexpected failure",
+   "holds": true,
+   "note": "Reproduced exactly."
+  }
+ ],
+ "non_blocking": [
+  "Writing: statusIssueRowWords joins its parts with a space and statusOnGitHubSentence has no final period. On a public repository the Settings row reads '... Status on GitHub: issue #12 (pinned) Everyone who can see this repository can read it.' (a missing full stop), and apps/ui/test/settings-all.test.tsx asserts it in that form (packages/runtime/src/loop/status-board-words.ts:609).",
+  "The change dialog's title lowercases the new label: 'Change status issue on github for Team site' (apps/ui/src/pages/SettingsPage.tsx:512 lowercases the label). This was already the case for 'Push unfinished work to GitHub', and the new label shows it again.",
+  "apps/ui/test/two-installs.test.ts:1089 uses toBeLessThanOrEqual(before.length + 1), which also passes with no guide update. In the harness the switched-off guide goes onto the open fr/docs-scaffold PR #1 with one comment, so assert that exactly.",
+  "Validation rule 3 (same commit): e0d3147 changed GET /settings, GET /projects/:id/docs, the join preview and settings.set without fake-daemon or real-daemon changes; d0b58ba brought them in. The final state is consistent, but the history breaks the rule.",
+  "facts() lists a pull request closed on GitHub (merge record left_to_you/closed, isClosedRecord) under 'Waiting for Merge' as long as its task is not cancelled or failed (status-board.ts:509-516).",
+  "lowestIssue's title fallback can pick an open issue with the same title whose marker names another project (two projects with one name on one repository). Excluding issues whose marker key differs would keep W8-write-9's 'never another project's issue'.",
+  "closeOwnStatusPullRequest runs only inside write(), so with the switch off an old status PR is never closed. state.oldPrChecked is set even when the check threw. The function returns nothing for a together project, so w8-together must call it before the project becomes together.",
+  "otherProjectStatusSentence suggests 'Work together on the Overview' for a project that took the repository over and whose marker has not merged yet.",
+  "While the intake's docs PR is open, switching the status issue off does not refresh the guide (refreshGuide returns early), so that PR's AGENTS.md still says the status issue is on until it merges and a session ends. This is w8-repo-guide's rule.",
+  "'One login on two computers' and 'a simultaneous first write leaves one open issue' are covered only by status-board unit cases, not by two composed homes.",
+  "The comment header parser accepts only plain GitHub logins, so a GitHub App's '[bot]' login would never parse as a writer.",
+  "The fake daemon hard-codes the switched-off sentence instead of importing statusSwitchedOffSentence (apps/ui/test/fake-daemon.ts).",
+  "The Docs Status row names 'issue #N' without a link to it.",
+  "W8a-left-18 note: the step-13 cut is API-only; Bob's offline task still pushed and then waited for him, which is why his comment says 'finished no task'. The step was judged on the API alone, as the note asks.",
+  "Suggested for the session lead's live check: on real GitHub, (1) Quit while a task runs and the network is off, restart with the network back, open no screen, and confirm the comment still shows Working on now (expected to fail until the first blocking item is fixed); (2) revoke the token's access to a private repository and read the Settings row."
+ ]
+}

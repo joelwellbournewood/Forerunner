@@ -1,58 +1,108 @@
-// AFTER walk 2: a check that changes nothing quotes the left-out line (LC-C29 shape), and a small
-// task with a CHF 0.08 budget gets its review (LC-C30 shape).
-const R = require("/home/user/Forerunner/.claude/worktrees/wf_801d579b-a17-1/scripts/bench/recorder.cjs");
-const n = "fix-l4-selftasks-check";
-(async () => {
-  const out = {};
-  const { browser, page } = await R.openApp(n);
+// w8-together AFTER walk (stand-in model, stand-in GitHub): Bob's "Site" on team/shared, whose
+// marker names Ada's "Team site", gets Work together on its Overview; the dialog, the press, the
+// joined page; Ada's Add to answers at once and her page says "Drafting the plan...".
+"use strict";
+const fs = require("node:fs");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+const REPO = process.env.REPO;
+const R = require(path.join(REPO, "scripts/bench/recorder.cjs"));
+const A = "w8t-after";
+const B = "w8t-after-bob";
+const label = "after";
+const gh = JSON.parse(fs.readFileSync(`/tmp/frbench/${A}/githost.json`, "utf8"));
+async function github(method, route, body, token = gh.users.ada.token) {
+  const res = await fetch(`${gh.url}${route}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/vnd.github+json",
+      "content-type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
   try {
-    const ui = R.bench(n).uiUrl;
-    const project = await R.api(n, "POST", "/projects", {
-      name: "Tea room",
-      goal: "A page for the tea room",
-      autonomyLevel: 2,
-    });
-    await R.api(n, "POST", `/projects/${project.id}/tasks`, {
-      title: "Build the page in index.html",
-      outcome: "index.html shows the tea room",
-      acceptanceCriteria: ["index.html exists"],
-      riskTier: 1,
-      specialist: "coder",
-    });
-    // A README task with a budget of USD 0.10 (CHF 0.08), as live check 4's LC-C30.
-    const readme = await R.api(n, "POST", `/projects/${project.id}/tasks`, {
-      title: "Write the README in README.md",
-      outcome: "README.md says what the page is",
-      acceptanceCriteria: ["README.md exists"],
-      riskTier: 1,
-      specialist: "coder",
-      budgetUsdMicro: 100000,
-    });
-    const s = await R.startSession(n, project.id);
-    const sid = s?.session?.id ?? s?.id;
-    await R.waitForSession(n, sid);
-    out.sessionId = sid;
-    await page.goto(`${ui}/sessions/${sid}`).catch(() => {});
-    await page.waitForTimeout(2500);
-    out.session = await R.step(page, "after-06-session-no-change-quote");
-    await page.goto(`${ui}/projects/${project.id}/tasks?task=${readme.id}`).catch(() => {});
-    await page.waitForTimeout(2500);
-    out.readme = await R.step(page, "after-07-small-task-reviewed");
-    out.tasks = (await R.api(n, "GET", `/projects/${project.id}/tasks`)).map?.((t) => [
-      t.title,
-      t.status,
-    ]);
-    out.events = (await R.api(n, "GET", `/sessions/${sid}/events`))
-      .filter?.((e) => /task_check|review/.test(e.type))
-      .map((e) => ({ type: e.type, audience: e.audience, text: e.text }));
-  } finally {
-    await browser.close();
+    return JSON.parse(text);
+  } catch {
+    return text;
   }
-  require("node:fs").writeFileSync(
-    "/tmp/frbench/fix-l4-selftasks-check/walk-after2.json",
-    JSON.stringify(out, null, 2),
-  );
-  console.log(JSON.stringify({ tasks: out.tasks, events: out.events }, null, 1));
+}
+const cut = (b, state) =>
+  spawnSync("node", [path.join(REPO, "scripts/bench/cut.mjs"), b, "github", state], {
+    stdio: "inherit",
+  });
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+(async () => {
+  const ids = JSON.parse(fs.readFileSync(`/tmp/frbench/${A}/steps/${label}-ids.json`, "utf8"));
+  const made = { id: ids.made };
+  const site = { id: ids.site };
+  const writesBefore = (await github("GET", "/repos/team/shared/pulls?state=all")).map((p) => [
+    p.number,
+    p.head.ref,
+    p.state,
+    p.user.login,
+  ]);
+  const two = await R.openTwo(A, B);
+  try {
+    const bob = two.b.page;
+    await bob.goto(`${R.bench(B).uiUrl}/`, { waitUntil: "domcontentloaded" });
+    await R.skipSetup(bob).catch(() => undefined);
+    await bob.goto(`${R.bench(B).uiUrl}/projects/${site.id}/summary`, {
+      waitUntil: "domcontentloaded",
+    });
+    await bob.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => undefined);
+    const over = await R.step(bob, `${label}-bob-site-work-together`, { settleMs: 4000 });
+    console.log("BOB OVERVIEW:", over.slice(over.indexOf("On GitHub"), over.indexOf("On GitHub") + 700));
+    await bob.getByTestId("repository-work-together").click();
+    await bob.getByTestId("join-together-confirm").waitFor({ timeout: 15000 });
+    const dialog = await R.step(bob, `${label}-bob-work-together-dialog`, { settleMs: 2000 });
+    const at = dialog.indexOf("Work together");
+    console.log("DIALOG:", dialog.slice(at, at + 900));
+    await bob.getByTestId("join-together-confirm").click();
+    await wait(4000);
+    const joined = await R.step(bob, `${label}-bob-after-join`, { settleMs: 3000 });
+    console.log("AFTER JOIN:", joined.slice(0, 900));
+    const projects = await R.api(B, "GET", "/projects");
+    console.log(
+      "bob projects",
+      JSON.stringify(projects.map((p) => [p.name, p.id === made.id ? "repository id" : p.id])),
+    );
+    const writesAfter = (await github("GET", "/repos/team/shared/pulls?state=all")).map((p) => [
+      p.number,
+      p.head.ref,
+      p.state,
+      p.user.login,
+    ]);
+    console.log("pulls before", JSON.stringify(writesBefore));
+    console.log("pulls after ", JSON.stringify(writesAfter));
+
+    // Add to it on Ada's project, through the route the dialog now uses.
+    const t0 = Date.now();
+    const r = await R.apiRaw(A, "POST", `/projects/${made.id}/intake`, {
+      brief: "Add a contact form page with a short thank-you note after sending",
+      background: true,
+    });
+    const ms = Date.now() - t0;
+    console.log("add-to answered after ms", ms, "status", r.status, JSON.stringify(r.body).slice(0, 200));
+    const ada = two.a.page;
+    await ada.goto(`${R.bench(A).uiUrl}/`, { waitUntil: "domcontentloaded" });
+    await R.skipSetup(ada).catch(() => undefined);
+    await ada.goto(`${R.bench(A).uiUrl}/projects/${made.id}/summary`, {
+      waitUntil: "domcontentloaded",
+    });
+    const drafting = await R.step(ada, `${label}-ada-add-to-drafting`, { settleMs: 200 });
+    console.log("ADA PAGE has drafting line:", /Drafting the plan/.test(drafting));
+    fs.writeFileSync(
+      `/tmp/frbench/${A}/steps/${label}-add-to-timing.txt`,
+      `AFTER (w8-together): POST /projects/:id/intake with background answered ${r.status} after ${ms} ms with state ${r.body?.state}; the page showed "Drafting the plan" at once: ${/Drafting the plan/.test(drafting)}.\n`,
+    );
+    await wait(6000);
+    await R.step(ada, `${label}-ada-plan-waits`, { settleMs: 2000 });
+  } finally {
+    await two.close();
+  }
 })().catch((e) => {
   console.error(e);
   process.exit(1);

@@ -1,0 +1,229 @@
+{
+ "area": "w8-l4-leftovers",
+ "branch": "fix/w8-l4-leftovers",
+ "head_sha": "93b21378fe53e9e7c4eff97b5385e8a567bb8eb8",
+ "commits": [
+  {
+   "sha": "2e82e4c",
+   "subject": "critic: a review that meets the subscription's share is a credential stop under the policy (L4i-left-59)"
+  },
+  {
+   "sha": "c6abd38",
+   "subject": "session words: an outer-limit stop says the session ended before the limit ran out; a done task whose review waits is said one way (L4i-left-28, L4i-left-31)"
+  },
+  {
+   "sha": "f72ad4a",
+   "subject": "result: no \"this session's budget was used\" while room is left (L4i-left-30)"
+  },
+  {
+   "sha": "d22a2c1",
+   "subject": "credentials: under \"then the other one\" the Start dialog and the plan card name what waits for the stopped credential (L4i-left-32)"
+  },
+  {
+   "sha": "6d1f8a1",
+   "subject": "session log: the run that goes on after a pause keeps its own person line with its CHF (L4i-left-58, L4-money-110)"
+  },
+  {
+   "sha": "af018bb",
+   "subject": "tasks: a task that spent nothing shows no CHF 0.00 on its row (L4i-left-64)"
+  },
+  {
+   "sha": "cd74437",
+   "subject": "inbox: the session plan card says Approve and Reject, each with one line of what it does (L4i-left-27)"
+  },
+  {
+   "sha": "d47bf91",
+   "subject": "docs: run L4's leftovers on starts, sessions and money; the stand-in GitHub roles in whole sentences (W8a-left-9)"
+  },
+  {
+   "sha": "15fb055",
+   "subject": "server: the Start dialog's waiting tasks are read with their type (L4i-left-32)"
+  },
+  {
+   "sha": "93b2137",
+   "subject": "session log: only the run that goes on after a pause is marked continued (L4i-left-58, L4-money-110)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "L4i-left-59 (L4a-left-7, L4c-left-12, carried twice; money, never cut): a critic review that met the subscription's plan share paused the task as at a budget ('\"X\" is done; its review waits for room in your Claude subscription's share' with a budget card that waited for the 1st), whatever the person's credential policy said (the owner's D5: 'Running out includes a usage limit, a plan-share cap and a monthly cap ... Whatever the policy says is what happens').",
+   "u_ids": [
+    "U-078",
+    "U-095"
+   ],
+   "failing_test_before": "packages/runtime/test/critic-review-share.test.ts 'under 'then the API key' the review goes on on the key: the task is done, no budget card, its review's cost on the task' (failed before: needs_human with the budget card); the file has four composed cases: then the key (cost on the task and the session), ask (one ask card, nothing reaches the key, compose twice keeps the same card and hold), wait (waits for Tue 1 Dec, nothing moves after a restart), and the task's own budget binding first (budget pause at its budget, no key call)",
+   "how": "Root cause: the hooks' plan level refuses the review's next call with budget_exceeded level 'plan'; reviewRefusalOf read it as a budget refusal and runner.ts reviewStopSource mapped 'plan' to a budget stop. Now loop/critic.ts catches a plan-level refusal and asks the critic's routed provider (session/review-refusal.ts shareGoesOn): when the policy lets another credential take over now, the review is made once more there, capped at what is left of the task's own budget after the refused calls; else withReviewWait turns it into the credential's wait (reason 'share', code provider_usage_limit, project kept on the source, one ask card under 'ask'), so the runner's existing credential branch lets the task wait. runner.ts reviewStopSource and the review budget stop are unchanged.",
+   "check_in_the_app": "Live (real model, real subscription): Settings > Which Claude does the work: 'Subscription first, then API key'; set the subscription's allowance low (Settings, the plan allowance) so a task's work fits under Forerunner's share but its review crosses it; Start the project. Expect: no Inbox card 'its review waits for room in your Claude subscription's share'; the task ends Done with its review on the API key; the task's cost and the session's spend include both review parts. Repeat with 'then ask me first': one card 'Use your API key until <1st>?' with Use API key / Wait, the task row 'Waits for your answer: use your API key?', nothing reaches the key until answered; Quit and reopen: the same one card. Repeat with 'then wait': the row 'Waits until <1st> (your subscription's share)', nothing moves."
+  },
+  {
+   "problem": "L4i-left-28 (L4c-left-1; money words, never cut): under an outer limit the status read 'Stopped at the project's budget', the result 'Stopped at the project's budget of CHF 0.06. CHF 0.04.' and the Sessions row '1 paused · Stopped at the ...' while part of the budget was left.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "packages/runtime/test/session-status-words.test.ts 'the status, the result's line and a stopped review say the limit' and budget-pause.test.ts 'the session it ends names this month's cap too ...' plus apps/ui/test/real-daemon.test.ts month's-cap case (assertions changed to the new text; they fail on the old code)",
+   "how": "Root cause: stop-words.ts sessionStatusText and result.ts stopWords said 'Stopped at <limit>', task-display.ts reviewStopWords 'the session stopped at <limit>'; a limit is never passed (the task pauses before it). New words: 'Ended before the project's budget ran out' (status, row, log end line), 'Ended before this month's cap of CHF 0.23 ran out.' (result), 'Ended before the share of your Claude subscription that Forerunner may use ran out.', 'the session ended before this month's cap ran out'.",
+   "check_in_the_app": "Bench or live: give a project a budget of CHF 0.06 and a task estimated above what is left after the first task; Start. On the session page the badge reads 'Ended before the project's budget ran out', the result's last line 'Ended before the project's budget of CHF 0.06 ran out. CHF 0.04.', and the Sessions tab row ends with the same status words; no 'Stopped at the project's budget'."
+  },
+  {
+   "problem": "L4i-left-30 (L4c-left-2; money words, never cut): 'Left for next time: ...; this session's CHF X was used.' fired for tasks left out after the others when a larger task's pause ended the session with room left.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "packages/runtime/test/session-status-words.test.ts 'w8-l4-leftovers, wave 8: no 'budget used' sentence while room is left (L4i-left-30)' > 'a larger task's pause that ended the session with room left never says the budget was used'",
+   "how": "Root cause: result.ts's 'left for next time' builder said 'was used' for every after_others task whatever ended the session. It now says so only when the session's own budget ended it (budget_exceeded, budget_finish_current) or its work budget has less than a centime left; else 'Left for next time: \"About page\" (about CHF 0.43); it did not fit this session's work budget after the tasks before it.'",
+   "check_in_the_app": "Bench: three tasks where the second is larger than the session's work budget and pauses at its specialist's limit; Start with CHF 5.00. The session result never says 'this session's CHF 5.00 was used' while most of it is left; it says the third task did not fit the work budget after the tasks before it."
+  },
+  {
+   "problem": "L4i-left-32 (L4d-left-1; money, never cut): under 'API key first, then subscription' with the key resting and mixed work, the Start dialog said the work runs on the subscription with a figure that covered work only the key can do, and the plan card's foot line said 'your subscription does the work meanwhile' for tasks only the key can do.",
+   "u_ids": [
+    "U-078"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts 'w8-l4-leftovers, wave 8: mixed work under 'API key first, then subscription' (L4i-left-32)' > 'names what waits for the key and gives no figure for it' (before: 'Your API key is at its limit until 11:40, so this runs on your subscription (about CHF 0.48).' with no waiting name), and 'the plan card's foot line under 'API key first, then subscription'' > 'says the work waits for the key when only it can do the plan's tasks'",
+   "how": "Root cause: credential-start.ts's nextServes/waitsNow rule knew only whether no ready task could run. compose.ts adds billing.waits.waitingTasks (each ready task's own pick, read only); server.ts credentialAtStart leaves those tasks out of the figure and startCredential appends '\"Write the tool notes\" waits for your API key.' (credential-policy-view.ts waitsForFirstLine). planCredentialLine gets the plan tasks whose runs-on line waits for the stopped credential: it names them and counts only the rest, and says '...: the work waits for it.' when every task waits.",
+   "check_in_the_app": "Live: Settings > Which Claude does the work 'API key first, then subscription', Code tasks that need commands to the API key; let the key reach its limit (or wait for a 429). A project with a writer task and a coder task: open Start. Expect 'Your API key is at its limit until HH:MM, so this runs on your subscription (about CHF X). \"<coder task>\" waits for your API key.' where X is the writer task's figure alone. A new project from a brief whose plan has only coder tasks: the plan card's foot line reads 'Your API key is at its limit until HH:MM: the work waits for it.'"
+  },
+  {
+   "problem": "L4i-left-58 (L4-money-110): during a larger task's run again in the session, the person's log showed no spend for the second run (its finish line was a detail), so the person lines did not add up to the session's spend.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "packages/runtime/test/oversize-pause.test.ts 'w8-l4-leftovers: the run that goes on after a pause keeps its own person line with its CHF' (expected continued true, was undefined)",
+   "how": "Root cause: event-audience.ts made every reviewed task.finished with again=true a detail (the critic's line tells a retry's outcome, but carries only the review's spend). The runner marks the item the in-session continue queues (continuesPause) and its task.finished 'continued'; eventAudience keeps that line for the person. A retry the critic sent back stays a detail (session-log-person.test.ts unchanged and green).",
+   "check_in_the_app": "Bench: a task larger than its specialist's limit that pauses with progress and goes on at once in the same session; on the session page the person-level lines show both runs' 'The coder finished \"X\" (CHF ...)' lines, and their CHF with the critic's add up to the session's spent figure."
+  },
+  {
+   "problem": "L4i-left-31 (L4c-left-3): the session status read 'Ended: 1 paused' and the log '\"X\" paused before its review: ... has no room for it.' while the row said 'Done; its review waits for room in ...'.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "packages/runtime/test/session-status-words.test.ts 'w8-l4-leftovers, wave 8: one wording for a task whose review waits (L4i-left-31)'; budget-pause.test.ts and task-budget-all.test.ts log-line assertions changed to the new text",
+   "how": "Root cause: the handoff kept no fact of which paused tasks only wait for their review and reviewPausedWords had its own words. The runner's handoff keeps review_waits; blockedOfHandoff counts them apart (EndedWaits.reviewWaits); endedStatusText says 'Ended: 1 review waits for room'; the log line is '\"X\" is done; its review waits for room in the project's budget of CHF 0.01.'",
+   "check_in_the_app": "Bench: a task whose work fits its own budget but its review does not; after the session the session page badge says 'Ended: 1 review waits for room', the log '\"X\" is done; its review waits for room in its budget of CHF ...', and the row 'Done; its review waits for room in its budget'."
+  },
+  {
+   "problem": "L4i-left-27 (L4b-left-6): the Assisted mode session plan card offered 'approve' / 'reject' in lower case with no explanation lines.",
+   "u_ids": [
+    "U-095"
+   ],
+   "failing_test_before": "packages/runtime/test/w8-l4-leftovers.test.ts 'says Approve and Reject, each with one line of what it does; the stored answers stay'",
+   "how": "request-words.ts gets a branch for the plan: card: 'Approve' ('Starts the session with these tasks, in this order.', primary) and 'Reject' ('Nothing runs; the tasks stay ready and your next session asks again.', secondary). The stored options stay approve/reject; planAnswer reads the clicked label as the same option.",
+   "check_in_the_app": "Bench: a project at autonomy level 0 or 1 (Assisted); press Start: the Inbox card 'Assisted mode: approve this session plan before work starts.' shows Approve and Reject with their lines; Approve starts the session, Reject starts nothing."
+  },
+  {
+   "problem": "L4i-left-64 (L4d-left-9): task rows showed 'CHF 0.00' for tasks that had spent nothing.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "apps/ui/test/w8-l4-leftovers.test.tsx 'the Tasks tab's row of a ready task that spent nothing has no money; a task that spent shows it'",
+   "how": "TasksTab.tsx shows <Money> only when the task's spend is above zero (design section 5 rule 5).",
+   "check_in_the_app": "Open a project's Tasks tab with a task that has not run: its Cost cell has no 'CHF 0.00' (bench after screenshot /tmp/frbench/fix-w8-l4-leftovers/steps/01-after-1-tasks-tab-nothing-spent.png); a done task still shows its CHF."
+  },
+  {
+   "problem": "W8a-left-9: docs/maintainers/testing.md's stand-in GitHub bullet was one run-on line with a sentence fragment ('For w8-shared-repo (the person without write access).').",
+   "u_ids": [],
+   "failing_test_before": "none (docs): pnpm docs:check --base claude/nifty-knuth-f9udt0 passes after the change",
+   "how": "Split into whole sentences (reader refusals, the read role since w8-issue-host, the role none, what the roles are for).",
+   "check_in_the_app": "Not visible in the app; read docs/maintainers/testing.md 'The stand-in GitHub: users, an organisation and a collaborator's role'."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "L4i-left-58's L4-money-105: a review-only pass is priced at the whole remaining estimate, not at its review part (runner.ts priceNow, the start check and the plan item; estimates/model.ts reviewPartUsdMicro has no caller for the pass).",
+   "why": "Not built for time: it changes runner.ts priceNow (outside this area's runner.ts regions), start-check.ts's pricing of every task and the session review's measure; it needs the composed BA-3 review-waits case plus a real-daemon start-check case. Not on the never-cut list; the next area that owns the start check should take it with the plan's fix_sketch (runL4-plan.json L4-money-105)."
+  },
+  {
+   "problem": "L4i-left-58's other parts: L4-money-107 (a node --test helper that never exits blocks the review), -108 (settleSessions/removeHomes in older cases), -113 (Left-to-do cut inside a word, emptyChangeSummary quote split), L4-money-106's card clause and the stand-in's max_tokens mode, L4-selftasks-107's composed case with a learned EstimatePort.",
+   "why": "Cut line (the spec allows not_done); not reached for time after the never-cut money items."
+  },
+  {
+   "problem": "L4i-left-23 (one place for the wait on the Overview; continuation 'goes on' twice; the queued start's Cancel explanation; Bird notes' 'No session yet.' while its start waits) and L4i-left-25 (the Start dialog's blocker said twice).",
+   "why": "Cut line; the design work (which surface keeps the wait) touches SummaryTab.tsx, which w8-status-write/w8-together also change (+35 lines) and w8-status-read will change; not reached for time."
+  },
+  {
+   "problem": "L4i-left-24: a running continuation's Sessions row shows startedBy null and 'plans the session'.",
+   "why": "Cut line; root cause found: plan.startedBy is written with the plan, after the 'planning' state, so the row has none while planning; the fix writes startedBy at session creation in runner.ts (outside this area's runner.ts regions) with a compose-twice case. Not reached for time."
+  },
+  {
+   "problem": "L4i-left-17 (stopping the critic's monthly check records it as failed), L4i-left-19 (the Desktop window check passes without seeing the session run), L4i-left-21 (Start a session by itself: words about already-ready tasks, after a behaviour check), L4i-left-22 (fixed tooltip words in task-actions.ts), L4i-left-26 (fake daemon limit wake; listedWhere for plan_awaiting_approval and continued sessions, needs FORERUNNER_TEST_PG), L4i-left-29 (header 'Waiting for you' with Answer for a task held at an outer limit), L4i-left-33 (Settings read-back card after leaving Settings; Playwright widths), L4i-left-49 (one rule for Costs' tries and runs).",
+   "why": "All on the spec's cut line; not reached for time after the never-cut items, -31, -27, -64 and W8a-left-9. Their evidence in phaseE.json triage still holds at this head."
+  },
+  {
+   "problem": "Bench BEFORE walk with screenshots.",
+   "why": "Only the AFTER walk was made (Tasks tab, /tmp/frbench/fix-w8-l4-leftovers/steps/01-after-1-tasks-tab-nothing-spent.png); the money and credential items are words computed in the daemon and were reproduced as failing composed and real-daemon tests instead (the share stop, the mixed-work line, the plan card line). The two-person journey was not walked: this area changes nothing two Forerunners share on GitHub."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0: lint (2 pre-existing warnings in StartSessionDialog.tsx and commands/task.ts, not this area's), paths, typecheck, unit 572 files / 6373 passed / 7 skipped, docs:check (no base in a worktree), links, secret scan clean. An earlier run found session-log-person.test.ts failing on the first cut of L4-money-110 (a critic retry told twice); fixed in 93b2137."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (30 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped (Postgres not set; this area changes no packages/state); 30 passed, 83 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 108 files, 1569 passed"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 40 passed"
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "nothing found; working tree clean"
+  },
+  {
+   "command": "node scripts/bench/start.mjs --name fix-w8-l4-leftovers --daemon-port 49302 --ui-port 2902 --fresh --provider bench; walk; stop.mjs --clean",
+   "result": "AFTER walk: Tasks tab shows no 'CHF 0.00'; bench stopped and its home removed (steps kept)"
+  }
+ ],
+ "screenshots": {
+  "before": [],
+  "after": [
+   "/tmp/frbench/fix-w8-l4-leftovers/steps/01-after-1-tasks-tab-nothing-spent.png"
+  ]
+ },
+ "new_problems": [
+  "The cargo checks were not run: the desktop shell was not touched. The injection suite was not run: no new channel from GitHub or a model reaches a prompt in this area.",
+  "L4-money-105 (review-only pass priced at the whole remaining estimate) is still open; see not_done."
+ ],
+ "notes_for_other_areas": [
+  "runner.ts: besides nothing in reviewStopSource itself, this area added a handoff field review_waits (the paused tasks whose work is done and whose review waits) next to handoff.paused, a PlanItem field continuesPause set only by the in-session continue after a pause, and task.finished's payload field 'continued'. The share stop of a review lives in loop/critic.ts and session/review-refusal.ts (shareGoesOn, isShareRefusal, withReviewWait now also takes a plan-level budget refusal).",
+  "New daemon port: rt.billing.waits.waitingTasks(projectId) -> {id,title}[] (compose.ts): ready tasks whose own pick meets a credential wait while others run; read only. Used by server.ts credentialAtStart. planCredentialLine (credential-start.ts) takes a third argument waitingOf(kind).",
+  "Sentences changed (old -> new, each asserted as exact text): 'Stopped at the project's budget' -> 'Ended before the project's budget ran out' (and the month's cap, 'your Claude subscription's share'); 'Stopped at this month's cap of CHF 0.23.' -> 'Ended before this month's cap of CHF 0.23 ran out.'; 'Stopped at the share of your Claude subscription that Forerunner may use.' -> 'Ended before the share of your Claude subscription that Forerunner may use ran out.'; 'the session stopped at this month's cap' -> 'the session ended before this month's cap ran out'; '\"X\" paused before its review: the project's budget of CHF 0.01 has no room for it.' -> '\"X\" is done; its review waits for room in the project's budget of CHF 0.01.'; new 'Ended: 1 review waits for room'; new 'Left for next time: \"X\" (about CHF 0.43); it did not fit this session's work budget after the tasks before it.'; new '\"X\" waits for your API key.' after the Start dialog's run-out line and the plan card's foot line; plan card buttons 'approve'/'reject' -> 'Approve' ('Starts the session with these tasks, in this order.') / 'Reject' ('Nothing runs; the tasks stay ready and your next session asks again.').",
+  "Suggested UPDATE-LOG/CHANGELOG lines: 'A critic review that reaches your subscription's share follows Which Claude does the work, as the work does (L4i-left-59).' 'A session that ended at an outer limit says it ended before the limit ran out (L4i-left-28).' 'The Start dialog and the plan card name the tasks that wait for a resting first choice and count only the rest (L4i-left-32).' 'No \"budget was used\" sentence while room is left (L4i-left-30).' 'A task's review that waits for room is said one way everywhere (L4i-left-31).' 'Assisted mode's plan card says Approve and Reject with what each does (L4i-left-27).' 'A task that spent nothing shows no CHF 0.00 (L4i-left-64).' 'The run that goes on after a pause keeps its CHF on the session page (L4-money-110).'",
+  "For final_check_additions (real model only): L4i-left-59's three policy walks with a low plan allowance, and L4i-left-32's key-first walk with a real key limit; steps are in this report's check_in_the_app.",
+  "Merge: this branch is based on 8299aa3, not on w8-together. Expected overlaps with W8b's earlier areas: apps/ui/test/real-daemon.test.ts (two new nested describes 'w8-l4-leftovers, wave 8' inside the L4 credential describes), docs/maintainers/runtime.md, apps.md, testing.md, user-guide.md (appended sections), runner.ts (handoff and task.finished payload lines), server.ts (credentialAtStart and the plan card foot line only)."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/session-status-words.test.ts 'the status, the result's line and a stopped review say the limit'",
+   "why": "L4i-left-28: the outer-limit stop words change from 'Stopped at <limit>' to 'Ended before <limit> ran out'; same intent (the limit is named, never 'the budget is used')."
+  },
+  {
+   "test": "packages/runtime/test/budget-pause.test.ts (the month's cap session case and the 'Review page' cases)",
+   "why": "L4i-left-28 and L4i-left-31: status 'Ended before this month's cap ran out', result 'Ended before this month's cap of CHF 0.10 ran out.', log '\"Review page\" is done; its review waits for room in the project's budget of CHF 0.01.'; the comment that called the two lines' disagreement a known sibling now says it is fixed."
+  },
+  {
+   "test": "packages/runtime/test/notifications-channels.test.ts (budget stop notifications) and packages/runtime/test/w15-words.test.ts",
+   "why": "L4i-left-28: the result's outer-limit sentence the notification body strips and the Update carries is now 'Ended before ... ran out.'."
+  },
+  {
+   "test": "packages/runtime/test/task-budget-all.test.ts (the review that waits at its own budget)",
+   "why": "L4i-left-31: '\"Write the footer\" is done; its review waits for room in its budget of CHF ...' replaces 'paused before its review: its own budget of ... has no room for it.'."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts (the month's cap case near the L4 money describe)",
+   "why": "L4i-left-28: statusText, summary, log end line and Update text use 'Ended before this month's cap ...'."
+  }
+ ]
+}

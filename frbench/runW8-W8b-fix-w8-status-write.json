@@ -1,0 +1,326 @@
+{
+ "area": "w8-status-write",
+ "branch": "fix/w8-status-write",
+ "head_sha": "c93e6e486fb7e163eb1fb14461c6b174ed3c4628",
+ "commits": [
+  {
+   "sha": "b710320ccad1b6f94de8b43bd97164bdfcb53ec2",
+   "subject": "testenv: the repository-wide comment list answers and admin is the admin's (W8a-left-2)"
+  },
+  {
+   "sha": "e8ec8f0f31c8680ad52bce87327e6357d294a929",
+   "subject": "status-board: one pinned status issue per project, one comment per Forerunner (W8-write-1, -2, -3)"
+  },
+  {
+   "sha": "e0d31477fbb71960a6941977a2e123c01e9150c1",
+   "subject": "status: the status pull request goes; Settings, Docs and the join show the status issue (W8-write-5, -6, -7, -10)"
+  },
+  {
+   "sha": "d0b58ba1de01184314b2fe0abf6e47f51dcb80dc",
+   "subject": "ui: the Status issue on GitHub row and the Docs Status note; tests follow the status issue (W8-write-5, -6, -10)"
+  },
+  {
+   "sha": "b2c1606e41fac3fdef03d40ee5442466138ae902",
+   "subject": "status-board: two homes keep one issue and two comments; the mirror writes no cost (W8-write-1, -2, -3, -6, -9, -10, W8a-left-1)"
+  },
+  {
+   "sha": "5b8b27e1a12f4e4b06d1ca210017656ba7d8bf9e",
+   "subject": "status-board: the board's Working on now, Paused and deleted-issue cases; the journey walks the status issue (W8-write-4, -8)"
+  },
+  {
+   "sha": "edc6a901d47688d16a7b227c262a0f58a5dbbf02",
+   "subject": "docs: the status issue (ADR 0122), amendments to 0106 and 0117, maintainer docs, the user guide (W8-write-1..10)"
+  },
+  {
+   "sha": "c93e6e486fb7e163eb1fb14461c6b174ed3c4628",
+   "subject": "ui tests: a together project's Status row is its own in the fake daemon's answers too (W8-write-6)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "There was no status on GitHub that both people could see. Each install either kept its status in the app or opened its own status pull request on fr/status, so two Forerunners on one repository could not see what the other was working on.",
+   "u_ids": [
+    "W8-write-1"
+   ],
+   "failing_test_before": "packages/runtime/test/status-board.test.ts \"two writers on one project: one open issue 'Forerunner status: Team site' with the marker and the label, pinned; two comments, each edited only by its writer, ids unchanged; the body lists both; a restart keeps the comments\" (before: no status board, no issue). Also apps/ui/test/two-installs.test.ts \"http: Ada's and Bob's Forerunners keep one pinned issue with the marker and the label and two comments, each edited only by its writer and the same comments across sessions and restarts; the body lists both; no raw device id, no money, no status pull request\" (before: no issue, one fr/status PR per home).",
+   "how": "New StatusBoard (packages/runtime/src/loop/status-board.ts) plus status-board-words.ts. The issue is titled 'Forerunner status: <project>', its body starts with the marker `<!-- forerunner:status v1 key=K -->`, it carries the label forerunner:status, and it is pinned while fewer than three issues are pinned. Each writer keeps one comment marked `<!-- forerunner:status-writer v1 key=K writer=W -->` with the header `**<agent> (Forerunner)** · <login> · updated …` and edits it in place (commentOnIssue once, updateIssueComment after that). The runner hooks taskStarted, taskBoundary and sessionEnded drive it. The pending write is stored in <projectsRoot>/<id>/status-issue.json, so no migration is needed. compose wires the board when the runtime can reach GitHub and is not the cloud runner, and registers the device row in that case.",
+   "check_in_the_app": "Link a GitHub repository project and run one session. On GitHub, the repository has one pinned issue 'Forerunner status: <project>' with the label forerunner:status and one comment by your login, with the sections Working on now, Waiting for Merge and Last session. Run a second session: the same comment (same id, shown as 'edited') changes, and no second issue or comment appears."
+  },
+  {
+   "problem": "Money and private text could reach GitHub: the status PR carried 'Spent CHF x.', and the Projects mirror wrote a cost field and a 'Cost' line.",
+   "u_ids": [
+    "W8-write-2"
+   ],
+   "failing_test_before": "packages/runtime/test/status-board.test.ts \"every renderer, with figures, emails and @mentions in every quoted text, writes none of them (W8-write-2, a property over 400 draws); marker lines aside\". Also packages/capabilities projects-mirror tests: the cost field cases now assert no cost field and no 'Cost' line (before: the field was created and written).",
+   "how": "Every quoted text passes redactQuoted, which removes money figures beside CHF/USD/EUR/GBP/SFr/Fr./$/€/£ and email addresses and drops the @ of a mention. The comment and the body have no cost line. projects-mirror.ts no longer creates or writes the cost field, and itemFor no longer reads the ledger.",
+   "check_in_the_app": "After a session that spent money, open the status issue and its comments on GitHub: no CHF/USD figure, no 'Spent', no email address. On the project's GitHub Projects board, new items have no Cost field value and no 'Cost' line in their body."
+  },
+  {
+   "problem": "A comment had to say whose Forerunner wrote it without putting the device id on GitHub, and one person on two computers needed two separate comments.",
+   "u_ids": [
+    "W8-write-3"
+   ],
+   "failing_test_before": "packages/runtime/test/status-board.test.ts \"the writer key is 16 hex characters, one per install and project, never the device id\" and \"one login on two computers keeps two comments with two writer keys\".",
+   "how": "The writer key is writerKeyOf(deviceId, K): the first 16 hex characters of sha256(deviceId + \"\\n\" + K). It appears only in the hidden marker. ownComment finds the comment by its stored id and login, or else by login and writer key. A comment by another login that carries this writer key is never treated as this writer's own.",
+   "check_in_the_app": "Open the status issue's HTML source (or edit view) on GitHub. The comment's hidden marker has writer=<16 hex>, and the install's device id from Settings appears nowhere. Use the same GitHub login on a second computer and run a session: a second comment appears beside the first."
+  },
+  {
+   "problem": "The status said nothing about what each Forerunner is doing now or what is paused.",
+   "u_ids": [
+    "W8-write-4"
+   ],
+   "failing_test_before": "packages/runtime/test/status-board.test.ts \"A task's start and end change the writer's Working on now line within one update; a paused task is listed with what is done and left and its checks (W8-write-4)\".",
+   "how": "taskStarted adds a Working on now line: '- \"title\" · files x · since HH:MM · until HH:MM UTC', where until is 90 minutes after the start and the files are taken from extractPathHints. taskBoundary removes the line of a task that ended. The Paused lines come from needs-human tasks paused at a budget: '· done: … · left: a; b · the checks pass on the kept work', or '· waits for its owner's answer'. close() clears this install's Working on now lines on Quit.",
+   "check_in_the_app": "Start a session and refresh the status issue while a task runs: your comment has 'Working on now' with the task's title, the files it names, 'since' and 'until'. After the task ends, the line is gone and the task is listed under Waiting for Merge. Let a task pause at its budget: it is listed under Paused with what is done and left."
+  },
+  {
+   "problem": "The status pull request on fr/status, and its setting, had to go. An open one left by an earlier version stayed open.",
+   "u_ids": [
+    "W8-write-5"
+   ],
+   "failing_test_before": "packages/runtime/test/loop-docs.test.ts \"w8-status-write (amendment 2): a repository project's status is the app's, also with an earlier version's status pull request setting on: no status pull request, no fr/status branch\" and packages/runtime/test/status-board.test.ts \"W8-write-5: the old status pull request this install opened for the project is closed with one line; another project's, an unmarked one and one without this install's record are left alone\".",
+   "how": "Removed STATUS_BRANCH, status_pull_request, STATUS_HELD_MARK, isProjectStatusPr, statusHeld and the status PR listing and joining code. writeSessionStatus now always writes the status into the app (statusInApp, still running refreshCopy). The board calls closeOwnStatusPullRequest once per project. It closes only an open fr/status PR whose mark names the project and whose address a docs.status_written event of this install recorded, with the line 'Closed by Forerunner: the project's status is kept in its status issue now, not in a pull request.'",
+   "check_in_the_app": "In a project where an earlier version opened 'docs: project status' on fr/status, run a session. That PR is closed on GitHub with the one closing line, Settings has no Status pull request row, and no new fr/status branch or PR appears."
+  },
+  {
+   "problem": "A project worked on together had no status on GitHub ('Kept in the app: you work on … together'), and its Docs Status row said the other Forerunner writes it.",
+   "u_ids": [
+    "W8-write-6"
+   ],
+   "failing_test_before": "apps/ui/test/settings-all.test.tsx \"w8-status-write (W8-write-6): a project worked on together has the Status issue on GitHub row too (its own comment on the shared issue); no Status pull request row anywhere\" and apps/ui/test/real-daemon.test.ts \"w8-status-write (W8-write-6, -10): after Work together on o/kite, GET /settings has the Status issue on GitHub row for the project (on; no Status pull request row); settings.set …\".",
+   "how": "A together project shares the project id K, so it writes its own comment on issue K. nameOf uses togetherOf(project).name, so both homes use one title. The Docs Status row of a together project is the project's own (DocsRoutesDeps.statusNote). The together Overview's Details line names the issue, and the join preview shows a 'Status issue' row.",
+   "check_in_the_app": "On Bob's app, open a repository Ada already uses, press Work together, then run a session. The status issue Ada's Forerunner opened now has Bob's comment beside hers, and there is no second issue. Bob's Docs tab Status row says 'In the app; also on GitHub: issue #N', not 'The other Forerunner … writes this doc'."
+  },
+  {
+   "problem": "The person could not see where the status is, or why it is not on GitHub (issues turned off, no permission, three pins taken, GitHub off).",
+   "u_ids": [
+    "W8-write-7"
+   ],
+   "failing_test_before": "apps/ui/test/settings-all.test.tsx \"w8-status-write (W8-write-7, -10): the status issue's switch: a repository project's row, on by default, says where the status is on GitHub and, on a public repository, who can read it\". Also packages/runtime/test/status-board.test.ts \"issues off, no permission, three pins taken: each its own place, and nothing else is written\" and \"GitHub off: the text waits (Settings says so), nothing is lost; a new daemon sends it once\".",
+   "how": "The Settings row project.status_issue 'Status issue on GitHub' shows statusIssueRowWords: what the switch does, then statusPlaceSentence, for example 'Status on GitHub: issue #12 (pinned)', '(not pinned: the repository has three pinned issues already)', 'Status stays in the app: issues are turned off on o/r.', 'Forerunner may not write issues on o/r (the GitHub key needs Issues: read and write).', or 'Status on GitHub: last updated 14:05; it updates when GitHub answers.'. On a public repository it adds 'Everyone who can see this repository can read it.'. The Docs Status row uses docsStatusNote. A write that GitHub has not taken is kept as pending, retried after 60 s, and retried whenever Settings or Docs reads the words.",
+   "check_in_the_app": "Open Settings > Advanced > Other settings and find 'Status issue on GitHub' for the project. After a session it reads 'Status on GitHub: issue #N (pinned)'. Turn off issues for the repository on GitHub and run a session: the row reads 'Status stays in the app: issues are turned off on owner/repo.'. Cut the network during a task: the row and the Docs Status row read 'Status on GitHub: last updated HH:MM; it updates when GitHub answers.', and once the network is back the comment is updated."
+  },
+  {
+   "problem": "Someone editing, deleting or closing the status on GitHub could leave it wrong or duplicated.",
+   "u_ids": [
+    "W8-write-8"
+   ],
+   "failing_test_before": "packages/runtime/test/status-board.test.ts \"W8-write-8: an edit by another login is found by comparing with the text last sent and the person is told once; a copy of the writer key by bob is never edited; a deleted comment is written again; a closed issue is never reopened\" and \"W8-write-8: a deleted issue gets one new issue and the person is told once\". Also \"two writers opening at once leave one open issue: the lower number stays, the other closes its own with one line\".",
+   "how": "The board compares the comment's body with the text it last sent (`sent`). If someone changed it, the person gets one Update (commentChangedUpdate) and the writer's text goes back on the next write. A deleted comment is written again. A closed issue stops the writes and says closedIssueSentence; the board never reopens it. A deleted issue gets one new issue and one Update (issueDeletedUpdate). When two writers open an issue at the same time, the one with the higher number closes its own with 'Closed: #N is this project's status issue.'.",
+   "check_in_the_app": "Edit your Forerunner's comment on GitHub and run the next session: you get one Update in the Inbox, and the comment's text is your Forerunner's again. Close the issue on GitHub: Settings reads 'The status issue #N was closed on GitHub; reopen it there to use it again.', and no new issue appears."
+  },
+  {
+   "problem": "A project whose repository's default-branch marker names another Forerunner project would write a status issue into that other project's repository.",
+   "u_ids": [
+    "W8-write-9"
+   ],
+   "failing_test_before": "packages/runtime/test/status-board.test.ts \"W8-write-9: a project whose repository's marker names another project writes no issue and no comment, and says why; switched off it writes nothing either\" and apps/ui/test/two-installs.test.ts \"memory: W8-write-9: Bob's 'Site' on team/shared, whose default branch's marker names Ada's 'Team site', writes no issue and no comment over a session and a restart, and its status stays in the app with its sentence\".",
+   "how": "Before writing, the board reads the default branch's .forerunner/project.json. If it names another project, the place is other_project: nothing is written, and the row reads 'Status stays in the app: o/kite is the Forerunner project \"Kite club\"; Work together on the Overview shares its status issue.'. issueOf only ever takes issue K: a stored issue or the lowest issue with K's marker or title opened by a writer, else a new one.",
+   "check_in_the_app": "Ada's project 'Kite club' owns o/kite. On Bob's app, make a separate (not together) project on o/kite and run a session. GitHub has no new issue or comment from Bob, and Bob's Settings row says the status stays in the app with the Work together sentence."
+  },
+  {
+   "problem": "There was no per-project switch to keep the status off GitHub.",
+   "u_ids": [
+    "W8-write-10"
+   ],
+   "failing_test_before": "packages/runtime/test/status-board.test.ts \"W8-write-10: switched off, the writer writes no issue and no comment, and the other writer's comment is untouched\" and apps/ui/test/two-installs.test.ts \"memory: W8-write-10 and W8a-left-1: switched off, Bob writes no issue and no comment and his row says so after a restart too; Ada's comment is untouched; Ada switching hers off gives one docs pull request whose guide says so, …\".",
+   "how": "New setting status_issue: on unless false (statusIssuePolicy), level low, narrows so that false applies at once, with the card STATUS_ISSUE_EFFECT both ways. It is in Settings (SettingsPage/SettingsFields), chat and voice, and the fake daemon mirrors it. When it is off, flush writes nothing and the row reads statusSwitchedOffSentence.",
+   "check_in_the_app": "Settings > Advanced > Other settings > Status issue on GitHub > Change > Off: the card says 'this Forerunner writes no status issue or comment for the project; its status stays in the app (Docs, Status)'. Run a session: GitHub gets no new issue or comment edit from you, and the row reads 'Status stays in the app: the status issue is turned off for \"<project>\" in Settings.'."
+  },
+  {
+   "problem": "The repository guide's status fact was a placeholder (guideStatusIssueState always 'on').",
+   "u_ids": [
+    "W8a-left-1"
+   ],
+   "failing_test_before": "apps/ui/test/two-installs.test.ts \"memory: W8-write-10 and W8a-left-1: … Ada switching hers off gives one docs pull request whose guide says so …\".",
+   "how": "guideStatusIssueState(project, board) returns switched_off when the policy is off and otherwise the board's state (StatusBoard.guideState). compose sets docs.statusIssueState. At each write the board records the guide fact, and when the fact changes, onStateChange runs docs.refreshGuide.",
+   "check_in_the_app": "Turn the status issue off for a project and run a session. The docs pull request's AGENTS.md / guide part says the status issue is turned off for this project."
+  },
+  {
+   "problem": "Two bugs in the GitHub stand-in: GET /repos/:o/:r/issues/comments answered 404 because /issues/:number matched first, and permissions.admin was true for any collaborator who could push.",
+   "u_ids": [
+    "W8a-left-2"
+   ],
+   "failing_test_before": "testenv/test/githost.test.ts \"GET /repos/:o/:r/issues/comments lists every issue's comments, oldest first, and /issues/:number still answers an issue\" and \"permissions.admin is true only for the repository's admin: a member who may push reads push true and admin false\".",
+   "how": "In routes-issues.ts the repository-wide comments route is registered before /issues/:number. In store.ts, admin is true only for the administration check plus roleOf === 'admin', and maintain is admin or push plus role 'maintain'.",
+   "check_in_the_app": "Bench only: on a two-person bench (--users ada,bob), GET http://<githost>/repos/<o>/<r>/issues/comments returns the status comments, and bob's GET /repos/<o>/<r> reads permissions.push true and admin false."
+  },
+  {
+   "problem": "The issue body's summary could be spoofed by a comment from someone without write access, or by a comment whose header names another login.",
+   "u_ids": [
+    "W8-write-1",
+    "W8-write-8"
+   ],
+   "failing_test_before": "packages/runtime/test/status-board.test.ts \"the writer filter: a comment with a valid marker by a login without write access, or whose header names another login, changes nothing in the body\".",
+   "how": "writerFilter (D-W8-37) keeps a comment only if it has a valid marker for K, its header login equals the comment's author, and getRepoPermission returns write, maintain or admin. A failed permission check excludes the comment. The body is rebuilt at most every 30 s (FORERUNNER_STATUS_BODY_MS) from parsed and re-redacted lines between status-quote markers, and is read again with an ETag (at most twice) if a comment changed in the meantime.",
+   "check_in_the_app": "Have a read-only collaborator post a copy of a writer comment on the status issue. After the next session, the issue's body at the top still lists only the writers with write access."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "W8-write-4's 'Waiting for Claude' line (a credential or limit wait) is not wired. claudeWaitLineText and the renderer section exist and are tested, but the runner does not yet feed the board a wait.",
+   "why": "This is on the allowed cut line. Wiring it needs the credential-wait events to reach the board with their end time; I left it for w8-l4-leftovers."
+  },
+  {
+   "problem": "The 30-minute refresh of a long-running Working on now line ('until' moved forward) is scheduled in the board but has no test.",
+   "why": "This is on the allowed cut line. It needs a fake clock threaded through the board's timers."
+  },
+  {
+   "problem": "W8-write-8 restore is an interpretation: the writer's text goes back on every write after a change on GitHub (the person is told once), not only at the moment the change is found.",
+   "why": "This is on the allowed cut line. The spec did not say when to restore; restoring on the next write keeps one code path."
+  },
+  {
+   "problem": "W8-write-9's 'pair made before the rule' case (two projects of one install on one repository made before the one-repository rule): each writes its own issue under its own K, not one shared issue.",
+   "why": "This is on the allowed cut line. The never-cut part (a marker that names another project means no issue) is done."
+  },
+  {
+   "problem": "The injection case for status comment text read back into a model belongs to w8-status-read. This area has no model channel: the board only writes.",
+   "why": "Out of this area. pnpm test:injection still passes 92/92."
+  },
+  {
+   "problem": "The cloud runner (billing.runner 'cloud') has no status board.",
+   "why": "The cloud runner has no device row or GitHub token of its own here. Wiring it needs a decision on whose writer key it uses."
+  },
+  {
+   "problem": "When the switch changes, the guide refresh happens at the board's next write, not at the moment of the switch.",
+   "why": "The guide fact is noted at each write. A refresh on settings.set would need a settings hook into the docs path, which I left out to keep the change small."
+  },
+  {
+   "problem": "After a restart, a body rebuild waiting on the 30 s timer is lost until the next write or a Settings or Docs read (resume rebuilds the body then).",
+   "why": "Low impact: the comments are correct and the body catches up at the next write."
+  },
+  {
+   "problem": "A GitHub Projects board made by an earlier version keeps its old cost field and the values already in it.",
+   "why": "Deleting a person's field on GitHub is destructive. The user guide and capabilities.md say how to delete it."
+  },
+  {
+   "problem": "CHANGELOG.md, docs/status/UPDATE-LOG.md and docs/requirements.md were not edited (not allowed). Suggested lines: CHANGELOG 'Each repository project has one pinned status issue on GitHub, \"Forerunner status: <project>\": every Forerunner keeps one comment there (what it works on, what waits for Merge, what is paused, its last session; never costs). The status pull request on fr/status is gone; an earlier one is closed with one line. Settings, Advanced, Other settings, Status issue on GitHub turns it off per project.' UPDATE-LOG '2026-11-24 w8-status-write: status issue (ADR 0122) replaces the status PR; W8-write-1..10, W8a-left-1/2; journey two-people 19/31.' requirements: mark the status issue requirement (D-W8-2) as built, with the cut-line items above open.",
+   "why": "The task forbids editing these files."
+  }
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/loop-docs.test.ts (status PR cases: 'a repository project's status stays in the app', the empty-repository case, 'a session that opened no pull request keeps its status in the app', W15-01 fix-up, the W8-write-5 fr/status case)",
+   "why": "The status pull request is gone (ADR 0122). These cases now assert no fr/status branch or PR and the status in the app."
+  },
+  {
+   "test": "packages/runtime/test/docs-scaffold.test.ts (composed runner)",
+   "why": "A session now writes this install's comment on the pinned status issue instead of opening a status PR."
+  },
+  {
+   "test": "packages/runtime/test/writing-rules.test.ts 'L4-github-108 …'",
+   "why": "The held-status line it checked went with the status PR. The possessive rule is kept for the remaining lines."
+  },
+  {
+   "test": "packages/runtime/test/settings-undo-routes.test.ts 'offers the Status issue on GitHub switch only for a project on a host repository …'",
+   "why": "The status_pull_request row became status_issue (on by default)."
+  },
+  {
+   "test": "packages/runtime/test/onerepo-together*.test.ts and packages/commands together-settings / project-join cases",
+   "why": "A together project's 'status stays in the app' refusal for status_pull_request is gone. The project now has the status_issue switch, and joining lists a Status issue row."
+  },
+  {
+   "test": "packages/capabilities projects-mirror tests",
+   "why": "No cost field or 'Cost' line any more (W8-write-2, D-W8-13)."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts: OR-07 Details line, C2-left-13 Docs Status row, the pair-before-rule case, OJ-03, L4-github-113..116/-125/L4-creds-28 dialog words, W15-01, C-57 row, 'a project made from a brief'",
+   "why": "These follow the new words: the together Details line names the status issue, the Status row is the project's own, nothing opens a status PR, and the Make one project dialog names the status issue switch."
+  },
+  {
+   "test": "apps/ui/test/settings-all.test.tsx (Status pull request row cases)",
+   "why": "Replaced by the Status issue on GitHub row (W8-write-6, -7, -10)."
+  },
+  {
+   "test": "apps/ui/test/project-tabs*.test.tsx and fixtures, apps/ui/test/onerepo-join.test.tsx",
+   "why": "The Docs Status row note is the daemon's status note, and the join preview has a Status issue row."
+  },
+  {
+   "test": "apps/ui/test/onerepo-link.test.tsx 'L4-creds-23 …' and apps/ui/test/contracts.test.ts (together Docs rows)",
+   "why": "A together project's Status row is now its own ('Status on GitHub: the status issue is written when a task starts or a session ends.'), not 'The other Forerunner … writes this doc'."
+  },
+  {
+   "test": "apps/ui/test/two-installs.test.ts harness and w8-repo-guide cases (Bob's write filters)",
+   "why": "Bob's status-issue writes (by marker key K) are now expected, so the 'Bob writes nothing' filters allow them."
+  },
+  {
+   "test": "scripts/bench/journeys/two-people-checks.cjs (one-status-issue, status-words-offline no longer known; new two-status-comments)",
+   "why": "These now pass on this code (19 of 31, was 15 of 30)."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check (at c93e6e4)",
+   "result": "exit 0: lint (1901 files, only pre-existing warnings), typecheck, 571 test files / 6385 passed, 7 skipped, docs check, secret-scan clean (2305 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 30 passed, 83 skipped (Postgres cases, no database here)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx vitest run (at c93e6e4)",
+   "result": "exit 0: 107 files, 1570 passed"
+  },
+  {
+   "command": "cp /tmp/frbench/pw-local.config.template.ts apps/ui/playwright.local.config.ts && (cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts)",
+   "result": "exit 0: 40 passed (file excluded via .git/info/exclude, not committed)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:injection",
+   "result": "exit 0: PASS, 92 cases (65 hostile, 27 controls), 0 failed"
+  },
+  {
+   "command": "npx vitest run packages/runtime/test/status-board.test.ts; apps/ui two-installs.test.ts",
+   "result": "20 passed; 16 passed"
+  },
+  {
+   "command": "bench two-person journey (scripts/bench/journeys/two-people.cjs, --provider bench, stand-in GitHub)",
+   "result": "19 of 31 checks pass (was 15 of 30 at 8299aa3); the 12 known failures are owned by later areas, and nothing failed that was not expected; /tmp/frbench/fix-w8-status-write/steps/two-people-result.json"
+  },
+  {
+   "command": "git grep -n \"^<<<<<<< \"",
+   "result": "nothing found"
+  },
+  {
+   "command": "git status --short; git rev-parse HEAD fix/w8-status-write",
+   "result": "clean; both c93e6e486fb7e163eb1fb14461c6b174ed3c4628; bench processes (pids from bench.json) all stopped"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/fix-w8-status-write/steps/before-docs-ada-at-8299aa3.png",
+   "/tmp/frbench/fix-w8-status-write/steps/before-docs-bob-at-8299aa3.png"
+  ],
+  "after": [
+   "/tmp/frbench/fix-w8-status-write/steps/11-after-settings-ada.png",
+   "/tmp/frbench/fix-w8-status-write/steps/12-after-docs-ada.png",
+   "/tmp/frbench/fix-w8-status-write-bob/steps/11-after-settings-bob.png",
+   "/tmp/frbench/fix-w8-status-write-bob/steps/12-after-docs-bob.png",
+   "/tmp/frbench/fix-w8-status-write-bob/steps/08-13-github-off-bob.png",
+   "/tmp/frbench/fix-w8-status-write/steps/after-status-issue.txt"
+  ]
+ },
+ "new_problems": [
+  "On the two-person bench both agents are named 'Alice', so both comment headers read '**Alice (Forerunner)** · ada' and '**Alice (Forerunner)** · bob' (see /tmp/frbench/fix-w8-status-write/steps/after-status-issue.txt). This comes from the bench's default agent name, not from the board, but the person reading the issue tells the writers apart only by login.",
+  "A together project keeps the name the person typed in its row, while the issue title uses togetherOf(project).name. The board handles this, but other places that use project.name for a together project may show a different name than the issue.",
+  "On the stand-in GitHub, issue numbers and PR numbers share one sequence (as on GitHub), so the first status issue is often #1 before any task PR. That is right for GitHub, but some older tests assume PR #1.",
+  "The repository guide's statusIssueTitle text is written unredacted, while the board redacts the project name with safeLine/redactQuoted. A project name holding an email or figure would differ between the guide and the issue title (w8-repo-guide owner).",
+  "Before the first session, the Docs Status row shows the 'missing' badge beside 'Status on GitHub: the status issue is written when a task starts or a session ends.'. The badge is the docs file's state, but it reads as if the status issue were missing.",
+  "scripts/bench/cut.mjs cuts only the API host, so 'GitHub off' on the bench leaves git pushes working, and a task can still finish offline in the journey."
+ ],
+ "notes_for_other_areas": [
+  "w8-together: call rt.statusBoard.closeOwnStatusPullRequest(project) if Work together or Make one project should close an earlier version's fr/status PR at the press. The board does this once per project at its first write (state.oldPrChecked). Never close another install's PR: the function checks this install's docs.status_written record.",
+  "w8-together: a together project writes its own comment on issue K (same project id) and the title uses togetherOf(project).name. The join preview has a row {label: 'Status issue', value: 'On'|'Off'}. TOGETHER_OVERVIEW_DETAILS is now 'What the other Forerunner does shows in its comment on the status issue and its pull requests on GitHub. You merge yours; its person merges theirs.'.",
+  "w8-status-read: parse comments with parseWriterComment (status-board-words.ts), filter writers with writerFilter (status-board.ts, D-W8-37: valid marker for K, header login == author, getRepoPermission write/maintain/admin, fails closed), and redact again with redactQuoted. Line formats: Working on now '- \"title\" · files a, b · since HH:MM · until HH:MM UTC'; Waiting for Merge '- #12 \"title\" · files x'; Paused '- \"title\" · done: … · left: a; b · the checks pass on the kept work' or '· waits for its owner's answer'; Waiting for Claude '- waits until HH:MM UTC, then it goes on' or '- waits for its person's answer'; 'Last session (2 Nov 20:59 UTC): did N tasks: \"…\". Next: \"…\".'. Markers: readStatusIssueKey, readWriterMarker, isMarkerLine. The quoted body sections sit between <!-- forerunner:status-quote --> and <!-- /forerunner:status-quote -->.",
+  "w8-status-read / w8-l4-leftovers: the board's record is <projectsRoot>/<id>/status-issue.json (STATUS_BOARD_FILE, StatusBoardState), with no migration; migration number 0011 is still free. rt.statusBoard.words(project, timezone) returns {sentence, docsNote, public}, and rt.statusBoard.place(project) returns the StatusPlace (on/not_yet/waiting/issues_off/no_permission/other_project/closed).",
+  "w8-repo-guide: guideStatusIssueState(project, board) is now real. docs.statusIssueState = statusBoard.guideState gives switched_off / on / the board's state. The guide refreshes through onStateChange when the fact changes at a write.",
+  "w8-l4-leftovers: claudeWaitLineText is rendered but not fed. Wire credential and limit waits from session/credential-wait.ts into StatusBoard (a new port method, e.g. claudeWaiting(projectId, until|null)). The 30-minute refresh timer exists but is untested.",
+  "Sentences removed: heldStatusNote, togetherStatusPullRequestSentence, togetherStatusNote, STATUS_HELD_MARK and 'Kept in the app: you work on … together …'. New sentences are all in status-board-words.ts (statusPlaceSentence, docsStatusNote, STATUS_NOT_YET_SENTENCE, STATUS_ISSUE_EFFECT, PUBLIC_REPOSITORY_SENTENCE, commentChangedUpdate, issueDeletedUpdate, OLD_STATUS_PR_LINE, duplicateIssueLine, closedIssueSentence, otherProjectStatusSentence). The module has no imports, so the UI's fake daemon imports it directly.",
+  "ADR 0122 'The status issue' is used. 0106 and 0117 have amendments. The settings key is status_issue (STATUS_ISSUE_SETTING); status_pull_request is now an unknown key.",
+  "Device registration: compose registers the device row whenever the status board is wired (a token or an injected host, and not the cloud runner). The writer key is writerKeyOf(device id, K)."
+ ]
+}

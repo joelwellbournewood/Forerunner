@@ -1,0 +1,162 @@
+{
+ "area": "w8-l4-leftovers",
+ "branch": "fix/w8-l4-leftovers",
+ "head_sha": "f53c68e",
+ "commits": [
+  {
+   "sha": "8a0cb6b",
+   "subject": "session words: a review that waits is said one way on the session page, the Sessions row and the log's end line (L4i-left-31, U-089)"
+  },
+  {
+   "sha": "0803401",
+   "subject": "budget words: a pause under an outer limit says \"before it ran out\" while some is left, \"at it\" once spent, in every place (L4i-left-28, U-089)"
+  },
+  {
+   "sha": "958babd",
+   "subject": "tasks: a budgeted task that spent nothing reads \"CHF 0.01 budget\", and its drawer shows no \"spent CHF 0.00\" (L4i-left-64, U-089)"
+  },
+  {
+   "sha": "84f1dcc",
+   "subject": "docs: the fixup's words for a pause under an outer limit, a review that waits and an unspent budget (L4i-left-28, L4i-left-31, L4i-left-64)"
+  },
+  {
+   "sha": "f53c68e",
+   "subject": "test: the Start dialog's held sentence follows the card's new title (L4i-left-28)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "Review blocking 1 (L4i-left-31): a task was done and only its review waited for room. Its row said 'Done; its review waits for room in its budget of CHF 0.01', but the session page's badge (GET /sessions/:id statusText) said 'Ended: 1 paused', the Sessions row said '1 done, 1 paused · Ended: 1 paused', and the log's end line said 'Session over: 1 done, 1 paused. CHF 0.02.'. Only the unit functions had the new words, and the user guide said 'says so in every place'.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "packages/runtime/test/task-budget-all.test.ts 'w8-l4-leftovers, wave 8: a review that waits is said one way where the session's end is shown (L4i-left-31)' > 'the session page's badge, the Sessions row and the log's end line say the review waits, also after a restart'. It failed with 'Session over: 1 done, 1 paused. CHF 0.03.'. Also: apps/ui/test/real-daemon.test.ts 'w8-l4-leftovers, wave 8: a review that waits is said one way on the session page and the Sessions row (L4i-left-31)'. Sibling unit cases are in session-list.test.ts (counts, end words, stillWaitsText, the gist) and session-status-words.test.ts (a row written before review_waits).",
+   "how": "Root cause: GET /sessions/:id and the Sessions list read the daemon's stillBlocked (views.ts), which never read handoff.review_waits. countsOf/countsWords counted every paused task as paused. The runner's session.ended payload carried one paused count. Fix: stop-words.ts reviewWaitIds reads handoff.review_waits. For an older row it reads the outcome's paused tasks marked reviewWaits (L4-money-111). stillBlocked, blockedOfHandoff and stillWaitsText now count those tasks apart. countsOf adds tasks.reviewWaits; it is optional in the API and absent when none. countsWords says '1 review waits for room'. session.ended carries reviewWaits, so event-lines' end line says it (one runner.ts data line). A session that did only that task has the gist '\"X\" is done; its review waits for room in its budget of CHF 0.01.'. The composed case checks the same words after a second compose on the same home.",
+   "check_in_the_app": "Bench (--provider bench): make a project 'Pond notes' with 'Write the pond notes' (budget CHF 0.01) and 'Write the frog notes'. Press Start session, then Start. The session page badge reads 'Ended: 1 review waits for room' and the log ends 'Session over: 1 done, 1 review waits for room. CHF 0.02.'. The Sessions tab row reads '1 done, 1 review waits for room · Ended: 1 review waits for room · CHF 0.02'. Quit and reopen: the same words. Screens: /tmp/frbench/fixup-w8-l4-leftovers/steps/04-fx-pond-session-page.png and 05-fx-pond-sessions-tab.png. The reviewer's before screens are /tmp/frbench/review-w8-l4-leftovers/steps/04-rv-pond-session-page.png and 05-rv-pond-sessions-tab.png."
+  },
+  {
+   "problem": "Review blocking 2 (L4i-left-28, never cut): a run stopped hard under the project's budget of CHF 0.06 with CHF 0.03 spent. The result said '\"Write the heron page\" paused at the project's budget of CHF 0.06: ...' and then 'Ended before the project's budget of CHF 0.06 ran out.'. The task row, the Sessions row's first line, the Overview (Needs you, Next), the card and the notification title ('stopped at the project's budget') all said 'at' with half of the budget unspent.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "packages/runtime/test/budget-pause.test.ts 'w8-l4-leftovers, wave 8: a hard stop under the project's budget says it paused before the budget ran out (L4i-left-28)'. It checks the card title, the task reason, the row label, the result, GET /sessions/:id/tasks here, the Sessions row gist and the notifications, and failed on the old src. Also apps/ui/test/real-daemon.test.ts 'w8-l4-leftovers, wave 8: a pause at the project's budget is said one way, true to what was spent (L4i-left-28)', the run past the limit through the UI's client; it failed with 'Ended before the project's budget ran out'. Unit cases for both branches are in session-status-words.test.ts 'w8-l4-leftovers, wave 8: one wording for a pause under an outer limit'.",
+   "how": "Root cause: budgetStopTitle (the card title and the task reason), budgetPauseLabelOf (the row) and the outcome's `before` (the result, the session task rows, the Sessions row) said 'paused before ... ran out' only for a wrap-up. A hard stop under an outer limit always said 'paused at'. The session words also said 'Ended before ... ran out' when a call billed more than its check took the run past the limit. The stand-in does this: the real-daemon run spent CHF 0.07 of CHF 0.06. Fix: one rule, pausedBeforeLimit(card), in the leaf session/review-room-words.ts. It is true for a wrap-up, or for an outer limit (project budget, month cap, subscription share) whose card's spent_usd_micro is below cap_usd_micro. budgetStopTitle, budgetPauseLabelOf and the runner's outcome `before` (one data line) read it. The session words say 'Stopped at <limit>' only when the session's own spend reached the limit (outerLimitPassed in stop-words.ts). That covers stopWords, sessionStatusText/endedStatusText (badge, Sessions row, docs note), a limitPassed flag on session.ended (log end line) and the budget_stop notification title. The plan share's title uses \"your subscription's share\" to stay within 60 characters. Cards filed before keep their stored titles.",
+   "check_in_the_app": "Bench: start.mjs --provider bench --env FORERUNNER_BENCH_USAGE=heron:40000. Make a project 'Bird notes' with a budget of CHF 0.06 and the tasks 'Write the heron page' and 'Write the owl page'. Press Start. On the session page: badge 'Ended before the project's budget ran out'; task row 'Paused before the project's budget of CHF 0.06 ran out'; result '\"Write the heron page\" paused before the project's budget of CHF 0.06 ran out: it is ready again once you raise that budget, for your next Start. Ended before the project's budget of CHF 0.06 ran out. ...'. Sessions row first line: '\"Write the heron page\" paused before the project's budget of CHF 0.06 ran out.'. Overview Needs you: '\"Write the heron page\" paused before the project's budget ran out'. Next: 'Paused before the project's budget ran out'. Notification: 'Bird notes: ended before the project's budget ran out'. Screens: /tmp/frbench/fixup-w8-l4-leftovers/steps/09-fx-bird-session-page.png, 10-fx-bird-sessions-tab.png and 11-fx-bird-overview.png. The before screens are /tmp/frbench/review-w8-l4-leftovers/steps/09-, 10- and 11-rv-bird-*.png. Live (real model): the same project. Expect the same words, and no 'paused at' or 'stopped at' anywhere while part of the budget is left."
+  },
+  {
+   "problem": "Review blocking 3 (a regression of L4i-left-64): a budgeted task that spent nothing showed the fragment 'of CHF 0.01 budget' in its Cost cell. The drawer sibling still read 'spent CHF 0.00'.",
+   "u_ids": [
+    "U-089"
+   ],
+   "failing_test_before": "apps/ui/test/w8-l4-leftovers.test.tsx 'w8-l4-leftovers, wave 8: a budgeted task that spent nothing reads its budget alone (L4i-left-64)'. It failed with 'of CHF 0.01 budget'.",
+   "how": "Root cause: taskCapWords wrote 'of <budget> budget' after an amount that L4i-left-64 no longer shows at zero, and TaskDrawer always wrote 'spent <Money>'. Fix: with nothing spent the cap line is 'CHF 0.01 budget'. The drawer leaves out the spend and names 'budget CHF 0.01' for a task with its own budget. A task that spent keeps 'of CHF 0.20 budget'.",
+   "check_in_the_app": "Bench: add a ready task with a budget of CHF 0.01 and open the Tasks tab. Its Cost cell reads 'CHF 0.01 budget' and nothing else. Open its drawer: the line reads 'Light review · Medium priority · coder · budget CHF 0.01', with no 'spent CHF 0.00'. Screens: /tmp/frbench/fixup-w8-l4-leftovers/steps/01-fx-pond-tasks-before-start.png, 16-fx-newt-tasks-row-unspent-budget.png and 17-fx-newt-drawer-unspent-budget.png. The before screen is /tmp/frbench/review-w8-l4-leftovers/steps/01-rv-pond-tasks-before-start.png."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "The detail log line of a hard stop still reads '\"Write the heron page\" stopped at the project's budget of CHF 0.06, less the CHF 0.03 kept for its review: it spent CHF 0.03, and its next step would have gone over.'.",
+   "why": "This line is the run's own sentence (budget-pause.ts pauseSentence, written by the executor). It is precise: the run stopped at the cap that is left after the review reserve. The reviewer did not list it. Changing it would touch the loop's pause sentence, which is outside this fixup."
+  },
+  {
+   "problem": "In the case where a run went past an outer limit, task-display.ts reviewStopWords ('the session ended before this month's cap ran out') and the state service's push body (services/state-api push/fanout.ts 'A session stopped at this month's cap.', titled 'Budget reached: session stopped') do not read the spend.",
+   "why": "Neither has the session's spend or the cap at hand. The push fan-out is outside this area, so its words stay as they were. Only the case where the stand-in overbills is affected, which the real API's precheck does not normally allow."
+  }
+ ],
+ "validation": [
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm check",
+   "result": "exit 0. Lint shows pre-existing warnings only. Typecheck, unit tests (572 files, 6379 passed, 7 skipped), docs:check (no base in a worktree), links and the secret scan all pass. A first run at 600 s was stopped by the tool's time limit during the tests and was rerun whole."
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (42 files)"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:integration",
+   "result": "exit 0: 5 files passed, 7 skipped (Postgres not set; no packages/state change); 30 passed, 83 skipped"
+  },
+  {
+   "command": "flock /tmp/frbench/heavy.lock pnpm test:e2e",
+   "result": "exit 0: 13 files, 25 passed, 1 skipped"
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock pnpm vitest run --config vitest.config.ts",
+   "result": "exit 0: 108 files, 1572 passed. The first run found real-daemon L4-money-204's Start-dialog sentence on the old card title; it was updated (f53c68e) and rerun green."
+  },
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx playwright test --config playwright.local.config.ts",
+   "result": "exit 0: 40 passed"
+  },
+  {
+   "command": "failing-first proof for B2: git checkout -- packages/runtime/src services; vitest budget-pause -t L4i-left-28; git apply",
+   "result": "The new composed case failed on the old src and passes with the fix. The B1 composed case and the B3 UI case each failed before their fix in the same run (see each commit)."
+  },
+  {
+   "command": "node scripts/bench/start.mjs --name fixup-w8-l4-leftovers --daemon-port 49322 --ui-port 2922 --fresh --provider bench --env FORERUNNER_BENCH_USAGE=heron:40000; walk (the reviewer's walk-a journey plus a drawer walk); stop.mjs --clean",
+   "result": "AFTER walk: Pond gives 'Ended: 1 review waits for room', the row '1 done, 1 review waits for room · Ended: 1 review waits for room' and the end line 'Session over: 1 done, 1 review waits for room. CHF 0.02.'. Bird gives 'paused before the project's budget of CHF 0.06 ran out' on the result, row, Sessions row, Overview and card, and the notification 'ended before the project's budget ran out'. Fern's Approve and Reject still work. The unspent budget reads 'CHF 0.01 budget' on the row and 'budget CHF 0.01' in the drawer. The bench is stopped and its home removed; steps/ kept. The reviewer's screens under /tmp/frbench/review-w8-l4-leftovers/steps/ are the before walk."
+  },
+  {
+   "command": "git merge-tree --write-tree --name-only fix/w8-together HEAD",
+   "result": "Conflicts only in the appended blocks of apps/ui/test/real-daemon.test.ts, docs/maintainers/apps.md, runtime.md and docs/user-guide.md. Keep both sides. runner.ts, views.ts, api-types.ts, compose.ts and server.ts merge cleanly."
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/frbench/review-w8-l4-leftovers/steps/01-rv-pond-tasks-before-start.png",
+   "/tmp/frbench/review-w8-l4-leftovers/steps/04-rv-pond-session-page.png",
+   "/tmp/frbench/review-w8-l4-leftovers/steps/05-rv-pond-sessions-tab.png",
+   "/tmp/frbench/review-w8-l4-leftovers/steps/09-rv-bird-session-page.png",
+   "/tmp/frbench/review-w8-l4-leftovers/steps/10-rv-bird-sessions-tab.png",
+   "/tmp/frbench/review-w8-l4-leftovers/steps/11-rv-bird-overview.png"
+  ],
+  "after": [
+   "/tmp/frbench/fixup-w8-l4-leftovers/steps/01-fx-pond-tasks-before-start.png",
+   "/tmp/frbench/fixup-w8-l4-leftovers/steps/04-fx-pond-session-page.png",
+   "/tmp/frbench/fixup-w8-l4-leftovers/steps/05-fx-pond-sessions-tab.png",
+   "/tmp/frbench/fixup-w8-l4-leftovers/steps/09-fx-bird-session-page.png",
+   "/tmp/frbench/fixup-w8-l4-leftovers/steps/10-fx-bird-sessions-tab.png",
+   "/tmp/frbench/fixup-w8-l4-leftovers/steps/11-fx-bird-overview.png",
+   "/tmp/frbench/fixup-w8-l4-leftovers/steps/14-fx-fern-inbox-plan-card.png",
+   "/tmp/frbench/fixup-w8-l4-leftovers/steps/16-fx-newt-tasks-row-unspent-budget.png",
+   "/tmp/frbench/fixup-w8-l4-leftovers/steps/17-fx-newt-drawer-unspent-budget.png"
+  ]
+ },
+ "new_problems": [
+  "The bench stand-in's FORERUNNER_BENCH_USAGE bills input tokens that the precheck never saw, so a run can go past an outer limit. The real-daemon case shows this: CHF 0.07 spent of a CHF 0.06 project budget. The app now says 'paused at' and 'Stopped at' truthfully in that case. Whether a real-API run can overshoot (late usage) is a live check.",
+  "runner.ts is changed outside the two regions shared_files gives this area, as the reviewer noted for the fixer. This fixup adds data lines only: the outcome's `before` reads pausedBeforeLimit, session.ended gains reviewWaits and limitPassed, and the docs note passes outerLimitPassed. There is no flow change.",
+  "Budget cards filed before this fix keep their stored titles ('paused at the project's budget of CHF 0.06'). The Inbox, the Overview's Needs you and the Start dialog's held sentence show those stored titles until the card closes."
+ ],
+ "notes_for_other_areas": [
+  "New helpers in session/review-room-words.ts (a leaf with no imports, so the UI's fake daemon reads it): outerLimitPausedWords(source), limitLeftAtStop(stop) and pausedBeforeLimit(card). New helpers in stop-words.ts: reviewWaitIds(handoff), reviewWaitsWords(n), outerLimitPassed({spentChfMicro, stopCapChfMicro}) and outerLimitPassedOfHandoff(handoff). sessionStatusText and endedStatusText take an optional limitPassed. stopWords takes an optional spentChfMicro.",
+  "API: ProjectSessionRowView.tasks gains an optional reviewWaits field (absent when none), and tasks.paused no longer counts those tasks. session.ended's payload gains reviewWaits, and paused excludes them; limitPassed is true only when the session spent all of the outer limit. The fake daemon's rows carry no reviewWaits, which the optional field allows.",
+  "Sentences, old -> new. Badge, row and end words: 'Ended: 1 paused' -> 'Ended: 1 review waits for room' (plural '2 reviews wait for room'). Counts: '1 done, 1 paused' -> '1 done, 1 review waits for room'. End line: 'Session over: 1 done, 1 paused. CHF 0.02.' -> 'Session over: 1 done, 1 review waits for room. CHF 0.02.'. Row with someone needed: '1 still needs you, 1 paused' + ', 1 review waits for room'. Gist of a session whose only task waits: '\"X\" paused at its budget of CHF 0.01.' -> '\"X\" is done; its review waits for room in its budget of CHF 0.01.' (two or more: '\"A\" and \"B\" are done; their reviews wait for room.').",
+  "Outer-limit pause words, old -> new, when some of the limit is left. Card title and task reason: '\"X\" paused at the project's budget of CHF 0.06' -> '\"X\" paused before the project's budget ran out' (also 'paused before this month's cap ran out' and \"paused before your Claude subscription's share ran out\"). Row label: \"Paused at the project's budget\" -> \"Paused before the project's budget ran out\" (also \"Paused before this month's cap ran out\"). Session task row, result and Sessions gist: 'paused at the project's budget of CHF 0.06' -> 'paused before the project's budget of CHF 0.06 ran out'. Two or more outer pauses: 'paused at a limit: they are ready again ...' -> 'paused before a limit ran out: ...'. budget_stop notification title: \"<project>: stopped at the project's budget\" -> \"<project>: ended before the project's budget ran out\" (plan share: \"ended before your subscription's share ran out\"). Start dialog: 'Nothing can run: \"X\" paused before the project's budget ran out; raise it in Settings.'. When the spend reached the limit: the old 'paused at ... of CHF ...' words, and \"Stopped at the project's budget\" with 'Stopped at the project's budget of CHF 0.06.' for the session.",
+  "UI: taskCapWords gives '<budget> budget' when nothing is spent ('CHF 0.01 budget'). The task drawer shows 'budget CHF 0.01' instead of 'spent CHF 0.00 of CHF 0.01 budget'.",
+  "Merge with w8-together: the conflicts are only in the appended blocks (real-daemon.test.ts, apps.md, runtime.md, user-guide.md); keep both sides. If w8-together's status board writes a paused task's card title or reason to GitHub, it now carries the new words. The words carry no CHF amount in the outer-limit title.",
+  "Suggested UPDATE-LOG/CHANGELOG lines: 'A task whose review waits for room is said one way on the session page, the Sessions list and the session log (L4i-left-31).'. 'A pause under the project's budget, the month's cap or the subscription's share says it paused before the limit ran out while some is left, on the card, the rows, the result and the notification, and \"at\" it only once the spend reached it (L4i-left-28).'. 'A task with its own budget that spent nothing shows \"CHF 0.01 budget\" (L4i-left-64).'.",
+  "For final_check_additions (real model): L4i-left-28. Use a project budget of CHF 0.06 and a task whose work and review do not both fit. After Start, check the card, row, result, Sessions row and notification for 'paused before the project's budget ran out' while part of the budget is left. Note whether a real run ever goes past the limit; if it does, every place says 'paused at' and 'Stopped at'."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "packages/runtime/test/budget-pause.test.ts: the month's-cap cases 'once the month's cap has room again ...' and 'a task paused at this month's cap goes on in the new month ...', plus the budget_stop title in 'the session it ends names this month's cap too'",
+   "why": "L4i-left-28: these hard stops left part of the cap (what the task spent is below it). The label is now \"Paused before this month's cap ran out\" and the title \"Members page project: ended before this month's cap ran out\"; it was \"Paused at this month's cap\" and \"stopped at this month's cap\". The intent is unchanged: the month is named, with no session budget."
+  },
+  {
+   "test": "packages/runtime/test/notifications-channels.test.ts 'session end at an outer limit: the urgent budget_stop names it and what helps'",
+   "why": "L4i-left-28: with CHF 0.04 spent the titles are \"ended before this month's cap ran out\", \"ended before the project's budget ran out\" and \"ended before your subscription's share ran out\". A new case covers a session that spent past the limit: \"stopped at the project's budget\"."
+  },
+  {
+   "test": "apps/ui/test/inbox.test.tsx 'a task paused at this month's cap (budget-resume)'",
+   "why": "L4i-left-28: the fixture's card title and why are now the form the runner files, and the row label is \"Paused before this month's cap ran out\" (the card's spend is below its cap)."
+  },
+  {
+   "test": "apps/ui/test/tasks.test.tsx U-042 'creates a task with the budget converted ...'",
+   "why": "L4i-left-64: the new task spent nothing, so its cap line reads 'CHF 4.00 budget'; it was 'of CHF 4.00 budget' after an empty cost."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts 'L4-money-204: right after a raise in Settings ...'",
+   "why": "L4i-left-28: the card has CHF 0.02 of CHF 0.06 spent, so the Start dialog reads 'Nothing can run: \"Write the club motto in motto.txt\" paused before the project's budget ran out; raise it in Settings.'. The intent is unchanged: it names the limit and what changes it."
+  }
+ ]
+}

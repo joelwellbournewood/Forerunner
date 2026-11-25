@@ -1,0 +1,220 @@
+{
+ "area": "w8-together",
+ "branch": "fix/w8-together",
+ "head_sha": "aef2f100d25b5a6b050c9f9fb6d1f7bb83c892b6",
+ "commits": [
+  {
+   "sha": "cf09c55",
+   "subject": "together: Work together for a project already here, one press on its Overview (W8-join-1, W8-join-2, W8a-left-5, W8a-left-6, W8a-left-7)"
+  },
+  {
+   "sha": "c20bfcf",
+   "subject": "docs: a person's docs pull request on fr/docs-scaffold is passed over, and an inherited branch marker counts for nothing (W8a-left-22, W8a-left-27)"
+  },
+  {
+   "sha": "41a8048",
+   "subject": "together: chat's Work together, project.create with together true, read back once (W8-join-4)"
+  },
+  {
+   "sha": "d2327d0",
+   "subject": "test: real-daemon cases follow the together and docs-ownership design (W8-join-1, W8-join-4, W8a-left-22)"
+  },
+  {
+   "sha": "8a3c3fc",
+   "subject": "commands: a new task the model wrote is read back in chat before it is added (L4i-left-4)"
+  },
+  {
+   "sha": "2bbd38f",
+   "subject": "intake: Add to it answers at once and drafts the plan in the background; one proposal per project at a time (L4i-left-48, L4i-left-65)"
+  },
+  {
+   "sha": "94cfb4a",
+   "subject": "docs: Work together for a project here, chat's Work together, Add to it in the background, the model's task words (W8-join-1, W8-join-2, W8-join-4, W8a-left-32, L4i-left-4, L4i-left-48, L4i-left-65)"
+  },
+  {
+   "sha": "aef2f10",
+   "subject": "commands: a move's read-back and its sentence say which of two same-titled tasks moves (L4i-left-20)"
+  }
+ ],
+ "fixed": [
+  {
+   "problem": "A project here whose repository is another Forerunner's project (made before the one-repository rule, or while GitHub did not answer) got only Take it over, and nothing at all when another account worked on it within 14 days; there was no way to make it the repository's own project (run C OJ-11).",
+   "u_ids": [
+    "W8-join-1",
+    "W8-join-2"
+   ],
+   "failing_test_before": "apps/ui/test/two-installs.test.ts 'w8-together, wave 8: join together'; apps/ui/test/onerepo-join.test.tsx Work together cases; apps/ui/test/real-daemon.test.ts 'w8-together, wave 8'; packages/commands/test/project-join.test.ts together cases",
+   "how": "RepositoryUse.overviewOf gives canWorkTogether/togetherLine (Work together first, also with recent activity of another account); togetherJoinFacts reads the repository's project from GitHub at the dialog and again at the press; project.join keep {together:true} makes the together project (repository id and name, or a removed together row back) in one store transaction with the moves; its only GitHub write, before anything moves, is StatusBoard.closeOwnStatusPullRequest of the closing project's own old status pull request; Undo after a restart moves the work back and removes the together row, the pull request stays closed. GET /projects/:id/join-preview?together=1, JoinProjectsDialog together form, SummaryTab button, fake daemon.",
+   "check_in_the_app": "Two installs on one repository: on Bob's 'Site' Overview the line reads 'team/shared is also the Forerunner project \"Team site\", which is not on this computer; ...' with Work together and 'This project's tasks, plan and cards move into \"Team site\"; both Forerunners work on it.' Press Work together, read the dialog's sentence and GitHub line, press Work together: the page becomes 'Team site' with 'Includes the work of \"Site\"'; Changes has Undo; nothing of Ada's pull requests changed."
+  },
+  {
+   "problem": "Harness write logs named 7 MemoryGitHost operations and several stand-in routes 'other', so 'wrote nothing' checks left them out; GitHub-off case ran on one form only; the together project's name came only from the default branch's marker.",
+   "u_ids": [
+    "W8a-left-5",
+    "W8a-left-6",
+    "W8a-left-7"
+   ],
+   "failing_test_before": "apps/ui/test/two-installs.test.ts write-log case (7 unnamed memory ops) and 'w8-together, wave 8: join together'",
+   "how": "MEMORY_ACTIONS and writeOfRequest name every write; GitHub-off case and restart run on memory and http; repositoryNameOf reads the default branch's marker, else the marker at the head of the open docs pull request that names the id.",
+   "check_in_the_app": "Work together on a repository whose maker's docs pull request is not merged yet: the together project is named as GitHub names it."
+  },
+  {
+   "problem": "A person's docs pull request on fr/docs-scaffold blocked a second project's scaffold for good (and refreshes wrote onto it); a branch marker inherited from the default branch counted as ownership; the guide not going out was never said.",
+   "u_ids": [
+    "W8a-left-22",
+    "W8a-left-27"
+   ],
+   "failing_test_before": "apps/ui/test/two-installs.test.ts 'W8a-left-22, -27' and 'W8a-left-22: with every branch ... holding someone else's pull request'",
+   "how": "scaffoldBranchFor passes over any branch with an open pull request that is not this project's and takes the project's own branch; branchMarkerNames counts a branch marker only when it differs from the default branch's; refreshGuide records guide_stopped 'branches_taken' and ProjectCard.guideStopped shows GUIDE_BRANCHES_TAKEN_LINE on the Overview.",
+   "check_in_the_app": "With someone else's docs pull request open on fr/docs-scaffold, the project's Docs shows its own docs pull request on fr/docs-scaffold-<project>, and the other pull request has no new commit or comment; when every branch is taken the Overview says 'The repository guide on GitHub was not updated: ...'."
+  },
+  {
+   "problem": "Chat could not start Work together: project.create had no together flag and the refusal sent the person to New project.",
+   "u_ids": [
+    "W8-join-4"
+   ],
+   "failing_test_before": "apps/ui/test/real-daemon.test.ts \"w8-together, wave 8: chat's Work together\"; packages/commands/test/onerepo-link.test.ts chat's Work together cases; injection record-013",
+   "how": "project.create takes together:true (medium risk, read back once: 'Work on \"Kite club\" together: this Forerunner joins it as the same project. Nothing on GitHub changes now.'); the daemon reads the repository's project at the read-back and at the yes (chatTogetherOffer) and creates it with the dialog's creation; an instruction-like marker name is never quoted; the refusal ends 'Say \"work on it together\" to join it here.'",
+   "check_in_the_app": "In chat on a project-less computer: 'add o/kite' is refused with the hint; say 'work on it together': the Yes/No read-back appears; Yes makes the together project, Changes has Undo."
+  },
+  {
+   "problem": "Chat's task_create acted at once at every level, also when its title or outcome were the model's own words (L4h-left-6 rest).",
+   "u_ids": [
+    "L4i-left-4"
+   ],
+   "failing_test_before": "packages/commands/test/executor.test.ts 'w8-together, wave 8: a new task said in chat, the person's words or the model's (L4i-left-4)' (2 of 3 failed); apps/ui/test/real-daemon.test.ts same name",
+   "how": "CommandDef.askFromChatWhen; task.create's taskWordsAreModels (chat/voice; any title/outcome/criteria not in the person's line by notesPersons) makes it a read-back 'Add \"Write the FAQ\" to Help?'; the person's words and the 'add a task:' pattern act at once. Stand-in knob FORERUNNER_BENCH_CHAT_OUTCOME.",
+   "check_in_the_app": "At Assisted, in chat type a task in your own words: it is added with Undo. Ask the chat to add a task where it writes the description itself: the card asks 'Add \"...\" to <project>?' and nothing is added before Yes."
+  },
+  {
+   "problem": "Add to it waited 2-10 s on 'Adding…' while the model planned; two first-plan requests at once made two model calls and two cards.",
+   "u_ids": [
+    "L4i-left-48",
+    "L4i-left-65"
+   ],
+   "failing_test_before": "apps/ui/test/onerepo-link.test.tsx 'w8-together (L4i-left-48): Add to it lands on Atlas at once ...' and 'Add to it sends the brief ...'; apps/ui/test/real-daemon.test.ts 'Add to it answers at once and plans in the background' race case (two request ids without the lock)",
+   "how": "POST /projects/:id/intake background:true -> IntakeService.proposeInBackground (refusals as propose, 409 with openPlanSentence or draftingPlanSentence, never a failed plan) starts enqueue and answers drafting; NewProjectDialog uses client.proposeIntakeInBackground; propose runs under a per-project oneAtATime chain; fake daemon mirrors it.",
+   "check_in_the_app": "New project on a repository a project here uses, type a brief, press Add to it: you land on the project at once and its page says 'Drafting the plan from your brief…' until the plan waits in the Inbox; a second brief meanwhile is answered 'A plan for \"Site\" is being drafted; ...' or '... waits for your answer. Answer it first.'"
+  },
+  {
+   "problem": "Move read-backs named two same-titled tasks by title only (L4-money-215).",
+   "u_ids": [
+    "L4i-left-20"
+   ],
+   "failing_test_before": "packages/commands/test/w15-chat.test.ts 'w8-together, wave 8: a move names which of two same-titled tasks it moves (L4i-left-20)'",
+   "how": "apartWords (pull request number when each has its own, else age; never state) and movedName in moveAsk/moveSentence for task.transition, moveCard and personMove.",
+   "check_in_the_app": "With two tasks 'Write the guide', in chat say 'pause Write the guide (the older one)': the card reads 'Pause \"Write the guide\" (the older one)? ...' and after Yes 'Paused \"Write the guide\" (the older one): ...'."
+  }
+ ],
+ "not_done": [
+  {
+   "problem": "W8-join-3: docs pull requests of a project joined into a together project are not listed as information only.",
+   "why": "Cut line item, not reached. Evidence: projectIdsOf (packages/runtime/src/sources/repository-words.ts:28) returns the together project's id plus settings.joined_from, so the closed project's own docs pull requests count as the together project's own (listed with Merge), not as information; no code lists them apart (wave8-codemap.md 1.3)."
+  },
+  {
+   "problem": "Final validation results not collected before this report.",
+   "why": "The full run (pnpm check with DOCS_CHECK_BASE=claude/nifty-knuth-f9udt0, test:integration, test:e2e, UI suite, Playwright local, test:injection, each under flock) was started at head aef2f10 via /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/suites-final.sh and was still in pnpm check's unit tests when the report was required; logs land in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/final/. The orchestrator should read final/summary.txt or rerun them before merging."
+  }
+ ],
+ "validation": [
+  {
+   "command": "cd apps/ui && flock /tmp/frbench/heavy.lock npx vitest run --config vitest.config.ts test/real-daemon.test.ts -t \"L-16|W15-01|L3-run-1, review|OR-07|OJ-03 (w8-status-write)|OJ-08: in chat|project_create's definition names no command|L4e-left-1|L4i-left-48\"",
+   "result": "11 passed (the 8 earlier failures changed for design, plus the 2 new intake cases)"
+  },
+  {
+   "command": "cd apps/ui && flock ... npx vitest run --config vitest.config.ts test/onerepo-link.test.tsx test/onerepo-join.test.tsx test/two-installs.test.ts",
+   "result": "3 files, 60 passed; onerepo-link rerun after the fake fix 18 passed"
+  },
+  {
+   "command": "flock ... npx vitest run --project unit packages/commands/test/",
+   "result": "32 files, 371 passed (after L4i-left-20)"
+  },
+  {
+   "command": "flock ... pnpm -s typecheck",
+   "result": "exit 0 (before the L4i-left-20 commit; biome check clean on changed files)"
+  },
+  {
+   "command": "node scripts/docs-check.mjs --base claude/nifty-knuth-f9udt0",
+   "result": "docs-check: ok (77 files) at 94cfb4a"
+  },
+  {
+   "command": "failing-first checks: old NewProjectDialog call / no oneAtATime / no askFromChatWhen / no apartWords",
+   "result": "each new test failed as recorded (2 UI, 1 real-daemon race, 2 executor, 1 w15-chat), then passed with the fix restored"
+  },
+  {
+   "command": "bench AFTER walk (stand-in model and GitHub, benches w8t-after + w8t-after-bob)",
+   "result": "Bob's line shows Work together; the press made 'Team site' (repository id) with Includes the work of \"Site\"; pull requests before = after (Ada's #1 untouched); Add to it via background answered 202 drafting in 9 ms (BEFORE 334 ms with the plan in the answer); Add to it while a plan waits shows the 409 sentence in the dialog. Benches stopped, homes deleted."
+  },
+  {
+   "command": "git grep -n '^<<<<<<< '",
+   "result": "empty; working tree clean"
+  },
+  {
+   "command": "suites-final.sh (pnpm check, test:integration, test:e2e, UI suite, Playwright local, test:injection)",
+   "result": "running at report time; results in /tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/final/summary.txt"
+  }
+ ],
+ "screenshots": {
+  "before": [
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/w8t-shots/02-before-bob-site-elsewhere.png",
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/w8t-shots/01-before-ada-team-site-overview.png",
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/w8t-shots/before-add-to-timing.txt"
+  ],
+  "after": [
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/w8t-shots/02-after-bob-site-work-together.png",
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/w8t-shots/03-after-bob-work-together-dialog.png",
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/w8t-shots/04-after-bob-after-join.png",
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/w8t-shots/03-after-ada-add-to-offer.png",
+   "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/w8t-shots/05-after-ada-add-to-landed.png"
+  ]
+ },
+ "new_problems": [
+  "The together dialog's screenshot 2 s after it opened still read 'Loading the repository's project…' on the stand-in GitHub (the press worked once it loaded); worth a look at how long togetherPreview takes (03-after-bob-work-together-dialog.png).",
+  "The 'blocked' Try again sentence ('another docs pull request is open on o/kite; close it on GitHub') is now reachable only when one branch holds mixed pull requests or in a race, since W8a-left-22 passes over a taken fr/docs-scaffold (take-over-retry.ts outcomeFailure).",
+  "Suggested CHANGELOG/UPDATE-LOG lines (not edited here): 'Work together: a project here whose repository is another Forerunner's project joins it in one press on its Overview, or from chat, with Undo; only its own old status pull request is closed on GitHub.' 'Add to it lands on the project at once and says Drafting the plan…; two plan requests at once make one plan.' 'A new task the chat wrote itself is read back first; a move names which of two same-titled tasks it moves.' 'A second project on a shared repository opens its own docs pull request on its own branch.'"
+ ],
+ "notes_for_other_areas": [
+  "branchMarkerNames(ids, {branchMarker, defaultMarker}) in loop/docs.ts: a branch marker counts only when it differs from the default branch's marker (W8a-left-27's default rule).",
+  "ProjectCard.guideStopped (string|null, optional): GUIDE_BRANCHES_TAKEN_LINE when summary_cache.docs.guide_stopped is 'branches_taken'; fake daemon state.guideStopped.",
+  "RepositoryUse.togetherJoinFacts(project) / TogetherJoinFacts; RepositoryOverview.canWorkTogether + togetherLine; repositoryNameOf(read, id); StatusBoard.findOwnStatusPullRequest (read only) and closeOwnStatusPullRequest; join-words.ts together sentences; GET /projects/:id/join-preview?together=1; client.togetherPreview.",
+  "chatTogetherOffer(use, repos) and CommandPorts.repositoryUse.together/createTogether; project.create together:true; CHAT_TOGETHER_HINT old 'Open New project to work on it together.' new 'Say \"work on it together\" to join it here.'; PROJECT_CREATE_DESCRIPTION and PROJECT_JOIN_DESCRIPTION gained one sentence each (exact text in the real-daemon OJ-08 and l4-chat-answers asserts).",
+  "POST /projects/:id/intake {background:true} -> 202 IntakeStatusView; IntakeService.proposeInBackground, oneAtATime per project, draftingPlanSentence (session/intake-words.ts); client.proposeIntakeInBackground; for w8-status-read: its read before planning belongs in this background path.",
+  "CommandDef.askFromChatWhen(params, ctx); task.create uses taskWordsAreModels; moveAsk/moveSentence accept {apart} (namedForMove/apartWords in task.ts).",
+  "Bench knob FORERUNNER_BENCH_CHAT_OUTCOME (role-player chatOutcome); two-installs helpers seedBranch, followDefaultBranch, MEMORY_ACTIONS, writeOfRequest; injection case record-013-marker-work-together.",
+  "W8a-left-32 one-line decision recorded in ADR 0117 amendment: a together project's screen keeps offering merge_mode; each Forerunner merges the pull requests it opens."
+ ],
+ "tests_changed_for_design": [
+  {
+   "test": "apps/ui/test/real-daemon.test.ts L-16, W15-01 pair, OJ-03",
+   "why": "W8a-left-22: a second project on one repository now opens its own docs pull request on fr/docs-scaffold-<slug> instead of stopping at the first one's fr/docs-scaffold."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts L4e-left-1 'the no-pull-request line offers Try again ...'",
+   "why": "W8a-left-22: with another project's docs pull request open on fr/docs-scaffold, Try again now opens this project's own on its own branch (before: refused until the person closed the other); still asserts nothing written to the other pull request, main and the other branch unchanged, also after restart."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts OR-07",
+   "why": "W8-join-1: the elsewhere line now carries canWorkTogether and togetherLine."
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts OJ-08 and l4-chat-answers project_create definition; packages/commands/test/onerepo-link.test.ts definition and hint; OR-03",
+   "why": "W8-join-4: the definitions gained the together sentence and the hint changed to 'Say \"work on it together\" to join it here.'"
+  },
+  {
+   "test": "apps/ui/test/real-daemon.test.ts L3-run-1 Talk",
+   "why": "L4i-left-4: the Talk line now names the task in the person's own words so the stand-in's task is added at once under the person-words rule."
+  },
+  {
+   "test": "packages/commands/test/executor.test.ts first chat call",
+   "why": "L4i-left-4: the call names its words (wordsUsed) as a person's chat line does."
+  },
+  {
+   "test": "apps/ui/test/onerepo-link.test.tsx 'Add to it sends the brief to Atlas's plan and lands on Atlas'",
+   "why": "L4i-left-48: the request body now carries background: true."
+  },
+  {
+   "test": "packages/runtime/test docs-scaffold.test.ts, loop-docs.test.ts (W15-01), the w8-repo-guide L4i-left-2 two-installs cases",
+   "why": "W8a-left-22/27 ownership rule (committed in c20bfcf)."
+  }
+ ]
+}

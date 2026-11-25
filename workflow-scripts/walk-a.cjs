@@ -1,110 +1,151 @@
-// fixup-l4-starts-carried bench walk A (--provider bench, FORERUNNER_BENCH_USAGE=club motto:20000):
-// the Start dialog with a task paused at the project's budget, a waiter on it, and a waiter on a
-// task the person paused (the review's blocking 1 and 2).
 "use strict";
-const path = require("node:path");
+// Reviewer walk for w8-l4-leftovers on bench A (--provider bench).
+const R = require("/home/user/Forerunner/.claude/worktrees/wf_9ce7980a-103-8/scripts/bench/recorder.cjs");
 const fs = require("node:fs");
-const repo = process.argv[2];
-const name = process.argv[3];
-const out = process.argv[4];
-const { openApp, step, api, until, skipSetup, bench } = require(path.join(repo, "scripts/bench/recorder.cjs"));
-
-const checks = [];
-const check = (label, ok, seen) => {
-  checks.push({ label, ok: !!ok, seen });
-  console.log(`${ok ? "PASS" : "FAIL"} ${label}${ok ? "" : ` :: ${String(seen).slice(0, 400)}`}`);
+const NAME = "review-w8-l4-leftovers";
+const enc = encodeURIComponent;
+const usdMicro = (chf) => Math.round((chf / 0.8) * 1_000_000);
+const out = {};
+const log = (k, v) => {
+  out[k] = v;
+  console.log(`== ${k}: ${typeof v === "string" ? v : JSON.stringify(v).slice(0, 1500)}`);
 };
-
-async function task(projectId, title, dependsOn = []) {
-  const t = await api(name, "POST", `/projects/${projectId}/tasks`, {
+const step = (page, s, o) => R.step(page, `rv ${s}`, o);
+const openProject = async (page, projectId, tab) => {
+  await page.goto(`${R.bench(NAME).uiUrl}/projects/${enc(projectId)}/${tab}`, {
+    waitUntil: "domcontentloaded",
+  });
+  await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
+  await page.waitForTimeout(1000);
+};
+async function startFromUi(page, projectId, what) {
+  await openProject(page, projectId, "summary");
+  const open = page.getByRole("button", { name: /^(Start session|Start|Continue)$/ }).first();
+  await open.click();
+  await page.waitForTimeout(1500);
+  const dialogText = await step(page, `${what} start dialog`);
+  const dialog = page.getByTestId("start-session-dialog");
+  await dialog.getByRole("button", { name: "Start", exact: true }).click();
+  await page.waitForTimeout(2500);
+  await step(page, `${what} after start`);
+  return dialogText;
+}
+async function newestSession(projectId) {
+  return R.until(
+    async () => (await R.api(NAME, "GET", `/sessions?projectId=${enc(projectId)}`))[0] ?? null,
+    30_000,
+    500,
+    "the new session",
+  );
+}
+const task = (projectId, title, file, extra = {}) =>
+  R.api(NAME, "POST", `/projects/${enc(projectId)}/tasks`, {
     title,
-    outcome: `${title} is written`,
-    acceptanceCriteria: ["it is written"],
+    outcome: `${file} is written`,
+    acceptanceCriteria: [`${file} exists`],
     priority: "medium",
     status: "ready",
-    dependsOn,
-    budgetUsdMicro: 0,
+    dependsOn: [],
     specialist: "coder",
-    riskTier: 0,
+    riskTier: 1,
+    ...extra,
   });
-  return t.task ?? t;
-}
-
-async function dialogText(page, projectId, label) {
-  await page.goto(`${bench(name).uiUrl.replace(/\/$/, "")}/projects/${projectId}`);
-  await page.getByTestId("start-session").first().click();
-  const dialog = page.getByTestId("start-session-dialog");
-  await dialog.waitFor();
-  await page.waitForTimeout(800);
-  await step(page, label);
-  const text = await dialog.innerText();
-  await page.keyboard.press("Escape");
-  return text;
-}
 
 (async () => {
-  const projects = await api(name, "GET", "/projects");
-  const project = await api(name, "POST", "/projects", { name: `Club motto ${String(Date.now()).slice(-4)}`, goal: "A motto" });
-  // The project's budget: CHF 0.06, through the same command Settings uses.
-  const asked = await api(name, "POST", "/commands/execute", {
-    commands: [{ name: "budget.set", params: { scope: "project", amountChf: 0.06, project: project.id } }],
-    wordsUsed: "Settings: Project budget to 0.06",
-    source: "ui",
-    projectId: project.id,
-  });
-  if (asked.status === "pending")
-    await api(name, "POST", `/commands/${asked.pendingId}/confirm`, { answer: "yes" });
-  const motto = await task(project.id, "Write the club motto in motto.txt");
-  const agents = await api(name, "GET", "/agents");
-  await api(name, "POST", "/sessions", { agentId: agents[0].id, projectId: project.id, trigger: "manual" });
-  await until(
-    async () => {
-      const ts = await api(name, "GET", `/projects/${project.id}/tasks`);
-      const sessions = await api(name, "GET", `/sessions?projectId=${project.id}`);
-      return (
-        ts.find((t) => t.id === motto.id)?.status === "needs_human" &&
-        sessions.every((s) => !["planned", "running", "paused"].includes(s.status))
+  const which = process.argv[2] || "all";
+  const { browser, page } = await R.openApp(NAME);
+  try {
+    const first = await page.evaluate(() => document.body.innerText);
+    if (/Set up Forerunner/.test(first)) await R.skipSetup(page);
+
+    if (which === "all" || which === "review") {
+      // L4i-left-31 + L4i-left-64: a task whose work fits its budget and whose review does not.
+      const p = await R.api(NAME, "POST", "/projects", { name: "Pond notes", goal: "Notes about the pond" });
+      await task(p.id, "Write the pond notes", "notes/pond.md", { budgetUsdMicro: usdMicro(0.01) });
+      await task(p.id, "Write the frog notes", "notes/frogs.md");
+      await openProject(page, p.id, "tasks");
+      log("pond tasks before", await step(page, "pond tasks before start"));
+      log("pond dialog", await startFromUi(page, p.id, "pond"));
+      const s = await newestSession(p.id);
+      const ended = await R.waitForSession(NAME, s.id);
+      await page.waitForTimeout(2000);
+      log("pond session statusText", ended.statusText);
+      log("pond session summary", ended.summary);
+      await page.goto(`${R.bench(NAME).uiUrl}/sessions/${enc(s.id)}`, { waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(2500);
+      log("pond session page", await step(page, "pond session page"));
+      await openProject(page, p.id, "sessions");
+      log("pond sessions tab", await step(page, "pond sessions tab"));
+      await openProject(page, p.id, "tasks");
+      log("pond tasks after", await step(page, "pond tasks after"));
+      const events = await R.api(NAME, "GET", `/sessions/${enc(s.id)}/events`);
+      log("pond lines", events.map((e) => e.text));
+      out.pond = { projectId: p.id, sessionId: s.id };
+    }
+
+    if (which === "all" || which === "outer") {
+      // L4i-left-28: an outer limit (the project's budget) ends the session with room left.
+      const p = await R.api(NAME, "POST", "/projects", {
+        name: "Bird notes",
+        goal: "Notes about birds",
+        budgetUsdMicro: usdMicro(0.06),
+      });
+      await task(p.id, "Write the heron page", "heron.md");
+      await task(p.id, "Write the owl page", "owl.md");
+      log("bird dialog", await startFromUi(page, p.id, "bird"));
+      const s = await newestSession(p.id);
+      const ended = await R.waitForSession(NAME, s.id);
+      await page.waitForTimeout(2000);
+      log("bird session statusText", ended.statusText);
+      log("bird session summary", ended.summary);
+      await page.goto(`${R.bench(NAME).uiUrl}/sessions/${enc(s.id)}`, { waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(2500);
+      log("bird session page", await step(page, "bird session page"));
+      await openProject(page, p.id, "sessions");
+      log("bird sessions tab", await step(page, "bird sessions tab"));
+      await openProject(page, p.id, "summary");
+      log("bird overview", await step(page, "bird overview"));
+      const events = await R.api(NAME, "GET", `/sessions/${enc(s.id)}/events`);
+      log("bird lines", events.map((e) => e.text));
+      const notes = await R.api(NAME, "GET", "/notifications/recent?limit=50");
+      log("bird notifications", (notes.notifications ?? []).map((n) => `${n.title} | ${n.body}`));
+      out.bird = { projectId: p.id, sessionId: s.id };
+    }
+
+    if (which === "all" || which === "assisted") {
+      // L4i-left-27: Assisted mode's session plan card.
+      const p = await R.api(NAME, "POST", "/projects", {
+        name: "Fern notes",
+        goal: "Notes about ferns",
+        autonomyLevel: 1,
+      });
+      await task(p.id, "Write the fern notes", "ferns.md");
+      log("fern dialog", await startFromUi(page, p.id, "fern"));
+      await page.goto(`${R.bench(NAME).uiUrl}/inbox`, { waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(3000);
+      log("fern inbox", await step(page, "fern inbox plan card"));
+      const inbox = await R.api(NAME, "GET", "/inbox");
+      const card = inbox.requests.find(
+        (r) => r.projectId === p.id && r.status === "open" && /session plan/i.test(r.title ?? r.why ?? ""),
       );
-    },
-    120_000,
-    1000,
-    "the motto task to pause at the project's budget",
-  );
-  const { browser, page } = await openApp(name);
-  await skipSetup(page).catch(() => undefined);
-  // 1. Alone: the limit and Open Settings, no "Give your agent work first".
-  const alone = await dialogText(page, project.id, "after-1-start-dialog-paused-at-the-project-budget");
-  check("the blocker names the limit", /(paused (at|before) the project's budget|its review waits for room in the project's budget).*raise it in Settings/s.test(alone), alone);
-  check("Open Settings is offered", /Open Settings/.test(alone), alone);
-  check("no 'Give your agent work first'", !/Give your agent work first/.test(alone), alone);
-  // 2. A waiter on it and a waiter on a task the person paused.
-  await task(project.id, "Write the club rules in rules.txt", [motto.id]);
-  const song = await task(project.id, "Write the club song in song.txt");
-  await task(project.id, "Sing the club song from song.txt", [song.id]);
-  await api(name, "POST", `/tasks/${song.id}/action`, { version: song.version, action: "pause" });
-  const waiting = await dialogText(page, project.id, "after-2-start-dialog-with-waiters");
-  check(
-    "the waiting line names the limit and Settings",
-    /"Write the club rules in rules\.txt" waits on "Write the club motto in motto\.txt", (paused (at|before) the project's budget[^,]*|which is done; its review waits for room in the project's budget), so it cannot run\. Raise the project's budget in Settings, or change what it waits for on the Tasks tab\./.test(waiting),
-    waiting,
-  );
-  check(
-    "the waiting line says 'which you paused' with Resume",
-    /"Sing the club song from song\.txt" waits on "Write the club song in song\.txt", which you paused, so it cannot run\. Resume "Write the club song in song\.txt", or change what it waits for on the Tasks tab\./.test(waiting),
-    waiting,
-  );
-  check("no 'needs your answer' in the dialog", !/needs your answer/.test(waiting), waiting);
-  check("no 'Give your agent work first' with waiters", !/Give your agent work first/.test(waiting), waiting);
-  // 3. At 375 px the same lines.
-  await page.setViewportSize({ width: 375, height: 800 });
-  const narrow = await dialogText(page, project.id, "after-3-start-dialog-with-waiters-375");
-  check("375 px: same waiting lines", /Raise the project's budget in Settings/.test(narrow) && /which you paused/.test(narrow), narrow);
-  fs.writeFileSync(out, JSON.stringify({ projects: projects.length, checks }, null, 2));
-  await browser.close();
-  const failed = checks.filter((c) => !c.ok).length;
-  console.log(`${checks.length - failed}/${checks.length} checks passed`);
-  process.exit(failed ? 1 : 0);
-})().catch((e) => {
-  console.error(e);
-  process.exit(2);
-});
+      log("fern card", card ? { title: card.title, options: card.options, choices: card.choices } : null);
+      const btn = page.getByRole("button", { name: "Approve", exact: true }).first();
+      log("approve button visible", await btn.isVisible().catch(() => false));
+      await btn.click();
+      await page.waitForTimeout(4000);
+      log("fern after approve", await step(page, "fern after approve"));
+      const sessions = await R.api(NAME, "GET", `/sessions?projectId=${enc(p.id)}`);
+      log("fern sessions", sessions.map((x) => ({ status: x.status, statusText: x.statusText })));
+      out.fern = { projectId: p.id };
+    }
+  } catch (e) {
+    console.error("WALK ERROR", e);
+    out.error = String(e && e.stack ? e.stack : e);
+  } finally {
+    fs.writeFileSync(
+      "/tmp/claude-0/-home-user/9d17d664-b8c3-5e0d-8f13-1f917f72dcc2/scratchpad/walk-a-result.json",
+      JSON.stringify(out, null, 1),
+    );
+    await browser.close();
+  }
+})();
