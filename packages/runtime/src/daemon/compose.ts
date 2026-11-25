@@ -1056,6 +1056,13 @@ export interface RuntimeApp {
          */
         asking?: { plain: string; to: string };
       } | null>;
+      /**
+       * w8-l4-leftovers (L4i-left-32): the ready tasks of the project whose own pick meets a
+       * credential wait now while others can run (read only, as `now` reads): under "then the
+       * other one" the Start dialog names what waits for the stopped credential and gives no
+       * figure for it. Empty when every task runs, or none does (`now` says that).
+       */
+      waitingTasks?(projectId: string): Promise<{ id: string; title: string }[]>;
     };
   };
   chfPerUsd: () => number;
@@ -4378,6 +4385,28 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   const credentialWaitNow = async (projectId: string): Promise<CredentialWait | null> =>
     (await runNowProbe(projectId)).wait;
   /**
+   * w8-l4-leftovers (L4i-left-32): each ready task whose own pick meets a credential wait now
+   * (read only), when at least one other ready task's pick succeeds; else none.
+   */
+  const waitingTasksNow = async (projectId: string): Promise<{ id: string; title: string }[]> => {
+    const ready = await store.task.readyTasks(projectId, { limit: 20 }).catch(() => []);
+    const waiting: { id: string; title: string }[] = [];
+    let runs = false;
+    for (const task of ready) {
+      const request = await nextRunProbe
+        .nextRunBillingRequest(task, { agentId: agent.id, ownerHumanId: human.id })
+        .catch(() => undefined);
+      if (!request) continue;
+      try {
+        await taskBilling.pick(request);
+        runs = true;
+      } catch (e) {
+        if (credentialWaitOf(e)) waiting.push({ id: task.id, title: task.title });
+      }
+    }
+    return runs ? waiting : [];
+  };
+  /**
    * S-10: when a kept continuation goes on, if the person's quiet hours hold it past the stop's
    * end: the end of the quiet hours (every sentence names the later time).
    */
@@ -4918,6 +4947,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       await credentialWaits.wake();
       return line;
     },
+    waitingTasks: (projectId) => waitingTasksNow(projectId),
     now: async (projectId) => {
       const found = await credentialWaitNow(projectId);
       if (!found) return null;

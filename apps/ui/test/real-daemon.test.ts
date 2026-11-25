@@ -22694,6 +22694,78 @@ describe("d1109-cred-screens, run C", () => {
     }
   }, 120_000);
 
+  describe("w8-l4-leftovers, wave 8: the plan card's foot line under 'API key first, then subscription' (L4i-left-32)", () => {
+    // L4d-left-1: with the key resting, the foot line said "your subscription does the work
+    // meanwhile" for a plan whose tasks only the key can do here (code tasks with commands set
+    // to the API key), beside each task's own "Waits until ..." line.
+    it("says the work waits for the key when only it can do the plan's tasks", async () => {
+      const both = await composeWithRolePlayer(
+        {},
+        {
+          vault: new MemoryVault({
+            anthropic_subscription_token: oauth,
+            anthropic_api_key: apiKey,
+          }),
+        },
+      );
+      const { rt, client } = both;
+      try {
+        await setPolicyCs(client, "key_then_subscription");
+        const commands = await client.executeCommands({
+          commands: [{ name: "settings.set", params: { key: "code_commands", value: "api_key" } }],
+          wordsUsed: "Settings: Code tasks that need commands to the API key",
+          source: "ui",
+        });
+        if (commands.status === "pending")
+          await client.confirmCommand(commands.pendingId ?? "", { answer: "tap" });
+        const brief = "A small web page that shows a quote of the day.";
+        const project = await client.createProject({
+          name: "Quote page",
+          goal: goalFromBrief(brief),
+          brief,
+          intake: true,
+        });
+        await rt.intake.inFlight(project.id);
+        const me = await client.me();
+        const card = async () =>
+          (await client.inbox(me.id)).requests.find(
+            (r) => r.projectId === project.id && r.status === "open" && r.planTasks,
+          );
+        const key = (
+          await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })
+        ).find((r) => r.kind === "api_key");
+        const until = new Date(rt.clock.now() + 40 * 60_000).toISOString();
+        await rt.store.billingSource.update(key?.id ?? "", key?.version ?? 0, {
+          limits: { ...(key?.limits as Record<string, unknown>), restingUntil: until } as never,
+        });
+        const at = clockTime(until, rt.human.timezone, rt.clock.now());
+        const shown = await card();
+        const tasks = shown?.planTasks ?? [];
+        const placed = tasks.filter((t) => t.runsOn);
+        const held = placed.filter((t) => t.runsOn?.kind === "api_key");
+        expect(placed.length).toBeGreaterThan(0);
+        if (held.length === placed.length)
+          expect(shown?.planCredentialLine).toBe(
+            `Your API key is at its limit until ${at}: the work waits for it.`,
+          );
+        else
+          expect(shown?.planCredentialLine).toBe(
+            `Your API key is at its limit until ${at}: your subscription does the work meanwhile. ${
+              held.length === 1
+                ? `"${held[0]?.title}" waits for your API key.`
+                : `"${held[0]?.title}" and ${held.length - 1} more wait for your API key.`
+            }`,
+          );
+        expect(shown?.planCredentialLine).not.toBe(
+          `Your API key is at its limit until ${at}: your subscription does the work meanwhile.`,
+        );
+      } finally {
+        await settleSessions(rt);
+        await rt.close();
+      }
+    }, 120_000);
+  });
+
   // CS-10's walk: under "Subscription first, then API key" with the subscription at its limit,
   // the card's foot said "your API key does the work meanwhile" while each task's line said
   // "Waits until 02:43 (your subscription's limit). Press Start and the work starts then.": the
@@ -25740,6 +25812,53 @@ describe("l4-cred-screens, run L4", () => {
       await rt.close();
     }
   }, 60_000);
+
+  describe("w8-l4-leftovers, wave 8: mixed work under 'API key first, then subscription' (L4i-left-32)", () => {
+    // L4d-left-1: with the key resting and mixed work, the Start dialog said the work runs on the
+    // subscription, and its figure covered the task only the key can do here (reading web pages).
+    it("names what waits for the key and gives no figure for it", async () => {
+      const calls: string[] = [];
+      const { rt, client, keyCalls } = await composeL4({ sdkQuery: claudeCode(calls, 0) });
+      try {
+        await setPolicyL4(client, "key_then_subscription");
+        // Code tasks that need commands go to the API key: a coder task only the key can do here.
+        const commands = await client.executeCommands({
+          commands: [{ name: "settings.set", params: { key: "code_commands", value: "api_key" } }],
+          wordsUsed: "Settings: Code tasks that need commands to the API key",
+          source: "ui",
+        });
+        if (commands.status === "pending")
+          await client.confirmCommand(commands.pendingId ?? "", { answer: "tap" });
+        const alone = await client.createProject({ name: "Launch", goal: "A post" });
+        await addTask(client, alone.id, "Write the launch post", {
+          specialist: "writer-marketing",
+        });
+        const mixed = await client.createProject({ name: "Tool notes", goal: "Notes" });
+        await addTask(client, mixed.id, "Write the launch post", {
+          specialist: "writer-marketing",
+        });
+        await addTask(client, mixed.id, "Write the tool notes");
+        await restSource(rt, "api_key", resetAt);
+        const plain = (await client.startCheck(alone.id)).credential?.line ?? "";
+        expect(plain).toMatch(
+          /^Your API key is at its limit until 11:40, so this runs on your subscription \((about CHF \d+\.\d\d|less than CHF 0\.01)\)\.$/,
+        );
+        const check = await client.startCheck(mixed.id);
+        const line = check.credential?.line ?? "";
+        expect(line).toMatch(
+          /^Your API key is at its limit until 11:40, so this runs on your subscription \((about CHF \d+\.\d\d|less than CHF 0\.01)\)\. "Write the tool notes" waits for your API key\.$/,
+        );
+        // The figure is the subscription's work alone, as for the project without the key's task.
+        expect(/\((.*)\)\./.exec(line)?.[1]).toBe(/\((.*)\)\./.exec(plain)?.[1]);
+        expect(check.blocked).toBeNull();
+        expect(calls).toHaveLength(0);
+        expect(keyCalls()).toHaveLength(0);
+      } finally {
+        await settleSessions(rt);
+        await rt.close();
+      }
+    }, 60_000);
+  });
 
   // L4-creds-18 (C6L-2: "Start on 1 Dec" at the share's stop started a session that stopped at
   // once): the start is kept for the month's start as "Start at 15:40" is for a limit, and starts

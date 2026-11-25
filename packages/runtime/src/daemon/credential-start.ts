@@ -16,6 +16,7 @@ import {
   startRunOutLine,
   startStoppedLine,
   useApiKeyExplain,
+  waitsForFirstLine,
 } from "./credential-policy-view.ts";
 
 /**
@@ -84,6 +85,12 @@ export interface StartRunsFacts {
    * the dialog's blocked sentence says so alone. Asked only in that branch.
    */
   waitsNow?: () => Promise<boolean>;
+  /**
+   * w8-l4-leftovers (L4i-left-32): the ready tasks only the stopped credential can do now while
+   * the rest runs on the other one (their figure is left out of the estimate): the line names
+   * them ('"Deploy the site" waits for your API key.').
+   */
+  waitingTitles?: readonly string[];
 }
 
 export async function startCredential(
@@ -160,9 +167,12 @@ export async function startCredential(
     const waitsNow = async () =>
       facts.waitsNow ? await facts.waitsNow().catch(() => false) : false;
     const runsThere = (await nextServes()) && !(await waitsNow());
+    const waits = facts.waitingTitles?.length
+      ? ` ${waitsForFirstLine(facts.waitingTitles, first.kind)}`
+      : "";
     return {
       view: {
-        line: runsThere ? startRunOutLine(first.kind, stop, about, opts) : null,
+        line: runsThere ? `${startRunOutLine(first.kind, stop, about, opts)}${waits}` : null,
         runOut: null,
       },
       offer: null,
@@ -221,6 +231,12 @@ export async function planCredentialLine(
    * and the Start dialog say it.
    */
   planUsdMicro?: number,
+  /**
+   * w8-l4-leftovers (L4i-left-32): the plan's tasks that only the stopped first choice can do
+   * here (their runs-on line waits for it), their figure, and whether that is all of the plan's
+   * work: under "then the other one" the line names them and gives no figure for them.
+   */
+  waitingOf?: (kind: string) => { titles: string[]; usdMicro: number; all: boolean },
 ): Promise<string | null> {
   if (!deps.billing) return null;
   const human = await deps.store.human.get(deps.humanId);
@@ -234,18 +250,36 @@ export async function planCredentialLine(
   if (!first || first.reason === "needs") return planCardLine(policy.rule, saved, null, opts);
   const row = await deps.store.billingSource.get(first.sourceId).catch(() => undefined);
   const grant = grantOf((row?.limits as JsonObject | undefined)?.grant);
-  const about =
-    typeof planUsdMicro === "number" && planUsdMicro > 0 && deps.chfPerUsd
-      ? aboutWords(chfText(planUsdMicro, deps.chfPerUsd()), planUsdMicro)
+  const granted = !!grant && grant.stopKey === first.stopKey;
+  const held = policy.rule.whenStopped === "next" && !granted ? waitingOf?.(first.kind) : undefined;
+  const stop = { reason: first.reason, until: first.until };
+  // L4i-left-32: every task waits for the stopped credential: the other one does none of it.
+  if (held?.all)
+    return planCardLine(
+      { ...policy.rule, whenStopped: "wait" },
+      saved,
+      { kind: first.kind, stop },
+      opts,
+    );
+  const left =
+    typeof planUsdMicro === "number"
+      ? Math.max(0, planUsdMicro - (held?.usdMicro ?? 0))
       : undefined;
-  return planCardLine(
+  const about =
+    typeof left === "number" && left > 0 && deps.chfPerUsd
+      ? aboutWords(chfText(left, deps.chfPerUsd()), left)
+      : undefined;
+  const line = planCardLine(
     policy.rule,
     saved,
-    { kind: first.kind, stop: { reason: first.reason, until: first.until } },
+    { kind: first.kind, stop },
     {
       ...opts,
-      granted: !!grant && grant.stopKey === first.stopKey,
+      granted,
       ...(about ? { about } : {}),
     },
   );
+  return line && held?.titles.length
+    ? `${line} ${waitsForFirstLine(held.titles, first.kind)}`
+    : line;
 }
