@@ -10313,12 +10313,33 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
 - **An outer-limit stop's words** (L4i-left-28): the session status, the result's line and the
   review's stopped reason say the session ended before the limit ran out ("Ended before the
   project's budget ran out", "Ended before this month's cap of CHF 0.23 ran out.", "the session
-  ended before this month's cap ran out"); a limit is never passed (`stop-words.ts`
-  `sessionStatusText`, `result.ts` `stopWords`, `task-display.ts` `reviewStopWords`).
+  ended before this month's cap ran out") (`stop-words.ts` `sessionStatusText`, `result.ts`
+  `stopWords`, `task-display.ts` `reviewStopWords`). The fixup made it one rule for the task
+  too: `session/review-room-words.ts` (a leaf, so the UI's fake reads it) has
+  `pausedBeforeLimit(card)`, true for a wrap-up or for an outer limit (the project's budget, this
+  month's cap, the subscription's share) whose card's `spent_usd_micro` is below its
+  `cap_usd_micro`. The card's title and the task's reason (`budgetStopTitle`: '"X" paused before
+  the project's budget ran out'), the task's row (`budgetPauseLabelOf`: "Paused before the
+  project's budget ran out") and the outcome's `before` (runner.ts reads the rule; the result,
+  the session's task rows and the Sessions row read `before` through `pausedBefore`) all follow
+  it. Only a run that went past the limit (a call billed more than it was checked for, which the
+  stand-in's `FORERUNNER_BENCH_USAGE` does) says "paused at the project's budget of CHF 0.06";
+  then the session's words say "Stopped at the project's budget" too: `outerLimitPassed` (the
+  outcome's `spentChfMicro` against `stopCapChfMicro`) feeds `stopWords`, `sessionStatusText` /
+  `endedStatusText` (the badge, the Sessions row, the docs note), the `limitPassed` flag on
+  `session.ended` (the log's end line) and the `budget_stop` notification's title. Cards filed
+  before keep their stored titles.
 - **A done task whose review waits** (L4i-left-31): the session's handoff keeps `review_waits`
-  (the paused tasks whose work is done); `blockedOfHandoff` counts them apart and the status says
-  "Ended: 1 review waits for room"; the log line is '"X" is done; its review waits for room in
-  the project's budget of CHF 0.01.' (`reviewPausedWords`), as the row and the card say.
+  (the paused tasks whose work is done); `reviewWaitIds` (stop-words.ts) reads it, and for a row
+  written before it the outcome's paused tasks marked `reviewWaits`. `blockedOfHandoff`, the
+  daemon's `stillBlocked` (GET /sessions/:id, the Sessions list), `stillWaitsText` and the
+  list's `countsOf` / `countsWords` count them apart (`tasks.reviewWaits` in the row, absent when
+  none), and the runner's `session.ended` carries `reviewWaits` for the log's end line: the badge
+  says "Ended: 1 review waits for room", the row "1 done, 1 review waits for room", the end line
+  "Session over: 1 done, 1 review waits for room. CHF 0.03.", and a session that did only that
+  task reads '"X" is done; its review waits for room in its budget of CHF 0.01.'. The log line is
+  '"X" is done; its review waits for room in the project's budget of CHF 0.01.'
+  (`reviewPausedWords`), as the row and the card say.
 - **No "budget used" sentence with room left** (L4i-left-30): the result's "Left for next time"
   says "this session's CHF 5.00 was used" only when the session's own budget ended it or its
   work budget has less than a centime left; else "it did not fit this session's work budget after
@@ -10337,4 +10358,5 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   the tasks stay ready and your next session asks again."); the stored options stay `approve`
   and `reject`, and `planAnswer` reads either form.
 - Tests: `session-status-words.test.ts`, `budget-pause.test.ts`, `oversize-pause.test.ts`,
-  `w8-l4-leftovers.test.ts`, and `apps/ui/test/real-daemon.test.ts` "w8-l4-leftovers, wave 8".
+  `w8-l4-leftovers.test.ts`, `task-budget-all.test.ts` and `session-list.test.ts` "w8-l4-leftovers,
+  wave 8", and `apps/ui/test/real-daemon.test.ts` "w8-l4-leftovers, wave 8".

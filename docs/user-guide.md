@@ -1980,9 +1980,13 @@ the next time it starts.
 ### Words for limits, reviews and credentials (2026-11-25)
 
 When a session ends because the project's budget, this month's cap or your subscription's share
-had too little room for the next step, it says "Ended before the project's budget ran out": the
-limit is never passed. A task whose work is done and whose review waits for room says so in
-every place ("is done; its review waits for room"). When the critic's review of a task reaches
+had too little room for the next step, it says "Ended before the project's budget ran out", and
+the task that paused says "paused before the project's budget ran out" on its card, its row and
+the session's result. Only if a step cost more than it was checked for and went past the limit
+do they say "paused at" and "Stopped at" it. A task whose work is done and whose review waits
+for room says so on its row, its card, the session page and the Sessions list ("1 review waits
+for room"). A task with its own budget that has spent nothing shows its budget alone ("CHF 0.01
+budget"). When the critic's review of a task reaches
 the share of your subscription Forerunner may use, your choice under Which Claude does the work
 decides what happens, as for the work itself: with "then the API key" the review goes on there,
 within the task's budget; with "ask me first" you get one card; with "then wait" the review waits
