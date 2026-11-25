@@ -1845,6 +1845,13 @@ export const CreateProjectBody = z.object({
 /** `POST /projects/:id/intake`: an optional brief in place of the one kept at creation. */
 export const IntakeRequestBody = z.object({
   brief: z.string().optional(),
+  /**
+   * w8-together (L4i-left-48): answer at once with the intake's status (`drafting`, an
+   * `IntakeStatusView`) and draft the plan in the background, as `POST /projects` with
+   * `intake: true` does (Add to it). Without it the route answers once the plan is filed, as
+   * before (`IntakeProposalView`).
+   */
+  background: z.boolean().optional(),
 });
 
 /** The intake filed (or reused) its proposal; the inbox holds the request (`202`). */

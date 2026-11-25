@@ -10,3 +10,11 @@
 export function openPlanSentence(projectName: string): string {
   return `A plan for "${projectName}" waits for your answer. Answer it first.`;
 }
+
+/**
+ * w8-together (L4i-left-48): a new brief while the project's plan is still being drafted in the
+ * background (Add to it answered at once): the same 409 as an open plan, in words that are true.
+ */
+export function draftingPlanSentence(projectName: string): string {
+  return `A plan for "${projectName}" is being drafted; answer it once it waits in your Inbox.`;
+}

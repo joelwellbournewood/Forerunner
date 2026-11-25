@@ -30952,3 +30952,122 @@ describe("w8-together, wave 8: a new task said in chat, the person's words or th
     }
   }, 60_000);
 });
+
+describe("w8-together, wave 8: Add to it answers at once and plans in the background (L4i-left-48, L4i-left-65)", () => {
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  /** A daemon on `dir` with the stand-in model, composed again on the same home for a restart. */
+  async function open(dir: string) {
+    const log = new ModelCallLog({ file: join(dir, "model-calls.jsonl") });
+    const provider = createRolePlayer(benchOptionsFromEnv({ FORERUNNER_BENCH_DELAY_MS: "0" }, log));
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: dir },
+      dirs: appDirs({ env: { FORERUNNER_HOME: dir } }),
+      config: null,
+      clock: new SystemClock(),
+      stateUrl: `sqlite:${join(dir, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    return { rt, client };
+  }
+  const intakeCards = async (rt: RuntimeApp, projectId: string) =>
+    (await rt.store.humanRequest.list({ project_id: projectId } as never, { limit: 100 })).filter(
+      (r) => (r.change_card as { key?: unknown } | null)?.key === `intake:${projectId}`,
+    );
+
+  it("POST /projects/:id/intake with background answers 'drafting' at once; the card comes after; a second brief meanwhile is a 409 and no failure; without background the route answers as before", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fr-ui-real-w8-intake-bg-"));
+    homes.push(dir);
+    const { rt, client } = await open(dir);
+    try {
+      const project = await client.createProject({ name: "Help", goal: "A help page" });
+      const at = await client.proposeIntakeInBackground(project.id, { brief: "Add a FAQ page." });
+      expect(at.state).toBe("drafting");
+      expect((await client.intakeStatus(project.id)).state).toBe("drafting");
+      const second = await client
+        .proposeIntakeInBackground(project.id, { brief: "Add a blog." })
+        .then(() => null)
+        .catch((e: unknown) => e);
+      expect(second).toBeInstanceOf(ApiError);
+      expect((second as ApiError).status).toBe(409);
+      // Drafting still, or filed by now: the 409 says which, in words.
+      expect([
+        'A plan for "Help" is being drafted; answer it once it waits in your Inbox.',
+        'A plan for "Help" waits for your answer. Answer it first.',
+      ]).toContain((second as ApiError).message);
+      await rt.intake.inFlight(project.id)?.catch(() => undefined);
+      const after = await client.intakeStatus(project.id);
+      expect(after.state).toBe("pending");
+      expect(after.error).toBeNull();
+      expect(await intakeCards(rt, project.id)).toHaveLength(1);
+      // The contract of the route without the option: the proposal, its card reused.
+      const sync = await client.proposeIntake(project.id, {} as { brief: string });
+      expect(sync.reused).toBe(true);
+      expect(sync.requestId).toBe(after.requestId);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
+
+  it("two first-plan requests at once make one model call and one card; a daemon closed while it drafts leaves no plan half-recorded", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fr-ui-real-w8-intake-race-"));
+    homes.push(dir);
+    let { rt, client } = await open(dir);
+    try {
+      const project = await client.createProject({ name: "Help", goal: "A help page" });
+      const calls = () =>
+        (existsSync(join(dir, "model-calls.jsonl"))
+          ? readFileSync(join(dir, "model-calls.jsonl"), "utf8").split("\n").filter(Boolean)
+          : []
+        ).length;
+      const before = calls();
+      const [a, b] = await Promise.all([
+        client.proposeIntake(project.id, {} as { brief: string }),
+        client.proposeIntake(project.id, {} as { brief: string }),
+      ]);
+      expect(a.requestId).toBe(b.requestId);
+      expect([a.reused, b.reused].sort()).toEqual([false, true]);
+      expect(calls() - before).toBe(1);
+      expect(await intakeCards(rt, project.id)).toHaveLength(1);
+
+      // A second project: the daemon closes while its plan is drafted, then starts again.
+      const other = await client.createProject({ name: "Shop", goal: "A shop" });
+      await client.proposeIntakeInBackground(other.id, { brief: "A shop page." });
+      await rt.intake.inFlight(other.id)?.catch(() => undefined);
+      await settleSessions(rt);
+      await rt.close();
+      ({ rt, client } = await open(dir));
+      const cards = await intakeCards(rt, other.id);
+      const status = await client.intakeStatus(other.id);
+      // Either the plan was filed whole (one card, pending) or nothing was (none or failed).
+      if (cards.length) {
+        expect(cards).toHaveLength(1);
+        expect(status.state).toBe("pending");
+        expect(status.requestId).toBe(cards[0]?.id);
+      } else expect(["none", "failed"]).toContain(status.state);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 90_000);
+});

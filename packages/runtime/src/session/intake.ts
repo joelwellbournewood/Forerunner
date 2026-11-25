@@ -96,7 +96,7 @@ import {
 } from "./credential-wait.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
 import { withOwnersContent } from "./intake-content.ts";
-import { openPlanSentence } from "./intake-words.ts";
+import { draftingPlanSentence, openPlanSentence } from "./intake-words.ts";
 import {
   DECISION_RECORD_MARK,
   MAX_PERSON_QUESTIONS,
@@ -1373,6 +1373,12 @@ export class IntakeService {
           this.logger.info("no plan filed: its project was removed", { projectId });
           throw e;
         }
+        // L4i-left-48: a plan that was already open is no failed planning ("Planning failed"
+        // never stands for it); the open card is the plan.
+        if (e instanceof ForerunnerError && e.code === "claim_conflict") {
+          this.logger.info("no second plan drafted: one is open", { projectId });
+          throw e;
+        }
         const wait = await this.waitFor(e, projectId);
         if (wait) {
           // U-078: no failure and no Try again (it cannot work while the credential is refused
@@ -1465,6 +1471,68 @@ export class IntakeService {
     return this.jobs.get(projectId) ?? null;
   }
 
+  /**
+   * w8-together (L4i-left-48): Add to it, answered at once. The plan is drafted in the background
+   * as `POST /projects` with `intake: true` drafts it (`enqueue`), and the answer is the status
+   * now (`drafting`), which the project page shows ("Drafting the plan..."). Refused before
+   * anything starts, as `propose` refuses: a removed project, no model, and a new brief while
+   * a plan is open or on its way (`claim_conflict`, the 409; never recorded as a failure).
+   * L4i-left-65: the check and the start are one step (no await between the last check and
+   * `enqueue`, which keeps one job per project), so two at once give one model call.
+   */
+  async proposeInBackground(
+    projectId: string,
+    opts: Pick<IntakeDraftOptions, "brief"> = {},
+  ): Promise<IntakeStatus> {
+    const project = await this.deps.store.project.mustGet(projectId);
+    refuseRemoved(project);
+    if (!this.deps.provider || !this.deps.pricing)
+      throw new ForerunnerError("unavailable", INTAKE_NEEDS_A_MODEL);
+    const open = await this.pendingFor(project.id);
+    const drafting = this.jobs.has(project.id) || this.locks.has(project.id);
+    if (open || drafting) {
+      if (opts.brief !== undefined)
+        throw new ForerunnerError(
+          "claim_conflict",
+          open ? openPlanSentence(project.name) : draftingPlanSentence(project.name),
+          {
+            details: {
+              ...(open ? { requestId: open.id } : {}),
+              reason: open ? "proposal_open" : "drafting",
+            },
+          },
+        );
+      return this.status(project.id);
+    }
+    void this.enqueue(project.id, opts.brief !== undefined ? { brief: opts.brief } : {}).catch(
+      () => undefined,
+    );
+    return this.status(project.id);
+  }
+
+  /**
+   * L4i-left-65: one proposal of a project at a time, the open-card check and the model call
+   * included, so two first-plan requests at once give one model call and one card (the second
+   * finds the first's card: reused, or the 409 for a new brief).
+   */
+  private readonly locks = new Map<string, Promise<void>>();
+  private async oneAtATime<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+    const before = this.locks.get(projectId) ?? Promise.resolve();
+    let release: () => void = () => undefined;
+    const mine = new Promise<void>((r) => {
+      release = r;
+    });
+    const chained = before.then(() => mine);
+    this.locks.set(projectId, chained);
+    await before;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.locks.get(projectId) === chained) this.locks.delete(projectId);
+    }
+  }
+
   private async recordFailure(
     projectId: string,
     error: string,
@@ -1511,6 +1579,14 @@ export class IntakeService {
    * the plan", design §3.3) follow the brief in the call, and the card keeps them.
    */
   async propose(projectId: string, opts: IntakeDraftOptions = {}): Promise<IntakeProposalOutcome> {
+    // L4i-left-65: the open-card check and the call are one step per project.
+    return this.oneAtATime(projectId, () => this.proposeNow(projectId, opts));
+  }
+
+  private async proposeNow(
+    projectId: string,
+    opts: IntakeDraftOptions = {},
+  ): Promise<IntakeProposalOutcome> {
     const { store } = this.deps;
     const project = await store.project.mustGet(projectId);
     // W15B-02: a removed project (its creation undone) gets no plan: no call, no card.

@@ -1220,6 +1220,16 @@ export function createDaemonApp(
   app.post("/projects/:id/intake", async (c) => {
     const project = await rt.store.project.mustGet(c.req.param("id"));
     const body = await parse(c, IntakeRequestBody);
+    // w8-together (L4i-left-48): Add to it answers at once; the plan is drafted in the
+    // background and the project page says "Drafting the plan..." until its card is filed.
+    if (body.background === true) {
+      const s = await rt.intake.proposeInBackground(
+        project.id,
+        body.brief !== undefined ? { brief: body.brief } : {},
+      );
+      rt.events.emit("project", { id: project.id });
+      return c.json(intakeStatusView(s), 202);
+    }
     const r = await rt.intake.propose(
       project.id,
       body.brief !== undefined ? { brief: body.brief } : {},

@@ -604,6 +604,11 @@ export interface DaemonClient {
    * (`POST /projects/:id/intake`, 202).
    */
   proposeIntake(projectId: string, body: { brief: string }): Promise<IntakeProposalView>;
+  /**
+   * w8-together (L4i-left-48): Add to it. `POST /projects/:id/intake` with `background: true`
+   * answers at once with the status (`drafting`); the plan card comes when the model is done.
+   */
+  proposeIntakeInBackground(projectId: string, body: { brief: string }): Promise<IntakeStatusView>;
   project(id: string, signal?: AbortSignal): Promise<ProjectCard>;
   projectSummary(id: string, signal?: AbortSignal): Promise<ProjectSummary>;
   /**
@@ -1124,6 +1129,8 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       get(routePath("intakeStatus", { id }), IntakeStatusViewSchema, undefined, signal),
     retryIntake: (id) => post(routePath("intakeRetry", { id }), IntakeStatusViewSchema, {}),
     proposeIntake: (id, body) => post(routePath("intake", { id }), IntakeProposalViewSchema, body),
+    proposeIntakeInBackground: (id, body) =>
+      post(routePath("intake", { id }), IntakeStatusViewSchema, { ...body, background: true }),
     project: (id, signal) =>
       get(routePath("project", { id }), ProjectCardSchema, undefined, signal),
     projectSummary: (id, signal) =>

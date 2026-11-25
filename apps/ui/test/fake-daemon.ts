@@ -119,7 +119,7 @@ import {
   statusIssueRowWords,
   statusSwitchedOffSentence,
 } from "@forerunner/runtime/loop/status-board-words";
-import { openPlanSentence } from "@forerunner/runtime/session/intake-words";
+import { draftingPlanSentence, openPlanSentence } from "@forerunner/runtime/session/intake-words";
 import {
   type Elsewhere,
   elsewhereSentence,
@@ -720,6 +720,12 @@ export interface FakeDaemonState {
    * someone else's (the daemon's `summary_cache.docs.guide_stopped`); the card's line.
    */
   guideStopped: Record<string, true>;
+  /**
+   * L4i-left-48: per project id, Add to it's background draft is held (the page stays on
+   * "Drafting the plan…") until the test calls `finishDrafting[id]()`, which files the card.
+   */
+  holdDrafting: Record<string, true>;
+  finishDrafting: Record<string, () => void>;
   /**
    * OJ-06: per closed project id, where Make one project put its work (`ProjectCard.joinedInto`);
    * `project.join` writes it, its Undo removes it. A joined project leaves `GET /projects`.
@@ -1619,6 +1625,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     oldStatusPr: {},
     togetherRefusal: {},
     guideStopped: {},
+    holdDrafting: {},
+    finishDrafting: {},
     joined: {},
     joinRefusal: null,
     joinUndoBlocked: null,
@@ -1959,6 +1967,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.oldStatusPr = {};
     state.togetherRefusal = {};
     state.guideStopped = {};
+    state.holdDrafting = {};
+    state.finishDrafting = {};
     state.joined = {};
     state.joinRefusal = null;
     state.joinUndoBlocked = null;
@@ -2660,7 +2670,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const id = c.req.param("id");
     const project = state.projects.find((p) => p.id === id);
     if (!project) return errorBody(c, 404, "not_found", "no such project");
-    const body = (await c.req.json().catch(() => ({}))) as { brief?: string };
+    const body = (await c.req.json().catch(() => ({}))) as {
+      brief?: string;
+      background?: boolean;
+    };
     const key = `intake:${id}`;
     const open = state.requests.find(
       (r) =>
@@ -2668,15 +2681,69 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         (r.changeCard as { key?: unknown } | null)?.key === key &&
         r.projectId === id,
     );
-    if (open && body.brief !== undefined)
+    // L4i-left-48, as the daemon: a brief while a plan is open or on its way is the 409.
+    const drafting = intakeOf(id).state === "drafting";
+    if ((open || drafting) && body.brief !== undefined)
       return c.json(
         {
           code: "conflict",
-          message: openPlanSentence(project.name),
-          details: { requestId: open.id, reason: "proposal_open", cause: "claim_conflict" },
+          message: open ? openPlanSentence(project.name) : draftingPlanSentence(project.name),
+          details: {
+            ...(open ? { requestId: open.id } : {}),
+            reason: open ? "proposal_open" : "drafting",
+            cause: "claim_conflict",
+          },
         },
         409,
       );
+    // w8-together (L4i-left-48), as the daemon: `background: true` answers at once with the
+    // status (`drafting`); the card is filed in the background (at once here, or when a test
+    // lets it: `state.holdDrafting[id]` keeps it drafting until `state.finishDrafting[id]()`).
+    if (body.background === true) {
+      // No brief while a plan is open or on its way: the status as it stands, nothing drafted.
+      if (open || drafting) return c.json(intakeOf(id), 202);
+      state.intake[id] = {
+        projectId: id,
+        state: "drafting",
+        requestId: null,
+        outcome: null,
+        appliedAt: null,
+        docs: null,
+        error: null,
+      };
+      const finish = () => {
+        delete state.finishDrafting[id];
+        fileIntakeCard(id, project, body.brief, open);
+      };
+      if (state.holdDrafting[id]) state.finishDrafting[id] = finish;
+      else setTimeout(finish, 0);
+      emit("project.changed", { id });
+      return c.json(intakeOf(id), 202);
+    }
+    const filed = fileIntakeCard(id, project, body.brief, open);
+    return c.json(
+      {
+        pending: true,
+        projectId: id,
+        requestId: filed.requestId,
+        reused: !!open,
+        summary: { milestones: 1, tasks: 1, docs: 0, firstSessionTasks: 1 },
+        estimateUsdMicro: 300_000,
+        costUsdMicro: 0,
+        docsTarget: filed.docsTarget,
+      },
+      202,
+    );
+  });
+  /** The plan card of a brief, as the daemon files it (OR-08's plan-only form included). */
+  function fileIntakeCard(
+    id: string,
+    project: { name: string; goal: string; repos?: string[] | null },
+    brief: string | undefined,
+    open: HumanRequestView | undefined,
+  ): { requestId: string; docsTarget: "repository" | "workspace" | null } {
+    const body = { brief };
+    const key = `intake:${id}`;
     const planOnly =
       state.tasks.some((t) => t.projectId === id) ||
       state.repositoryOverview[id]?.kind === "together";
@@ -2741,20 +2808,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       error: null,
     };
     emit("project.changed", { id });
-    return c.json(
-      {
-        pending: true,
-        projectId: id,
-        requestId,
-        reused: !!open,
-        summary: { milestones: 1, tasks: 1, docs: 0, firstSessionTasks: 1 },
-        estimateUsdMicro: 300_000,
-        costUsdMicro: 0,
-        docsTarget,
-      },
-      202,
-    );
-  });
+    return { requestId, docsTarget };
+  }
   app.get("/projects/:id/intake", (c) => {
     const id = c.req.param("id");
     if (!state.projects.some((p) => p.id === id))
