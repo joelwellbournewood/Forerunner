@@ -455,9 +455,14 @@ describe("w8-together, wave 8: Work together for a project already here (OJ-11, 
       }),
     );
     await waitFor(() => expect(screen.queryByTestId("join-together-dialog")).toBeNull());
-    // It lands on the project it became, which says it is shared.
-    expect(await screen.findByTestId("repository-elsewhere-line")).toHaveTextContent(
-      "Shared on GitHub with another Forerunner: each keeps its own tasks.",
+    // It lands on the project it became, which says it is shared. Until the new page renders,
+    // "Atlas"'s own line (the same test id) is still on screen, so wait for the line to change.
+    await waitFor(
+      () =>
+        expect(screen.getByTestId("repository-elsewhere-line")).toHaveTextContent(
+          "Shared on GitHub with another Forerunner: each keeps its own tasks.",
+        ),
+      { timeout: 10_000 },
     );
     const row = harness.daemon.state.changes[0];
     expect(row?.sentence).toBe(
