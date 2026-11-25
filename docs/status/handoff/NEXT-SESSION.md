@@ -15,6 +15,51 @@ has approved this plan and asked for it to be done thoroughly, hands-on, for rea
   header `x-api-key` and no prefix. **Step 0 below checks which one works.** Never print, log or
   commit the key; never ask the owner to paste it into chat.
 
+## Status at 2026-11-25 06:10 UTC (wave 8 W8a and W8b merged; paused at the weekly limit)
+
+**Head: 25010cf** (pushed, 45 signed commits since 8299aa3). CI run 340 and Desktop app run 95
+on it were running when this was written (8299aa3 had CI 339 and Desktop app 94 green). Weekly
+usage was 81% at 05:18 UTC; work paused here, as the owner asked, and continues after the reset on
+Sunday 2026-11-29 at 05:00 UTC (a continuation is scheduled for about 05:30 UTC).
+
+- **Wave 8 (D9, working together through GitHub)** was re-planned on 24 November (workflow
+  `wf_c1e0c5cc-9d7`, four independent checks, all 51 findings taken in): 12 areas in five
+  sub-runs, `frbench/wave8-plan.json`; the areas are in `frbench/phaseE.json`.
+- **W8a merged at 8299aa3** (24 Nov): `w8-two-homes` (two Forerunners side by side in tests and on
+  the bench), `w8-issue-host` (the GitHub issue and comment port with both stand-ins),
+  `w8-repo-guide` (the repository guide and doc ownership).
+- **W8b merged at 25010cf** (25 Nov): `w8-status-write` (one pinned status issue per project, one
+  comment per Forerunner, no costs; the status pull request is gone; ADR 0122), `w8-together`
+  (Work together from the Overview and from chat; Add to it drafts in the background and survives
+  a Quit), `w8-l4-leftovers` (run L4's start, session and money words). Every area was fixed,
+  reviewed on the bench (each review found blocking problems, all fixed in the fix-ups), merged
+  with the full validation (unit, UI, Playwright 40, e2e 25, live harness, injection 93) and the
+  smoke journey. Two container restarts during W8b (00:20 and 01:35 UTC) lost nothing: the run
+  resumed from its journal, and an unfinished fix-up's test was kept as a patch.
+- **W8b's leftovers are collected but not yet placed**: `frbench/leftovers-W8b-raw.json` (87 raw
+  items from the fix, fix-up, review and merge reports, many repeated). Never cut:
+  **L4-money-105** (a review-only pass is priced at the whole remaining estimate, `runner.ts`
+  priceNow; the fixer deferred it because runner pricing was outside its area's regions, and the
+  review accepted that) goes to the W8c-W8e area that owns runner pricing and the start check.
+  Below the cut line and carried: W8-join-3 (a joined project's docs pull requests listed as
+  information only), the status board's 'Waiting for Claude' line and 30-minute refresh test,
+  L4i-left-17/-19/-21/-23/-24 and the rest named in the reports.
+- **The owner's itemized to-do list** (150 items) is on the status dashboard and in
+  `frbench/todo-data.cjs`.
+
+**To continue (Sunday 29 Nov, after the reset):**
+
+1. Restore `/tmp/frbench` from `claude/nifty-knuth-f9udt0-backup/plan-files` if it is missing.
+2. Check CI and the Desktop app on 25010cf (runs 340 and 95, or later); fix any red first.
+3. Place W8b's leftovers from `frbench/leftovers-W8b-raw.json` into the W8c-W8e areas the way
+   W8a's were (`place-w8a-leftovers-part1.cjs` and `-part2.cjs`: dedupe, route by file ownership in
+   `wave8-plan.json` shared_files, tag "(W8b leftovers)", L4-money-105 never cut).
+4. Build and run W8c: `node build-wave8-args.cjs W8c 25010cf "<note>"`, then W8d and W8e, one at a
+   time, with the same post-processing (stage reports, merge, push, signatures, CI and the Desktop
+   app on Windows and Linux, leftovers, plan-file backup, dashboard).
+5. Then F (`runL4-plan.json` final_check plus wave 8's final_check_additions; live budget used so
+   far USD 16.50 of 40), G, G2 and H as described below.
+
 ## Status at 2026-11-24 10:30 UTC (run L4 complete; wave 8 being re-planned)
 
 **Head: c15d75e** (pushed). CI run 337 on it is green on Windows and Linux; the Desktop app
