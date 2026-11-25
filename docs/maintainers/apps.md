@@ -171,7 +171,10 @@ fixtures with both sides and compares key sets so drift fails before a screen do
 d1109-onerepo-link: the New project dialog (`NewProjectDialog.tsx`) reads a 409 with a link
 cause (`linkOfferOf`) as an offer in place of the create button: the daemon's sentence, then
 Open it (`project.switch`, then the project's page), Add to it when a brief or goal was typed
-(`client.proposeIntake(projectId, { brief })`, then the project's page), Work together and Take
+(`client.proposeIntakeInBackground(projectId, { brief })`, w8-together, L4i-left-48: `POST
+/projects/:id/intake` with `background: true` answers at once with the status, so the project's
+page says "Drafting the plan…" until the card is filed; before, `proposeIntake` held the dialog
+on "Adding…" for the whole model call; then the project's page), Work together and Take
 it over for a project that is not on this computer (the same create with `together` or
 `takeOver`, each with its consequence line and Details), and Cancel. The Overview's line
 (`SummaryTab.tsx`, `RepositoryElsewhere`) shows `ProjectCard.repositoryElsewhere` with Take it
@@ -186,6 +189,17 @@ Overview (Take it over, Research reads' Change, Merge, the preview) shows `descr
 background service that does not answer reads "Forerunner's background service does not
 answer.", never the raw request error; C2-left-13). The Docs tab shows no "missing" mark for a
 row with `notWrittenHere` (a together project's doc, which the other Forerunner writes).
+w8-together (ADR 0117 amended 2026-11-24): when the card's `repositoryElsewhere.canWorkTogether`
+is set (a project here whose repository is another Forerunner's project), the line shows **Work
+together** first, with `togetherLine` under it, then Take it over; the press opens
+`JoinProjectsDialog.tsx` in its together form (`client.togetherPreview(id)`, `GET
+/projects/:id/join-preview?together=1`: `togetherJoinSentence`, the GitHub line naming only
+this project's own old status pull request, the name the together project gets, a refusal in
+words in place of the button) and sends `project.join {keep: {together: true}, close: [id]}`
+with `confirm: "tap"`. The Overview also shows `ProjectCard.guideStopped`
+(`guide-stopped-line`, W8a-left-22) when the repository guide could not go out because every
+branch the project may write its docs on holds someone else's pull request. Tests:
+`test/onerepo-join.test.tsx` 'w8-together', the real-daemon 'w8-together, wave 8' cases.
 
 d1109-onerepo-join (Make one project, ADR 0117 amended 2026-11-16): the Overview's
 `SharedRepository` (`SummaryTab.tsx`) shows `ProjectCard.sharesRepositoryWith` ('"Site" and
@@ -977,8 +991,11 @@ another project's link answers 409 with `inUseSentence` and its details; a repos
 in `state.repositoryElsewhere` (by `owner/name`) answers the offer of a project that is not on
 this computer (`elsewhereSentence`, Work together and Take it over by its `Elsewhere`), and
 `together` or `takeOver` in the body creates it; another host answers `otherHostSentence`.
-`POST /projects/:id/intake` answers 202 with a proposal (Add to it), or 409 with
-`openPlanSentence` while a plan is open: its card is the daemon's shape (`INTAKE_OPTIONS`, a
+`POST /projects/:id/intake` answers 202 with a proposal, or with `background: true` (Add to it,
+L4i-left-48) 202 with the status `drafting` and files the card next (`state.holdDrafting[id]`
+keeps it drafting until the test calls `state.finishDrafting[id]()`), or 409 with
+`openPlanSentence` while a plan is open (`draftingPlanSentence` while one is drafted, as the
+daemon answers): its card is the daemon's shape (`INTAKE_OPTIONS`, a
 one-task plan from the brief, `plan_only` with no `docs_target` for a project with tasks or worked
 on together, `docsTarget` null in the answer). `state.repositoryOverview` (by project id) is the
 Overview's line, the card's `repositoryElsewhere`; `repo.take_over` removes it (refused with
