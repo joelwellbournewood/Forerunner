@@ -98,6 +98,7 @@ import {
   personQuestionsOf,
 } from "../src/pages/InboxPage.tsx";
 import { goalFromBrief } from "../src/pages/NewProjectDialog.tsx";
+import { planningFailedLine } from "../src/pages/project/IntakeBanner.tsx";
 import { latestRunByTask, taskCapWords } from "../src/pages/project/TasksTab.tsx";
 
 /**
@@ -30957,10 +30958,16 @@ describe("w8-together, wave 8: Add to it answers at once and plans in the backgr
   const homes: string[] = [];
   afterAll(() => removeHomes(homes));
 
+  /** The stand-in model on `dir`'s call log. */
+  const playerOn = (dir: string) =>
+    createRolePlayer(
+      benchOptionsFromEnv(
+        { FORERUNNER_BENCH_DELAY_MS: "0" },
+        new ModelCallLog({ file: join(dir, "model-calls.jsonl") }),
+      ),
+    );
   /** A daemon on `dir` with the stand-in model, composed again on the same home for a restart. */
-  async function open(dir: string) {
-    const log = new ModelCallLog({ file: join(dir, "model-calls.jsonl") });
-    const provider = createRolePlayer(benchOptionsFromEnv({ FORERUNNER_BENCH_DELAY_MS: "0" }, log));
+  async function open(dir: string, provider: ReturnType<typeof createRolePlayer> = playerOn(dir)) {
     const rt = await composeRuntime({
       env: { FORERUNNER_HOME: dir },
       dirs: appDirs({ env: { FORERUNNER_HOME: dir } }),
@@ -31029,7 +31036,7 @@ describe("w8-together, wave 8: Add to it answers at once and plans in the backgr
     }
   }, 60_000);
 
-  it("two first-plan requests at once make one model call and one card; a daemon closed while it drafts leaves no plan half-recorded", async () => {
+  it("two first-plan requests at once make one model call and one card; a plan filed before a restart is the one card after it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fr-ui-real-w8-intake-race-"));
     homes.push(dir);
     let { rt, client } = await open(dir);
@@ -31050,7 +31057,8 @@ describe("w8-together, wave 8: Add to it answers at once and plans in the backgr
       expect(calls() - before).toBe(1);
       expect(await intakeCards(rt, project.id)).toHaveLength(1);
 
-      // A second project: the daemon closes while its plan is drafted, then starts again.
+      // A second project: its plan from the brief is filed, then the daemon closes and starts
+      // again (the Quit while it is drafted is the next case).
       const other = await client.createProject({ name: "Shop", goal: "A shop" });
       await client.proposeIntakeInBackground(other.id, { brief: "A shop page." });
       await rt.intake.inFlight(other.id)?.catch(() => undefined);
@@ -31059,15 +31067,217 @@ describe("w8-together, wave 8: Add to it answers at once and plans in the backgr
       ({ rt, client } = await open(dir));
       const cards = await intakeCards(rt, other.id);
       const status = await client.intakeStatus(other.id);
-      // Either the plan was filed whole (one card, pending) or nothing was (none or failed).
-      if (cards.length) {
-        expect(cards).toHaveLength(1);
-        expect(status.state).toBe("pending");
-        expect(status.requestId).toBe(cards[0]?.id);
-      } else expect(["none", "failed"]).toContain(status.state);
+      expect(cards).toHaveLength(1);
+      expect(status.state).toBe("pending");
+      expect(status.requestId).toBe(cards[0]?.id);
+      expect(status.error).toBeNull();
     } finally {
       await settleSessions(rt);
       await rt.close();
     }
   }, 90_000);
+
+  /**
+   * fixup-w8-together: the stand-in on `dir` whose planning call waits until `release()` and
+   * then fails as a dead daemon's call would; `atModel` resolves once the call is made.
+   */
+  function heldAtPlanning(dir: string) {
+    let reached!: () => void;
+    const atModel = new Promise<void>((r) => {
+      reached = r;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    const player = playerOn(dir);
+    const stream = player.stream.bind(player);
+    player.stream = (req) =>
+      detectRole(req).role !== "intake"
+        ? stream(req)
+        : {
+            [Symbol.asyncIterator]: () => ({
+              next: async (): Promise<IteratorResult<never>> => {
+                reached();
+                await released;
+                throw new Error("the daemon is gone");
+              },
+            }),
+          };
+    return { player, atModel, release };
+  }
+  /**
+   * The stand-in on `dir` with its planning calls kept in `asked`; while `fail.on`, each one
+   * fails as Claude not answering would.
+   */
+  function planningSeen(dir: string) {
+    const asked: ModelRequest[] = [];
+    const fail = { on: false };
+    const player = playerOn(dir);
+    const plain = player.stream.bind(player);
+    player.stream = (req) => {
+      if (detectRole(req).role !== "intake") return plain(req);
+      // A copy: the loop appends the reply to the same messages after the call.
+      asked.push({ ...req, messages: structuredClone(req.messages) });
+      if (!fail.on) return plain(req);
+      return {
+        [Symbol.asyncIterator]: () => ({
+          next: async (): Promise<IteratorResult<never>> => {
+            throw new Error("Claude did not answer");
+          },
+        }),
+      };
+    };
+    return { player, asked, fail };
+  }
+  const LOST = "Forerunner closed before the plan from your brief was drafted.";
+
+  // fixup-w8-together (review blocking 3; validation rule 4): Quit while the plan of an Add to
+  // brief is drafted. Before, the brief lived only in memory: after the restart the page said
+  // nothing ('none'), no plan came and no Try again was offered, where the old synchronous
+  // dialog had kept the brief and shown the error.
+  it("a daemon closed while the plan of an Add to brief is drafted: after a restart, twice, the page says it was not drafted and Try again drafts it from the same brief", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fr-ui-real-w8-intake-lost-"));
+    homes.push(dir);
+    const FIRST = "A shop for the village market.";
+    const BRIEF = "A shop page with three products and a contact form.";
+    const held = heldAtPlanning(dir);
+    let { rt, client } = await open(dir, held.player);
+    let projectId = "";
+    try {
+      // A project here made with a brief and no plan yet; Add to it gives it a new brief.
+      const project = await client.createProject({ name: "Shop", goal: "A shop", brief: FIRST });
+      projectId = project.id;
+      const at = await client.proposeIntakeInBackground(project.id, { brief: BRIEF });
+      expect(at.state).toBe("drafting");
+      await held.atModel;
+      expect((await client.intakeStatus(project.id)).state).toBe("drafting");
+      // Quit while the planning call runs: no settleSessions, the call is held until the
+      // daemon is gone.
+      await rt.close();
+    } finally {
+      held.release();
+    }
+    // Composed twice: the brief's lost draft is said each time, and nothing is half-recorded.
+    for (let i = 0; i < 2; i++) {
+      ({ rt, client } = await open(dir));
+      try {
+        const status = await client.intakeStatus(projectId);
+        expect(status.state, `compose ${i + 2}`).toBe("failed");
+        expect(status.error, `compose ${i + 2}`).toBe(LOST);
+        // The banner on the project page, word for word, with its Try again.
+        expect(planningFailedLine(status.error)).toBe(
+          "Planning failed: Forerunner closed before the plan from your brief was drafted.",
+        );
+        expect(await intakeCards(rt, projectId)).toHaveLength(0);
+        // The project's line (Home, the Overview) says the same, with Try again.
+        const card = (await client.projects()).find((p) => p.id === projectId);
+        expect(card?.statusLine).toEqual({
+          kind: "planning_failed",
+          text: "Planning failed: Forerunner closed before the plan from your brief was drafted",
+          action: { kind: "retry", label: "Try again", to: null },
+        });
+      } finally {
+        await settleSessions(rt);
+        await rt.close();
+      }
+    }
+    // Try again drafts it from the person's Add to brief, in one press, not from the first.
+    const seen = planningSeen(dir);
+    ({ rt, client } = await open(dir, seen.player));
+    try {
+      const again = await client.retryIntake(projectId);
+      expect(again.state).toBe("drafting");
+      await rt.intake.inFlight(projectId)?.catch(() => undefined);
+      const after = await client.intakeStatus(projectId);
+      expect(after.state).toBe("pending");
+      expect(after.error).toBeNull();
+      expect(await intakeCards(rt, projectId)).toHaveLength(1);
+      expect(seen.asked).toHaveLength(1);
+      expect(JSON.stringify(seen.asked[0]?.messages)).toContain(BRIEF);
+      expect(JSON.stringify(seen.asked[0]?.messages)).not.toContain(FIRST);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+    // Filed: a restart now says the plan waits, not the lost draft.
+    ({ rt, client } = await open(dir));
+    try {
+      const filed = await client.intakeStatus(projectId);
+      expect(filed.state).toBe("pending");
+      expect(filed.error).toBeNull();
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
+
+  // fixup-w8-together, the siblings of the lost draft (validation rule 8): an Add to brief whose
+  // plan fails is drafted again from that brief (before, Try again drafted from the project's
+  // first brief, as the old dialog never did: it kept the brief and showed the error), and a new
+  // project's plan cut off by a Quit is said and drafted again (before, its page said "No tasks
+  // yet" and the plan never came).
+  it("an Add to brief whose plan failed, and a new project's plan cut off by a Quit, are each drafted again from their own brief by Try again", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fr-ui-real-w8-intake-again-"));
+    homes.push(dir);
+    const FIRST = "A club site with a calendar of the matches.";
+    const ADDED = "Add a members-only page with the minutes of each meeting.";
+    const seen = planningSeen(dir);
+    let { rt, client } = await open(dir, seen.player);
+    let bakery = "";
+    try {
+      const club = await client.createProject({ name: "Club", goal: "A club site", brief: FIRST });
+      seen.fail.on = true;
+      await client.proposeIntakeInBackground(club.id, { brief: ADDED });
+      await rt.intake.inFlight(club.id)?.catch(() => undefined);
+      const failed = await client.intakeStatus(club.id);
+      expect(failed.state).toBe("failed");
+      expect(failed.error).not.toBe(LOST);
+      expect(await intakeCards(rt, club.id)).toHaveLength(0);
+      seen.fail.on = false;
+      seen.asked.length = 0;
+      await client.retryIntake(club.id);
+      await rt.intake.inFlight(club.id)?.catch(() => undefined);
+      expect((await client.intakeStatus(club.id)).state).toBe("pending");
+      expect(await intakeCards(rt, club.id)).toHaveLength(1);
+      expect(seen.asked).toHaveLength(1);
+      expect(JSON.stringify(seen.asked[0]?.messages)).toContain(ADDED);
+      expect(JSON.stringify(seen.asked[0]?.messages)).not.toContain(FIRST);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+    // A new project with its plan asked for (the New project dialog), cut off by a Quit.
+    const SECOND = "A bakery site with the opening hours and the bread of the day.";
+    const held = heldAtPlanning(dir);
+    ({ rt, client } = await open(dir, held.player));
+    try {
+      const made = await client.createProject({
+        name: "Bakery",
+        goal: "A bakery site",
+        brief: SECOND,
+        intake: true,
+      });
+      bakery = made.id;
+      await held.atModel;
+      await rt.close();
+    } finally {
+      held.release();
+    }
+    const after = planningSeen(dir);
+    ({ rt, client } = await open(dir, after.player));
+    try {
+      const status = await client.intakeStatus(bakery);
+      expect(status.state).toBe("failed");
+      expect(status.error).toBe(LOST);
+      await client.retryIntake(bakery);
+      await rt.intake.inFlight(bakery)?.catch(() => undefined);
+      expect((await client.intakeStatus(bakery)).state).toBe("pending");
+      expect(after.asked).toHaveLength(1);
+      expect(JSON.stringify(after.asked[0]?.messages)).toContain(SECOND);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 120_000);
 });

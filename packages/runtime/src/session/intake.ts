@@ -96,7 +96,7 @@ import {
 } from "./credential-wait.ts";
 import { unappliedBlockingAnswers } from "./findings.ts";
 import { withOwnersContent } from "./intake-content.ts";
-import { draftingPlanSentence, openPlanSentence } from "./intake-words.ts";
+import { DRAFT_LOST_WORDS, draftingPlanSentence, openPlanSentence } from "./intake-words.ts";
 import {
   DECISION_RECORD_MARK,
   MAX_PERSON_QUESTIONS,
@@ -1200,6 +1200,24 @@ export class IntakeService {
       };
     const failure = (project.summary_cache as { intake?: JsonObject }).intake;
     const failedAt = typeof failure?.failed_at === "string" ? failure.failed_at : null;
+    // w8-together fix-up (review blocking 3): a draft in the background that no daemon runs now
+    // and that ended with neither a card nor a failure (`draftRecord`): a Quit cut it off. The
+    // page says so with Try again, which drafts it from the same brief (`retry`); before, it
+    // said nothing ("none"), and Add to it's brief was gone with the daemon.
+    const draftingAt = typeof failure?.drafting_at === "string" ? failure.drafting_at : null;
+    if (draftingAt && !(row && row.created_at >= draftingAt)) {
+      const before = (row?.change_card ?? {}) as JsonObject;
+      return {
+        projectId,
+        state: "failed",
+        requestId: row?.id ?? null,
+        outcome: typeof before.outcome === "string" ? before.outcome : null,
+        appliedAt: typeof before.applied_at === "string" ? before.applied_at : null,
+        docs: null,
+        error: DRAFT_LOST_WORDS,
+        wait: null,
+      };
+    }
     // U-078: a draft that met a refused or resting credential waits for it; it did not fail.
     const waiting = failedAt ? credentialWaitFrom(failure?.wait) : null;
     const wait = waiting ? await this.waitView(waiting) : null;
@@ -1357,16 +1375,36 @@ export class IntakeService {
    * at once, the request lands in the inbox when the model is done. One job per project at a
    * time; a failure is logged and recorded on the project's summary cache (`intake.failed_at`,
    * `intake.error`) so the status route reports it.
+   *
+   * w8-together fix-up (review blocking 3): a draft from a brief (no `changes`, which the
+   * answered card keeps) is written down before the planning call (`draftRecord`: when, and the
+   * brief it was given), so a Quit meanwhile is said after the restart and Try again drafts from
+   * the same brief; a failure or a wait keeps that brief too. The record goes once a card is
+   * filed, or an open one stands for it (`draftEnded`).
    */
   enqueue(projectId: string, opts: IntakeDraftOptions = {}): Promise<IntakeProposalOutcome> {
     const running = this.jobs.get(projectId);
     if (running) return running;
+    const fromBrief = (opts.changes ?? []).length === 0;
+    // Before the call, and before the copy below, which writes the project's summary cache too.
+    const recorded = fromBrief
+      ? this.draftRecord(projectId, () => ({
+          drafting_at: this.deps.clock.nowIso(),
+          ...(opts.brief !== undefined ? { brief: opts.brief } : {}),
+        }))
+      : Promise.resolve();
     // W6-25 (review of merged-copy): this computer's copy of the project's repository is made
     // while the plan is drafted, so the Docs and Files tabs read it while the plan waits (before,
     // only from the watcher's first poll, up to a minute later). Part of the job, so nothing of
     // it keeps running once the job is done; a failure is logged and the plan goes on.
-    const copy = this.copyWhileDrafting(projectId);
-    const job = this.propose(projectId, opts)
+    const copy = recorded.then(() => this.copyWhileDrafting(projectId));
+    const job = recorded
+      .then(() => this.propose(projectId, opts))
+      .then(async (outcome) => {
+        // A card was filed, or an open one is the plan: nothing was lost.
+        if (fromBrief) await this.draftEnded(projectId);
+        return outcome;
+      })
       .catch(async (e: unknown) => {
         // W15B-02: the project was removed meanwhile: nothing to record on it.
         if (e instanceof ForerunnerError && e.details?.cause === "project_removed") {
@@ -1377,6 +1415,7 @@ export class IntakeService {
         // never stands for it); the open card is the plan.
         if (e instanceof ForerunnerError && e.code === "claim_conflict") {
           this.logger.info("no second plan drafted: one is open", { projectId });
+          if (fromBrief) await this.draftEnded(projectId);
           throw e;
         }
         const wait = await this.waitFor(e, projectId);
@@ -1388,10 +1427,10 @@ export class IntakeService {
             reason: wait.reason,
             ...(wait.until ? { until: wait.until } : {}),
           });
-          await this.recordFailure(projectId, (await this.waitView(wait)).text, wait);
+          await this.recordFailure(projectId, (await this.waitView(wait)).text, wait, opts.brief);
         } else {
           this.logger.warn("automatic intake failed", { projectId, error: errorMessage(e) });
-          await this.recordFailure(projectId, intakeFailureWords(e));
+          await this.recordFailure(projectId, intakeFailureWords(e), undefined, opts.brief);
         }
         throw e;
       })
@@ -1447,7 +1486,17 @@ export class IntakeService {
         : undefined;
     const changes = changesAskedOn(changed?.change_card as JsonObject | undefined);
     const read = planRead(changed?.change_card as JsonObject | undefined);
-    void this.enqueue(projectId, changes.length ? { changes, read } : {}).catch(() => undefined);
+    // w8-together fix-up (review blocking 3): a draft from a brief that failed, waited or was
+    // cut off by a Quit (Add to it's) is drafted again from that brief, which its record keeps.
+    // The record is newer than any card (it goes once one is filed), so it wins over an earlier
+    // card's changes. Before, Try again drafted from the project's first brief.
+    const project = await this.deps.store.project.get(projectId).catch(() => undefined);
+    const record = (project?.summary_cache as { intake?: JsonObject } | undefined)?.intake;
+    const brief = typeof record?.brief === "string" ? record.brief : undefined;
+    void this.enqueue(
+      projectId,
+      brief !== undefined ? { brief } : changes.length ? { changes, read } : {},
+    ).catch(() => undefined);
     return this.status(projectId);
   }
 
@@ -1533,10 +1582,57 @@ export class IntakeService {
     }
   }
 
+  /**
+   * w8-together fix-up (review blocking 3): the project's intake record (`summary_cache.intake`)
+   * written from what it holds now (`next`; undefined removes it), in one transaction; a write
+   * between the read and the update is read again, twice at most. Never throws: a record not
+   * written is logged, and the draft goes on.
+   */
+  private async draftRecord(
+    projectId: string,
+    next: (now: JsonObject | undefined) => JsonObject | undefined,
+  ): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.deps.store.transaction(async (tx) => {
+          const project = await tx.project.mustGet(projectId);
+          const cache = { ...(project.summary_cache as JsonObject) };
+          const record = next(cache.intake as JsonObject | undefined);
+          if (record === undefined) delete cache.intake;
+          else cache.intake = record;
+          await tx.project.update(project.id, project.version, { summary_cache: cache as never });
+        });
+        return;
+      } catch (e) {
+        if (e instanceof ForerunnerError && e.code === "version_conflict" && attempt < 2) continue;
+        this.logger.warn("intake record not written", { projectId, error: errorMessage(e) });
+        return;
+      }
+    }
+  }
+
+  /**
+   * A draft from a brief ended with a card (filed, or an open one that stands for it): its
+   * record goes, so neither the status after a restart nor Try again reads it any more. Written
+   * only when there is one.
+   */
+  private async draftEnded(projectId: string): Promise<void> {
+    const project = await this.deps.store.project.get(projectId).catch(() => undefined);
+    const record = (project?.summary_cache as { intake?: JsonObject } | undefined)?.intake;
+    if (!record || (record.drafting_at === undefined && record.brief === undefined)) return;
+    await this.draftRecord(projectId, (now) => {
+      if (!now) return undefined;
+      const { drafting_at: _at, brief: _brief, ...rest } = now;
+      // What is left is an earlier failure, which the filed card is newer than.
+      return Object.keys(rest).length ? rest : undefined;
+    });
+  }
+
   private async recordFailure(
     projectId: string,
     error: string,
     wait?: CredentialWait,
+    brief?: string,
   ): Promise<void> {
     try {
       const project = await this.deps.store.project.mustGet(projectId);
@@ -1546,6 +1642,9 @@ export class IntakeService {
           intake: {
             failed_at: this.deps.clock.nowIso(),
             error: redact(cut(error)),
+            // w8-together fix-up: the brief it was asked with (Add to it's), for Try again and
+            // for the draft once a credential it waited for serves.
+            ...(brief !== undefined ? { brief } : {}),
             // What it waits for (U-078): `status` answers `waiting` while this is kept.
             ...(wait
               ? {
@@ -1752,6 +1851,9 @@ export class IntakeService {
       requestId: row.id,
       costUsdMicro: called.costUsdMicro,
     });
+    // w8-together fix-up: a plan filed from a brief ends what a draft in the background kept of
+    // it, whichever way this one was asked (`draftEnded`).
+    await this.draftEnded(project.id);
     return {
       pending: true,
       projectId: project.id,

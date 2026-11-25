@@ -116,9 +116,12 @@ function world(
   const home = mkdtempSync(join(tmpdir(), "fr-cred-limits-"));
   const dirs = appDirs({ env: { FORERUNNER_HOME: home } });
   const vault = new MemoryVault();
-  const model = new AcceptingCriticProvider(
-    new ScriptedProvider(opts.replies ?? [{ text: "Wrote the note. Lesson: none." }], clock),
+  // The calls a credential served reach the scripted model (`scripted.calls`, what it was asked).
+  const scripted = new ScriptedProvider(
+    opts.replies ?? [{ text: "Wrote the note. Lesson: none." }],
+    clock,
   );
+  const model = new AcceptingCriticProvider(scripted);
   const standIn = messagesApiStandIn({
     model,
     clock,
@@ -159,7 +162,7 @@ function world(
       messages: () => standIn.requests.filter((r) => r.path === "/v1/messages").length,
     };
   };
-  return { vault, standIn, start };
+  return { vault, standIn, start, scripted };
 }
 
 async function twoTasks(rt: RuntimeApp) {
@@ -416,6 +419,47 @@ describe("planning that meets a refused API key (U-078)", () => {
       const s = await json<IntakeView>(req(`/projects/${created.id}/intake`));
       return s.state === "pending" ? null : `${s.state} ${s.error ?? ""}`;
     });
+  }, 120_000);
+
+  // fixup-w8-together (the siblings of review blocking 3): Add to it drafts in the background
+  // now, so its brief must outlive the call. Before, the plan drafted at the reset came from the
+  // project's first brief: Add to it's brief was only in the call that met the limit.
+  it("an Add to brief whose plan waits at a usage limit is drafted from that brief at the reset, after a restart too", async () => {
+    const clock = new SimulatedClock("2026-11-03T14:00:00Z");
+    const w = world(clock, { limitMs: 100 * 60_000, replies: [{ text: SMALL_PLAN }] });
+    await w.vault.set(SECRET_NAMES.anthropic, LIMITED);
+    const first = await w.start();
+    const FIRST = "Quotes from the founders of the club.";
+    const ADDED = "Add a page with the quote of the day and its author.";
+    // A project here made with a brief and no plan; Add to it sends the New project dialog's
+    // body (`proposeIntakeInBackground`).
+    const created = await json<{ id: string }>(
+      first.req("/projects", { ...QUOTES, brief: FIRST, intake: false }),
+    );
+    const answer = await first.req(`/projects/${created.id}/intake`, {
+      brief: ADDED,
+      background: true,
+    });
+    expect(answer.status).toBe(202);
+    await first.rt.intake.inFlight(created.id)?.catch(() => undefined);
+    expect(first.messages()).toBe(1);
+    expect((await json<IntakeView>(first.req(`/projects/${created.id}/intake`))).state).toBe(
+      "waiting",
+    );
+
+    // Quit and start again before the reset; at the reset the plan is drafted by itself.
+    await first.rt.close();
+    const second = await w.start();
+    clock.set(Date.parse("2026-11-03T15:41:00Z"));
+    await second.rt.scheduler.tick();
+    await until("the plan to be drafted at the reset", async () => {
+      const s = await json<IntakeView>(second.req(`/projects/${created.id}/intake`));
+      return s.state === "pending" ? null : `${s.state} ${s.error ?? ""}`;
+    });
+    const planning = w.scripted.calls.map((c) => JSON.stringify(c.messages));
+    expect(planning).toHaveLength(1);
+    expect(planning[0]).toContain(ADDED);
+    expect(planning[0]).not.toContain(FIRST);
   }, 120_000);
 });
 

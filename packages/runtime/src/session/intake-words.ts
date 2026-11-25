@@ -18,3 +18,11 @@ export function openPlanSentence(projectName: string): string {
 export function draftingPlanSentence(projectName: string): string {
   return `A plan for "${projectName}" is being drafted; answer it once it waits in your Inbox.`;
 }
+
+/**
+ * w8-together fix-up (review blocking 3): a plan drafted in the background (Add to it, a new
+ * project's plan, Try again) that a Quit cut off. After the restart the project page says it
+ * ("Planning failed: Forerunner closed before ...") with Try again, which drafts it from the same
+ * brief; before, the page said nothing and the brief was gone.
+ */
+export const DRAFT_LOST_WORDS = "Forerunner closed before the plan from your brief was drafted.";

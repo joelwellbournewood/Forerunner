@@ -1887,8 +1887,27 @@ status (`drafting`). The New project dialog's Add to it posts it, so the project
 is no failed planning). **One proposal per project at a time (L4i-left-65).** `propose` runs
 under `oneAtATime(projectId)`, a per-project promise chain over `proposeNow`, so the open-card
 check and the model call are one step: two first-plan requests at once make one call and one
-card (the second answers `reused`, or the 409 for a new brief). A daemon closed while a plan is
-drafted leaves the whole card or none (the real-daemon 'Add to it answers at once' cases).
+card (the second answers `reused`, or the 409 for a new brief). **A draft in the background
+survives a Quit (fixup-w8-together, review blocking 3).** Before, Add to it's brief lived only
+in the job: a Quit while it drafted left the page saying nothing (`none`), and a failed or
+waiting draft was drafted again from the project's first brief (`summary_cache.brief`). Now
+`enqueue` writes, for a draft from a brief (no `changes`, which the answered card keeps), the
+record `summary_cache.intake = { drafting_at, brief? }` before the planning call and before the
+copy of the repository (`draftRecord`: one store transaction, read again on a version conflict,
+never throws). A filed card (in `proposeNow`, whichever way it was asked) or an open card that
+stands for it removes `drafting_at` and `brief` (`draftEnded`); a failure or a credential wait
+keeps the `brief` beside `failed_at`/`error`/`wait` (`recordFailure`). `status` answers a
+record with `drafting_at` that no job of this daemon runs and no card filed after it as
+`failed` with `DRAFT_LOST_WORDS` ("Forerunner closed before the plan from your brief was
+drafted.", `session/intake-words.ts`): the banner reads 'Planning failed: Forerunner closed
+before the plan from your brief was drafted.' with Try again, and a project with no tasks gets
+the `planning_failed` line. `retry` drafts from the record's `brief` when it has one (newer than
+any card, so it wins over an earlier card's changes), else as before; the wake after a
+credential wait goes through `retry`, so it drafts from that brief too. The same record covers a
+new project's plan (`POST /projects` with `intake: true`), whose Quit used to leave "No tasks
+yet". Cases: real-daemon 'a daemon closed while the plan of an Add to brief is drafted ...' and
+'an Add to brief whose plan failed, and a new project's plan cut off by a Quit ...';
+`credential-limits.test.ts` 'an Add to brief whose plan waits at a usage limit ...'.
 **A failed intake is visible and can be retried (U-046).** Before, a background intake that
 failed left no card and no error anywhere a person looked, and the Start dialog said a plan
 waited in the Inbox. The project page reads `GET /projects/:id/intake` and shows the draft,

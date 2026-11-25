@@ -207,7 +207,10 @@ holds someone else's pull request.'
 **Add to it** (New project on a repository a project here uses) lands on that project at once;
 its page says 'Drafting the plan from your brief…' until the plan waits in your Inbox. A new
 brief for it meanwhile is answered 'A plan for "Site" is being drafted; answer it once it waits
-in your Inbox.'
+in your Inbox.' If you quit Forerunner before the plan is drafted, the page says 'Planning
+failed: Forerunner closed before the plan from your brief was drafted.' when you open it again;
+**Try again** drafts it from the same brief. A plan that failed or waited for Claude is drafted
+again from the brief you gave with Add to it, not from the project's first brief.
 
 A new task you ask for in chat in your own words is added at once, with Undo; one whose title or
 description the chat wrote itself is read back first ('Add "Write the FAQ" to Help?').
