@@ -3980,6 +3980,10 @@ export class SessionRunner {
         .map((r) => [r.task_id as string, r]),
     );
     const pausedNow = needsYouNow.filter((id) => pausedCards.has(id));
+    // L4-money-111: the paused task whose work is done and only its review waits for room.
+    const reviewWaitsCard = (id: string) =>
+      (pausedCards.get(id)?.change_card as { review_waits?: unknown } | null)?.review_waits ===
+      true;
     const leftOutIds = new Set((plan?.leftOutForBudget ?? []).map((i) => i.taskId));
     // U-078: the wait's one sentence, its reset in the person's time zone, true when written.
     const waitOwner = credentialWait
@@ -4636,7 +4640,10 @@ export class SessionRunner {
       // What needs the person now, as the result says it: a task the person paused is theirs,
       // not "needs you" (design §2); W15-69: a task paused at a budget is counted as paused.
       needsHuman: needsYouNow.filter((id) => !pausedCards.has(id)).length,
-      paused: pausedNow.length,
+      // fixup-w8-l4-leftovers (L4i-left-31): a done task whose review waits for room is counted
+      // apart, so the end line says it as its row does ("1 review waits for room").
+      paused: pausedNow.filter((id) => !reviewWaitsCard(id)).length,
+      reviewWaits: pausedNow.filter(reviewWaitsCard).length,
       cancelled: cancelled.length,
       reviewFailed: reviewFailed.length,
       skipped: notStarted.length,

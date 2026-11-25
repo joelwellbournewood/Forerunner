@@ -30610,3 +30610,90 @@ describe("w8-repo-guide, wave 8: Try again names the repository as its line does
     }
   }, 180_000);
 });
+
+/**
+ * fixup-w8-l4-leftovers, wave 8 (L4i-left-31, the review's blocking item 1): GET /sessions/:id
+ * and GET /projects/:id/sessions, read by the UI's client, say a done task whose review waits
+ * for room as its row says it. The session is stored as the runner leaves it (the composed run
+ * is packages/runtime/test/task-budget-all.test.ts' 'w8-l4-leftovers, wave 8' case). Before, the
+ * badge read "Ended: 1 paused" and the row "1 done, 1 paused · Ended: 1 paused".
+ */
+describe("w8-l4-leftovers, wave 8: a review that waits is said one way on the session page and the Sessions row (L4i-left-31)", () => {
+  it("the badge, the counts and the end words say the review waits for room", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Pond notes", goal: "Notes" });
+      const pond = await client.createTask(project.id, {
+        title: "Write the pond notes",
+        outcome: "notes/pond.md exists",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const frog = await client.createTask(project.id, {
+        title: "Write the frog notes",
+        outcome: "notes/frogs.md exists",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await rt.store.task.patch(pond.id, { status: "needs_human" } as never);
+      await rt.store.task.patch(frog.id, { status: "done" } as never);
+      const row = await rt.store.session.insert({
+        agent_id: rt.agent.id,
+        project_id: project.id,
+        trigger: "manual",
+        plan: { startedBy: { by: "person" } } as never,
+        reason: "who asked for the session",
+        author_agent: rt.agent.id,
+        budget_cap_usd_micro: 6_250_000,
+        step_cap: 100,
+        spent_usd_micro: 25_000,
+        steps: 15,
+        status: "planned",
+        summary: "",
+        handoff: {},
+        runner: "pc",
+      });
+      const running = await rt.store.session.setStatus(row.id, row.version, "running");
+      await rt.store.session.setStatus(running.id, running.version, "completed", {
+        handoff: {
+          stop_reason: "completed",
+          done: [frog.id],
+          blocked: [pond.id],
+          paused: [pond.id],
+          review_waits: [pond.id],
+          outcome: {
+            done: [{ id: frog.id, title: frog.title }],
+            failed: [],
+            needsYou: [],
+            paused: [
+              {
+                id: pond.id,
+                title: pond.title,
+                limit: "its budget of CHF 0.01",
+                reviewWaits: true,
+              },
+            ],
+            leftOver: [],
+            waiting: [],
+            waitingForDocker: [],
+            stopReason: "completed",
+            spentChfMicro: 20_000,
+          },
+        } as never,
+      });
+      expect((await client.session(row.id)).statusText).toBe("Ended: 1 review waits for room");
+      const listed = (await client.projectSessions(project.id)).rows.find((r) => r.id === row.id);
+      expect(listed).toMatchObject({
+        countsWords: "1 done, 1 review waits for room",
+        endedWords: "Ended: 1 review waits for room",
+        tasks: { done: 1, paused: 0, reviewWaits: 1 },
+      });
+      // Once the person answered its card (the task no longer waits), the badge says Done.
+      await rt.store.task.patch(pond.id, { status: "done" } as never);
+      expect((await client.session(row.id)).statusText).toBe("Done");
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
+});

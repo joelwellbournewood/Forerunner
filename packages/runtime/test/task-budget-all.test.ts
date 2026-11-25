@@ -1040,3 +1040,85 @@ describe("l4-selftasks-check, run L4", () => {
     }
   }, 120_000);
 });
+
+/**
+ * fixup-w8-l4-leftovers, wave 8 (L4i-left-31, the review's blocking item 1): a done task whose
+ * review waits for room is said one way wherever the session's end is shown. Before, its row
+ * said 'Done; its review waits for room in its budget of CHF 0.01' while the session page's
+ * badge (GET /sessions/:id statusText) said "Ended: 1 paused", the Sessions row "1 done, 1 paused
+ * · Ended: 1 paused" and the log's end line "Session over: 1 done, 1 paused. CHF 0.02.": the
+ * daemon's `stillBlocked`, the list's counts and the end event never told the review apart.
+ */
+describe("w8-l4-leftovers, wave 8: a review that waits is said one way where the session's end is shown (L4i-left-31)", () => {
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  it("the session page's badge, the Sessions row and the log's end line say the review waits, also after a restart", async () => {
+    const FOOTER = "Write the footer";
+    const HEADER = "Write the header";
+    const w = world([
+      ...codes(FOOTER, "footer.html", [
+        { input_tokens: 1_000, output_tokens: 300 },
+        { input_tokens: 1_000, output_tokens: 300 },
+      ]),
+      ...codes(HEADER, "header.html"),
+    ]);
+    const h = mkdtempSync(join(tmpdir(), "fr-budget-all-"));
+    homes.push(h);
+    let o = await w.open(h);
+    try {
+      const { projectId, taskId } = await projectWithTask(o, FOOTER, {
+        budgetUsdMicro: 75_000,
+        file: "footer.html",
+      });
+      const header = await addTask(o, projectId, HEADER, { file: "header.html" });
+      await budgetBelowFloor(o, taskId, 10_000, 1_000);
+      const sessionId = await start(o, projectId);
+      await ended(o, sessionId);
+      await settleSessions(o.rt);
+      expect((await o.rt.store.task.mustGet(taskId)).status).toBe("needs_human");
+      expect((await o.rt.store.task.mustGet(header)).status).toBe("done");
+      // The log's end line, as the session page shows it.
+      const lines = await linesOf(o, sessionId);
+      expect(lines.filter((l) => l.startsWith("Session over"))).toEqual([
+        expect.stringMatching(
+          /^Session over: 1 done, 1 review waits for room\. (?:Less than )?CHF \d+\.\d{2}\.$/,
+        ),
+      ]);
+      expect(lines.join(" | ")).not.toMatch(/\b1 paused\b/);
+      const said = async (x: Opened) => {
+        const s = await x.json(`/sessions/${sessionId}`);
+        const list = await x.json(`/projects/${projectId}/sessions`);
+        const row = ((list.rows as Json[]) ?? []).find((r) => r.id === sessionId) as Json;
+        return {
+          statusText: s.statusText,
+          countsWords: row?.countsWords,
+          endedWords: row?.endedWords,
+          tasks: row?.tasks,
+        };
+      };
+      const expected = {
+        statusText: "Ended: 1 review waits for room",
+        countsWords: "1 done, 1 review waits for room",
+        endedWords: "Ended: 1 review waits for room",
+        tasks: {
+          done: 1,
+          failed: 0,
+          paused: 0,
+          reviewWaits: 1,
+          needsYou: 0,
+          cancelled: 0,
+          leftForYou: 0,
+        },
+      };
+      expect(await said(o)).toEqual(expected);
+      // Persisted (validation rule 4): composed again on the same home, the same words.
+      await o.rt.close();
+      o = await w.open(h);
+      expect(await said(o)).toEqual(expected);
+    } finally {
+      await settleSessions(o.rt);
+      await o.rt.close();
+    }
+  }, 120_000);
+});

@@ -171,5 +171,20 @@ describe("w8-l4-leftovers, wave 8: one wording for a task whose review waits (L4
       needYou: 0,
       paused: 1,
     });
+    // fixup-w8-l4-leftovers: a row written before review_waits keeps the fact in its outcome
+    // (L4-money-111's `reviewWaits` on the paused task): its badge says it the same way.
+    const older = {
+      blocked: ["t1"],
+      paused: ["t1"],
+      outcome: {
+        done: [],
+        failed: [],
+        needsYou: [],
+        paused: [{ id: "t1", title: "Write the footer", limit: "its budget", reviewWaits: true }],
+      },
+    };
+    expect(endedStatusText("completed", "completed", blockedOfHandoff(older))).toBe(
+      "Ended: 1 review waits for room",
+    );
   });
 });

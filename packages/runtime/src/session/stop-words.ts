@@ -181,12 +181,12 @@ export function planningStatusText(status: string): string {
 export function blockedOfHandoff(handoff: unknown): EndedWaits {
   if (!handoff || typeof handoff !== "object" || Array.isArray(handoff))
     return { needYou: 0, paused: 0 };
-  const ids = (k: "blocked" | "paused" | "review_waits") => {
+  const ids = (k: "blocked" | "paused") => {
     const v = (handoff as Record<string, unknown>)[k];
     return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
   };
   const paused = new Set(ids("paused"));
-  const reviews = new Set(ids("review_waits"));
+  const reviews = reviewWaitIds(handoff);
   const blocked = ids("blocked");
   const waiting = blocked.filter((id) => paused.has(id));
   const reviewWaits = waiting.filter((id) => reviews.has(id)).length;
@@ -195,6 +195,33 @@ export function blockedOfHandoff(handoff: unknown): EndedWaits {
     paused: waiting.length - reviewWaits,
     ...(reviewWaits ? { reviewWaits } : {}),
   };
+}
+
+/**
+ * fixup-w8-l4-leftovers (L4i-left-31): the paused tasks of a session whose work is done and only
+ * whose review waits for room: `handoff.review_waits` (written since w8-l4-leftovers) and, for a
+ * row written before it, the outcome's paused tasks marked `reviewWaits` (L4-money-111), so an
+ * older session's badge says it the same way.
+ */
+export function reviewWaitIds(handoff: unknown): Set<string> {
+  const out = new Set<string>();
+  if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) return out;
+  const h = handoff as { review_waits?: unknown; outcome?: { paused?: unknown } | null };
+  if (Array.isArray(h.review_waits))
+    for (const id of h.review_waits) if (typeof id === "string") out.add(id);
+  const paused = h.outcome && typeof h.outcome === "object" ? h.outcome.paused : undefined;
+  if (Array.isArray(paused))
+    for (const t of paused)
+      if (t && typeof t === "object" && (t as { reviewWaits?: unknown }).reviewWaits === true) {
+        const id = (t as { id?: unknown }).id;
+        if (typeof id === "string") out.add(id);
+      }
+  return out;
+}
+
+/** "1 review waits for room", "2 reviews wait for room" (L4i-left-31: one wording). */
+export function reviewWaitsWords(n: number): string {
+  return `${n} ${n === 1 ? "review waits" : "reviews wait"} for room`;
 }
 
 /**
@@ -234,9 +261,7 @@ export function endedStatusText(
   const parts = [
     needYou ? `${needYou} ${needYou === 1 ? "task needs" : "tasks need"} you` : null,
     paused ? `${paused} paused` : null,
-    reviewWaits
-      ? `${reviewWaits} ${reviewWaits === 1 ? "review waits" : "reviews wait"} for room`
-      : null,
+    reviewWaits ? reviewWaitsWords(reviewWaits) : null,
   ].filter(Boolean);
   return `Ended: ${parts.join(", ")}`;
 }
@@ -252,7 +277,14 @@ export function endedStatusText(
 export function stillWaitsText(waits: EndedWaits): string | null {
   if (waits.needYou <= 0) return null;
   const still = `${waits.needYou} still ${waits.needYou === 1 ? "needs" : "need"} you`;
-  return waits.paused ? `${still}, ${waits.paused} paused` : still;
+  // fixup-w8-l4-leftovers (L4i-left-31): a review that waits is said as its row says it.
+  return [
+    still,
+    waits.paused ? `${waits.paused} paused` : null,
+    waits.reviewWaits ? reviewWaitsWords(waits.reviewWaits) : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
 /** `handoff.stop_reason` of a session row, or null. */
