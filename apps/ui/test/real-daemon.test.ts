@@ -28156,8 +28156,10 @@ describe("l4-starts-sessions, run L4", () => {
       });
       // l4-starts-carried (L4g-left-1): before the raise the check says the limit and what
       // changes it (it said "needs your answer" though the card asks nothing).
+      // fixup-w8-l4-leftovers (L4i-left-28): CHF 0.02 of the CHF 0.06 was spent, so its card says
+      // it paused before the budget ran out (before: "paused at the project's budget of CHF 0.06").
       expect((await client.startCheck(project.id)).blocked?.sentence).toBe(
-        'Nothing can run: "Write the club motto in motto.txt" paused at the project\'s budget of CHF 0.06; raise it in Settings.',
+        'Nothing can run: "Write the club motto in motto.txt" paused before the project\'s budget ran out; raise it in Settings.',
       );
       // Settings: Project budget to CHF 0.50, with its yes.
       const asked = await client.executeCommands({
