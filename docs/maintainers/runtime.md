@@ -1901,7 +1901,11 @@ record with `drafting_at` that no job of this daemon runs and no card filed afte
 `failed` with `DRAFT_LOST_WORDS` ("Forerunner closed before the plan from your brief was
 drafted.", `session/intake-words.ts`): the banner reads 'Planning failed: Forerunner closed
 before the plan from your brief was drafted.' with Try again, and a project with no tasks gets
-the `planning_failed` line. `retry` drafts from the record's `brief` when it has one (newer than
+the `planning_failed` line. That is the crash path (the process gone, the store closed before a
+failure could be written; also `rt.close()` in tests, which stops no run); the app's Quit
+(`POST /shutdown`, `kill.stop("all")`) stops the call first, so `enqueue` records the kill as
+'Planning was stopped before it finished.' with the brief kept, and Try again drafts from it
+the same way (bench walk of 2026-11-25, both paths). `retry` drafts from the record's `brief` when it has one (newer than
 any card, so it wins over an earlier card's changes), else as before; the wake after a
 credential wait goes through `retry`, so it drafts from that brief too. The same record covers a
 new project's plan (`POST /projects` with `intake: true`), whose Quit used to leave "No tasks

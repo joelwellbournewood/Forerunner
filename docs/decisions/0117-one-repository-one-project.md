@@ -487,3 +487,20 @@ Tests: `apps/ui/test/two-installs.test.ts` 'w8-together, wave 8: join together',
 together, Add to it in the background), `apps/ui/test/onerepo-join.test.tsx` and
 `onerepo-link.test.tsx`, `packages/commands/test/project-join.test.ts` and `onerepo-link.test.ts`,
 injection case record-013.
+
+## Amendment (2026-11-25, wave 8, w8-together fix-up): a plan drafted in the background survives a Quit
+
+Add to it drafts the plan in the background, so its brief has to outlive the planning call
+(review of w8-together, blocking 3). Before, a Quit or a crash while it drafted left the page
+saying nothing (or an earlier failure), and Try again, or the draft once a Claude credential
+it waited for served again, drafted from the project's first brief. Now a draft from a brief
+in the background writes down when it started and the brief it was given before the planning
+call (`summary_cache.intake`), keeps the brief when it fails or waits, and drops both once a
+plan card is filed. After a restart a draft no daemon runs any more reads 'Planning failed:
+Forerunner closed before the plan from your brief was drafted.' with Try again (a Quit that
+stops the call first reads 'Planning failed: planning was stopped before it finished.', as
+before), and Try again drafts from that same brief. The same holds for a new project's plan
+(New project with a brief). Tests: `apps/ui/test/real-daemon.test.ts` 'a daemon closed while
+the plan of an Add to brief is drafted ...' and 'an Add to brief whose plan failed, and a new
+project's plan cut off by a Quit, ...'; `packages/runtime/test/credential-limits.test.ts` 'an
+Add to brief whose plan waits at a usage limit ...'.
