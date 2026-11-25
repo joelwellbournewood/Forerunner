@@ -222,7 +222,7 @@ export function togetherJoinSentence(site: string, kite: string): string {
 export function togetherGithubLine(site: string, oldStatusPr: number | null): string {
   return oldStatusPr === null
     ? "Nothing on GitHub changes now."
-    : `On GitHub only the old status pull request #${oldStatusPr} of "${site}" is closed; nothing of the other Forerunner is touched.`;
+    : `On GitHub only the old status pull request #${oldStatusPr} of "${site}" is closed, with one line saying why; nothing of the other Forerunner is touched.`;
 }
 
 /** OJ-11: the change sentence, also the Changes row. */

@@ -193,8 +193,8 @@ project "Kite club", which is not on this computer.') and offers **Work together
 dialog reads GitHub again and says what the press does ('"Site" becomes "Kite club", the project
 GitHub knows: its tasks, plan and cards move into it, and this Forerunner works on it together
 with the other one.') and its one write on GitHub: 'On GitHub only the old status pull request
-#4 of "Site" is closed; nothing of the other Forerunner is touched.' (or 'Nothing on GitHub
-changes now.'). **Work together** moves everything in one step; Changes has its **Undo** ('"Site"
+#4 of "Site" is closed, with one line saying why; nothing of the other Forerunner is
+touched.' (or 'Nothing on GitHub changes now.'). **Work together** moves everything in one step; Changes has its **Undo** ('"Site"
 is its own project again.'), also after Forerunner starts again. When GitHub does not answer,
 the dialog and the press say 'GitHub did not answer, so the project cannot be checked. Try
 again.' and nothing moves. In chat, "work on o/kite together" is read back first: 'Work on "Kite

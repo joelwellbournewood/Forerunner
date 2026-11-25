@@ -124,6 +124,9 @@ describe("d1109-onerepo-link, run C: the New project offer (OR-02, OR-15)", () =
       .proposeIntakeInBackground("proj_atlas", { brief: "Add a blog." })
       .catch((e: unknown) => e as { status?: number; message?: string });
     expect((again as { status?: number }).status).toBe(409);
+    expect((again as { message?: string }).message).toBe(
+      'A plan for "Atlas" is being drafted; answer it once it waits in your Inbox.',
+    );
     expect(harness.daemon.state.intake.proj_atlas?.state).toBe("drafting");
     harness.daemon.state.finishDrafting.proj_atlas?.();
     await waitFor(() => expect(harness.daemon.state.intake.proj_atlas?.state).toBe("pending"));

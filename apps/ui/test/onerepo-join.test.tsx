@@ -435,7 +435,7 @@ describe("w8-together, wave 8: Work together for a project already here (OJ-11, 
       '"Atlas" becomes "Kite club", the project GitHub knows: its tasks, plan and cards move into it, and this Forerunner works on it together with the other one.',
     );
     expect(within(dialog).getByTestId("join-together-github")).toHaveTextContent(
-      'On GitHub only the old status pull request #4 of "Atlas" is closed; nothing of the other Forerunner is touched.',
+      'On GitHub only the old status pull request #4 of "Atlas" is closed, with one line saying why; nothing of the other Forerunner is touched.',
     );
     expect(dialog).toHaveTextContent(
       '"Atlas" keeps its sessions, changes and spending to read; no budget changes.',

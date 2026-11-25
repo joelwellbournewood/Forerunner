@@ -1399,7 +1399,7 @@ describe("w8-together, wave 8: join together", () => {
         name: "Kite club",
         sentence:
           '"Site" becomes "Kite club", the project GitHub knows: its tasks, plan and cards move into it, and this Forerunner works on it together with the other one.',
-        github: `On GitHub only the old status pull request #${pr.number} of "Site" is closed; nothing of the other Forerunner is touched.`,
+        github: `On GitHub only the old status pull request #${pr.number} of "Site" is closed, with one line saying why; nothing of the other Forerunner is touched.`,
         stays: '"Site" keeps its sessions, changes and spending to read; no budget changes.',
         refusal: null,
       });
@@ -1457,6 +1457,70 @@ describe("w8-together, wave 8: join together", () => {
       // The Undo wrote nothing on GitHub; Site's line offers Work together again.
       expect(two.writesBy("bob").length).toBe(setup.length + 2);
       expect((await bob.client.project(site.id)).repositoryElsewhere?.canWorkTogether).toBe(true);
+    } finally {
+      await two.close();
+    }
+  }, 300_000);
+
+  // fixup-w8-together (the review's non-blocking 1): the acceptance's "afterwards B writes no
+  // docs or status pull request and its status goes to its own comment on A's issue".
+  it("http: W8-join-1, afterwards: Bob's session in the together project opens only its task's pull request, no docs or status pull request, and his status goes to his own comment on Ada's status issue", async () => {
+    const two = await composeTwo({ host: "http" });
+    try {
+      const { ada, bob } = two;
+      const repo = two.repo;
+      const { kite } = await kiteClub(two, true);
+      // Ada's first session opens the status issue with her comment (W8-write-1).
+      await runOneTask(ada, two, kite.id, "Write the about page in about.md");
+      await ada.rt.statusBoard.settled();
+      const statusIssues = async () =>
+        (await ada.rt.gitHost.listIssues(repo, { state: "all" })).filter(
+          (i) => readStatusIssueKey(i.body) !== null,
+        );
+      const [issue, ...more] = await statusIssues();
+      expect(more).toEqual([]);
+      const number = issue?.number ?? 0;
+      const adas = (await ada.rt.gitHost.listIssueComments(repo, number)).comments;
+      expect(adas.map((c) => c.author)).toEqual(["ada"]);
+
+      const { site, pr: oldStatus } = await bobsSite(two);
+      await followDefaultBranch(bob, site.id);
+      const done = await workTogether(bob, site.id);
+      expect(done.status, done.reason).toBe("done");
+      const before = two.writesBy("bob").length;
+      const ran = await runOneTask(bob, two, kite.id, "Write the contact page in contact.md");
+      await bob.rt.statusBoard.settled();
+      const after = two.writesBy("bob").slice(before);
+
+      // Bob's new pull requests are the task pull requests of the together project (his new
+      // task's and the two Site brought, which were ready too): no docs or status pull request.
+      const bobs = (await two.pullRequests()).filter(
+        (p) => p.authorLogin === "bob" && p.number !== oldStatus.number,
+      );
+      const branches = (await bob.rt.store.task.list({ project_id: kite.id } as never))
+        .map((t) => t.branch)
+        .filter((b): b is string => !!b);
+      expect(bobs.map((p) => p.head.ref)).toContain(ran.task.branch);
+      expect(bobs.filter((p) => !branches.includes(p.head.ref)).map((p) => p.head.ref)).toEqual([]);
+      expect(bobs.filter((p) => /^fr\/(docs-scaffold|status|intake)/.test(p.head.ref))).toEqual([]);
+      expect(after.filter((w) => w.action === "pull_request.create")).toHaveLength(bobs.length);
+      // His status: one comment of his on Ada's issue; no issue of his; Ada's comment untouched.
+      expect((await statusIssues()).map((i) => i.number)).toEqual([number]);
+      expect(after.filter((w) => w.action === "issue.create")).toEqual([]);
+      const comments = (await ada.rt.gitHost.listIssueComments(repo, number)).comments;
+      expect(comments.map((c) => c.author)).toEqual(["ada", "bob"]);
+      expect(comments[0]?.body).toBe(adas[0]?.body);
+      const adaComment = adas[0]?.id;
+      expect(
+        after.filter(
+          (w) => w.action === "comment.update" && w.op.endsWith(`/issues/comments/${adaComment}`),
+        ),
+      ).toEqual([]);
+      // Nothing on Ada's pull requests.
+      const adaPrs = (await two.pullRequests())
+        .filter((p) => p.authorLogin === "ada")
+        .map((p) => p.number);
+      expect(after.filter((w) => w.number && adaPrs.includes(w.number))).toEqual([]);
     } finally {
       await two.close();
     }

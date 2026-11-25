@@ -30621,7 +30621,7 @@ describe("w8-together, wave 8: Work together for a project already here (OJ-11)"
         name: "Kite club",
         sentence:
           '"Site" becomes "Kite club", the project GitHub knows: its tasks, plan and cards move into it, and this Forerunner works on it together with the other one.',
-        github: `On GitHub only the old status pull request #${old.number} of "Site" is closed; nothing of the other Forerunner is touched.`,
+        github: `On GitHub only the old status pull request #${old.number} of "Site" is closed, with one line saying why; nothing of the other Forerunner is touched.`,
         stays: '"Site" keeps its sessions, changes and spending to read; no budget changes.',
         refusal: null,
       });
