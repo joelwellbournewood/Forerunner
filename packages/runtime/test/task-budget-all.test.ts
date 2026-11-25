@@ -563,7 +563,7 @@ describe("d1116-budget-all", () => {
       );
       const lines = await linesOf(o, sessionId);
       expect(lines).toContain(
-        `"Write the footer" paused before its review: its own budget of ${chfOf(budget)} has no room for it.`,
+        `"Write the footer" is done; its review waits for room in its budget of ${chfOf(budget)}.`,
       );
       expect(lines.join(" | ")).not.toMatch(/this session's budget/);
       const cards = await cardsOf(o, taskId);

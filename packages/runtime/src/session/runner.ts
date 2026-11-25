@@ -4159,6 +4159,9 @@ export class SessionRunner {
         // How it ended, as the Sessions list says it (the handoff's blocked and paused), never
         // the raw stop reason (L3-github-6: "Note: stop reason completed; spent CHF 0.09").
         const pausedIds = new Set((outcome.paused ?? []).map((t) => t.id));
+        const reviewIds = new Set(
+          (outcome.paused ?? []).filter((t) => t.reviewWaits).map((t) => t.id),
+        );
         // L4-money-214: a task the person paused waits on nobody (as `needsYouNow` reads it);
         // before, the note said "Ended: 1 task needs you." for their own Stop.
         const waits = uniq([...needsHuman, ...failed]).filter((id) => !pausedByYou(id));
@@ -4166,7 +4169,8 @@ export class SessionRunner {
         // zero never reads "CHF 0.00" (the result beside it says "Less than CHF 0.01.").
         const endedNote = `${endedStatusText(status, stopReason, {
           needYou: waits.filter((id) => !pausedIds.has(id)).length,
-          paused: waits.filter((id) => pausedIds.has(id)).length,
+          paused: waits.filter((id) => pausedIds.has(id) && !reviewIds.has(id)).length,
+          reviewWaits: waits.filter((id) => reviewIds.has(id)).length,
         })}. Spent ${moneyWords(formatChf(spentChf), spentChf)}.`;
         try {
           docsOutcome = await this.deps.docs.writeSessionStatus({
@@ -4255,6 +4259,8 @@ export class SessionRunner {
       // The tasks paused at a budget with their card open (ADR 0112): the session review grades
       // a pause as a pause, not as work that waits for the person (the leftovers of wave 7).
       paused: (outcome.paused ?? []).map((t) => t.id),
+      // w8-l4-leftovers (L4i-left-31): of those, the tasks done whose review waits for room.
+      review_waits: (outcome.paused ?? []).filter((t) => t.reviewWaits).map((t) => t.id),
       reviews: reviews.map((r) => ({
         task_id: r.taskId,
         review_id: r.reviewId,
@@ -4977,7 +4983,7 @@ export class SessionRunner {
     // first model call under way, `onStarted`), or just before a verdict reached without one;
     // a review a limit refused before it ran says only that it paused. Before, the line came
     // first whatever happened: "The critic started a light review (attempt 1)." and then
-    // '"X" paused before its review: the project's budget ... has no room for it.'
+    // '"X" is done; its review waits for room in the project's budget of CHF 0.01.'
     let started: Promise<void> | null = null;
     const sayStarted = () => {
       started ??= emit("critic.review_started", {

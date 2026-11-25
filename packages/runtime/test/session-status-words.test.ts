@@ -69,23 +69,29 @@ describe("a session stopped at an outer limit names it (budget-stop)", () => {
   });
 
   it("the status, the result's line and a stopped review say the limit", () => {
-    expect(endedStatusText("stopped", "budget_month", 1)).toBe("Stopped at this month's cap");
-    expect(endedStatusText("stopped", "budget_project", 0)).toBe("Stopped at the project's budget");
+    expect(endedStatusText("stopped", "budget_month", 1)).toBe(
+      "Ended before this month's cap ran out",
+    );
+    expect(endedStatusText("stopped", "budget_project", 0)).toBe(
+      "Ended before the project's budget ran out",
+    );
     expect(endedStatusText("stopped", "budget_plan", 0)).toBe(
-      "Stopped at your Claude subscription's share",
+      "Ended before your Claude subscription's share ran out",
     );
     expect(endedStatusText("stopped", "budget_exceeded", 0)).toBe("Stopped: the budget is used");
-    expect(stopWords("budget_month", 230_000)).toBe("Stopped at this month's cap of CHF 0.23.");
-    expect(stopWords("budget_month")).toBe("Stopped at this month's cap.");
+    expect(stopWords("budget_month", 230_000)).toBe(
+      "Ended before this month's cap of CHF 0.23 ran out.",
+    );
+    expect(stopWords("budget_month")).toBe("Ended before this month's cap ran out.");
     expect(stopWords("budget_project", 400_000)).toBe(
-      "Stopped at the project's budget of CHF 0.40.",
+      "Ended before the project's budget of CHF 0.40 ran out.",
     );
     expect(stopWords("budget_plan")).toBe(
-      "Stopped at the share of your Claude subscription that Forerunner may use.",
+      "Ended before the share of your Claude subscription that Forerunner may use ran out.",
     );
     expect(stopWords("budget_exceeded")).toBe("The session's budget is used.");
     expect(reviewStopWords({ status: "in_review" }, "budget_month")).toBe(
-      "the session stopped at this month's cap",
+      "the session ended before this month's cap ran out",
     );
     const lines = sessionResultLines({
       outcome: {
@@ -106,9 +112,27 @@ describe("a session stopped at an outer limit names it (budget-stop)", () => {
     });
     expect(lines).toEqual([
       '"Write the manual" needs your decision (Inbox).',
-      "Stopped at this month's cap of CHF 0.23. CHF 0.04.",
+      "Ended before this month's cap of CHF 0.23 ran out. CHF 0.04.",
     ]);
     // News: the Update says it (it is not only money and a stop the person made).
     expect(isNewsLine(lines[1] ?? "")).toBe(true);
+  });
+});
+
+describe("w8-l4-leftovers, wave 8: one wording for a task whose review waits (L4i-left-31)", () => {
+  it("a session that ended with a done task whose review waits says so, never 'paused'", () => {
+    const handoff = { blocked: ["t1", "t2"], paused: ["t1", "t2"], review_waits: ["t2"] };
+    expect(blockedOfHandoff(handoff)).toEqual({ needYou: 0, paused: 1, reviewWaits: 1 });
+    expect(endedStatusText("completed", "completed", blockedOfHandoff(handoff))).toBe(
+      "Ended: 1 paused, 1 review waits for room",
+    );
+    expect(
+      endedStatusText("completed", "completed", { needYou: 0, paused: 0, reviewWaits: 2 }),
+    ).toBe("Ended: 2 reviews wait for room");
+    // A handoff of before (no review_waits) reads as it did.
+    expect(blockedOfHandoff({ blocked: ["t1"], paused: ["t1"] })).toEqual({
+      needYou: 0,
+      paused: 1,
+    });
   });
 });

@@ -136,10 +136,13 @@ export function sessionStatusText(status: string, stopReason: string | null | un
     case "budget_exceeded":
     case "budget_finish_current":
       return "Stopped: the budget is used";
+    // w8-l4-leftovers (L4i-left-28): the task paused before the limit, which is never passed
+    // (its room was too small for what came next): before, "Stopped at the project's budget"
+    // read as all of it spent while part of it was left.
     case MONTH_CAP_STOP:
     case PROJECT_BUDGET_STOP:
     case PLAN_SHARE_STOP:
-      return `Stopped at ${stopLimitWords(stopReason)}`;
+      return `Ended before ${stopLimitWords(stopReason)} ran out`;
     case "timeout":
       return "Stopped: the time limit was reached";
     case "plan_awaiting_approval":
@@ -178,15 +181,19 @@ export function planningStatusText(status: string): string {
 export function blockedOfHandoff(handoff: unknown): EndedWaits {
   if (!handoff || typeof handoff !== "object" || Array.isArray(handoff))
     return { needYou: 0, paused: 0 };
-  const ids = (k: "blocked" | "paused") => {
+  const ids = (k: "blocked" | "paused" | "review_waits") => {
     const v = (handoff as Record<string, unknown>)[k];
     return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
   };
   const paused = new Set(ids("paused"));
+  const reviews = new Set(ids("review_waits"));
   const blocked = ids("blocked");
+  const waiting = blocked.filter((id) => paused.has(id));
+  const reviewWaits = waiting.filter((id) => reviews.has(id)).length;
   return {
     needYou: blocked.filter((id) => !paused.has(id)).length,
-    paused: blocked.filter((id) => paused.has(id)).length,
+    paused: waiting.length - reviewWaits,
+    ...(reviewWaits ? { reviewWaits } : {}),
   };
 }
 
@@ -198,6 +205,11 @@ export function blockedOfHandoff(handoff: unknown): EndedWaits {
 export interface EndedWaits {
   needYou: number;
   paused: number;
+  /**
+   * w8-l4-leftovers (L4i-left-31): paused tasks whose work is done and only whose review waits
+   * for room (`handoff.review_waits`), said as their rows say it, never as "paused".
+   */
+  reviewWaits?: number;
 }
 
 /**
@@ -212,11 +224,19 @@ export function endedStatusText(
   waits: number | EndedWaits,
 ): string {
   const text = sessionStatusText(status, stopReason);
-  const { needYou, paused } = typeof waits === "number" ? { needYou: waits, paused: 0 } : waits;
-  if (status !== "completed" || needYou + paused === 0 || text !== "Done") return text;
+  const {
+    needYou,
+    paused,
+    reviewWaits = 0,
+  } = typeof waits === "number" ? { needYou: waits, paused: 0 } : waits;
+  if (status !== "completed" || needYou + paused + reviewWaits === 0 || text !== "Done")
+    return text;
   const parts = [
     needYou ? `${needYou} ${needYou === 1 ? "task needs" : "tasks need"} you` : null,
     paused ? `${paused} paused` : null,
+    reviewWaits
+      ? `${reviewWaits} ${reviewWaits === 1 ? "review waits" : "reviews wait"} for room`
+      : null,
   ].filter(Boolean);
   return `Ended: ${parts.join(", ")}`;
 }

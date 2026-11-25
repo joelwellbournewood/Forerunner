@@ -771,8 +771,8 @@ describe("producers", () => {
       stopReason: "budget_month",
       stopCapChfMicro: 230_000,
       summary:
-        '"Write the manual" needs your decision (Inbox).\nStopped at this month\'s cap of CHF 0.23. CHF 0.04.',
-      news: ["Stopped at this month's cap of CHF 0.23. CHF 0.04."],
+        '"Write the manual" needs your decision (Inbox).\nEnded before this month\'s cap of CHF 0.23 ran out. CHF 0.04.',
+      news: ["Ended before this month's cap of CHF 0.23 ran out. CHF 0.04."],
       spentUsdMicro: 50_000,
       spentChfMicro: 40_000,
       completed: [],
@@ -793,7 +793,7 @@ describe("producers", () => {
       ...facts,
       stopReason: "budget_project",
       stopCapChfMicro: 400_000,
-      news: ["Stopped at the project's budget of CHF 0.40. CHF 0.04."],
+      news: ["Ended before the project's budget of CHF 0.40 ran out. CHF 0.04."],
     });
     expect(project.title).toBe("Quote page: stopped at the project's budget");
     expect(project.body).toBe(
@@ -802,7 +802,9 @@ describe("producers", () => {
     const plan = producers.sessionEnded("h-1", {
       ...facts,
       stopReason: "budget_plan",
-      news: ["Stopped at the share of your Claude subscription that Forerunner may use. CHF 0.04."],
+      news: [
+        "Ended before the share of your Claude subscription that Forerunner may use ran out. CHF 0.04.",
+      ],
     });
     expect(plan.title).toBe("Quote page: stopped at your Claude subscription's share");
     expect(plan.body).toBe(
@@ -1088,8 +1090,8 @@ describe("l4-starts-carried, run L4", () => {
       status: "stopped",
       stopReason: "budget_project",
       stopCapChfMicro: 400_000,
-      summary: "Stopped at the project's budget of CHF 0.40. Less than CHF 0.01.",
-      news: ["Stopped at the project's budget of CHF 0.40. Less than CHF 0.01."],
+      summary: "Ended before the project's budget of CHF 0.40 ran out. Less than CHF 0.01.",
+      news: ["Ended before the project's budget of CHF 0.40 ran out. Less than CHF 0.01."],
       spentUsdMicro: 3_000,
       spentChfMicro: 2_400,
       completed: [],

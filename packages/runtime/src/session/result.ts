@@ -48,7 +48,7 @@ export interface LastSessionOutcome {
   stopReason: string;
   /**
    * The amount of the outer limit a pause ended the session at (`budget_month`,
-   * `budget_project`, ADR 0112), in CHF: the result's "Stopped at this month's cap of CHF 0.23."
+   * `budget_project`, ADR 0112), in CHF: the result's "Ended before this month's cap of CHF 0.23 ran out."
    */
   stopCapChfMicro?: number;
   /**
@@ -273,11 +273,14 @@ const titlesOf = (l: readonly NamedTask[]) => l.map((t) => t.title);
  */
 export function stopWords(stopReason: string, capChfMicro?: number): string {
   switch (stopReason) {
+    // w8-l4-leftovers (L4i-left-28): the session ended before the limit ran out (a limit is
+    // never passed); before, "Stopped at the project's budget of CHF 0.06. CHF 0.04." read as
+    // all of it spent while part of it was left.
     case MONTH_CAP_STOP:
     case PROJECT_BUDGET_STOP:
-      return `Stopped at ${stopLimitWords(stopReason, capChfMicro)}.`;
+      return `Ended before ${stopLimitWords(stopReason, capChfMicro)} ran out.`;
     case PLAN_SHARE_STOP:
-      return "Stopped at the share of your Claude subscription that Forerunner may use.";
+      return "Ended before the share of your Claude subscription that Forerunner may use ran out.";
     case "you":
       return "Stopped by you.";
     case "quit":

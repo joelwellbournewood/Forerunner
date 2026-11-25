@@ -8194,19 +8194,19 @@ describe("the UI client against the real daemon: a session ended at this month's
     const session = await client.session(sessionId);
     // Before: "Stopped: the budget is used" and "The session's budget is used." at 1% of the
     // session's own CHF 5.00.
-    expect(session.statusText).toBe("Stopped at this month's cap");
-    expect(session.summary ?? "").toContain("Stopped at this month's cap of CHF 0.02.");
+    expect(session.statusText).toBe("Ended before this month's cap ran out");
+    expect(session.summary ?? "").toContain("Ended before this month's cap of CHF 0.02 ran out.");
     expect(session.summary ?? "").not.toMatch(/budget is used/);
     const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
     expect(
-      lines.some((l) => /^Stopped at this month's cap: /.test(l)),
+      lines.some((l) => /^Ended before this month's cap ran out: /.test(l)),
       lines.join(" | "),
     ).toBe(true);
     expect(lines.join(" | ")).not.toMatch(/budget is used/);
     const updates = (await client.inbox(me.id)).messages
       .filter((m) => m.projectId === project.id)
       .map((m) => m.body);
-    expect(updates.join(" | ")).toContain("Stopped at this month's cap of CHF 0.02.");
+    expect(updates.join(" | ")).toContain("Ended before this month's cap of CHF 0.02 ran out.");
     expect(updates.join(" | ")).not.toMatch(/budget is used/);
   }, 60_000);
 });
