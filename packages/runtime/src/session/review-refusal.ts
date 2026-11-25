@@ -76,6 +76,39 @@ export function reviewRefusalOf(e: unknown): ReviewRefusal | null {
 interface WaitingProvider {
   waitNow?(model?: string): Promise<CredentialWait | null>;
   noteWait?(sourceId: string, projectId: string, agentId: string): Promise<void>;
+  peek?(model?: string): Promise<{ kind: string } | null>;
+}
+
+/**
+ * w8-l4-leftovers (L4i-left-59): a review the hooks refused at the plan level, the share of the
+ * subscription Forerunner may use (`budget_exceeded` with level `plan`). The share is a run-out
+ * of that credential under the person's policy (the owner's D5), as it is for a run
+ * (L4-creds-1), never a budget pause: before, the task paused with a budget card ("its review
+ * waits for room in your Claude subscription's share") that waited for the 1st whatever the
+ * person chose.
+ */
+export function isShareRefusal(e: unknown): boolean {
+  const refusal = reviewRefusalOf(e);
+  return refusal?.kind === "budget" && refusal.level === "plan";
+}
+
+/**
+ * Whether a review the share refused goes on now with another credential: the person's policy
+ * lets one take over ("then the API key", or a standing yes), so a call of the critic's purpose
+ * would not wait and would not be made on the subscription. The review is then made once more
+ * there; false under 'wait' and 'ask' (the wait `withReviewWait` keeps), and for any other error.
+ */
+export async function shareGoesOn(e: unknown, provider: unknown): Promise<boolean> {
+  if (!isShareRefusal(e)) return false;
+  const routed = (provider ?? {}) as WaitingProvider;
+  if (!routed.waitNow || !routed.peek) return false;
+  try {
+    if (await routed.waitNow()) return false;
+    const next = await routed.peek();
+    return !!next && next.kind !== "subscription";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -99,7 +132,10 @@ export async function withReviewWait(
   },
 ): Promise<unknown> {
   const refusal = reviewRefusalOf(e);
-  if (refusal?.kind !== "credential" || !(e instanceof ForerunnerError)) return e;
+  // L4i-left-59: the share's refusal waits as the credential's stop when the policy holds the
+  // work ('wait', or 'ask' with its one card); without such a wait it stays the refusal it was.
+  const share = isShareRefusal(e);
+  if ((refusal?.kind !== "credential" && !share) || !(e instanceof ForerunnerError)) return e;
   const routed = (opts.provider ?? {}) as WaitingProvider;
   let wait: CredentialWait | null = null;
   try {
@@ -107,7 +143,8 @@ export async function withReviewWait(
   } catch (err) {
     opts.onError?.("the review's credential wait was not read", err);
   }
-  if (!wait && refusal.sourceId) {
+  if (share && !wait) return e;
+  if (!wait && refusal?.kind === "credential" && refusal.sourceId) {
     const row = await opts.store.billingSource.get(refusal.sourceId).catch(() => undefined);
     if (row) {
       const limits = (row.limits ?? {}) as { restingUntil?: unknown; refusedAt?: unknown };
@@ -134,7 +171,11 @@ export async function withReviewWait(
   }
   // The 'ask' form only while the stop's one card is open (d1109-cred-engine fix-up).
   const shown = await askShown(opts.store, wait).catch(() => wait as CredentialWait);
-  return new ForerunnerError(e.code, e.message, {
-    details: { ...(e.details ?? {}), wait: { ...shown } },
+  return new ForerunnerError(share ? "provider_usage_limit" : e.code, e.message, {
+    details: {
+      ...(e.details ?? {}),
+      ...(share ? { sourceId: wait.sourceId, ...(wait.until ? { resetAt: wait.until } : {}) } : {}),
+      wait: { ...shown },
+    },
   });
 }
