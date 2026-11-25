@@ -10435,3 +10435,68 @@ parser `parseWriterComment`, which w8-status-read's reader uses).
   runner), `test/loop-docs.test.ts` (no status pull request), and the two-home cases in
   `apps/ui/test/two-installs.test.ts` ('w8-status-write, wave 8'; Quit while a task runs, with
   GitHub out and with it answering, through `home.quit()` and `home.start()`).
+
+## w8-l4-leftovers (wave 8, 2026-11-25): run L4's leftovers on starts, sessions and money
+
+- **A critic review that meets the subscription's share** (L4i-left-59, the owner's D5: "Running
+  out includes a usage limit, a plan-share cap and a monthly cap ... Whatever the policy says is
+  what happens"). The hooks' plan level refuses the review's next call (`budget_exceeded`, level
+  `plan`). `loop/critic.ts` asks the critic's routed provider what a call would do now
+  (`shareGoesOn` in `session/review-refusal.ts`): when the person's policy lets another
+  credential take over, the review is made once more there, capped at what is left of the
+  task's own budget after the refused calls (reviews count, the owner's answer of 2026-11-16).
+  Under 'wait' or 'ask', `withReviewWait` turns the refusal into the credential's wait (reason
+  `share`, code `provider_usage_limit`, the project kept on the source, one ask card under
+  'ask'), and the runner's credential branch lets the task wait as for any credential stop. No
+  budget card is filed for the share. Tests: `critic-review-share.test.ts` (one composed case
+  per policy, a compose twice while held, and the task's own budget binding first).
+- **An outer-limit stop's words** (L4i-left-28): the session status, the result's line and the
+  review's stopped reason say the session ended before the limit ran out ("Ended before the
+  project's budget ran out", "Ended before this month's cap of CHF 0.23 ran out.", "the session
+  ended before this month's cap ran out") (`stop-words.ts` `sessionStatusText`, `result.ts`
+  `stopWords`, `task-display.ts` `reviewStopWords`). The fixup made it one rule for the task
+  too: `session/review-room-words.ts` (a leaf, so the UI's fake reads it) has
+  `pausedBeforeLimit(card)`, true for a wrap-up or for an outer limit (the project's budget, this
+  month's cap, the subscription's share) whose card's `spent_usd_micro` is below its
+  `cap_usd_micro`. The card's title and the task's reason (`budgetStopTitle`: '"X" paused before
+  the project's budget ran out'), the task's row (`budgetPauseLabelOf`: "Paused before the
+  project's budget ran out") and the outcome's `before` (runner.ts reads the rule; the result,
+  the session's task rows and the Sessions row read `before` through `pausedBefore`) all follow
+  it. Only a run that went past the limit (a call billed more than it was checked for, which the
+  stand-in's `FORERUNNER_BENCH_USAGE` does) says "paused at the project's budget of CHF 0.06";
+  then the session's words say "Stopped at the project's budget" too: `outerLimitPassed` (the
+  outcome's `spentChfMicro` against `stopCapChfMicro`) feeds `stopWords`, `sessionStatusText` /
+  `endedStatusText` (the badge, the Sessions row, the docs note), the `limitPassed` flag on
+  `session.ended` (the log's end line) and the `budget_stop` notification's title. Cards filed
+  before keep their stored titles.
+- **A done task whose review waits** (L4i-left-31): the session's handoff keeps `review_waits`
+  (the paused tasks whose work is done); `reviewWaitIds` (stop-words.ts) reads it, and for a row
+  written before it the outcome's paused tasks marked `reviewWaits`. `blockedOfHandoff`, the
+  daemon's `stillBlocked` (GET /sessions/:id, the Sessions list), `stillWaitsText` and the
+  list's `countsOf` / `countsWords` count them apart (`tasks.reviewWaits` in the row, absent when
+  none), and the runner's `session.ended` carries `reviewWaits` for the log's end line: the badge
+  says "Ended: 1 review waits for room", the row "1 done, 1 review waits for room", the end line
+  "Session over: 1 done, 1 review waits for room. CHF 0.03.", and a session that did only that
+  task reads '"X" is done; its review waits for room in its budget of CHF 0.01.'. The log line is
+  '"X" is done; its review waits for room in the project's budget of CHF 0.01.'
+  (`reviewPausedWords`), as the row and the card say.
+- **No "budget used" sentence with room left** (L4i-left-30): the result's "Left for next time"
+  says "this session's CHF 5.00 was used" only when the session's own budget ended it or its
+  work budget has less than a centime left; else "it did not fit this session's work budget after
+  the tasks before it.".
+- **Mixed work under "then the other one"** (L4i-left-32): `billing.waits.waitingTasks` (compose)
+  reads each ready task's own pick, read only, and lists the tasks that wait for a credential
+  while others run. `credentialAtStart` (server.ts) leaves them out of the Start dialog's figure
+  and `startCredential` adds '"Write the tool notes" waits for your API key.'
+  (`waitsForFirstLine`). The plan card's foot line (`planCredentialLine`) does the same from its
+  tasks' runs-on lines and says "the work waits for it." when every task waits.
+- **A run that goes on after a pause** (L4i-left-58, L4-money-110): the runner marks its
+  `task.finished` `continued`, and `eventAudience` keeps that line for the person (a reviewed
+  retry the critic sent back stays a detail), so the person's lines carry its CHF.
+- **The session plan card** (L4i-left-27): `requestWords` shows the `plan:` card's options as
+  "Approve" ("Starts the session with these tasks, in this order.") and "Reject" ("Nothing runs;
+  the tasks stay ready and your next session asks again."); the stored options stay `approve`
+  and `reject`, and `planAnswer` reads either form.
+- Tests: `session-status-words.test.ts`, `budget-pause.test.ts`, `oversize-pause.test.ts`,
+  `w8-l4-leftovers.test.ts`, `task-budget-all.test.ts` and `session-list.test.ts` "w8-l4-leftovers,
+  wave 8", and `apps/ui/test/real-daemon.test.ts` "w8-l4-leftovers, wave 8".

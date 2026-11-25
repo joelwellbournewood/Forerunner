@@ -170,6 +170,7 @@ import {
   workHash,
 } from "./review-pending.ts";
 import { type ReviewRefusal, reviewRefusalOf } from "./review-refusal.ts";
+import { pausedBeforeLimit } from "./review-room-words.ts";
 import {
   needsContainerSandbox,
   type SandboxGate,
@@ -180,6 +181,7 @@ import {
 import {
   budgetStopReasonOf,
   endedStatusText,
+  outerLimitPassed,
   type PersonStop,
   personStopOf,
   stopLimitWords,
@@ -289,6 +291,12 @@ export interface PlanItem {
    * what the person was shown), and the session review counts the task once.
    */
   again?: boolean;
+  /**
+   * w8-l4-leftovers (L4i-left-58, L4-money-110): the run again goes on from where its pause in
+   * this session left it (no retry the critic sent back): its finish line keeps its CHF for the
+   * person (`continued` on `task.finished`, `eventAudience`).
+   */
+  continuesPause?: boolean;
   /**
    * D4 (d1109-oversize-pause, OP-0): set on the item of a task whose figure alone is more than
    * the work budget, which the plan takes at its place with the room left: its whole figure, its
@@ -3030,6 +3038,10 @@ export class SessionRunner {
                 ...(toCritic ? { review: true } : {}),
                 ...(couldNot !== null ? { couldNot } : {}),
                 ...(again ? { again: true } : {}),
+                // w8-l4-leftovers (L4i-left-58, L4-money-110): the run that goes on in this
+                // session from where its pause left it keeps its own person line with its CHF
+                // (`eventAudience`), so the person-level lines add up to the session's spend.
+                ...(again && item.continuesPause === true ? { continued: true } : {}),
               },
               result.costUsdMicro,
             );
@@ -3594,7 +3606,13 @@ export class SessionRunner {
               });
               // A run again of the same planned task: no second take of a larger one, nothing
               // added to the plan's figure (L3-run-2).
-              queue.unshift({ ...item, wholeEstimateUsdMicro: undefined, again: true });
+              queue.unshift({
+                ...item,
+                wholeEstimateUsdMicro: undefined,
+                again: true,
+                // w8-l4-leftovers (L4-money-110): its finish line stays the person's.
+                continuesPause: true,
+              });
               continue;
             }
             const waiting = await store.task.transition(
@@ -3976,6 +3994,10 @@ export class SessionRunner {
         .map((r) => [r.task_id as string, r]),
     );
     const pausedNow = needsYouNow.filter((id) => pausedCards.has(id));
+    // L4-money-111: the paused task whose work is done and only its review waits for room.
+    const reviewWaitsCard = (id: string) =>
+      (pausedCards.get(id)?.change_card as { review_waits?: unknown } | null)?.review_waits ===
+      true;
     const leftOutIds = new Set((plan?.leftOutForBudget ?? []).map((i) => i.taskId));
     // U-078: the wait's one sentence, its reset in the person's time zone, true when written.
     const waitOwner = credentialWait
@@ -4003,10 +4025,10 @@ export class SessionRunner {
                 ),
                 // A limit no Continue lifts: it goes on by itself once raised or reset.
                 ...(offersContinue(source) ? {} : { waits: true }),
-                // L3-research-2: its run heard the wrap-up and paused before the limit ran out.
-                ...(card.stopped_by === "wrap_up" && card.review_waits !== true
-                  ? { before: true }
-                  : {}),
+                // L3-research-2: its run heard the wrap-up and paused before the limit ran out;
+                // fixup-w8-l4-leftovers (L4i-left-28): so did a hard stop under an outer limit
+                // with some of it left (one rule with the card's title, `pausedBeforeLimit`).
+                ...(pausedBeforeLimit(card) ? { before: true } : {}),
                 // L4-money-111: the work is done and only its review waits for room.
                 ...(card.review_waits === true ? { reviewWaits: true } : {}),
                 // d1109-oversize-pause (OP-7, OP-8): from the card, the one place of the fact.
@@ -4171,15 +4193,24 @@ export class SessionRunner {
         // How it ended, as the Sessions list says it (the handoff's blocked and paused), never
         // the raw stop reason (L3-github-6: "Note: stop reason completed; spent CHF 0.09").
         const pausedIds = new Set((outcome.paused ?? []).map((t) => t.id));
+        const reviewIds = new Set(
+          (outcome.paused ?? []).filter((t) => t.reviewWaits).map((t) => t.id),
+        );
         // L4-money-214: a task the person paused waits on nobody (as `needsYouNow` reads it);
         // before, the note said "Ended: 1 task needs you." for their own Stop.
         const waits = uniq([...needsHuman, ...failed]).filter((id) => !pausedByYou(id));
         // L4g-left-3 (l4-starts-carried): one money wording everywhere (W14-6): an amount above
         // zero never reads "CHF 0.00" (the result beside it says "Less than CHF 0.01.").
-        const endedNote = `${endedStatusText(status, stopReason, {
-          needYou: waits.filter((id) => !pausedIds.has(id)).length,
-          paused: waits.filter((id) => pausedIds.has(id)).length,
-        })}. Spent ${moneyWords(formatChf(spentChf), spentChf)}.`;
+        const endedNote = `${endedStatusText(
+          status,
+          stopReason,
+          {
+            needYou: waits.filter((id) => !pausedIds.has(id)).length,
+            paused: waits.filter((id) => pausedIds.has(id) && !reviewIds.has(id)).length,
+            reviewWaits: waits.filter((id) => reviewIds.has(id)).length,
+          },
+          outerLimitPassed(outcome),
+        )}. Spent ${moneyWords(formatChf(spentChf), spentChf)}.`;
         try {
           docsOutcome = await this.deps.docs.writeSessionStatus({
             project,
@@ -4279,6 +4310,8 @@ export class SessionRunner {
       // The tasks paused at a budget with their card open (ADR 0112): the session review grades
       // a pause as a pause, not as work that waits for the person (the leftovers of wave 7).
       paused: (outcome.paused ?? []).map((t) => t.id),
+      // w8-l4-leftovers (L4i-left-31): of those, the tasks done whose review waits for room.
+      review_waits: (outcome.paused ?? []).filter((t) => t.reviewWaits).map((t) => t.id),
       reviews: reviews.map((r) => ({
         task_id: r.taskId,
         review_id: r.reviewId,
@@ -4638,7 +4671,13 @@ export class SessionRunner {
       // What needs the person now, as the result says it: a task the person paused is theirs,
       // not "needs you" (design §2); W15-69: a task paused at a budget is counted as paused.
       needsHuman: needsYouNow.filter((id) => !pausedCards.has(id)).length,
-      paused: pausedNow.length,
+      // fixup-w8-l4-leftovers (L4i-left-31): a done task whose review waits for room is counted
+      // apart, so the end line says it as its row does ("1 review waits for room").
+      paused: pausedNow.filter((id) => !reviewWaitsCard(id)).length,
+      reviewWaits: pausedNow.filter(reviewWaitsCard).length,
+      // fixup-w8-l4-leftovers (L4i-left-28): the session spent all of the outer limit it ended
+      // at, so its end line says "Stopped at" (else "Ended before ... ran out").
+      ...(outerLimitPassed(outcome) ? { limitPassed: true } : {}),
       cancelled: cancelled.length,
       reviewFailed: reviewFailed.length,
       skipped: notStarted.length,
@@ -5001,7 +5040,7 @@ export class SessionRunner {
     // first model call under way, `onStarted`), or just before a verdict reached without one;
     // a review a limit refused before it ran says only that it paused. Before, the line came
     // first whatever happened: "The critic started a light review (attempt 1)." and then
-    // '"X" paused before its review: the project's budget ... has no room for it.'
+    // '"X" is done; its review waits for room in the project's budget of CHF 0.01.'
     let started: Promise<void> | null = null;
     const sayStarted = () => {
       started ??= emit("critic.review_started", {

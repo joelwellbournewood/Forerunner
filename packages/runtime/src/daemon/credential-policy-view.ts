@@ -345,6 +345,21 @@ export function startRunOutLine(
   return `${firstStoppedPhrase(kind, stop, opts)}, so this runs on ${short(otherOf(kind))} (${aboutChf}).`;
 }
 
+/**
+ * w8-l4-leftovers (L4i-left-32): the work only the stopped first choice can do here, said after
+ * the run-out line, which then counts only the rest: '"Deploy the site" waits for your API key.';
+ * two or more: '"Deploy the site" and 1 more wait for your API key.'.
+ */
+export function waitsForFirstLine(
+  titles: readonly string[],
+  kind: CredentialKind | string,
+): string {
+  const [one] = titles;
+  const who = short(kind);
+  if (titles.length <= 1) return `"${one ?? ""}" waits for ${who}.`;
+  return `"${one}" and ${titles.length - 1} more wait for ${who}.`;
+}
+
 /** Under ask and wait with the first choice out: the one line above the two buttons. */
 export function startStoppedLine(
   kind: CredentialKind | string,

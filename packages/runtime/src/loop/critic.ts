@@ -60,7 +60,7 @@ import {
   reportedQuestions,
   wentAheadWithout,
 } from "../session/person-questions.ts";
-import { withReviewWait } from "../session/review-refusal.ts";
+import { reviewRefusalOf, shareGoesOn, withReviewWait } from "../session/review-refusal.ts";
 import { continuesLine, personContextOf } from "../session/task-context.ts";
 import { keptSourcesOf, type WebSource, webSourceEvidence } from "../session/web-sources.ts";
 import {
@@ -709,41 +709,60 @@ export class CriticLoop implements CriticPort {
           evidence.notChecked?.push(...ran.notTried);
         }
       }
-      output = await (lease
-        ? new CriticService({
-            ...this.serviceDeps(sessionContext?.pipeline),
-            checkRunner: sandboxCheckRunner(lease.sandbox),
-          })
-        : criticService
-      ).review(
-        { subject: { kind: "task", taskId: task.id }, tier, evidence },
-        {
-          sessionToken: req.token,
-          budget: req.budget,
-          // d1116-budget-all: the review stops at what is left of the task's own budget.
-          ...(req.budgetUsdMicro !== undefined ? { budgetUsdMicro: req.budgetUsdMicro } : {}),
-          projectSettings: settings,
-          checks,
-          cwd: worktree,
-          signal: req.signal,
-          humanId: owner,
-          ...(asksPerson ? { questionsCardInstead: true } : {}),
-          ...(root && readTools.length ? { project: { root, tools: readTools } } : {}),
-          // L3-run-10: the review started once its first model call is under way (the
-          // limits allowed it); a review refused before that call never says it started.
-          // d1116-budget-all: each call's cost reaches the task as the call ends (a call a stop
-          // cut off, `CUT_OFF_STOP_REASON`, is booked and counts too).
-          ...(req.onStarted || req.onCost
-            ? {
-                onEvent: (ev: RunEvent) => {
-                  if (ev.type === "model_call_start") req.onStarted?.();
-                  else if (ev.type === "model_call_end" && ev.costUsdMicro > 0)
-                    req.onCost?.(ev.costUsdMicro);
-                },
-              }
-            : {}),
-        },
-      );
+      const review = (budgetUsdMicro = req.budgetUsdMicro) =>
+        (lease
+          ? new CriticService({
+              ...this.serviceDeps(sessionContext?.pipeline),
+              checkRunner: sandboxCheckRunner(lease.sandbox),
+            })
+          : criticService
+        ).review(
+          { subject: { kind: "task", taskId: task.id }, tier, evidence },
+          {
+            sessionToken: req.token,
+            budget: req.budget,
+            // d1116-budget-all: the review stops at what is left of the task's own budget.
+            ...(budgetUsdMicro !== undefined ? { budgetUsdMicro } : {}),
+            projectSettings: settings,
+            checks,
+            cwd: worktree,
+            signal: req.signal,
+            humanId: owner,
+            ...(asksPerson ? { questionsCardInstead: true } : {}),
+            ...(root && readTools.length ? { project: { root, tools: readTools } } : {}),
+            // L3-run-10: the review started once its first model call is under way (the
+            // limits allowed it); a review refused before that call never says it started.
+            // d1116-budget-all: each call's cost reaches the task as the call ends (a call a stop
+            // cut off, `CUT_OFF_STOP_REASON`, is booked and counts too).
+            ...(req.onStarted || req.onCost
+              ? {
+                  onEvent: (ev: RunEvent) => {
+                    if (ev.type === "model_call_start") req.onStarted?.();
+                    else if (ev.type === "model_call_end" && ev.costUsdMicro > 0)
+                      req.onCost?.(ev.costUsdMicro);
+                  },
+                }
+              : {}),
+          },
+        );
+      try {
+        output = await review();
+      } catch (e) {
+        // w8-l4-leftovers (L4i-left-59; the owner's D5: "Running out includes a usage limit, a
+        // plan-share cap and a monthly cap ... Whatever the policy says is what happens"): the
+        // subscription's share met by the review is a stop of that credential, as for a run
+        // (L4-creds-1). When the person's policy lets another credential take over now, the
+        // review goes on there once (its calls so far are on the task's figure already); else
+        // `withReviewWait` below makes it the credential's wait (one ask card under 'ask').
+        if (!(await shareGoesOn(e, this.deps.providers.get(this.deps.providerName)))) throw e;
+        // What is left of the task's own budget after the refused review's calls: the review
+        // that goes on never takes the task past it (the owner's answer of 2026-11-16).
+        const refused = reviewRefusalOf(e);
+        const spent = refused?.kind === "budget" ? refused.spentUsdMicro : 0;
+        output = await review(
+          req.budgetUsdMicro !== undefined ? Math.max(0, req.budgetUsdMicro - spent) : undefined,
+        );
+      }
     } catch (e) {
       // A credential refused the review and no other could serve it (ADR 0100 point 9): what it
       // waits for is kept for the task's project, and the session lets the task wait.

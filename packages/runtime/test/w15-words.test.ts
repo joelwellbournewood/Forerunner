@@ -225,7 +225,7 @@ describe("w15-words, wave 15 run B", () => {
       );
       expect(waits).not.toContain("CHF 0.00");
       expect(stopWords("budget_project", 3_000)).toBe(
-        "Stopped at the project's budget of less than CHF 0.01.",
+        "Ended before the project's budget of less than CHF 0.01 ran out.",
       );
     });
 

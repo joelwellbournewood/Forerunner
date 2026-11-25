@@ -463,11 +463,11 @@ export function reviewPausedWords(
   chf: (usdMicro: number) => string,
 ): string {
   const name = `"${title.replace(/\s+/g, " ").trim()}"`;
-  const what = limitWords(stop.source, stop.capUsdMicro, chf, stop.specialist).replace(
-    /^its budget/,
-    "its own budget",
-  );
-  return `${name} paused before its review: ${what} has no room for it.`;
+  const what = limitWords(stop.source, stop.capUsdMicro, chf, stop.specialist);
+  // w8-l4-leftovers (L4i-left-31): one state, one wording: the work is done and only its review
+  // waits, as its row ("Done; its review waits for room in ...") and the status say; before, the
+  // log said "paused before its review" beside them.
+  return `${name} is done; its review waits for room in ${what}.`;
 }
 
 /**

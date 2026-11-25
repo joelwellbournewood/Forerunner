@@ -7,6 +7,7 @@ import {
   type LastSessionOutcome,
   type NamedTask,
   type PausedTask,
+  pausedBefore,
   RESULT_LINE_BUILDERS,
   type ResultFacts,
 } from "../session/result.ts";
@@ -14,7 +15,9 @@ import {
   blockedOfHandoff,
   type EndedWaits,
   endedStatusText,
+  outerLimitPassedOfHandoff,
   planningStatusText,
+  reviewWaitsWords,
   stillWaitsText,
   stopReasonOfHandoff,
 } from "../session/stop-words.ts";
@@ -180,28 +183,40 @@ export interface SessionTaskCounts {
   done: number;
   failed: number;
   paused: number;
+  /**
+   * fixup-w8-l4-leftovers (L4i-left-31): of the tasks it paused, those whose work is done and
+   * only whose review waits for room, counted apart (absent when none, no zero counts).
+   */
+  reviewWaits?: number;
   needsYou: number;
   cancelled: number;
   leftForYou: number;
 }
 
 export function countsOf(r: SessionRecord): SessionTaskCounts {
+  const reviewWaits = r.paused.filter((t) => t.reviewWaits === true).length;
   return {
     done: r.done.length,
     failed: r.failed.length,
-    paused: r.paused.length,
+    paused: r.paused.length - reviewWaits,
+    ...(reviewWaits ? { reviewWaits } : {}),
     needsYou: r.needsYou.length,
     cancelled: r.cancelled.length,
     leftForYou: r.leftForYou,
   };
 }
 
-/** "2 done", "1 done, 1 failed, 1 paused", "2 left for you"; "" when none (no zero counts). */
+/**
+ * "2 done", "1 done, 1 failed, 1 paused", "1 done, 1 review waits for room", "2 left for you";
+ * "" when none (no zero counts).
+ */
 export function countsWords(c: SessionTaskCounts): string {
   return [
     c.done ? `${c.done} done` : null,
     c.failed ? `${c.failed} failed` : null,
     c.paused ? `${c.paused} paused` : null,
+    // fixup-w8-l4-leftovers (L4i-left-31): said as its row says it, never "paused".
+    c.reviewWaits ? reviewWaitsWords(c.reviewWaits) : null,
     c.needsYou ? `${c.needsYou} needed you` : null,
     c.cancelled ? `${c.cancelled} cancelled` : null,
     c.leftForYou ? `${c.leftForYou} left for you` : null,
@@ -225,8 +240,17 @@ export function sessionGist(r: SessionRecord): string {
   if (r.paused.length) {
     const limits = [...new Set(r.paused.map((t) => t.limit).filter(Boolean))];
     const at = limits.length === 1 && limits[0] ? limits[0] : "a budget";
-    // L3-research-2: runs that heard the wrap-up paused before the limit ran out.
-    if (limits.length === 1 && r.paused.every((t) => t.before))
+    // fixup-w8-l4-leftovers (L4i-left-31): done tasks whose review waits for room are said as
+    // their rows say it (before: '"X" paused at its budget of CHF 0.01.').
+    if (r.paused.every((t) => t.reviewWaits))
+      return fitted(titles(r.paused), (names) =>
+        r.paused.length === 1
+          ? `${names} is done; its review waits for room in ${at}.`
+          : `${names} are done; their reviews wait for room.`,
+      );
+    // L3-research-2: runs that heard the wrap-up paused before the limit ran out;
+    // fixup-w8-l4-leftovers (L4i-left-28): so did a pause at an outer limit (`pausedBefore`).
+    if (limits.length === 1 && r.paused.every(pausedBefore))
       return fitted(titles(r.paused), (names) => `${names} paused before ${at} ran out.`);
     return fitted(titles(r.paused), (names) => `${names} paused at ${at}.`);
   }
@@ -352,6 +376,8 @@ export function sessionEndWords(
     row.status,
     stopReasonOfHandoff(row.handoff),
     waits ?? blockedOfHandoff(row.handoff),
+    // fixup-w8-l4-leftovers (L4i-left-28): "Stopped at" only when it spent all of it.
+    outerLimitPassedOfHandoff(row.handoff),
   );
 }
 
@@ -773,7 +799,7 @@ function hereOf(
       // L4-money-111: the work is done and only its review waits for room.
       words: paused.reviewWaits
         ? `Done; its review waits for room in ${paused.limit}`
-        : paused.before
+        : pausedBefore(paused)
           ? `Paused before ${paused.limit} ran out`
           : `Paused at ${paused.limit}`,
       key: "answer",

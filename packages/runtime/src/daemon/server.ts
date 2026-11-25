@@ -1687,8 +1687,17 @@ export function createDaemonApp(
   const credentialAtStart = async (
     r: Awaited<ReturnType<RuntimeApp["startCheck"]>>,
     projectId: string,
-  ) =>
-    startCredential(
+  ) => {
+    // w8-l4-leftovers (L4i-left-32): the tasks that wait for the stopped credential while the
+    // rest runs on the other one: named in the line, and no figure for them.
+    const waitingTasks: { id: string; title: string }[] = rt.billing.waits.waitingTasks
+      ? await rt.billing.waits.waitingTasks(projectId).catch(() => [])
+      : [];
+    const waitingIds = new Set(waitingTasks.map((t) => t.id));
+    const runsHere = waitingIds.size
+      ? { ...r, runnable: r.runnable.filter((t) => !waitingIds.has(t.taskId)) }
+      : r;
+    return startCredential(
       {
         store: rt.store,
         clock: rt.clock,
@@ -1702,7 +1711,7 @@ export function createDaemonApp(
       // plan card show too (the promise with its followers and review parts, plus what is left
       // of a task a session holds), within the work budget. Before: the runnable tasks alone.
       waitingWorkUsdMicro(
-        r,
+        runsHere,
         await inFlightWork({ store: rt.store, estimates: rt.estimates }, projectId).catch(() => []),
       ),
       // "Use API key" only for a start that runs something and that Stop all does not refuse.
@@ -1712,8 +1721,10 @@ export function createDaemonApp(
         runsWork: runsWork(r),
         stopped: rt.kill.isFrozen({ agentId: rt.agent.id }),
         waitsNow: async () => !!(await rt.billing.waits.now(projectId)),
+        waitingTitles: waitingTasks.map((t) => t.title),
       },
     ).catch(() => ({ view: null, offer: null }));
+  };
   /**
    * Why a Start now would do nothing (design §3.6; `start-blocked.ts`, the chat says the same).
    * `agentId`'s running session makes a start wait rather than refuse only when it can make
@@ -2743,6 +2754,17 @@ export function createDaemonApp(
             chfPerUsd: chf,
           },
           planUsdMicro,
+          // w8-l4-leftovers (L4i-left-32): the tasks whose runs-on line waits for the stopped
+          // first choice (the chooser's kind is the credential it waits for).
+          (kind) => {
+            const placed = planTasks.filter((t) => t.runsOn);
+            const held = placed.filter((t) => t.runsOn?.kind === kind);
+            return {
+              titles: held.map((t) => t.title),
+              usdMicro: held.reduce((n, t) => n + (t.estimateUsdMicro ?? 0), 0),
+              all: held.length > 0 && held.length === placed.length,
+            };
+          },
         ).catch(() => null);
       }
     }

@@ -11,7 +11,7 @@ import { branchWords } from "@forerunner/capabilities";
 import { quotedWords, saidByName } from "@forerunner/critic";
 import { AUTONOMY_NAMES } from "../enforcement/autonomy.ts";
 import { aboutWords, moneyWords, moneyWordsFirst } from "../session/money-words.ts";
-import { sessionStatusText } from "../session/stop-words.ts";
+import { reviewWaitsWords, sessionStatusText } from "../session/stop-words.ts";
 import {
   CONTINUES_EVENT_TYPE,
   JOINED_EVENT_TYPE,
@@ -176,6 +176,8 @@ function endedCounts(p: Payload): string {
   add("needsHuman", (n) => `${n} need${n === 1 ? "s" : ""} you`);
   // W15-69: a task paused at a budget is paused, not one that needs you.
   add("paused", (n) => `${n} paused`);
+  // fixup-w8-l4-leftovers (L4i-left-31): a done task whose review waits, as its row says it.
+  add("reviewWaits", reviewWaitsWords);
   add("retried", (n) => `${n} sent back`);
   add("inReview", (n) => `${n} in review`);
   add("skipped", (n) => `${n} not started`);
@@ -370,7 +372,8 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
         return counts
           ? `Session over: ${counts}. ${moneyWordsFirst(chf("spentUsdMicro"), n("spentUsdMicro"))}.`
           : `Session over. ${moneyWordsFirst(chf("spentUsdMicro"), n("spentUsdMicro"))}.`;
-      const status = sessionStatusText(s("status"), s("stopReason"));
+      // fixup-w8-l4-leftovers (L4i-left-28): "Stopped at" only when it spent all of the limit.
+      const status = sessionStatusText(s("status"), s("stopReason"), p.limitPassed === true);
       const head = status === "Done" ? "Session over" : status;
       // U-078: the tasks that wait for a credential are said by the wait's line, not again as
       // "not started".

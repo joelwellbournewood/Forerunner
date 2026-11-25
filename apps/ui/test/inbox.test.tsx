@@ -1505,7 +1505,9 @@ describe("Inbox", () => {
       taskTitle: "Decide the versioning scheme",
       sessionId: "sess_1",
       kind: "approval",
-      why: '"Decide the versioning scheme" paused at this month\'s cap of CHF 150.00.',
+      // fixup-w8-l4-leftovers (L4i-left-28): the title the runner files now (before: '... paused
+      // at this month's cap of CHF 150.00'); an outer limit is never passed.
+      why: '"Decide the versioning scheme" paused before this month\'s cap ran out.',
       steps: [],
       options: ["Cancel task"],
       blocking: true,
@@ -1514,7 +1516,7 @@ describe("Inbox", () => {
         key: "task:budget_stop",
         task_id: "task_3",
         task_title: "Decide the versioning scheme",
-        title: '"Decide the versioning scheme" paused at this month\'s cap of CHF 150.00',
+        title: '"Decide the versioning scheme" paused before this month\'s cap ran out',
         run_id: "run_1",
         source: "month",
         specialist: "writer",
@@ -1560,8 +1562,10 @@ describe("Inbox", () => {
       expect(link).toHaveTextContent("Open Settings");
       expect(link).toHaveAttribute("href", "/settings");
       const view = (await harness.client.tasks("proj_atlas")).find((t) => t.id === "task_3");
+      // fixup-w8-l4-leftovers (L4i-left-28): before, "Paused at this month's cap" while part of
+      // the cap was left (a run under it is capped at what is left, less its review's reserve).
       expect(view?.display).toMatchObject({
-        label: "Paused at this month's cap",
+        label: "Paused before this month's cap ran out",
         detail:
           "Ready again once that limit is raised or resets, for your next Start; or cancel it.",
       });

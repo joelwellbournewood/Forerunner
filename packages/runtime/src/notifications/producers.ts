@@ -17,6 +17,7 @@ import { isNewsLine, stopWords } from "../session/result.ts";
 import {
   isBudgetStopReason,
   MONTH_CAP_STOP,
+  outerLimitPassed,
   PLAN_SHARE_STOP,
   PROJECT_BUDGET_STOP,
   stopLimitWords,
@@ -406,7 +407,7 @@ export function budgetStop(humanId: string, r: SessionEndFacts): Notification {
     .join(" ")
     .replace(/The session's budget is used\.\s*/g, "");
   // The title says the limit: its sentence is not said again.
-  if (limit) text = text.split(stopWords(r.stopReason, r.stopCapChfMicro)).join(" ");
+  if (limit) text = text.split(stopWords(r.stopReason, r.stopCapChfMicro, chf)).join(" ");
   const said = text
     .replace(/\s{2,}/g, " ")
     // The result's money line ends it ("CHF 0.04.", "Less than CHF 0.01."): the body says it.
@@ -420,7 +421,14 @@ export function budgetStop(humanId: string, r: SessionEndFacts): Notification {
     humanId,
     title: titled(
       r.projectName,
-      limit ? `stopped at ${limit}` : `stopped, the budget is used (${spent} spent)`,
+      // fixup-w8-l4-leftovers (L4i-left-28): as the result says: "ended before" while some of the
+      // limit was left, "stopped at" once the session spent all of it.
+      limit
+        ? outerLimitPassed({ spentChfMicro: chf, stopCapChfMicro: r.stopCapChfMicro })
+          ? `stopped at ${limit}`
+          : // The title has 60 characters: the share's shorter name keeps it whole.
+            `ended before ${r.stopReason === PLAN_SHARE_STOP ? "your subscription's share" : limit} ran out`
+        : `stopped, the budget is used (${spent} spent)`,
     ),
     body: bodyOf(
       limit

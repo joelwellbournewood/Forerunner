@@ -3341,3 +3341,18 @@ project's too (never "the other Forerunner writes this doc"). The fake daemon mi
 free of the store). `test/two-installs.test.ts` has the area's describe ('w8-status-write, wave
 8': one issue, two comments, GitHub off and a restart, another project's marker, the switch and
 the guide); the harness is unchanged.
+
+## w8-l4-leftovers (wave 8, 2026-11-25)
+
+- The Tasks tab's money cell shows nothing for a task that spent nothing (L4i-left-64, design
+  section 5 rule 5): before, every such row read "CHF 0.00". Its cap line then reads on its own
+  ("CHF 0.01 budget"; "of CHF 0.01 budget" only after an amount, `taskCapWords`), and the task
+  drawer leaves out "spent CHF 0.00" (it names "budget CHF 0.01" for a task with its own budget).
+  Test: `test/w8-l4-leftovers.test.tsx`.
+- The Sessions row's `tasks` may carry `reviewWaits` (the daemon's count of done tasks whose
+  review waits, L4i-left-31); the screen shows `countsWords` as it comes. The fake daemon's rows
+  have none, which the optional field allows.
+- The Start dialog's credential line and the plan card's foot line are the daemon's words; the
+  UI shows them as they come (L4i-left-32, `runtime.md`). The real-daemon cases are under
+  "w8-l4-leftovers, wave 8" in `test/real-daemon.test.ts`; no route or field changed, so the fake
+  daemon is unchanged.

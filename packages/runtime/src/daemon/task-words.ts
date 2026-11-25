@@ -17,7 +17,11 @@ import {
 } from "../loop/merge-mode.ts";
 import { SIGNOFF_SPECIALISTS } from "../loop/verification.ts";
 import { CREDENTIAL_WAIT_REASON } from "../session/credential-wait.ts";
-import { reviewRoomWords } from "../session/review-room-words.ts";
+import {
+  outerLimitPausedWords,
+  pausedBeforeLimit,
+  reviewRoomWords,
+} from "../session/review-room-words.ts";
 import { FULL_REVIEW_TIER } from "../session/sandbox-gate.ts";
 import type { TaskAction, TaskDisplay } from "./api-types.ts";
 import { cancelWorkKind, cancelWorkLine, prNumberOf } from "./cancel-words.ts";
@@ -425,6 +429,10 @@ export function budgetPauseLabelOf(card: unknown): string {
     const where = reviewRoomWords(c.source).replace(/^room/, "");
     return `Review waits for room${where.replace(/ this session's/, " the session's")}`;
   }
+  // fixup-w8-l4-leftovers (L4i-left-28): under an outer limit a hard stop with some of it left
+  // paused before it ran out too, as its card says (before: "Paused at the project's budget").
+  const outer = outerLimitPausedWords(c.source);
+  if (outer && pausedBeforeLimit(c)) return capitalFirst(outer);
   if (c.stopped_by === "wrap_up" && c.review_waits !== true)
     switch (c.source) {
       case "session":
@@ -434,11 +442,8 @@ export function budgetPauseLabelOf(card: unknown): string {
         return "Paused before its budget ran out";
       case "specialist_limit":
         return "Paused before its limit per run ran out";
-      // L4-money-103: a run capped at what was left of an outer limit wrapped up inside it.
-      case "project":
-        return "Paused before the project's budget ran out";
-      case "month":
-        return "Paused before this month's cap ran out";
+      // L4-money-103: a run capped at what was left of an outer limit wrapped up inside it
+      // (`budgetPauseLabel` says the same for a hard stop there, fixup-w8-l4-leftovers).
       default:
         break;
     }
@@ -932,3 +937,5 @@ export function runOrder<T extends Pick<TaskRow, "id" | "depends_on" | "priority
   }
   return out;
 }
+
+const capitalFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

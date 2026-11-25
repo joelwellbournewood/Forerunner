@@ -94,7 +94,13 @@ export function taskCapWords(
     const cost = task.spent ?? task.actual;
     const usedUp = task.cap.usdMicro <= 0 || cost.usdMicro >= task.budget.usdMicro;
     return {
-      text: usedUp ? `${budget} budget used up` : `of ${budget} budget`,
+      // fixup-w8-l4-leftovers (L4i-left-64): with nothing spent the row shows no amount, so the
+      // line reads on its own ("CHF 0.01 budget"; before, the fragment "of CHF 0.01 budget").
+      text: usedUp
+        ? `${budget} budget used up`
+        : cost.usdMicro > 0
+          ? `of ${budget} budget`
+          : `${budget} budget`,
       title: TASK_BUDGET_TITLE,
     };
   }
@@ -562,8 +568,12 @@ export function TasksTab({
                     </td>
                     <td className="py-1.5 pr-2">{whoName(who)}</td>
                     <td className="py-1.5 pr-2 whitespace-nowrap">
-                      {/* W15-20: what it cost, its reviews included, as Costs reads it. */}
-                      <Money value={t.spent ?? t.actual} />
+                      {/* W15-20: what it cost, its reviews included, as Costs reads it.
+                          w8-l4-leftovers (L4i-left-64, design section 5 rule 5): nothing for a
+                          task that spent nothing (before, every such row read "CHF 0.00"). */}
+                      {(t.spent ?? t.actual).usdMicro > 0 ? (
+                        <Money value={t.spent ?? t.actual} />
+                      ) : null}
                       {isFinished(t) || who === WHO_PERSON ? null : (
                         <TaskCap task={t} specialist={who} />
                       )}

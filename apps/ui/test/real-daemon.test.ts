@@ -8219,19 +8219,19 @@ describe("the UI client against the real daemon: a session ended at this month's
     const session = await client.session(sessionId);
     // Before: "Stopped: the budget is used" and "The session's budget is used." at 1% of the
     // session's own CHF 5.00.
-    expect(session.statusText).toBe("Stopped at this month's cap");
-    expect(session.summary ?? "").toContain("Stopped at this month's cap of CHF 0.02.");
+    expect(session.statusText).toBe("Ended before this month's cap ran out");
+    expect(session.summary ?? "").toContain("Ended before this month's cap of CHF 0.02 ran out.");
     expect(session.summary ?? "").not.toMatch(/budget is used/);
     const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
     expect(
-      lines.some((l) => /^Stopped at this month's cap: /.test(l)),
+      lines.some((l) => /^Ended before this month's cap ran out: /.test(l)),
       lines.join(" | "),
     ).toBe(true);
     expect(lines.join(" | ")).not.toMatch(/budget is used/);
     const updates = (await client.inbox(me.id)).messages
       .filter((m) => m.projectId === project.id)
       .map((m) => m.body);
-    expect(updates.join(" | ")).toContain("Stopped at this month's cap of CHF 0.02.");
+    expect(updates.join(" | ")).toContain("Ended before this month's cap of CHF 0.02 ran out.");
     expect(updates.join(" | ")).not.toMatch(/budget is used/);
   }, 60_000);
 });
@@ -22721,6 +22721,78 @@ describe("d1109-cred-screens, run C", () => {
     }
   }, 120_000);
 
+  describe("w8-l4-leftovers, wave 8: the plan card's foot line under 'API key first, then subscription' (L4i-left-32)", () => {
+    // L4d-left-1: with the key resting, the foot line said "your subscription does the work
+    // meanwhile" for a plan whose tasks only the key can do here (code tasks with commands set
+    // to the API key), beside each task's own "Waits until ..." line.
+    it("says the work waits for the key when only it can do the plan's tasks", async () => {
+      const both = await composeWithRolePlayer(
+        {},
+        {
+          vault: new MemoryVault({
+            anthropic_subscription_token: oauth,
+            anthropic_api_key: apiKey,
+          }),
+        },
+      );
+      const { rt, client } = both;
+      try {
+        await setPolicyCs(client, "key_then_subscription");
+        const commands = await client.executeCommands({
+          commands: [{ name: "settings.set", params: { key: "code_commands", value: "api_key" } }],
+          wordsUsed: "Settings: Code tasks that need commands to the API key",
+          source: "ui",
+        });
+        if (commands.status === "pending")
+          await client.confirmCommand(commands.pendingId ?? "", { answer: "tap" });
+        const brief = "A small web page that shows a quote of the day.";
+        const project = await client.createProject({
+          name: "Quote page",
+          goal: goalFromBrief(brief),
+          brief,
+          intake: true,
+        });
+        await rt.intake.inFlight(project.id);
+        const me = await client.me();
+        const card = async () =>
+          (await client.inbox(me.id)).requests.find(
+            (r) => r.projectId === project.id && r.status === "open" && r.planTasks,
+          );
+        const key = (
+          await rt.store.billingSource.list({ human_id: rt.human.id }, { limit: 10 })
+        ).find((r) => r.kind === "api_key");
+        const until = new Date(rt.clock.now() + 40 * 60_000).toISOString();
+        await rt.store.billingSource.update(key?.id ?? "", key?.version ?? 0, {
+          limits: { ...(key?.limits as Record<string, unknown>), restingUntil: until } as never,
+        });
+        const at = clockTime(until, rt.human.timezone, rt.clock.now());
+        const shown = await card();
+        const tasks = shown?.planTasks ?? [];
+        const placed = tasks.filter((t) => t.runsOn);
+        const held = placed.filter((t) => t.runsOn?.kind === "api_key");
+        expect(placed.length).toBeGreaterThan(0);
+        if (held.length === placed.length)
+          expect(shown?.planCredentialLine).toBe(
+            `Your API key is at its limit until ${at}: the work waits for it.`,
+          );
+        else
+          expect(shown?.planCredentialLine).toBe(
+            `Your API key is at its limit until ${at}: your subscription does the work meanwhile. ${
+              held.length === 1
+                ? `"${held[0]?.title}" waits for your API key.`
+                : `"${held[0]?.title}" and ${held.length - 1} more wait for your API key.`
+            }`,
+          );
+        expect(shown?.planCredentialLine).not.toBe(
+          `Your API key is at its limit until ${at}: your subscription does the work meanwhile.`,
+        );
+      } finally {
+        await settleSessions(rt);
+        await rt.close();
+      }
+    }, 120_000);
+  });
+
   // CS-10's walk: under "Subscription first, then API key" with the subscription at its limit,
   // the card's foot said "your API key does the work meanwhile" while each task's line said
   // "Waits until 02:43 (your subscription's limit). Press Start and the work starts then.": the
@@ -25768,6 +25840,53 @@ describe("l4-cred-screens, run L4", () => {
     }
   }, 60_000);
 
+  describe("w8-l4-leftovers, wave 8: mixed work under 'API key first, then subscription' (L4i-left-32)", () => {
+    // L4d-left-1: with the key resting and mixed work, the Start dialog said the work runs on the
+    // subscription, and its figure covered the task only the key can do here (reading web pages).
+    it("names what waits for the key and gives no figure for it", async () => {
+      const calls: string[] = [];
+      const { rt, client, keyCalls } = await composeL4({ sdkQuery: claudeCode(calls, 0) });
+      try {
+        await setPolicyL4(client, "key_then_subscription");
+        // Code tasks that need commands go to the API key: a coder task only the key can do here.
+        const commands = await client.executeCommands({
+          commands: [{ name: "settings.set", params: { key: "code_commands", value: "api_key" } }],
+          wordsUsed: "Settings: Code tasks that need commands to the API key",
+          source: "ui",
+        });
+        if (commands.status === "pending")
+          await client.confirmCommand(commands.pendingId ?? "", { answer: "tap" });
+        const alone = await client.createProject({ name: "Launch", goal: "A post" });
+        await addTask(client, alone.id, "Write the launch post", {
+          specialist: "writer-marketing",
+        });
+        const mixed = await client.createProject({ name: "Tool notes", goal: "Notes" });
+        await addTask(client, mixed.id, "Write the launch post", {
+          specialist: "writer-marketing",
+        });
+        await addTask(client, mixed.id, "Write the tool notes");
+        await restSource(rt, "api_key", resetAt);
+        const plain = (await client.startCheck(alone.id)).credential?.line ?? "";
+        expect(plain).toMatch(
+          /^Your API key is at its limit until 11:40, so this runs on your subscription \((about CHF \d+\.\d\d|less than CHF 0\.01)\)\.$/,
+        );
+        const check = await client.startCheck(mixed.id);
+        const line = check.credential?.line ?? "";
+        expect(line).toMatch(
+          /^Your API key is at its limit until 11:40, so this runs on your subscription \((about CHF \d+\.\d\d|less than CHF 0\.01)\)\. "Write the tool notes" waits for your API key\.$/,
+        );
+        // The figure is the subscription's work alone, as for the project without the key's task.
+        expect(/\((.*)\)\./.exec(line)?.[1]).toBe(/\((.*)\)\./.exec(plain)?.[1]);
+        expect(check.blocked).toBeNull();
+        expect(calls).toHaveLength(0);
+        expect(keyCalls()).toHaveLength(0);
+      } finally {
+        await settleSessions(rt);
+        await rt.close();
+      }
+    }, 60_000);
+  });
+
   // L4-creds-18 (C6L-2: "Start on 1 Dec" at the share's stop started a session that stopped at
   // once): the start is kept for the month's start as "Start at 15:40" is for a limit, and starts
   // exactly one session then, also after a restart.
@@ -28077,8 +28196,10 @@ describe("l4-starts-sessions, run L4", () => {
       });
       // l4-starts-carried (L4g-left-1): before the raise the check says the limit and what
       // changes it (it said "needs your answer" though the card asks nothing).
+      // fixup-w8-l4-leftovers (L4i-left-28): CHF 0.02 of the CHF 0.06 was spent, so its card says
+      // it paused before the budget ran out (before: "paused at the project's budget of CHF 0.06").
       expect((await client.startCheck(project.id)).blocked?.sentence).toBe(
-        'Nothing can run: "Write the club motto in motto.txt" paused at the project\'s budget of CHF 0.06; raise it in Settings.',
+        'Nothing can run: "Write the club motto in motto.txt" paused before the project\'s budget ran out; raise it in Settings.',
       );
       // Settings: Project budget to CHF 0.50, with its yes.
       const asked = await client.executeCommands({
@@ -31280,4 +31401,174 @@ describe("w8-together, wave 8: Add to it answers at once and plans in the backgr
       await rt.close();
     }
   }, 120_000);
+});
+
+/**
+ * fixup-w8-l4-leftovers, wave 8 (L4i-left-31, the review's blocking item 1): GET /sessions/:id
+ * and GET /projects/:id/sessions, read by the UI's client, say a done task whose review waits
+ * for room as its row says it. The session is stored as the runner leaves it (the composed run
+ * is packages/runtime/test/task-budget-all.test.ts' 'w8-l4-leftovers, wave 8' case). Before, the
+ * badge read "Ended: 1 paused" and the row "1 done, 1 paused · Ended: 1 paused".
+ */
+describe("w8-l4-leftovers, wave 8: a review that waits is said one way on the session page and the Sessions row (L4i-left-31)", () => {
+  it("the badge, the counts and the end words say the review waits for room", async () => {
+    const { rt, client } = await composeWithRolePlayer({});
+    try {
+      const project = await client.createProject({ name: "Pond notes", goal: "Notes" });
+      const pond = await client.createTask(project.id, {
+        title: "Write the pond notes",
+        outcome: "notes/pond.md exists",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      const frog = await client.createTask(project.id, {
+        title: "Write the frog notes",
+        outcome: "notes/frogs.md exists",
+        riskTier: 1,
+        specialist: "coder",
+      });
+      await rt.store.task.patch(pond.id, { status: "needs_human" } as never);
+      await rt.store.task.patch(frog.id, { status: "done" } as never);
+      const row = await rt.store.session.insert({
+        agent_id: rt.agent.id,
+        project_id: project.id,
+        trigger: "manual",
+        plan: { startedBy: { by: "person" } } as never,
+        reason: "who asked for the session",
+        author_agent: rt.agent.id,
+        budget_cap_usd_micro: 6_250_000,
+        step_cap: 100,
+        spent_usd_micro: 25_000,
+        steps: 15,
+        status: "planned",
+        summary: "",
+        handoff: {},
+        runner: "pc",
+      });
+      const running = await rt.store.session.setStatus(row.id, row.version, "running");
+      await rt.store.session.setStatus(running.id, running.version, "completed", {
+        handoff: {
+          stop_reason: "completed",
+          done: [frog.id],
+          blocked: [pond.id],
+          paused: [pond.id],
+          review_waits: [pond.id],
+          outcome: {
+            done: [{ id: frog.id, title: frog.title }],
+            failed: [],
+            needsYou: [],
+            paused: [
+              {
+                id: pond.id,
+                title: pond.title,
+                limit: "its budget of CHF 0.01",
+                reviewWaits: true,
+              },
+            ],
+            leftOver: [],
+            waiting: [],
+            waitingForDocker: [],
+            stopReason: "completed",
+            spentChfMicro: 20_000,
+          },
+        } as never,
+      });
+      expect((await client.session(row.id)).statusText).toBe("Ended: 1 review waits for room");
+      const listed = (await client.projectSessions(project.id)).rows.find((r) => r.id === row.id);
+      expect(listed).toMatchObject({
+        countsWords: "1 done, 1 review waits for room",
+        endedWords: "Ended: 1 review waits for room",
+        tasks: { done: 1, paused: 0, reviewWaits: 1 },
+      });
+      // Once the person answered its card (the task no longer waits), the badge says Done.
+      await rt.store.task.patch(pond.id, { status: "done" } as never);
+      expect((await client.session(row.id)).statusText).toBe("Done");
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
+});
+
+/**
+ * fixup-w8-l4-leftovers, wave 8 (L4i-left-28, the review's blocking item 2), through the UI's
+ * client: a pause under the project's budget says "paused before it ran out" only while some of
+ * it is left (the composed hard stop with room left is budget-pause.test.ts' 'w8-l4-leftovers,
+ * wave 8' case). Here the stand-in bills each heron call 40,000 tokens more than it was checked
+ * for, so the run went past the project's budget of CHF 0.06 (CHF 0.07): every place says it
+ * paused, and the session stopped, at the budget, in one wording; none says "ended before".
+ */
+describe("w8-l4-leftovers, wave 8: a pause at the project's budget is said one way, true to what was spent (L4i-left-28)", () => {
+  it("a run that went past the budget: the result, the badge, the task rows, the Sessions row, the card and the log say 'at' it", async () => {
+    const { rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_USAGE: "heron:40000" });
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Bird notes", goal: "Notes about birds" });
+      // The project's budget of CHF 0.06, as Settings sets it.
+      await rt.store.project.patch(project.id, { budget_usd_micro: 75_000 });
+      const heron = await client.createTask(project.id, {
+        title: "Write the heron page",
+        outcome: "heron.md exists",
+        riskTier: 1,
+        specialist: "coder",
+        priority: "high",
+      });
+      await client.createTask(project.id, {
+        title: "Write the owl page",
+        outcome: "owl.md exists",
+        riskTier: 1,
+        specialist: "coder",
+        priority: "low",
+      });
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          ["completed", "stopped", "failed", "killed"].includes(
+            (await client.session(sessionId)).status,
+          ),
+        "the session to end",
+        async () => (await client.session(sessionId)).status,
+        30_000,
+      );
+      await settleSessions(rt);
+      const session = await client.session(sessionId);
+      const run = (await rt.store.run.forTask(heron.id)).find((r) => r.specialist !== "critic");
+      expect(run?.outcome).toBe("budget_exceeded");
+      expect(
+        (await rt.store.costLedger.sum({ projectId: project.id })).usd_micro,
+      ).toBeGreaterThanOrEqual(75_000);
+      expect(session.statusText).toBe("Stopped at the project's budget");
+      expect(session.summary).toContain(
+        '"Write the heron page" paused at the project\'s budget of CHF 0.06: it is ready again once you raise that budget, for your next Start.',
+      );
+      expect(session.summary).toContain("Stopped at the project's budget of CHF 0.06.");
+      expect(session.summary).not.toMatch(/Ended before|paused before/);
+      const here = (await client.sessionTasks(sessionId)).tasks.find((t) => t.id === heron.id);
+      expect(here?.here).toBe("Paused at the project's budget of CHF 0.06");
+      const row = (await client.projectSessions(project.id)).rows.find((r) => r.id === sessionId);
+      expect(row?.gist).toBe('"Write the heron page" paused at the project\'s budget of CHF 0.06.');
+      expect(row?.endedWords).toBe("Stopped at the project's budget");
+      const task = (await client.tasks(project.id)).find((t) => t.id === heron.id);
+      expect(task?.display?.label).toBe("Paused at the project's budget");
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.taskId === heron.id && r.status === "open",
+      );
+      expect(card?.title).toBe(
+        '"Write the heron page" paused at the project\'s budget of CHF 0.06',
+      );
+      const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
+      expect(
+        lines.filter((l) => /^(Stopped at|Ended before) the project's budget/.test(l)),
+      ).toEqual([
+        expect.stringMatching(
+          /^Stopped at the project's budget: 1 paused, 1 not started\. CHF \d+\.\d{2}\.$/,
+        ),
+      ]);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
 });

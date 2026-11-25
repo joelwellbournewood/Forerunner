@@ -866,6 +866,11 @@ export const ProjectSessionRowView = z.object({
     done: z.number().int(),
     failed: z.number().int(),
     paused: z.number().int(),
+    /**
+     * fixup-w8-l4-leftovers (L4i-left-31): done tasks whose review waits for room, counted
+     * apart from `paused` ("1 review waits for room"); absent when none.
+     */
+    reviewWaits: z.number().int().optional(),
     needsYou: z.number().int(),
     cancelled: z.number().int(),
     /** An older row's tasks left waiting for the person ("2 left for you"). */

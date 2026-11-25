@@ -398,7 +398,7 @@ export async function seedProject(
   rt: RuntimeApp,
   name: string,
   titles: readonly string[],
-  extra: { specialist?: string } = {},
+  extra: { specialist?: string; estimateUsdMicro?: number; budgetUsdMicro?: number } = {},
 ) {
   const project = await rt.store.project.insert({ name, goal: `${name} goal`, autonomy_level: 2 });
   const tasks = [];
@@ -412,7 +412,8 @@ export async function seedProject(
         risk_tier: 0,
         status: "ready",
         priority: 5 - i,
-        est_cost_usd_micro: 100_000,
+        est_cost_usd_micro: extra.estimateUsdMicro ?? 100_000,
+        ...(extra.budgetUsdMicro !== undefined ? { budget_usd_micro: extra.budgetUsdMicro } : {}),
         reason: "seed",
         ...(extra.specialist ? { specialist: extra.specialist } : {}),
       }),

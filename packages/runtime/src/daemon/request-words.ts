@@ -1938,6 +1938,30 @@ export function requestWords(
     // d1109-cred-engine CE-7: the one card per stop, its words computed when it is shown.
     words = askCard(r, card, ctx);
     if (r.status !== "open") return words;
+  } else if (key?.startsWith(ANSWER_CARD_KEYS.planPrefix)) {
+    // w8-l4-leftovers (L4i-left-27, design section 3.4): the session plan card of Assisted mode
+    // says its buttons as buttons, each with one line of what it does. The stored answers stay
+    // "approve" and "reject" (the plan's sync, the cloud runner's trigger and the fake read
+    // them; `planAnswer` reads the label a click sends the same way).
+    words = genericCard(r);
+    words.choices = words.choices.map((c) =>
+      /^approve$/i.test(c.label)
+        ? {
+            ...c,
+            label: "Approve",
+            explain: "Starts the session with these tasks, in this order.",
+            tone: "primary",
+          }
+        : /^reject$/i.test(c.label)
+          ? {
+              ...c,
+              label: "Reject",
+              explain: "Nothing runs; the tasks stay ready and your next session asks again.",
+              tone: "secondary",
+            }
+          : c,
+    );
+    outcome = changeCardOutcome(card, r.answer) ?? lateApprovalOutcome(card);
   } else {
     words = genericCard(r);
     outcome = changeCardOutcome(card, r.answer) ?? lateApprovalOutcome(card);

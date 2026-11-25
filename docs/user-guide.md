@@ -2029,3 +2029,22 @@ your comment on GitHub, you get one Update and your Forerunner writes its own te
 closed issue is never reopened ("The status issue #12 was closed on GitHub; reopen it there to
 use it again."). The status pull request of earlier versions is gone: one your Forerunner opened
 for the project is closed with one line.
+
+### Words for limits, reviews and credentials (2026-11-25)
+
+When a session ends because the project's budget, this month's cap or your subscription's share
+had too little room for the next step, it says "Ended before the project's budget ran out", and
+the task that paused says "paused before the project's budget ran out" on its card, its row and
+the session's result. Only if a step cost more than it was checked for and went past the limit
+do they say "paused at" and "Stopped at" it. A task whose work is done and whose review waits
+for room says so on its row, its card, the session page and the Sessions list ("1 review waits
+for room"). A task with its own budget that has spent nothing shows its budget alone ("CHF 0.01
+budget"). When the critic's review of a task reaches
+the share of your subscription Forerunner may use, your choice under Which Claude does the work
+decides what happens, as for the work itself: with "then the API key" the review goes on there,
+within the task's budget; with "ask me first" you get one card; with "then wait" the review waits
+for the month's start or a raised allowance. With "API key first, then subscription" and your
+key resting, the Start dialog and the plan card name the tasks that wait for the key and count
+only the work your subscription does. The session plan card of Assisted mode has the buttons
+Approve and Reject, each with what it does. A task that has spent nothing shows no amount on the
+Tasks tab.

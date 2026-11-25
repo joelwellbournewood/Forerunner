@@ -10,6 +10,7 @@ import type { ProjectSessionsView } from "../src/daemon/api-types.ts";
 import { composeRuntime, type RuntimeApp } from "../src/daemon/compose.ts";
 import { createDaemonApp } from "../src/daemon/server.ts";
 import {
+  countsOf,
   countsWords,
   GIST_MAX,
   listEndWords,
@@ -619,5 +620,44 @@ describe("l4-starts-sessions, run L4: a Sessions row counts what needed the pers
   });
   it("the session page's badge keeps its own words (L-21)", () => {
     expect(sessionEndWords(done, { needYou: 1, paused: 0 })).toBe("Ended: 1 task needs you");
+  });
+});
+
+/**
+ * fixup-w8-l4-leftovers, wave 8 (L4i-left-31, siblings of the review's blocking item 1): a done
+ * task whose review waits for room is said as its row says it on the Sessions row, in its counts,
+ * its end words and its first line, never "paused" (before: "1 done, 1 paused · Ended: 1 paused",
+ * and a session that did only that task read '"X" paused at its budget of CHF 0.01.').
+ */
+describe("w8-l4-leftovers, wave 8: a Sessions row says a review that waits as its task row does (L4i-left-31)", () => {
+  const done = { status: "completed", handoff: {}, plan: {} } as unknown as SessionRow;
+  const waiting = {
+    ...task("Write the pond notes"),
+    limit: "its budget of CHF 0.01",
+    reviewWaits: true,
+  };
+  it("its counts and end words count the review apart", () => {
+    const counts = countsOf(record({ done: [task("Write the frog notes")], paused: [waiting] }));
+    expect(counts).toMatchObject({ done: 1, paused: 0, reviewWaits: 1 });
+    expect(countsWords(counts)).toBe("1 done, 1 review waits for room");
+    expect(countsWords({ ...counts, done: 0, reviewWaits: 2 })).toBe("2 reviews wait for room");
+    expect(listEndWords(done, { needYou: 0, paused: 0, reviewWaits: 1 }, 0)).toBe(
+      "Ended: 1 review waits for room",
+    );
+    expect(listEndWords(done, { needYou: 1, paused: 1, reviewWaits: 1 }, 2)).toBe(
+      "1 still needs you, 1 paused, 1 review waits for room",
+    );
+  });
+  it("a session that did only that task says it is done and its review waits", () => {
+    expect(plain(sessionGist(record({ paused: [waiting] })))).toBe(
+      '"Write the pond notes" is done; its review waits for room in its budget of CHF 0.01.',
+    );
+    expect(
+      plain(
+        sessionGist(record({ paused: [waiting, { ...waiting, ...task("Write the newt notes") }] })),
+      ),
+    ).toBe(
+      '"Write the pond notes" and "Write the newt notes" are done; their reviews wait for room.',
+    );
   });
 });

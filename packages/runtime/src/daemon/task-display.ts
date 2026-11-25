@@ -508,7 +508,8 @@ export function reviewStopWords(task: Pick<TaskRow, "status">, sessionStop: stri
       // A pause at the month's cap, the project's budget or the subscription's share ended the
       // session (ADR 0112): the review stopped there, not at the session's own budget.
       const limit = stopLimitWords(sessionStop);
-      return limit ? `the session stopped at ${limit}` : "it was stopped";
+      // L4i-left-28: the session ended before the limit ran out (it is never passed).
+      return limit ? `the session ended before ${limit} ran out` : "it was stopped";
     }
   }
 }

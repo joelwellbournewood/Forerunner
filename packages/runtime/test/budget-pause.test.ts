@@ -552,9 +552,9 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
   it("the session it ends names this month's cap too: its status, its result, its log, the Update and the notification", async () => {
     const r = await runOne(req, rt, "Members page", { budgetUsdMicro: 2_000_000 });
     expect(r.session.status).toBe("stopped");
-    expect(r.session.statusText).toBe("Stopped at this month's cap");
+    expect(r.session.statusText).toBe("Ended before this month's cap ran out");
     const summary = String(r.session.summary);
-    expect(summary).toContain("Stopped at this month's cap of CHF 0.10.");
+    expect(summary).toContain("Ended before this month's cap of CHF 0.10 ran out.");
     expect(summary).not.toMatch(/session's budget|budget is used/);
     // Its card offers no Continue (the fixup's bench walk: the result said "continue or cancel
     // it in the Inbox"): it says how the task goes on.
@@ -562,18 +562,17 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     // was left of the cap: "This run may spend CHF 0.05, the rest of this month's cap: ..."; it
     // heard the wrap-up at CHF 0.04). l4c-workstate: the run is deterministic, so the summary
     // says this one sentence, exactly (L4-money-103 had accepted "paused at" too).
-    // fixup-l4c-workstate (the review of l4c-workstate): its two lines disagree today ("paused
-    // before ... ran out", then "Stopped at this month's cap"), design section 5 rule 4. That is
-    // the review of l4-money-pause's known outer-limit sibling, left for its own round: when it is
-    // fixed, this exact text changes with it.
+    // fixup-l4c-workstate (the review of l4c-workstate): its two lines disagreed ("paused before
+    // ... ran out", then "Stopped at this month's cap"), design section 5 rule 4. w8-l4-leftovers
+    // (L4i-left-28): the session's line now says it ended before the cap ran out, as the task's.
     expect(summary).toBe(
-      "\"Members page\" paused before this month's cap of CHF 0.10 ran out: it is ready again once that limit is raised or resets, for your next Start.\nStopped at this month's cap of CHF 0.10. CHF 0.04.",
+      "\"Members page\" paused before this month's cap of CHF 0.10 ran out: it is ready again once that limit is raised or resets, for your next Start.\nEnded before this month's cap of CHF 0.10 ran out. CHF 0.04.",
     );
     expect(summary).not.toContain("continue or cancel");
     const said = lines(r.events);
     // The session's end line (before: "Stopped: the budget is used: 1 needs you. CHF 0.04.").
     expect(
-      said.some((l) => /^Stopped at this month's cap: /.test(l)),
+      said.some((l) => /^Ended before this month's cap ran out: /.test(l)),
       said.join(" | "),
     ).toBe(true);
     expect(said.join(" | ")).not.toMatch(/budget is used/);
@@ -581,7 +580,7 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     const updates = ((await (await req("/inbox")).json()) as { messages: Json[] }).messages
       .filter((m) => m.projectId === r.projectId)
       .map((m) => String(m.body));
-    expect(updates.join(" | ")).toContain("Stopped at this month's cap of CHF 0.10.");
+    expect(updates.join(" | ")).toContain("Ended before this month's cap of CHF 0.10 ran out.");
     expect(updates.join(" | ")).not.toMatch(/budget is used/);
     // The urgent notification names the month and says what helps.
     const stop = await waitFor(
@@ -593,7 +592,9 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
         ).notifications.find((n) => n.kind === "budget_stop" && n.sessionId === r.sessionId),
       async () => "the session's budget_stop notification",
     );
-    expect(String(stop.title)).toBe("Members page project: stopped at this month's cap");
+    // fixup-w8-l4-leftovers (L4i-left-28): as the result says (before: "stopped at this month's
+    // cap" while part of it was left).
+    expect(String(stop.title)).toBe("Members page project: ended before this month's cap ran out");
     expect(String(stop.body)).toMatch(
       /^This month's cap is CHF 0\.10\. The session spent CHF [\d.]+\. .*Raise the monthly spending cap in Settings to go on\.$/,
     );
@@ -604,10 +605,12 @@ describe("a stop at the month's cap names the month (budget-stop, ADR 0112)", ()
     const r = await runOne(req, rt, "Members map", { budgetUsdMicro: 2_000_000 });
     // l4c-workstate: the run is deterministic. CHF 0.01 is left of the month's cap, too little
     // to wrap up ("This run may spend CHF 0.01, the rest of this month's cap: too little to wrap
-    // up ..."), so it stops at the cap with its work kept, and the row says so, exactly
-    // (L4-money-103 had accepted "Paused before this month's cap ran out" too).
+    // up ..."), so it stops with its work kept, and the row says so, exactly. fixup-w8-l4-leftovers
+    // (L4i-left-28): its next step would have gone over the cap, so it paused before the cap ran
+    // out (what the task spent is below it), as its card says (before: "Paused at this month's
+    // cap" beside "Ended before this month's cap ran out").
     expect(r.view.display).toMatchObject({
-      label: "Paused at this month's cap",
+      label: "Paused before this month's cap ran out",
       detail: "Ready again once that limit is raised or resets, for your next Start; or cancel it.",
     });
     expect(lines(r.events)).toContain(
@@ -794,7 +797,9 @@ describe("a task paused at the project's budget goes on only once that budget ch
     await rt.store.human.patch(rt.human.id, { monthly_cap_usd_micro: spent + 5_000 });
     try {
       const r = await runOne(req, rt, "Members table", { budgetUsdMicro: 2_000_000 });
-      expect(r.view.display).toMatchObject({ label: "Paused at this month's cap" });
+      // fixup-w8-l4-leftovers (L4i-left-28): CHF 0.004 of the cap is left; it paused before the
+      // cap ran out (before: "Paused at this month's cap").
+      expect(r.view.display).toMatchObject({ label: "Paused before this month's cap ran out" });
       const [card] = await cardOf(r.taskId);
       expect(card?.status).toBe("open");
       const wake = (now: string) =>
@@ -911,14 +916,14 @@ describe("a review refused at the project's budget pauses the task (leftovers of
     // The session log says the review paused, never that the critic sent it back.
     const said = lines(r.events);
     expect(said).toContain(
-      '"Review page" paused before its review: the project\'s budget of CHF 0.01 has no room for it.',
+      '"Review page" is done; its review waits for room in the project\'s budget of CHF 0.01.',
     );
     expect(said.join(" | ")).not.toMatch(
       /sent "Review page" back|failed \d times|did not complete/,
     );
     // The project's budget ended the session there (ADR 0112 point 6).
     expect(r.session.status).toBe("stopped");
-    expect(r.session.statusText).toBe("Stopped at the project's budget");
+    expect(r.session.statusText).toBe("Ended before the project's budget ran out");
 
     // The person raises the project's budget in Settings: the next tick goes on with it, and the
     // critic reviews it once.
@@ -2009,7 +2014,7 @@ describe("l3-money-engine, run L3", () => {
     expect((await rt.store.task.mustGet(r.taskId)).status).toBe("needs_human");
     const said = lines(r.events);
     expect(said).toContain(
-      '"Review page of the motto" paused before its review: the project\'s budget of CHF 0.01 has no room for it.',
+      '"Review page of the motto" is done; its review waits for room in the project\'s budget of CHF 0.01.',
     );
     expect(said.join(" | ")).not.toMatch(/The critic started/);
     expect(r.events.map((e) => e.type)).not.toContain("critic.review_started");
@@ -3316,4 +3321,104 @@ describe("l4-money-pause, run L4: a reply cut off at its length limit has its li
       "Your last reply was cut off at the output limit (6308 tokens) before it said anything, and nothing of it was used. Send less in one reply: one file per call, short enough to fit.",
     );
   });
+});
+
+/**
+ * fixup-w8-l4-leftovers, wave 8 (L4i-left-28, the review's blocking item 2): a run under the
+ * project's budget is capped at what is left of it, less its review's reserve, so the budget is
+ * never passed; a hard stop there said '"Write the heron page" paused at the project's budget of
+ * CHF 0.06' in the result, the session's task row, the Sessions row and the card, beside "Ended
+ * before the project's budget of CHF 0.06 ran out." with half of it unspent, and the notification
+ * said "stopped at the project's budget". One wording now: paused before the budget ran out.
+ */
+describe("w8-l4-leftovers, wave 8: a hard stop under the project's budget says it paused before the budget ran out (L4i-left-28)", () => {
+  const clock = new SimulatedClock("2026-11-02T09:00:00Z");
+  const home = mkdtempSync(join(tmpdir(), "fr-budget-outer-hard-"));
+  const calls: ModelRequest[] = [];
+  const fake = new FakeProvider({
+    clock,
+    latency: "none",
+    onNoMatch: "echo",
+    replies: [
+      submitReply({}, { times: Number.POSITIVE_INFINITY }),
+      closingReply(),
+      // Each call is CHF 0.004: the second one's worst case meets what is left under the
+      // project's budget once its review's reserve is kept.
+      ...works("Write the heron page", 5_000, LEFT),
+      textReply("Wrote owl.html.\n\nLeft to do: nothing", {
+        when: coderOn("Write the owl page"),
+        times: Number.POSITIVE_INFINITY,
+      }),
+    ],
+  });
+  const stream = fake.stream.bind(fake);
+  fake.stream = (r) => {
+    calls.push({ ...r, messages: structuredClone(r.messages) });
+    return stream(r);
+  };
+  let rt: RuntimeApp;
+  let req: Req;
+  beforeAll(async () => {
+    ({ rt, req } = await compose(home, clock, fake));
+  }, 120_000);
+  afterAll(async () => {
+    await settleSessions(rt);
+    await rt?.close();
+    removeHomes([home]);
+  });
+
+  it("the card, the row, the result, the Sessions row and the notification say it paused before the budget ran out", async () => {
+    const r = await runOne(req, rt, "Write the heron page", {
+      budgetUsdMicro: 2_000_000,
+      projectBudgetUsdMicro: 12_500,
+      projectName: "Bird notes",
+    });
+    const heron = await rt.store.task.mustGet(r.taskId);
+    expect(heron.status).toBe("needs_human");
+    // A hard stop, not a wrap-up, and its review never ran: the case the words were wrong for.
+    expect(r.runs.at(-1)?.outcome).toBe("budget_exceeded");
+    expect(handoffOf(r.runs.at(-1)?.artifacts)?.stoppedBy).toBe("budget");
+    const spent = (await rt.store.costLedger.sum({ projectId: r.projectId })).usd_micro;
+    expect(spent).toBeLessThan(12_500);
+    // Its card and its reason.
+    const cards = ((await (await req("/inbox")).json()) as { requests: Json[] }).requests.filter(
+      (q) => q.taskId === r.taskId && q.status === "open",
+    );
+    expect(cards.map((c) => c.title)).toEqual([
+      '"Write the heron page" paused before the project\'s budget ran out',
+    ]);
+    expect(heron.reason).toBe(
+      '"Write the heron page" paused before the project\'s budget ran out.',
+    );
+    // Its row on the Tasks tab.
+    expect(r.view.display).toMatchObject({ label: "Paused before the project's budget ran out" });
+    // The session's result, as the session page and the Overview's Last result show it.
+    const summary = String(r.session.summary);
+    expect(summary).toContain(
+      '"Write the heron page" paused before the project\'s budget of CHF 0.01 ran out: it is ready again once you raise that budget, for your next Start.',
+    );
+    expect(summary).not.toMatch(/paused at the project's budget/);
+    // The session's task row (GET /sessions/:id/tasks).
+    const here = (await (await req(`/sessions/${r.sessionId}/tasks`)).json()) as {
+      tasks: Json[];
+    };
+    expect(here.tasks.find((t) => t.id === r.taskId)?.here).toBe(
+      "Paused before the project's budget of CHF 0.01 ran out",
+    );
+    // The Sessions row's first line.
+    const list = (await (await req(`/projects/${r.projectId}/sessions`)).json()) as {
+      rows: Json[];
+    };
+    expect(list.rows.find((x) => x.id === r.sessionId)?.gist).toBe(
+      '"Write the heron page" paused before the project\'s budget of CHF 0.01 ran out.',
+    );
+    // Every notification it sent.
+    const notes = (
+      (await (await req("/notifications/recent?limit=200")).json()) as { notifications: Json[] }
+    ).notifications.filter((n) => String(n.title).startsWith("Bird notes"));
+    expect(notes.length).toBeGreaterThan(0);
+    expect(notes.map((n) => `${n.title} ${n.body}`).join(" | ")).not.toMatch(
+      /paused at the project's budget|stopped at the project's budget/,
+    );
+  }, 120_000);
 });

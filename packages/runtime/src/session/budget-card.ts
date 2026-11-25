@@ -14,7 +14,7 @@ import { unappliedAnswers } from "./findings.ts";
 import { moneyWords } from "./money-words.ts";
 import type { PreparePort, PrepareResult } from "./prepared-work.ts";
 import { noteAboutTask, recordStart, type StartPort, startForPerson } from "./resume-work.ts";
-import { reviewRoomWords } from "./review-room-words.ts";
+import { limitLeftAtStop, outerLimitPausedWords, reviewRoomWords } from "./review-room-words.ts";
 import type { BudgetStop } from "./runner.ts";
 
 /**
@@ -126,7 +126,8 @@ export function continueLabel(moreUsdMicro: number, rate: number): string {
  */
 export function budgetStopTitle(
   task: Pick<TaskRow, "title">,
-  stop: Pick<BudgetStop, "capUsdMicro" | "source" | "specialist" | "stoppedBy">,
+  stop: Pick<BudgetStop, "capUsdMicro" | "source" | "specialist" | "stoppedBy"> &
+    Partial<Pick<BudgetStop, "spentUsdMicro">>,
   rate: number,
   /**
    * l4-money-pause, run L4 (L4-money-111, live check 4): the specialist finished and only its
@@ -140,6 +141,13 @@ export function budgetStopTitle(
   const chf = chfText(stop.capUsdMicro, rate);
   if (opts.reviewWaits)
     return `${title} is done; its review waits for ${reviewRoomWords(stop.source)}`;
+  // fixup-w8-l4-leftovers (L4i-left-28): a run under an outer limit is capped at what is left of
+  // it, less its review's reserve, so a hard stop there paused before the limit ran out, as the
+  // session's "Ended before the project's budget ran out" says (before: '"X" paused at the
+  // project's budget of CHF 0.06' with half of it unspent). Only a run that went past it (a
+  // call billed more than it was checked for) says it paused at it.
+  const outer = outerLimitPausedWords(stop.source);
+  if (outer && (stop.stoppedBy === "wrap_up" || limitLeftAtStop(stop))) return `${title} ${outer}`;
   if (stop.stoppedBy === "wrap_up")
     switch (stop.source) {
       case "task_budget":
@@ -148,11 +156,6 @@ export function budgetStopTitle(
         return `${title} paused before the ${saidByName(stop.specialist) ?? "specialist"}'s limit per run ran out`;
       case "session":
         return `${title} paused before this session's budget ran out`;
-      // L4-money-103: a run capped at what was left of an outer limit heard its wrap-up there.
-      case "project":
-        return `${title} paused before the project's budget ran out`;
-      case "month":
-        return `${title} paused before this month's cap ran out`;
       default:
         break;
     }

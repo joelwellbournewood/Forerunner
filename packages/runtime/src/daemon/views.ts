@@ -64,7 +64,9 @@ import {
   blockedOfHandoff,
   type EndedWaits,
   endedStatusText,
+  outerLimitPassedOfHandoff,
   planningStatusText,
+  reviewWaitIds,
   stopReasonOfHandoff,
 } from "../session/stop-words.ts";
 import { guideStoppedLine } from "../sources/repository-words.ts";
@@ -704,15 +706,22 @@ export async function stillBlocked(store: StateStore, handoff: unknown): Promise
   );
   // L4-money-214: a task the person paused while it ran waits on nobody while it is still theirs.
   const pausedByYou = new Set((outcomeOfHandoff(handoff)?.pausedByYou ?? []).map((t) => t.id));
+  // fixup-w8-l4-leftovers (L4i-left-31): of the paused ones, a done task whose review waits for
+  // room is said as its row says it ("1 review waits for room"), never "paused" (before: the
+  // session page's badge read "Ended: 1 paused" beside the row's "Done; its review waits ...").
+  const reviewIds = reviewWaitIds(handoff);
   const out: EndedWaits = { needYou: 0, paused: 0 };
+  let reviewWaits = 0;
   for (const id of new Set(ids)) {
     const t = await store.task.get(id);
     if (!t || (t.status !== "needs_human" && t.status !== "failed")) continue;
     if (pausedByYou.has(id) && isPausedByPerson(t, false)) continue;
-    if (pausedIds.has(id) && t.status === "needs_human") out.paused += 1;
-    else out.needYou += 1;
+    if (pausedIds.has(id) && t.status === "needs_human") {
+      if (reviewIds.has(id)) reviewWaits += 1;
+      else out.paused += 1;
+    } else out.needYou += 1;
   }
-  return out;
+  return reviewWaits ? { ...out, reviewWaits } : out;
 }
 
 export function sessionView(
@@ -768,6 +777,8 @@ export function sessionView(
           s.status,
           stopReasonOfHandoff(s.handoff),
           blockedNow ?? blockedOfHandoff(s.handoff),
+          // fixup-w8-l4-leftovers (L4i-left-28): "Stopped at" only when it spent all of it.
+          outerLimitPassedOfHandoff(s.handoff),
         ),
     ...(planning ? { planning: true } : {}),
   };
