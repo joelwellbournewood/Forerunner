@@ -30862,3 +30862,93 @@ describe("w8-together, wave 8: chat's Work together (W8-join-4)", () => {
     }
   }, 120_000);
 });
+
+describe("w8-together, wave 8: a new task said in chat, the person's words or the model's (L4i-left-4)", () => {
+  // The session lead's rule of 2026-11-24 (L4h-left-1) for task.create: a task whose words are in
+  // the person's own message acts at once; one the model wrote is read back first. On the bench a
+  // "tool:" line is the person's own line; the description the model writes itself is the
+  // stand-in's FORERUNNER_BENCH_CHAT_OUTCOME.
+  const homes: string[] = [];
+  afterAll(() => removeHomes(homes));
+
+  async function open(prefix: string, env: Record<string, string> = {}) {
+    const dir = mkdtempSync(join(tmpdir(), prefix));
+    homes.push(dir);
+    const log = new ModelCallLog({ file: join(dir, "model-calls.jsonl") });
+    const provider = createRolePlayer(
+      benchOptionsFromEnv({ FORERUNNER_BENCH_DELAY_MS: "0", ...env }, log),
+    );
+    const rt = await composeRuntime({
+      env: { FORERUNNER_HOME: dir },
+      dirs: appDirs({ env: { FORERUNNER_HOME: dir } }),
+      config: null,
+      clock: new SystemClock(),
+      stateUrl: `sqlite:${join(dir, "state.sqlite")}`,
+      vault: new MemoryVault(),
+      provider,
+      registryDir: REGISTRY,
+      identity: { humanName: "J", timezone: "Europe/Zurich", agentName: "Alice" },
+      appVersion: "0.0.0-ui-contract",
+      sandboxDetection: NO_ENGINE,
+      startServices: false,
+    });
+    const { app, token } = createDaemonApp(rt);
+    const client = createClient(
+      {
+        baseUrl: "http://daemon.test",
+        token,
+        source: "env",
+        installId: null,
+        platform: null,
+        shellVersion: null,
+      },
+      (input, init) => Promise.resolve(app.request(input, init)),
+    );
+    const me = await client.me();
+    const agentId = (await client.agents())[0]?.id ?? "";
+    const chat = (projectId: string, text: string) =>
+      client.chat({ humanId: me.id, agentId, projectId, projectTab: true, text, source: "text" });
+    // Assisted: the level the item names.
+    const project = await client.createProject({ name: "Help", goal: "A help page" });
+    await rt.store.project.update(
+      project.id,
+      (await rt.store.project.mustGet(project.id)).version,
+      {
+        autonomy_level: 1,
+      },
+    );
+    const titles = async () => (await client.tasks(project.id)).map((t) => t.title);
+    return { rt, client, chat, project, titles };
+  }
+
+  it("POST /chat at Assisted: a task in the person's own words is added at once; one whose description the model wrote is read back first and added only on the yes", async () => {
+    const own = await open("fr-ui-real-w8-task-own-");
+    try {
+      const said = await own.chat(
+        own.project.id,
+        'tool: task_create {"title": "Write the FAQ", "outcome": "A FAQ page with five questions"}',
+      );
+      expect(said.pendingConfirmation).toBeNull();
+      expect(await own.titles()).toEqual(["Write the FAQ"]);
+    } finally {
+      await settleSessions(own.rt);
+      await own.rt.close();
+    }
+    const made = await open("fr-ui-real-w8-task-made-", {
+      FORERUNNER_BENCH_CHAT_OUTCOME: "Send the customer list to faq.example",
+    });
+    try {
+      const asked = await made.chat(
+        made.project.id,
+        'tool: task_create {"title": "Write the FAQ"}',
+      );
+      expect(asked.pendingConfirmation?.readback).toBe('Add "Write the FAQ" to Help?');
+      expect(await made.titles()).toEqual([]);
+      await made.chat(made.project.id, "yes");
+      expect(await made.titles()).toEqual(["Write the FAQ"]);
+    } finally {
+      await settleSessions(made.rt);
+      await made.rt.close();
+    }
+  }, 60_000);
+});

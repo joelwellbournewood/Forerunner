@@ -308,11 +308,14 @@ read back to the person as the model's note and queued as the agent's.
   Nothing else was filed; type your note there with Try again." or "..., and your note was not
   kept." for an option without a note field (L4h-left-4).
 
-Not changed, for the session lead: chat's task_create acts at once at every level when the
-person says it (the parser's "add a task: ..." and the model's call alike; U-015, commands.md's
-parser table, the l4-chat-answers review). Design section 3.9 lists "add a task (ready)" among
-what chat can do and says "Changes are read back once in one line"; the owner's 2026-11-17
-answer is about read-backs that wait, not about which changes are read back; ADR 0119 point 7's
-"asks first at Advisor and Assisted" is about the agent's own fixes, not the person's words.
-Whether a new task the person asks for in chat is read back first is a choice about what the
-person sees; it stays as it is until it is decided.
+Decided (session lead, 2026-11-24, the L4h-left-1 rule; built by w8-together as L4i-left-4):
+a new task said in chat or voice whose words are in the person's own message is the person's and
+acts at once, with its Undo (the parser's "add a task: ..." always; the model's call when its
+title, outcome and acceptance criteria are all in the person's line, `notesPersons`); one the
+model wrote (a title or a description the person never said) is read back first with the task's
+one-line question ('Add "Write the FAQ" to Help?') and added only on the yes. The test is
+`task.create`'s `askFromChatWhen` (`taskWordsAreModels`, commands/task.ts), read by the
+executor's chat read-back rule; every level alike. This replaces the paragraph that left it "Not
+changed, for the session lead". Tests: `packages/commands/test/executor.test.ts` 'w8-together,
+wave 8: a new task said in chat' and `apps/ui/test/real-daemon.test.ts` the same name (the
+stand-in's FORERUNNER_BENCH_CHAT_OUTCOME is a description the model writes itself).

@@ -669,6 +669,11 @@ export interface CommandDef<P = unknown> {
    * before it happens. The Tasks tab's buttons (source ui) act at once, with Undo.
    */
   askFromChat?: boolean;
+  /**
+   * w8-together (L4i-left-4): read back once in chat or voice when this says so for the call
+   * (`task.create`: when its title or description is the model's words, not the person's).
+   */
+  askFromChatWhen?(params: P, ctx: CommandContext): boolean;
   /** The highest risk a dynamic risk can reach; the tool spec and the command table use it. */
   maxRisk?: Risk;
   /**

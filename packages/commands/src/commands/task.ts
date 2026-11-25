@@ -132,6 +132,21 @@ const noteParam = z.string().trim().max(2000).optional().describe(NOTE_PARAM_DES
  */
 const ownNote = (ctx: CommandContext, note: string | undefined): boolean => notesPersons(ctx, note);
 
+/**
+ * w8-together (L4i-left-4): a new task said in chat or voice whose title, outcome or acceptance
+ * criteria are words the model wrote (not in the person's own line, `notesPersons`). The
+ * person's own command (the Tasks tab, chat's patterns) is never asked about here.
+ */
+function taskWordsAreModels(
+  params: { title: string; outcome: string; acceptance_criteria: readonly string[] },
+  ctx: CommandContext,
+): boolean {
+  if (ctx.source !== "chat" && ctx.source !== "voice") return false;
+  return [params.title, params.outcome, ...params.acceptance_criteria]
+    .filter((t) => t.trim().length > 0)
+    .some((t) => !notesPersons(ctx, t));
+}
+
 /** The note a read-back shows when the model made it up ('Note for its next brief: "…"'). */
 function noteClause(ctx: CommandContext, note: string | undefined): string {
   const text = note?.trim();
@@ -1041,6 +1056,10 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
     "Add a task to a project, ready unless a draft is asked for (it joins the running session if it fits, else waits for the person's next Start): title, outcome, acceptance criteria, priority (low, medium or high; medium when not said), the tasks it waits for (titles), its review level (1 light review, the default; 2 full review: needs Docker; 3 full review and the person's sign-off) and who does it (a specialist, or 'person' for a question only the person can answer).",
   params: createParams,
   risk: "low",
+  // w8-together (L4i-left-4; the L4h-left-1 rule, session lead 2026-11-24): said in chat or
+  // voice, a task whose title and description are in the person's own words acts at once; one
+  // the model wrote (a title or an outcome the person never said) is read back first.
+  askFromChatWhen: (params, ctx) => taskWordsAreModels(params, ctx),
   scope: "project",
   reversible: true,
   undoStrategy: "cancel the created task",

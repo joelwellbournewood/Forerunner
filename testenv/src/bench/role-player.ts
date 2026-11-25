@@ -191,6 +191,12 @@ export interface BenchOptions {
    * in the person's words; this knob is the note the model wrote without them.
    */
   chatNote?: string;
+  /**
+   * w8-together (L4i-left-4): the chat model writes a task's description itself
+   * (FORERUNNER_BENCH_CHAT_OUTCOME=<text>): a task_create call given no outcome gets this text,
+   * words the person never said, as `chatNote` is a note they never gave.
+   */
+  chatOutcome?: string;
   clock?: Clock;
 }
 
@@ -285,6 +291,9 @@ export function benchOptionsFromEnv(env: NodeJS.ProcessEnv, log: ModelCallLog): 
     ),
     ...(env.FORERUNNER_BENCH_CHAT_NOTE?.trim()
       ? { chatNote: env.FORERUNNER_BENCH_CHAT_NOTE.trim() }
+      : {}),
+    ...(env.FORERUNNER_BENCH_CHAT_OUTCOME?.trim()
+      ? { chatOutcome: env.FORERUNNER_BENCH_CHAT_OUTCOME.trim() }
       : {}),
   };
 }
@@ -416,10 +425,13 @@ export function createRolePlayer(opts: BenchOptions): ModelProvider {
           titles,
         );
       case "chat":
-        return withMadeUpNote(
-          chatAnswer(req, opts.chatAlone === true, opts.chatNoLook === true),
-          req,
-          opts.chatNote,
+        return withMadeUpOutcome(
+          withMadeUpNote(
+            chatAnswer(req, opts.chatAlone === true, opts.chatNoLook === true),
+            req,
+            opts.chatNote,
+          ),
+          opts.chatOutcome,
         );
       case "task_check":
         // d1109-selftasks-run (ST-14): no change unless the evidence names one.
@@ -1807,6 +1819,22 @@ function withMadeUpNote(answer: Answer, req: ModelRequest, note: string | undefi
     ...answer,
     toolCalls: answer.toolCalls.map((c) =>
       takesNote(c.name) && c.input.note === undefined ? { ...c, input: { ...c.input, note } } : c,
+    ),
+  };
+}
+
+/**
+ * w8-together (FORERUNNER_BENCH_CHAT_OUTCOME): the description the stand-in's chat model writes
+ * for a task_create call that was given none.
+ */
+function withMadeUpOutcome(answer: Answer, outcome: string | undefined): Answer {
+  if (!outcome || !answer.toolCalls?.length) return answer;
+  return {
+    ...answer,
+    toolCalls: answer.toolCalls.map((c) =>
+      c.name === "task_create" && c.input.outcome === undefined
+        ? { ...c, input: { ...c.input, outcome } }
+        : c,
     ),
   };
 }
