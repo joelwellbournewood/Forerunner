@@ -256,9 +256,12 @@ describe("d1109-chat-depth, run C: the signal and Stop (D3-12)", () => {
     let turnId = "";
     // fixup-w8-together (L4i-left-4): the task's title and outcome are the person's own words, so
     // the change acts at once (one the model wrote is read back first, before any change).
-    const pending = w.chat("could you make sure we remember to write the FAQ page? we need an FAQ page.", {
-      onTurn: (t) => (turnId = t.turnId),
-    });
+    const pending = w.chat(
+      "could you make sure we remember to write the FAQ page? we need an FAQ page.",
+      {
+        onTurn: (t) => (turnId = t.turnId),
+      },
+    );
     // Stop once the call after the change is being made (at most 10 s of real time).
     const started = Date.now();
     while (slow.calls.length < 2 && Date.now() - started < 10_000)
