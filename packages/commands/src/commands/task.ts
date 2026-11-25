@@ -1070,9 +1070,12 @@ function createSentence(
   if (p.priority !== DEFAULT_TASK_PRIORITY) parts.push(`${p.priority} priority`);
   if (p.specialist === PERSON_SPECIALIST) parts.push("it asks you in the Inbox");
   else if (p.specialist) parts.push(`for the ${p.specialist}`);
-  const draft = p.status === "draft" ? " as a draft (no session picks it up)" : "";
-  return `Added ${quote(p.title)} to ${projectName}${draft}${parts.length ? `, ${parts.join(", ")}` : ""}.`;
+  return `Added ${quote(p.title)} to ${projectName}${draftWords(p)}${parts.length ? `, ${parts.join(", ")}` : ""}.`;
 }
+
+/** A draft's words in task.create's sentence and read-back; empty for a ready task. */
+const draftWords = (p: Pick<TaskCreateParams, "status">): string =>
+  p.status === "draft" ? " as a draft (no session picks it up)" : "";
 
 /** Dependencies named by id or by title, as ids of the project's tasks (unknown ones kept). */
 async function resolveDependencies(
@@ -1120,11 +1123,14 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
       scope: "project",
       risk: "low",
       sentence: `${createSentence(params, project.name, beforeTitles)}${noFile}`,
-      // The one-line read-back when it waits for a yes (d1109-chat-guard: after a record).
+      // The one-line read-back when it waits for a yes (d1109-chat-guard: after a record;
+      // w8-together, L4i-left-4: a task the model worded). fixup-w8-together: a draft says so,
+      // as its sentence does, so the yes promises no work that no session picks up (the O.8
+      // hand-over of real work as a draft, closeout-conversation.test.ts).
       ask: `${
         beforeTitles.length
           ? `Add ${quote(params.title)} before ${namesList(beforeTitles)}?`
-          : `Add ${quote(params.title)} to ${project.name}?`
+          : `Add ${quote(params.title)} to ${project.name}${draftWords(params)}?`
       }${noFile}`,
       reversible: true,
       projectId: project.id,

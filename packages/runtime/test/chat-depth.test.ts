@@ -254,7 +254,9 @@ describe("d1109-chat-depth, run C: the signal and Stop (D3-12)", () => {
     });
     const w = await world({ provider: slow });
     let turnId = "";
-    const pending = w.chat("could you make sure we remember the FAQ page?", {
+    // fixup-w8-together (L4i-left-4): the task's title and outcome are the person's own words, so
+    // the change acts at once (one the model wrote is read back first, before any change).
+    const pending = w.chat("could you make sure we remember to write the FAQ page? we need an FAQ page.", {
       onTurn: (t) => (turnId = t.turnId),
     });
     // Stop once the call after the change is being made (at most 10 s of real time).
@@ -1080,8 +1082,11 @@ describe("d1109-chat-depth fixup: Think it through never under a change", () => 
         textReply("Two tasks are left."),
       ],
     });
-    // A line the parser does not take: the model makes the change with its command tool.
-    const changed = await w.chat("could you make sure we remember the FAQ page?");
+    // A line the parser does not take: the model makes the change with its command tool, in the
+    // person's own words, so it acts at once (fixup-w8-together, L4i-left-4).
+    const changed = await w.chat(
+      "could you make sure we remember to write the FAQ page? we need an FAQ page.",
+    );
     expect(w.requests()).toHaveLength(2);
     expect(changed.actions.map((a) => a.kind)).toContain("task.create");
     expect(changed.pendingConfirmation).toBeNull();

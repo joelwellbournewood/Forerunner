@@ -290,18 +290,27 @@ describe("conversation agent close-out (spec O.2, O.6, O.8)", () => {
         "That needs real work.",
         { when: { toolAvailable: "task_create" } },
       ),
-      textReply(
-        "That needs real work: I handed it to your agent as a draft task; you will hear back in the inbox.",
-        { when: { lastUserIncludes: "as a draft" } },
-      ),
     ]);
-    const res = await w.chat(question);
+    const draftsNow = () => w.store.task.list({ project_id: w.game, status: "draft" } as never);
+    const asked = await w.chat(question);
+    // fixup-w8-together (L4i-left-4; ADR 0119, the L4h-left-1 rule): the hand-over's words are the
+    // model's ("Compare the three renderers" is not in the person's question), so it is read back
+    // first, saying it is a draft, and nothing is added before the yes. Before the rule the draft
+    // was added at once.
+    expect(asked.actions).toEqual([]);
+    expect(asked.pendingConfirmation?.readback).toBe(
+      'Add "Compare the three renderers" to Game as a draft (no session picks it up)?',
+    );
+    expect(await draftsNow()).toHaveLength(0);
+    const res = await w.chat("yes");
     expect(res.actions[0]?.kind).toBe("task.create");
     expect(res.actions[0]?.undoToken).toBeTruthy();
     // It says so: the reply names the hand-over, after the registry confirmed the draft task.
-    expect(res.reply).toContain("handed it to your agent as a draft task");
-    expect(res.actions[0]?.summary).toContain("as a draft (no session picks it up)");
-    const drafts = await w.store.task.list({ project_id: w.game, status: "draft" } as never);
+    expect(res.actions[0]?.summary).toBe(
+      'Added "Compare the three renderers" to Game as a draft (no session picks it up).',
+    );
+    expect(res.reply).toContain("as a draft (no session picks it up)");
+    const drafts = await draftsNow();
     expect(drafts).toHaveLength(1);
     const task = drafts[0];
     if (!task) throw new Error("no draft task");
