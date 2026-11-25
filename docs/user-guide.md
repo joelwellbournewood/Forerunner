@@ -1975,3 +1975,19 @@ the next time it starts.
   GitHub), GitHub did not answer (try again in a moment), or the saved token cannot push. A
   take-over you made with a brief whose plan's docs pull request could not be opened shows the
   same line with Try again.
+
+
+### Words for limits, reviews and credentials (2026-11-25)
+
+When a session ends because the project's budget, this month's cap or your subscription's share
+had too little room for the next step, it says "Ended before the project's budget ran out": the
+limit is never passed. A task whose work is done and whose review waits for room says so in
+every place ("is done; its review waits for room"). When the critic's review of a task reaches
+the share of your subscription Forerunner may use, your choice under Which Claude does the work
+decides what happens, as for the work itself: with "then the API key" the review goes on there,
+within the task's budget; with "ask me first" you get one card; with "then wait" the review waits
+for the month's start or a raised allowance. With "API key first, then subscription" and your
+key resting, the Start dialog and the plan card name the tasks that wait for the key and count
+only the work your subscription does. The session plan card of Assisted mode has the buttons
+Approve and Reject, each with what it does. A task that has spent nothing shows no amount on the
+Tasks tab.

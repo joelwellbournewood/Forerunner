@@ -3303,3 +3303,13 @@ L4 (fixup)").
   MEMBER, and the reverse with bob; each reads the other's role as write; a repeated read is not
   modified (a 304 on the stand-in); Bob's first read after his restart is a full read; neither
   home holds the ETag on disk. No screen changes: this area builds the host calls only.
+
+
+## w8-l4-leftovers (wave 8, 2026-11-25)
+
+- The Tasks tab's money cell shows nothing for a task that spent nothing (L4i-left-64, design
+  section 5 rule 5): before, every such row read "CHF 0.00". Test: `test/w8-l4-leftovers.test.tsx`.
+- The Start dialog's credential line and the plan card's foot line are the daemon's words; the
+  UI shows them as they come (L4i-left-32, `runtime.md`). The real-daemon cases are under
+  "w8-l4-leftovers, wave 8" in `test/real-daemon.test.ts`; no route or field changed, so the fake
+  daemon is unchanged.

@@ -3433,11 +3433,12 @@ fixup-l4-selftasks-chat (L4-selftasks-121; C2-left-14, C4-left-4, C3-left-10) ad
 - **The stand-in GitHub: users, an organisation and a collaborator's role** (testenv). A repository
   record has `readers` beside `collaborators`; `FakeGitHost.setCollaboratorRole(repo, login,
   "write" | "read" | "none")` sets one (`addCollaborator` is `write`). A reader can see and clone
-  the repository (`GET /user/repos` lists it, `checkRepoAccess` lets reads through) and is refused
-  every write but opening an issue and commenting (403, as GitHub answers a read collaborator;
-  w8-issue-host: the read role opens issues and comments, as on GitHub; the test pushes a file and
-  makes a label); `none`
-  takes both away (404, as for any private repository the login cannot see). For w8-shared-repo (the person without write access). Tests: `testenv/test/githost.test.ts`
+  the repository (`GET /user/repos` lists it, `checkRepoAccess` lets reads through). A reader is
+  refused every write but opening an issue and commenting, with a 403, as GitHub answers a read
+  collaborator. Since w8-issue-host the read role opens issues and comments, as on GitHub; the
+  test pushes a file and makes a label to see the refusals. The role `none` takes both away with
+  a 404, as GitHub answers for a private repository the login cannot see. The roles are there for
+  w8-shared-repo, the person without write access. Tests: `testenv/test/githost.test.ts`
   "w8-two-homes, wave 8: two users, an organisation and a collaborator's role".
 - **Two benches on one GitHub, GitHub off for one, the two-person journey** (W8-homes-3, -4, -5):
   `start.mjs --githost <port> --users ada,bob --org team` and, for the second bench,
