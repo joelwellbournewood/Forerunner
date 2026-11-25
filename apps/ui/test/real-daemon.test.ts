@@ -8074,10 +8074,15 @@ describe("the UI client against the real daemon: a task that waits for unmerged 
       repos: ["o/shared"],
     });
     const listed = await client.projectPullRequests(second.id);
-    expect(listed.waiting.filter((w) => w.kind === "docs")).toEqual([]);
+    // w8-together (W8a-left-22): the second project's scaffold opens its own docs pull request
+    // on its own branch (before: none, it stopped at the first one's); never the first one's.
+    expect(listed.waiting.filter((w) => w.kind === "docs").map((w) => w.branch)).toEqual([
+      "fr/docs-scaffold-shared-two",
+    ]);
     // Its Docs tab does not say its docs wait in the first project's pull request.
+    const firstNumber = firstDocs[0]?.number;
     for (const d of await client.docs(second.id))
-      expect(d.note ?? "", d.path).not.toMatch(/waiting in pull request/);
+      expect(d.note ?? "", d.path).not.toContain(`waiting in pull request #${firstNumber}:`);
   }, 120_000);
 });
 
@@ -12748,12 +12753,14 @@ describe("w15-merge, wave 15", () => {
           .filter((p) => p.head.ref.startsWith("fr/status") || p.head.ref === "fr/docs-scaffold")
           .map((p) => p.number),
       ).toEqual([scaffold?.number]);
-      // Each Overview lists only its own docs pull requests.
+      // Each Overview lists only its own docs pull requests. w8-together (W8a-left-22): B's
+      // scaffold opens its own on its own branch (before: none, it stopped at A's).
       expect(await docsRows(client, a.id)).toEqual([`fr/docs-scaffold #${scaffold?.number}`]);
-      expect(await docsRows(client, b.id)).toEqual([]);
+      const bRows = await docsRows(client, b.id);
+      expect(bRows.map((r) => r.split(" ")[0])).toEqual(["fr/docs-scaffold-shared-b"]);
       // B's Docs tab does not say its docs wait in A's pull requests.
       for (const d of await client.docs(b.id))
-        expect(d.note ?? "", d.path).not.toMatch(/waiting in pull request/);
+        expect(d.note ?? "", d.path).not.toContain(`waiting in pull request #${scaffold?.number}:`);
       // B's status stayed in the app, and its Docs tab reads it there (the review of the fix:
       // "docs/status.md missing / not written yet" while the app kept it).
       const statusOfB = async () => {
@@ -12774,7 +12781,7 @@ describe("w15-merge, wave 15", () => {
       await rt.close();
       ({ rt, client } = await compose());
       expect(await docsRows(client, a.id)).toEqual([`fr/docs-scaffold #${scaffold?.number}`]);
-      expect(await docsRows(client, b.id)).toEqual([]);
+      expect(await docsRows(client, b.id)).toEqual(bRows);
       await statusOfB();
     } finally {
       await rt.close();
@@ -17652,7 +17659,9 @@ describe("l3-chat-claims, run L3", () => {
       // A change made in the turn: an "asked" claim beside it is replaced with the change's own
       // sentence, the one its row with Undo shows; nothing waits.
       before = chatCalls().length;
-      const added = await say("the links need a look, can you see to it?");
+      // w8-together (L4i-left-4): the task's title is in the person's own words, so it is
+      // added at once (a title the model wrote itself is read back first).
+      const added = await say("check the links, can you see to it?");
       expect(chatCalls().length - before).toBe(3);
       // d1109-starts-engine S-9: the line says when the new task runs (no session is running).
       const sentence = 'Added "Check the links" to Reading rules. It runs at your next Start.';
@@ -18480,6 +18489,10 @@ describe("d1109-onerepo-link, run C", () => {
         canTakeOver: false,
         takeOverLine: null,
         details: null,
+        // w8-together (OJ-11): Work together is offered first on this line now.
+        canWorkTogether: true,
+        togetherLine:
+          'This project\'s tasks, plan and cards move into "Kite club"; both Forerunners work on it.',
       });
       const busy = await press(client);
       expect(busy.status).toBe("refused");
@@ -18498,6 +18511,10 @@ describe("d1109-onerepo-link, run C", () => {
         takeOverLine:
           'The repository then names this project: choose it only if no Forerunner uses "Kite club" now.',
         details: 'The pull requests of "Kite club" stay as they are.',
+        // w8-together (OJ-11): Work together is offered first on this line now.
+        canWorkTogether: true,
+        togetherLine:
+          'This project\'s tasks, plan and cards move into "Kite club"; both Forerunners work on it.',
       });
       const done = await press(client);
       expect(done.status).toBe("done");
@@ -20181,7 +20198,10 @@ describe("d1109-onerepo-join, run C", () => {
         state: "open",
         head: "fr/docs-scaffold",
       });
-      expect(await docsRows(client, site.id)).toEqual([]);
+      // w8-together (W8a-left-22): Site's scaffold opened its own docs pull request on its own
+      // branch (before: none, it stopped at Kite club's fr/docs-scaffold).
+      const siteOwn = await docsRows(client, site.id);
+      expect(siteOwn.map((r) => r.split(" ")[0])).toEqual(["fr/docs-scaffold-site"]);
       const joined = await client.executeCommands({
         commands: [{ name: "project.join", params: { keep: site.id, close: [kite.id] } }],
         wordsUsed: "Make one project (Overview)",
@@ -20191,10 +20211,11 @@ describe("d1109-onerepo-join, run C", () => {
       });
       expect(joined.status).toBe("done");
       const kiteRows = [`fr/docs-scaffold #${scaffold?.number}`];
-      expect(await docsRows(client, site.id)).toEqual(kiteRows);
+      const both = [...kiteRows, ...siteOwn].sort();
+      expect((await docsRows(client, site.id)).sort()).toEqual(both);
       await rt.close();
       ({ rt, client } = await compose());
-      expect(await docsRows(client, site.id)).toEqual(kiteRows);
+      expect((await docsRows(client, site.id)).sort()).toEqual(both);
       await session(site.id, "Write the notes in site-notes.md");
       expect(await host.listPullRequests(repo, { state: "all", head: "fr/status" })).toEqual([]);
       const text = (await client.doc(site.id, "docs/status.md")).content;
@@ -20381,7 +20402,7 @@ describe("d1109-onerepo-join, run C", () => {
       const asked = await say('tool: project_join {"keep":"Site","close":["Kite club"]}');
       const def = chatCalls[0]?.tools?.find((t) => t.name === "project_join");
       expect(def?.description).toBe(
-        "Make one project of projects on this computer that work in the same repository or folder: keep is the project the person chose to keep, close the others. Their tasks, plan, cards and open pull requests move into the kept project; their sessions, changes and spending stay readable where they are, and no budget changes. Only when the person asks for it and names the project to keep; never choose it yourself.",
+        'Make one project of projects on this computer that work in the same repository or folder: keep is the project the person chose to keep, close the others. Their tasks, plan, cards and open pull requests move into the kept project; their sessions, changes and spending stay readable where they are, and no budget changes. Only when the person asks for it and names the project to keep; never choose it yourself. When the person asks to work together on a project whose repository is another Forerunner\'s project, keep is {"together": true} and close names that one project.',
       );
       expect(asked.pendingConfirmation?.readback).toContain(
         'Make one project: move the tasks, plan and cards of "Kite club" into "Site"? Changes has its Undo.',
@@ -25097,7 +25118,7 @@ describe("l4-chat-answers, run L4", () => {
       const names = (call?.tools ?? []).map((t) => t.name);
       const def = call?.tools?.find((t) => t.name === "project_create")?.description ?? "";
       expect(def).toBe(
-        "Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead: the person can open it or add the new work to it, never a second project. To open it for the person, call project_switch.",
+        "Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead: the person can open it or add the new work to it, never a second project. To open it for the person, call project_switch. When the refusal says the repository is another Forerunner's project and the person asks to work on it together, call this again with the same repositories and together true.",
       );
       expect(def).not.toMatch(/\b[a-z]+\.[a-z_]+\b/);
       for (const tool of def.match(/\b[a-z]+_[a-z_]+\b/g) ?? []) expect(names).toContain(tool);
@@ -30259,7 +30280,7 @@ describe("l4-github-carried, run L4: Try again on the take-over's line (L4e-left
     return { work, host, seeded, compose };
   };
 
-  it("the no-pull-request line offers Try again; a push GitHub refuses and another project's open docs pull request are refused in one sentence each and keep the line; once both are out of the way, Try again opens one pull request on this project's own branch, never touches main or the other project's branch, and the line is gone, also after the daemon starts again", async () => {
+  it("the no-pull-request line offers Try again; a push GitHub refuses is refused in one sentence and keeps the line; once the push works, Try again opens one pull request on this project's own branch while another project's docs pull request stays open on fr/docs-scaffold (W8a-left-22), never touches main, the other project's branch or its pull request, and the line is gone, also after the daemon starts again", async () => {
     const w = world();
     const { bare, seed, seedDir } = await w.seeded("kite", {
       "README.md": "# kite\n",
@@ -30303,10 +30324,14 @@ describe("l4-github-carried, run L4: Try again on the take-over's line (L4e-left
         prUrl: null,
       });
       expect((await client.project(made.id)).repositoryElsewhere).toMatchObject(line);
-      // 2. The push works now, but the other project's docs pull request is open on its branch.
+      // 2. The push works now, and the other project's docs pull request is open on its branch.
       // w8-repo-guide (L4i-left-2): its body names no project (an older version's, or one a
       // person edited), and this is the only project here linked to o/kite: still nobody's, so
       // nothing is written to it (before, the body had to carry Sandbox's mark).
+      // w8-together (W8a-left-22): that branch is passed over, so Try again opens this project's
+      // own docs pull request on its own branch while the other stays open (before, the press
+      // was refused with 'another docs pull request is open on o/kite' until the person closed
+      // that one on GitHub).
       rmSync(hook);
       const sandboxPr = await w.host.openPullRequestAs(repo, "sandbox-person", {
         title: "docs: scaffold",
@@ -30314,30 +30339,22 @@ describe("l4-github-carried, run L4: Try again on the take-over's line (L4e-left
         head: "fr/docs-scaffold",
         base: "main",
       });
-      expect(await client.retryTakeOver(made.id)).toEqual({
-        state: "refused",
-        sentence:
-          "The docs pull request still could not be opened: another docs pull request is open on o/kite; close it on GitHub, then try again.",
-        prUrl: null,
-      });
-      expect(w.host.writesBy("alice").filter((x) => x.number === sandboxPr.number)).toEqual([]);
-      expect((await w.host.getPullRequest(repo, sandboxPr.number)).state).toBe("open");
-      expect(await git("rev-parse", "fr/docs-scaffold")).toBe(sandboxBefore);
-      expect((await client.project(made.id)).repositoryElsewhere).toMatchObject(line);
-      // 3. The person closes that one on GitHub; the daemon starts again; the line is still there.
-      await w.host.updatePullRequest(repo, sandboxPr.number, { state: "closed" });
-      await settleSessions(rt);
-      await rt.close();
-      ({ rt, client } = await w.compose());
       expect((await client.project(made.id)).repositoryElsewhere).toMatchObject(line);
       const opened = await client.retryTakeOver(made.id);
       const open = await w.host.listPullRequests(repo, { state: "open" });
-      expect(open.map((p) => p.head.ref)).toEqual(["fr/docs-scaffold-kite-flyers"]);
+      expect(open.map((p) => p.head.ref).sort()).toEqual([
+        "fr/docs-scaffold",
+        "fr/docs-scaffold-kite-flyers",
+      ]);
+      const ownPr = open.find((p) => p.head.ref === "fr/docs-scaffold-kite-flyers");
       expect(opened).toEqual({
         state: "opened",
-        sentence: `Opened #${open[0]?.number}: once you merge it, GitHub names this project.`,
-        prUrl: open[0]?.htmlUrl,
+        sentence: `Opened #${ownPr?.number}: once you merge it, GitHub names this project.`,
+        prUrl: ownPr?.htmlUrl,
       });
+      // Nothing was written to, commented on or closed in the other project's pull request.
+      expect(w.host.writesBy("alice").filter((x) => x.number === sandboxPr.number)).toEqual([]);
+      expect((await w.host.getPullRequest(repo, sandboxPr.number)).state).toBe("open");
       // Its branch names this project; main and the other project's branch are as they were.
       const named = await git("show", "fr/docs-scaffold-kite-flyers:.forerunner/project.json");
       expect(JSON.parse(named)).toMatchObject({ project: made.id });
@@ -30354,7 +30371,11 @@ describe("l4-github-carried, run L4: Try again on the take-over's line (L4e-left
       await rt.close();
       ({ rt, client } = await w.compose());
       expect((await client.project(made.id)).repositoryElsewhere ?? null).toBeNull();
-      expect((await w.host.listPullRequests(repo, { state: "open" })).length).toBe(1);
+      expect(
+        (await w.host.listPullRequests(repo, { state: "open" })).map((p) => p.head.ref).sort(),
+      ).toEqual(["fr/docs-scaffold", "fr/docs-scaffold-kite-flyers"]);
+      expect(w.host.writesBy("alice").filter((x) => x.number === sandboxPr.number)).toEqual([]);
+      expect(await git("rev-parse", "fr/docs-scaffold")).toBe(sandboxBefore);
       await settleSessions(rt);
     } finally {
       await rt.close();
