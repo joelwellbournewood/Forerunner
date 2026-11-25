@@ -6,6 +6,7 @@ import { aboutWords, moneyWords, moneyWordsFirst } from "./money-words.ts";
 import { namesOf } from "./recovery.ts";
 import {
   MONTH_CAP_STOP,
+  outerLimitPassed,
   PLAN_SHARE_STOP,
   PROJECT_BUDGET_STOP,
   stopLimitWords,
@@ -271,14 +272,23 @@ const titlesOf = (l: readonly NamedTask[]) => l.map((t) => t.title);
  * How the session ended, in words, or "" when it simply ran out of work. A pause at an outer
  * limit names it, with its amount when known (`capChfMicro`, ADR 0112).
  */
-export function stopWords(stopReason: string, capChfMicro?: number): string {
+export function stopWords(
+  stopReason: string,
+  capChfMicro?: number,
+  spentChfMicro?: number,
+): string {
+  // fixup-w8-l4-leftovers (L4i-left-28): "Stopped at" only when the session's spend reached the
+  // limit (a call billed more than it was checked for), as its badge says (`outerLimitPassed`).
+  const passed = outerLimitPassed({ spentChfMicro, stopCapChfMicro: capChfMicro });
   switch (stopReason) {
-    // w8-l4-leftovers (L4i-left-28): the session ended before the limit ran out (a limit is
-    // never passed); before, "Stopped at the project's budget of CHF 0.06. CHF 0.04." read as
-    // all of it spent while part of it was left.
+    // w8-l4-leftovers (L4i-left-28): the session ended before the limit ran out (a run under it
+    // is capped at what is left); before, "Stopped at the project's budget of CHF 0.06. CHF
+    // 0.04." read as all of it spent while part of it was left.
     case MONTH_CAP_STOP:
     case PROJECT_BUDGET_STOP:
-      return `Ended before ${stopLimitWords(stopReason, capChfMicro)} ran out.`;
+      return passed
+        ? `Stopped at ${stopLimitWords(stopReason, capChfMicro)}.`
+        : `Ended before ${stopLimitWords(stopReason, capChfMicro)} ran out.`;
     case PLAN_SHARE_STOP:
       return "Ended before the share of your Claude subscription that Forerunner may use ran out.";
     case "you":
@@ -477,7 +487,7 @@ export const RESULT_LINE_BUILDERS: ResultLineBuilder[] = [
     name: "how it ended",
     line: 3,
     build: (_f, o) => {
-      const stop = stopWords(o.stopReason, o.stopCapChfMicro);
+      const stop = stopWords(o.stopReason, o.stopCapChfMicro, o.spentChfMicro);
       return stop ? [stop] : [];
     },
   },
@@ -670,6 +680,18 @@ export type PausedTask = NamedTask & {
   reviewWaits?: boolean;
 };
 
+/**
+ * fixup-w8-l4-leftovers (L4i-left-28): whether a paused task paused before its limit ran out, as
+ * its card's `pausedBeforeLimit` decided when the session ended (`before`: its run heard the
+ * wrap-up, or it stopped under an outer limit with some of it left). Before, a hard stop under
+ * the project's budget read '"X" paused at the project's budget of CHF 0.06' beside "Ended before
+ * the project's budget of CHF 0.06 ran out." with half of it unspent. One rule for the result,
+ * the session's task rows and the Sessions row (`session-list.ts`).
+ */
+export function pausedBefore(t: Pick<PausedTask, "before" | "reviewWaits">): boolean {
+  return t.reviewWaits !== true && t.before === true;
+}
+
 /** "test", "test and lint", "test, lint and 1 more": at most two check names. */
 function checkNames(names: readonly string[]): string {
   return names.length > 2
@@ -696,7 +718,7 @@ export function pausedSentences(paused: readonly PausedTask[], told?: ToldByCard
   // L4-money-111: a task whose review waits for room is done, not paused at its budget.
   const how = one.reviewWaits
     ? `is done; its review waits for room in ${one.limit}`
-    : one.before
+    : pausedBefore(one)
       ? `paused before ${one.limit} ran out`
       : `paused at ${one.limit}`;
   if (shown.length === 1) {
@@ -714,8 +736,13 @@ export function pausedSentences(paused: readonly PausedTask[], told?: ToldByCard
     ];
   }
   const names = namesOf(titlesOf(shown));
+  // fixup-w8-l4-leftovers (L4i-left-28): before a limit ran out when each of them did.
   if (waiting === shown.length)
-    return [`${names} paused at a limit: they are ready again once it is raised or resets.`];
+    return [
+      shown.every(pausedBefore)
+        ? `${names} paused before a limit ran out: they are ready again once it is raised or resets.`
+        : `${names} paused at a limit: they are ready again once it is raised or resets.`,
+    ];
   if (waiting > 0) return [`${names} paused at a budget: see their cards in the Inbox.`];
   return [`${names} paused at a budget: continue or cancel them in the Inbox.`];
 }

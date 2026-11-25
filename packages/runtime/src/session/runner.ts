@@ -169,6 +169,7 @@ import {
   workHash,
 } from "./review-pending.ts";
 import { type ReviewRefusal, reviewRefusalOf } from "./review-refusal.ts";
+import { pausedBeforeLimit } from "./review-room-words.ts";
 import {
   needsContainerSandbox,
   type SandboxGate,
@@ -179,6 +180,7 @@ import {
 import {
   budgetStopReasonOf,
   endedStatusText,
+  outerLimitPassed,
   type PersonStop,
   personStopOf,
   stopLimitWords,
@@ -4011,10 +4013,10 @@ export class SessionRunner {
                 ),
                 // A limit no Continue lifts: it goes on by itself once raised or reset.
                 ...(offersContinue(source) ? {} : { waits: true }),
-                // L3-research-2: its run heard the wrap-up and paused before the limit ran out.
-                ...(card.stopped_by === "wrap_up" && card.review_waits !== true
-                  ? { before: true }
-                  : {}),
+                // L3-research-2: its run heard the wrap-up and paused before the limit ran out;
+                // fixup-w8-l4-leftovers (L4i-left-28): so did a hard stop under an outer limit
+                // with some of it left (one rule with the card's title, `pausedBeforeLimit`).
+                ...(pausedBeforeLimit(card) ? { before: true } : {}),
                 // L4-money-111: the work is done and only its review waits for room.
                 ...(card.review_waits === true ? { reviewWaits: true } : {}),
                 // d1109-oversize-pause (OP-7, OP-8): from the card, the one place of the fact.
@@ -4187,11 +4189,16 @@ export class SessionRunner {
         const waits = uniq([...needsHuman, ...failed]).filter((id) => !pausedByYou(id));
         // L4g-left-3 (l4-starts-carried): one money wording everywhere (W14-6): an amount above
         // zero never reads "CHF 0.00" (the result beside it says "Less than CHF 0.01.").
-        const endedNote = `${endedStatusText(status, stopReason, {
-          needYou: waits.filter((id) => !pausedIds.has(id)).length,
-          paused: waits.filter((id) => pausedIds.has(id) && !reviewIds.has(id)).length,
-          reviewWaits: waits.filter((id) => reviewIds.has(id)).length,
-        })}. Spent ${moneyWords(formatChf(spentChf), spentChf)}.`;
+        const endedNote = `${endedStatusText(
+          status,
+          stopReason,
+          {
+            needYou: waits.filter((id) => !pausedIds.has(id)).length,
+            paused: waits.filter((id) => pausedIds.has(id) && !reviewIds.has(id)).length,
+            reviewWaits: waits.filter((id) => reviewIds.has(id)).length,
+          },
+          outerLimitPassed(outcome),
+        )}. Spent ${moneyWords(formatChf(spentChf), spentChf)}.`;
         try {
           docsOutcome = await this.deps.docs.writeSessionStatus({
             project,
@@ -4644,6 +4651,9 @@ export class SessionRunner {
       // apart, so the end line says it as its row does ("1 review waits for room").
       paused: pausedNow.filter((id) => !reviewWaitsCard(id)).length,
       reviewWaits: pausedNow.filter(reviewWaitsCard).length,
+      // fixup-w8-l4-leftovers (L4i-left-28): the session spent all of the outer limit it ended
+      // at, so its end line says "Stopped at" (else "Ended before ... ran out").
+      ...(outerLimitPassed(outcome) ? { limitPassed: true } : {}),
       cancelled: cancelled.length,
       reviewFailed: reviewFailed.length,
       skipped: notStarted.length,

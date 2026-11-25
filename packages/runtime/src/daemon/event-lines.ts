@@ -372,7 +372,8 @@ export function personLine(type: string, p: Payload, chfPerUsd: number): string 
         return counts
           ? `Session over: ${counts}. ${moneyWordsFirst(chf("spentUsdMicro"), n("spentUsdMicro"))}.`
           : `Session over. ${moneyWordsFirst(chf("spentUsdMicro"), n("spentUsdMicro"))}.`;
-      const status = sessionStatusText(s("status"), s("stopReason"));
+      // fixup-w8-l4-leftovers (L4i-left-28): "Stopped at" only when it spent all of the limit.
+      const status = sessionStatusText(s("status"), s("stopReason"), p.limitPassed === true);
       const head = status === "Done" ? "Session over" : status;
       // U-078: the tasks that wait for a credential are said by the wait's line, not again as
       // "not started".

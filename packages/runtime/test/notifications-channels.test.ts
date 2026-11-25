@@ -783,9 +783,11 @@ describe("producers", () => {
     expect(producers.sessionEndIsNews(facts)).toBe(true);
     const month = producers.sessionEnded("h-1", facts);
     // The title has 60 characters: the limit; the amounts lead the body.
+    // fixup-w8-l4-leftovers (L4i-left-28): it ended before the cap ran out (CHF 0.04 of 0.23), as
+    // the result says (before: "stopped at this month's cap").
     expect(month).toMatchObject({
       kind: "budget_stop",
-      title: "Quote page: stopped at this month's cap",
+      title: "Quote page: ended before this month's cap ran out",
       body: "This month's cap is CHF 0.23. The session spent CHF 0.04. Raise the monthly spending cap in Settings to go on.",
       dedupeKey: "session:s-2:budget",
     });
@@ -795,7 +797,7 @@ describe("producers", () => {
       stopCapChfMicro: 400_000,
       news: ["Ended before the project's budget of CHF 0.40 ran out. CHF 0.04."],
     });
-    expect(project.title).toBe("Quote page: stopped at the project's budget");
+    expect(project.title).toBe("Quote page: ended before the project's budget ran out");
     expect(project.body).toBe(
       "The project's budget is CHF 0.40. The session spent CHF 0.04. Raise the project budget in Settings to go on.",
     );
@@ -806,9 +808,21 @@ describe("producers", () => {
         "Ended before the share of your Claude subscription that Forerunner may use ran out. CHF 0.04.",
       ],
     });
-    expect(plan.title).toBe("Quote page: stopped at your Claude subscription's share");
+    expect(plan.title).toBe("Quote page: ended before your subscription's share ran out");
     expect(plan.body).toBe(
       "The session spent CHF 0.04. It can go on once your Claude subscription's usage resets.",
+    );
+    // fixup-w8-l4-leftovers (L4i-left-28): a session that spent all of the limit (a call billed
+    // more than it was checked for) says it stopped at it, as its result does.
+    const past = producers.sessionEnded("h-1", {
+      ...facts,
+      stopReason: "budget_project",
+      stopCapChfMicro: 30_000,
+      news: ["Stopped at the project's budget of CHF 0.03. CHF 0.04."],
+    });
+    expect(past.title).toBe("Quote page: stopped at the project's budget");
+    expect(past.body).toBe(
+      "The project's budget is CHF 0.03. The session spent CHF 0.04. Raise the project budget in Settings to go on.",
     );
   });
 

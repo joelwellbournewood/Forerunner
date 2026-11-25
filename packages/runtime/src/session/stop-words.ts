@@ -117,7 +117,16 @@ export function stopLimitWords(
  * was back), "Ended with a plan for you to approve" (it read "Waiting for you: approve the plan"
  * after the plan was approved).
  */
-export function sessionStatusText(status: string, stopReason: string | null | undefined): string {
+export function sessionStatusText(
+  status: string,
+  stopReason: string | null | undefined,
+  /**
+   * fixup-w8-l4-leftovers (L4i-left-28): the session's own spend reached the outer limit it ended
+   * at (`outerLimitPassed`): only then "Stopped at the project's budget" (a call billed more than
+   * it was checked for); else it ended before the limit ran out.
+   */
+  limitPassed = false,
+): string {
   if (status === "running") return "Working";
   if (status === "paused") return "Stopping after this task";
   if (status === "planned") return "Starting";
@@ -142,7 +151,9 @@ export function sessionStatusText(status: string, stopReason: string | null | un
     case MONTH_CAP_STOP:
     case PROJECT_BUDGET_STOP:
     case PLAN_SHARE_STOP:
-      return `Ended before ${stopLimitWords(stopReason)} ran out`;
+      return limitPassed
+        ? `Stopped at ${stopLimitWords(stopReason)}`
+        : `Ended before ${stopLimitWords(stopReason)} ran out`;
     case "timeout":
       return "Stopped: the time limit was reached";
     case "plan_awaiting_approval":
@@ -249,8 +260,10 @@ export function endedStatusText(
   status: string,
   stopReason: string | null,
   waits: number | EndedWaits,
+  /** fixup-w8-l4-leftovers (L4i-left-28): `sessionStatusText`'s `limitPassed`. */
+  limitPassed = false,
 ): string {
-  const text = sessionStatusText(status, stopReason);
+  const text = sessionStatusText(status, stopReason, limitPassed);
   const {
     needYou,
     paused,
@@ -285,6 +298,26 @@ export function stillWaitsText(waits: EndedWaits): string | null {
   ]
     .filter(Boolean)
     .join(", ");
+}
+
+/**
+ * fixup-w8-l4-leftovers (L4i-left-28): whether a session that ended at an outer limit spent all of
+ * it (its outcome's `spentChfMicro` against `stopCapChfMicro`, the limit's amount): a call billed
+ * more than it was checked for can take a run past it. Without both figures: not passed.
+ */
+export function outerLimitPassed(
+  o: { spentChfMicro?: unknown; stopCapChfMicro?: unknown } | null | undefined,
+): boolean {
+  const spent = o?.spentChfMicro;
+  const cap = o?.stopCapChfMicro;
+  return typeof spent === "number" && typeof cap === "number" && cap > 0 && spent >= cap;
+}
+
+/** `outerLimitPassed` of a session row's handoff (its `outcome`). */
+export function outerLimitPassedOfHandoff(handoff: unknown): boolean {
+  if (!handoff || typeof handoff !== "object" || Array.isArray(handoff)) return false;
+  const o = (handoff as { outcome?: unknown }).outcome;
+  return o && typeof o === "object" ? outerLimitPassed(o as Record<string, unknown>) : false;
 }
 
 /** `handoff.stop_reason` of a session row, or null. */

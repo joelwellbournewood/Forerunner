@@ -30697,3 +30697,86 @@ describe("w8-l4-leftovers, wave 8: a review that waits is said one way on the se
     }
   }, 60_000);
 });
+
+/**
+ * fixup-w8-l4-leftovers, wave 8 (L4i-left-28, the review's blocking item 2), through the UI's
+ * client: a pause under the project's budget says "paused before it ran out" only while some of
+ * it is left (the composed hard stop with room left is budget-pause.test.ts' 'w8-l4-leftovers,
+ * wave 8' case). Here the stand-in bills each heron call 40,000 tokens more than it was checked
+ * for, so the run went past the project's budget of CHF 0.06 (CHF 0.07): every place says it
+ * paused, and the session stopped, at the budget, in one wording; none says "ended before".
+ */
+describe("w8-l4-leftovers, wave 8: a pause at the project's budget is said one way, true to what was spent (L4i-left-28)", () => {
+  it("a run that went past the budget: the result, the badge, the task rows, the Sessions row, the card and the log say 'at' it", async () => {
+    const { rt, client } = await composeWithRolePlayer({ FORERUNNER_BENCH_USAGE: "heron:40000" });
+    try {
+      const me = await client.me();
+      const agentId = (await client.agents())[0]?.id ?? "";
+      const project = await client.createProject({ name: "Bird notes", goal: "Notes about birds" });
+      // The project's budget of CHF 0.06, as Settings sets it.
+      await rt.store.project.patch(project.id, { budget_usd_micro: 75_000 });
+      const heron = await client.createTask(project.id, {
+        title: "Write the heron page",
+        outcome: "heron.md exists",
+        riskTier: 1,
+        specialist: "coder",
+        priority: "high",
+      });
+      await client.createTask(project.id, {
+        title: "Write the owl page",
+        outcome: "owl.md exists",
+        riskTier: 1,
+        specialist: "coder",
+        priority: "low",
+      });
+      const started = await client.startSession({ agentId, projectId: project.id });
+      const sessionId = started.session?.id ?? "";
+      await eventually(
+        async () =>
+          ["completed", "stopped", "failed", "killed"].includes(
+            (await client.session(sessionId)).status,
+          ),
+        "the session to end",
+        async () => (await client.session(sessionId)).status,
+        30_000,
+      );
+      await settleSessions(rt);
+      const session = await client.session(sessionId);
+      const run = (await rt.store.run.forTask(heron.id)).find((r) => r.specialist !== "critic");
+      expect(run?.outcome).toBe("budget_exceeded");
+      expect(
+        (await rt.store.costLedger.sum({ projectId: project.id })).usd_micro,
+      ).toBeGreaterThanOrEqual(75_000);
+      expect(session.statusText).toBe("Stopped at the project's budget");
+      expect(session.summary).toContain(
+        '"Write the heron page" paused at the project\'s budget of CHF 0.06: it is ready again once you raise that budget, for your next Start.',
+      );
+      expect(session.summary).toContain("Stopped at the project's budget of CHF 0.06.");
+      expect(session.summary).not.toMatch(/Ended before|paused before/);
+      const here = (await client.sessionTasks(sessionId)).tasks.find((t) => t.id === heron.id);
+      expect(here?.here).toBe("Paused at the project's budget of CHF 0.06");
+      const row = (await client.projectSessions(project.id)).rows.find((r) => r.id === sessionId);
+      expect(row?.gist).toBe('"Write the heron page" paused at the project\'s budget of CHF 0.06.');
+      expect(row?.endedWords).toBe("Stopped at the project's budget");
+      const task = (await client.tasks(project.id)).find((t) => t.id === heron.id);
+      expect(task?.display?.label).toBe("Paused at the project's budget");
+      const card = (await client.inbox(me.id)).requests.find(
+        (r) => r.taskId === heron.id && r.status === "open",
+      );
+      expect(card?.title).toBe(
+        '"Write the heron page" paused at the project\'s budget of CHF 0.06',
+      );
+      const lines = (await client.sessionEvents(sessionId)).map((e) => e.text);
+      expect(
+        lines.filter((l) => /^(Stopped at|Ended before) the project's budget/.test(l)),
+      ).toEqual([
+        expect.stringMatching(
+          /^Stopped at the project's budget: 1 paused, 1 not started\. CHF \d+\.\d{2}\.$/,
+        ),
+      ]);
+    } finally {
+      await settleSessions(rt);
+      await rt.close();
+    }
+  }, 60_000);
+});

@@ -64,6 +64,7 @@ import {
   blockedOfHandoff,
   type EndedWaits,
   endedStatusText,
+  outerLimitPassedOfHandoff,
   planningStatusText,
   reviewWaitIds,
   stopReasonOfHandoff,
@@ -773,6 +774,8 @@ export function sessionView(
           s.status,
           stopReasonOfHandoff(s.handoff),
           blockedNow ?? blockedOfHandoff(s.handoff),
+          // fixup-w8-l4-leftovers (L4i-left-28): "Stopped at" only when it spent all of it.
+          outerLimitPassedOfHandoff(s.handoff),
         ),
     ...(planning ? { planning: true } : {}),
   };

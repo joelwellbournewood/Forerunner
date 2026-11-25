@@ -7,6 +7,7 @@ import {
   type LastSessionOutcome,
   type NamedTask,
   type PausedTask,
+  pausedBefore,
   RESULT_LINE_BUILDERS,
   type ResultFacts,
 } from "../session/result.ts";
@@ -14,6 +15,7 @@ import {
   blockedOfHandoff,
   type EndedWaits,
   endedStatusText,
+  outerLimitPassedOfHandoff,
   planningStatusText,
   reviewWaitsWords,
   stillWaitsText,
@@ -246,8 +248,9 @@ export function sessionGist(r: SessionRecord): string {
           ? `${names} is done; its review waits for room in ${at}.`
           : `${names} are done; their reviews wait for room.`,
       );
-    // L3-research-2: runs that heard the wrap-up paused before the limit ran out.
-    if (limits.length === 1 && r.paused.every((t) => t.before))
+    // L3-research-2: runs that heard the wrap-up paused before the limit ran out;
+    // fixup-w8-l4-leftovers (L4i-left-28): so did a pause at an outer limit (`pausedBefore`).
+    if (limits.length === 1 && r.paused.every(pausedBefore))
       return fitted(titles(r.paused), (names) => `${names} paused before ${at} ran out.`);
     return fitted(titles(r.paused), (names) => `${names} paused at ${at}.`);
   }
@@ -373,6 +376,8 @@ export function sessionEndWords(
     row.status,
     stopReasonOfHandoff(row.handoff),
     waits ?? blockedOfHandoff(row.handoff),
+    // fixup-w8-l4-leftovers (L4i-left-28): "Stopped at" only when it spent all of it.
+    outerLimitPassedOfHandoff(row.handoff),
   );
 }
 
@@ -794,7 +799,7 @@ function hereOf(
       // L4-money-111: the work is done and only its review waits for room.
       words: paused.reviewWaits
         ? `Done; its review waits for room in ${paused.limit}`
-        : paused.before
+        : pausedBefore(paused)
           ? `Paused before ${paused.limit} ran out`
           : `Paused at ${paused.limit}`,
       key: "answer",
