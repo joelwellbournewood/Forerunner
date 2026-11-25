@@ -154,10 +154,19 @@ function DrawerBody({
         </Badge>
         <span className="text-xs text-neutral-500">
           {reviewLevelName(reviewLevelValue(task.riskTier, task.specialist))} ·{" "}
-          {PRIORITY_LABELS[task.priority]} priority · {whoName(task.specialist)} · spent{" "}
-          <Money value={task.spent ?? task.actual} />
-          {/* d1116-budget-all (BA-9): the budget its one figure counts against, as the row says. */}
-          {task.capSource === "task_budget" ? ` of ${formatMoney(task.budget)} budget` : null}
+          {PRIORITY_LABELS[task.priority]} priority · {whoName(task.specialist)}
+          {/* fixup-w8-l4-leftovers (L4i-left-64, design section 5 rule 5): nothing spent shows no
+              amount (before, "spent CHF 0.00"); a budget of its own is named alone. */}
+          {(task.spent ?? task.actual).usdMicro > 0 ? (
+            <>
+              {" "}
+              · spent <Money value={task.spent ?? task.actual} />
+              {/* d1116-budget-all (BA-9): the budget its one figure counts against, as the row says. */}
+              {task.capSource === "task_budget" ? ` of ${formatMoney(task.budget)} budget` : null}
+            </>
+          ) : task.capSource === "task_budget" ? (
+            ` · budget ${formatMoney(task.budget)}`
+          ) : null}
         </span>
       </div>
       {d.detail ? <p className="text-neutral-700 dark:text-neutral-300">{d.detail}</p> : null}

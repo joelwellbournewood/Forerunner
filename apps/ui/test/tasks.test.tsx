@@ -1135,7 +1135,9 @@ describe("Tasks tab (design §3.5)", () => {
     });
     const title = await screen.findByText("Write the deploy runbook");
     const row = title.closest("[data-testid=task-row]") as HTMLElement;
-    expect(within(row).getByTestId("task-cap")).toHaveTextContent("of CHF 4.00 budget");
+    // fixup-w8-l4-leftovers (L4i-left-64): the new task spent nothing, so its row shows no amount
+    // and the line reads on its own (before: "of CHF 4.00 budget" after an empty cost).
+    expect(within(row).getByTestId("task-cap").textContent).toBe("CHF 4.00 budget");
   });
 
   it("a done task says how it was checked, and its drawer opens the evidence: the checks, the page tried and its screenshot (ADR 0104)", async () => {

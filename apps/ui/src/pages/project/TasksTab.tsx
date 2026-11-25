@@ -94,7 +94,13 @@ export function taskCapWords(
     const cost = task.spent ?? task.actual;
     const usedUp = task.cap.usdMicro <= 0 || cost.usdMicro >= task.budget.usdMicro;
     return {
-      text: usedUp ? `${budget} budget used up` : `of ${budget} budget`,
+      // fixup-w8-l4-leftovers (L4i-left-64): with nothing spent the row shows no amount, so the
+      // line reads on its own ("CHF 0.01 budget"; before, the fragment "of CHF 0.01 budget").
+      text: usedUp
+        ? `${budget} budget used up`
+        : cost.usdMicro > 0
+          ? `of ${budget} budget`
+          : `${budget} budget`,
       title: TASK_BUDGET_TITLE,
     };
   }
