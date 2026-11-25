@@ -1677,9 +1677,9 @@ export function createDaemonApp(
   ) => {
     // w8-l4-leftovers (L4i-left-32): the tasks that wait for the stopped credential while the
     // rest runs on the other one: named in the line, and no figure for them.
-    const waitingTasks = await (rt.billing.waits.waitingTasks?.(projectId) ?? []).catch(
-      () => [] as { id: string; title: string }[],
-    );
+    const waitingTasks: { id: string; title: string }[] = rt.billing.waits.waitingTasks
+      ? await rt.billing.waits.waitingTasks(projectId).catch(() => [])
+      : [];
     const waitingIds = new Set(waitingTasks.map((t) => t.id));
     const runsHere = waitingIds.size
       ? { ...r, runnable: r.runnable.filter((t) => !waitingIds.has(t.taskId)) }
