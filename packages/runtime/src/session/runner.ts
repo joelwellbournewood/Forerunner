@@ -3018,6 +3018,10 @@ export class SessionRunner {
                 ...(toCritic ? { review: true } : {}),
                 ...(couldNot !== null ? { couldNot } : {}),
                 ...(again ? { again: true } : {}),
+                // w8-l4-leftovers (L4i-left-58, L4-money-110): the run that goes on in this
+                // session from where its pause left it keeps its own person line with its CHF
+                // (`eventAudience`), so the person-level lines add up to the session's spend.
+                ...(again && item.again === true ? { continued: true } : {}),
               },
               result.costUsdMicro,
             );

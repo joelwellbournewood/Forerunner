@@ -131,10 +131,13 @@ export function eventAudience(type: string, p: Record<string, unknown> = {}): Ev
   // The critic's line says how a reviewed run ended: for a run that could not do the work it is
   // the design's one line ('The designer could not …: "…". Trying again.'), and for a retry it
   // says what came of it. The run's own line is then a detail.
+  // w8-l4-leftovers (L4i-left-58, L4-money-110): a run that went on in the session after its
+  // pause (`continued`) is no retry the critic sent back: its own line carries its spend, which
+  // the critic's line does not (before, the person's lines showed no CHF for it).
   if (
     type === "task.finished" &&
     p.review === true &&
-    (typeof p.couldNot === "string" || p.again === true)
+    (typeof p.couldNot === "string" || (p.again === true && p.continued !== true))
   )
     return "detail";
   return "person";

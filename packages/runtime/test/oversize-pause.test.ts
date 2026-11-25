@@ -4,6 +4,7 @@ import { join, SimulatedClock } from "@forerunner/platform";
 import { openStore, type StateStore, type TaskRow } from "@forerunner/state";
 import { redactValues } from "@forerunner/vault";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { eventAudience } from "../src/daemon/event-audience.ts";
 import { requestWords } from "../src/daemon/request-words.ts";
 import { budgetPauseDetailOf, budgetPauseLabelOf } from "../src/daemon/task-words.ts";
 import { describeEvent } from "../src/daemon/views.ts";
@@ -308,6 +309,32 @@ describe("d1109-oversize-pause, run C: the pause keeps, checks and goes on (OP-2
     const events = await store.event.list(r.sessionId);
     expect(events.filter((e) => e.type === "session.task_continues")).toHaveLength(1);
     expect((await store.task.mustGet(shop.id)).status).not.toBe("needs_human");
+  }, 60_000);
+
+  // w8-l4-leftovers, wave 8 (L4i-left-58, L4-money-110): the run that goes on in the session
+  // after a pause is reviewed, and its own line was a detail (the critic's line says what came of
+  // it), so the person-level lines showed no spend for it while the session's figure counted it.
+  it("w8-l4-leftovers: the run that goes on after a pause keeps its own person line with its CHF", async () => {
+    const shop = await add();
+    steps.push({ outcome: "paused", content: "one" }, { outcome: "done", content: "two" });
+    const r = await start();
+    const finished = (await store.event.list(r.sessionId)).filter(
+      (e) =>
+        e.type === "task.finished" &&
+        (e.payload as Record<string, unknown> | null)?.taskId === shop.id,
+    );
+    expect(finished).toHaveLength(2);
+    const second = finished[1]?.payload as Record<string, unknown>;
+    expect(second.again).toBe(true);
+    expect(second.continued).toBe(true);
+    expect(eventAudience("task.finished", second)).toBe("person");
+    // Reviewed, as it is in a world with the critic: still the person's line.
+    expect(eventAudience("task.finished", { ...second, review: true })).toBe("person");
+    expect(eventAudience("task.finished", finished[0]?.payload as Record<string, unknown>)).toBe(
+      "person",
+    );
+    // A retry the critic sent back stays told by the critic's line (unchanged).
+    expect(eventAudience("task.finished", { review: true, again: true })).toBe("detail");
   }, 60_000);
 
   it("OP-4, OP-5: run again, the second pause got no further: one card that asks, no third run, never 'goes on by itself'", async () => {
