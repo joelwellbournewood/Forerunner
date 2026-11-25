@@ -562,8 +562,12 @@ export function TasksTab({
                     </td>
                     <td className="py-1.5 pr-2">{whoName(who)}</td>
                     <td className="py-1.5 pr-2 whitespace-nowrap">
-                      {/* W15-20: what it cost, its reviews included, as Costs reads it. */}
-                      <Money value={t.spent ?? t.actual} />
+                      {/* W15-20: what it cost, its reviews included, as Costs reads it.
+                          w8-l4-leftovers (L4i-left-64, design section 5 rule 5): nothing for a
+                          task that spent nothing (before, every such row read "CHF 0.00"). */}
+                      {(t.spent ?? t.actual).usdMicro > 0 ? (
+                        <Money value={t.spent ?? t.actual} />
+                      ) : null}
                       {isFinished(t) || who === WHO_PERSON ? null : (
                         <TaskCap task={t} specialist={who} />
                       )}
