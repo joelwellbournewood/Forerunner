@@ -289,6 +289,12 @@ export interface PlanItem {
    */
   again?: boolean;
   /**
+   * w8-l4-leftovers (L4i-left-58, L4-money-110): the run again goes on from where its pause in
+   * this session left it (no retry the critic sent back): its finish line keeps its CHF for the
+   * person (`continued` on `task.finished`, `eventAudience`).
+   */
+  continuesPause?: boolean;
+  /**
    * D4 (d1109-oversize-pause, OP-0): set on the item of a task whose figure alone is more than
    * the work budget, which the plan takes at its place with the room left: its whole figure, its
    * `estimateUsdMicro` being that room (what the session review measures it against).
@@ -3021,7 +3027,7 @@ export class SessionRunner {
                 // w8-l4-leftovers (L4i-left-58, L4-money-110): the run that goes on in this
                 // session from where its pause left it keeps its own person line with its CHF
                 // (`eventAudience`), so the person-level lines add up to the session's spend.
-                ...(again && item.again === true ? { continued: true } : {}),
+                ...(again && item.continuesPause === true ? { continued: true } : {}),
               },
               result.costUsdMicro,
             );
@@ -3586,7 +3592,13 @@ export class SessionRunner {
               });
               // A run again of the same planned task: no second take of a larger one, nothing
               // added to the plan's figure (L3-run-2).
-              queue.unshift({ ...item, wholeEstimateUsdMicro: undefined, again: true });
+              queue.unshift({
+                ...item,
+                wholeEstimateUsdMicro: undefined,
+                again: true,
+                // w8-l4-leftovers (L4-money-110): its finish line stays the person's.
+                continuesPause: true,
+              });
               continue;
             }
             const waiting = await store.task.transition(
