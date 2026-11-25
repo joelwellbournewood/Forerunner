@@ -96,9 +96,15 @@ import {
   joinedIntoSentence,
   joinedRefusalSentence,
   joinSentence,
+  joinStaysLine,
   joinUndoneSentence,
   OPEN_ON_A_CLOSED_PROJECT,
   sessionsBeforeJoinSentence,
+  togetherGithubLine,
+  togetherJoinAsk,
+  togetherJoinedSentence,
+  togetherJoinSentence,
+  togetherUndoneSentence,
 } from "@forerunner/runtime/daemon/join-words";
 import {
   closeFailedSentence,
@@ -113,10 +119,11 @@ import {
   statusIssueRowWords,
   statusSwitchedOffSentence,
 } from "@forerunner/runtime/loop/status-board-words";
-import { openPlanSentence } from "@forerunner/runtime/session/intake-words";
+import { draftingPlanSentence, openPlanSentence } from "@forerunner/runtime/session/intake-words";
 import {
   type Elsewhere,
   elsewhereSentence,
+  GUIDE_BRANCHES_TAKEN_LINE,
   inUseSentence,
   nothingToTakeOverSentence,
   otherHostSentence,
@@ -126,6 +133,7 @@ import {
   type TakeOverRetryFailure,
   TOGETHER_OVERVIEW_DETAILS,
   TOGETHER_OVERVIEW_LINE,
+  TOGETHER_UNREADABLE,
   takeOverAsk,
   takeOverDetails,
   takeOverLine,
@@ -700,6 +708,24 @@ export interface FakeDaemonState {
   sharedRepository: Record<string, NonNullable<ProjectCard["sharesRepositoryWith"]>>;
   /** OJ-05: per project id, `GET /projects/:id/join-preview` as the daemon answers it. */
   joinPreviews: Record<string, JoinPreviewView>;
+  /**
+   * w8-together (OJ-11): per project id, the old status pull request the together join closes
+   * (the daemon's `StatusBoard.findOwnStatusPullRequest`); absent: none.
+   */
+  oldStatusPr: Record<string, number>;
+  /** OJ-11: per project id, a refusal of the together form (GitHub not answering, ...). */
+  togetherRefusal: Record<string, string>;
+  /**
+   * W8a-left-22: per project id, the guide's last run stopped because every scaffold branch is
+   * someone else's (the daemon's `summary_cache.docs.guide_stopped`); the card's line.
+   */
+  guideStopped: Record<string, true>;
+  /**
+   * L4i-left-48: per project id, Add to it's background draft is held (the page stays on
+   * "Drafting the plan…") until the test calls `finishDrafting[id]()`, which files the card.
+   */
+  holdDrafting: Record<string, true>;
+  finishDrafting: Record<string, () => void>;
   /**
    * OJ-06: per closed project id, where Make one project put its work (`ProjectCard.joinedInto`);
    * `project.join` writes it, its Undo removes it. A joined project leaves `GET /projects`.
@@ -1596,6 +1622,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     takeOverRetryFails: {},
     sharedRepository: {},
     joinPreviews: {},
+    oldStatusPr: {},
+    togetherRefusal: {},
+    guideStopped: {},
+    holdDrafting: {},
+    finishDrafting: {},
     joined: {},
     joinRefusal: null,
     joinUndoBlocked: null,
@@ -1933,6 +1964,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.takeOverUndoBlocked = null;
     state.sharedRepository = {};
     state.joinPreviews = {};
+    state.oldStatusPr = {};
+    state.togetherRefusal = {};
+    state.guideStopped = {};
+    state.holdDrafting = {};
+    state.finishDrafting = {};
     state.joined = {};
     state.joinRefusal = null;
     state.joinUndoBlocked = null;
@@ -2369,6 +2405,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       repository,
       // 'sites': as the daemon's card, from "Web pages research may read".
       researchReads: researchReadsLine(webAccessFake(p.id)),
+      // W8a-left-22, as the daemon: the guide could not go out (`guideStoppedLine`).
+      guideStopped:
+        state.guideStopped[p.id] && p.status !== "archived" ? GUIDE_BRANCHES_TAKEN_LINE : null,
       // OR-07: the repository is also a project that is not on this computer (or together).
       repositoryElsewhere: state.repositoryOverview[p.id] ?? null,
       // OJ-01 and OJ-06 (d1109-onerepo-join), as the daemon's card.
@@ -2558,6 +2597,9 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
   app.get("/projects/:id/join-preview", (c) => {
     const p = state.projects.find((x) => x.id === c.req.param("id"));
     if (!p) return errorBody(c, 404, "not_found", "no such project");
+    // w8-together (OJ-11): the together form, as the daemon's `togetherPreview` gives it for the
+    // Overview's line (the repository's project named there; GitHub's answer is the test's).
+    if (c.req.query("together") === "1") return c.json(togetherPreviewOf(p));
     return c.json(
       state.joinPreviews[p.id] ?? {
         projectId: p.id,
@@ -2569,6 +2611,43 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       },
     );
   });
+  /** OJ-11: the repository's project the Overview's line names, as the together form reads it. */
+  function togetherTargetOf(p: ProjectCard): { id: string; name: string } | null {
+    const line = state.repositoryOverview[p.id];
+    if (line?.kind !== "elsewhere" || !line.canWorkTogether) return null;
+    const name = /"([^"]+)"/.exec(line.text)?.[1] ?? null;
+    return name ? { id: `together-${p.id}`, name } : null;
+  }
+  function togetherPreviewOf(p: ProjectCard): JoinPreviewView {
+    const target = togetherTargetOf(p);
+    const refusal = state.togetherRefusal[p.id] ?? (target ? null : TOGETHER_UNREADABLE);
+    const tasks = state.tasks.filter((t) => t.projectId === p.id);
+    const open = tasks.filter((t) => t.status !== "done" && t.status !== "cancelled").length;
+    return {
+      projectId: p.id,
+      shared: null,
+      projects: [
+        {
+          id: p.id,
+          name: p.name,
+          together: false,
+          lines: [open ? `${open} open task${open === 1 ? "" : "s"}` : "No tasks yet"],
+        },
+      ],
+      ifKept: {},
+      keepOnly: null,
+      keepOnlyLine: null,
+      together: {
+        projectId: refusal ? null : (target?.id ?? null),
+        name: refusal ? null : (target?.name ?? null),
+        sentence: refusal || !target ? null : togetherJoinSentence(p.name, target.name),
+        github:
+          refusal || !target ? null : togetherGithubLine(p.name, state.oldStatusPr[p.id] ?? null),
+        stays: joinStaysLine([p.name]),
+        refusal,
+      },
+    };
+  }
   // The plan from the brief (U-046), as the daemon's intake status and Retry answer it.
   const intakeOf = (projectId: string): IntakeStatusView =>
     state.intake[projectId] ?? {
@@ -2591,7 +2670,10 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     const id = c.req.param("id");
     const project = state.projects.find((p) => p.id === id);
     if (!project) return errorBody(c, 404, "not_found", "no such project");
-    const body = (await c.req.json().catch(() => ({}))) as { brief?: string };
+    const body = (await c.req.json().catch(() => ({}))) as {
+      brief?: string;
+      background?: boolean;
+    };
     const key = `intake:${id}`;
     const open = state.requests.find(
       (r) =>
@@ -2599,15 +2681,69 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         (r.changeCard as { key?: unknown } | null)?.key === key &&
         r.projectId === id,
     );
-    if (open && body.brief !== undefined)
+    // L4i-left-48, as the daemon: a brief while a plan is open or on its way is the 409.
+    const drafting = intakeOf(id).state === "drafting";
+    if ((open || drafting) && body.brief !== undefined)
       return c.json(
         {
           code: "conflict",
-          message: openPlanSentence(project.name),
-          details: { requestId: open.id, reason: "proposal_open", cause: "claim_conflict" },
+          message: open ? openPlanSentence(project.name) : draftingPlanSentence(project.name),
+          details: {
+            ...(open ? { requestId: open.id } : {}),
+            reason: open ? "proposal_open" : "drafting",
+            cause: "claim_conflict",
+          },
         },
         409,
       );
+    // w8-together (L4i-left-48), as the daemon: `background: true` answers at once with the
+    // status (`drafting`); the card is filed in the background (at once here, or when a test
+    // lets it: `state.holdDrafting[id]` keeps it drafting until `state.finishDrafting[id]()`).
+    if (body.background === true) {
+      // No brief while a plan is open or on its way: the status as it stands, nothing drafted.
+      if (open || drafting) return c.json(intakeOf(id), 202);
+      state.intake[id] = {
+        projectId: id,
+        state: "drafting",
+        requestId: null,
+        outcome: null,
+        appliedAt: null,
+        docs: null,
+        error: null,
+      };
+      const finish = () => {
+        delete state.finishDrafting[id];
+        fileIntakeCard(id, project, body.brief, open);
+      };
+      if (state.holdDrafting[id]) state.finishDrafting[id] = finish;
+      else setTimeout(finish, 0);
+      emit("project.changed", { id });
+      return c.json(intakeOf(id), 202);
+    }
+    const filed = fileIntakeCard(id, project, body.brief, open);
+    return c.json(
+      {
+        pending: true,
+        projectId: id,
+        requestId: filed.requestId,
+        reused: !!open,
+        summary: { milestones: 1, tasks: 1, docs: 0, firstSessionTasks: 1 },
+        estimateUsdMicro: 300_000,
+        costUsdMicro: 0,
+        docsTarget: filed.docsTarget,
+      },
+      202,
+    );
+  });
+  /** The plan card of a brief, as the daemon files it (OR-08's plan-only form included). */
+  function fileIntakeCard(
+    id: string,
+    project: { name: string; goal: string; repos?: string[] | null },
+    brief: string | undefined,
+    open: HumanRequestView | undefined,
+  ): { requestId: string; docsTarget: "repository" | "workspace" | null } {
+    const body = { brief };
+    const key = `intake:${id}`;
     const planOnly =
       state.tasks.some((t) => t.projectId === id) ||
       state.repositoryOverview[id]?.kind === "together";
@@ -2672,20 +2808,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       error: null,
     };
     emit("project.changed", { id });
-    return c.json(
-      {
-        pending: true,
-        projectId: id,
-        requestId,
-        reused: !!open,
-        summary: { milestones: 1, tasks: 1, docs: 0, firstSessionTasks: 1 },
-        estimateUsdMicro: 300_000,
-        costUsdMicro: 0,
-        docsTarget,
-      },
-      202,
-    );
-  });
+    return { requestId, docsTarget };
+  }
   app.get("/projects/:id/intake", (c) => {
     const id = c.req.param("id");
     if (!state.projects.some((p) => p.id === id))
@@ -6945,6 +7069,76 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         },
       };
     }
+    if (name === "project.join" && params.keep && typeof params.keep === "object") {
+      // w8-together (OJ-11), as the daemon's together form: the project here becomes the
+      // repository's project (made now, its tasks moved in), it leaves Home, and its own old
+      // status pull request is closed; Undo puts it back and removes the together project.
+      const closeRefs = Array.isArray(params.close) ? params.close.map(String) : [];
+      const site = closeRefs.length === 1 ? projectByRef(closeRefs[0]) : undefined;
+      if (!site) return refuse("Choose the one project to work on together.");
+      const preview = togetherPreviewOf(site);
+      const t = preview.together;
+      if (!t || t.refusal || !t.name || !t.projectId)
+        return refuse(t?.refusal ?? TOGETHER_UNREADABLE);
+      const kiteName = t.name;
+      const kiteId = t.projectId;
+      const pr = state.oldStatusPr[site.id] ?? null;
+      return {
+        name,
+        params,
+        risk: "medium",
+        card: {
+          ...card(
+            {
+              command: "project.join",
+              what: "the project this repository is",
+              oldValue: `"${site.name}"`,
+              newValue: `"${kiteName}"`,
+              scope: "project",
+              sentence: togetherJoinedSentence(site.name, kiteName, pr),
+              projectId: site.id,
+              projectName: site.name,
+            },
+            "medium",
+          ),
+          ask: togetherJoinAsk(site.name, kiteName),
+        },
+        apply: () => {
+          const at = new Date().toISOString();
+          const kite: ProjectCard = { ...site, id: kiteId, name: kiteName, active: false };
+          state.projects.push(kite);
+          state.repositoryOverview[kite.id] = {
+            kind: "together",
+            text: TOGETHER_OVERVIEW_LINE,
+            canTakeOver: false,
+            takeOverLine: null,
+            details: TOGETHER_OVERVIEW_DETAILS,
+          };
+          const line = state.repositoryOverview[site.id] ?? null;
+          delete state.repositoryOverview[site.id];
+          const moved = state.tasks.filter((x) => x.projectId === site.id).map((x) => x.id);
+          for (const x of state.tasks) if (x.projectId === site.id) x.projectId = kite.id;
+          state.joined[site.id] = {
+            projectId: kite.id,
+            name: kite.name,
+            at,
+            text: joinedIntoSentence({ project: kite.id, name: kite.name, at }, "UTC"),
+          };
+          delete state.oldStatusPr[site.id];
+          emit("project.changed", { id: site.id });
+          emit("project.changed", { id: kite.id });
+          return {
+            before: { together: { line }, closed: [{ id: site.id, name: site.name }] },
+            after: {
+              keep: { id: kite.id, name: kite.name },
+              moved: { [site.id]: moved },
+              together: true,
+              oldStatusPr: pr,
+            },
+          };
+        },
+      };
+    }
     if (name === "project.join") {
       // OJ-02, as the daemon's `project.join` (medium: the dialog's press is the yes): the
       // closed projects' tasks move into the kept one and they leave Home; Undo puts them back.
@@ -8308,7 +8502,25 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     if (first?.name === "project.join") {
       const after = (Array.isArray(entry.after) ? entry.after[0] : entry.after) as {
         moved?: Record<string, string[]>;
+        together?: boolean;
+        keep?: { id?: string };
       } | null;
+      // w8-together (OJ-11): the together project goes again, and the closed project's line
+      // comes back.
+      if (after?.together === true && after.keep?.id) {
+        const keptId = after.keep.id;
+        const togetherBefore = (before?.together ?? {}) as {
+          line?: NonNullable<ProjectCard["repositoryElsewhere"]> | null;
+        };
+        for (const closedId of Object.keys(after.moved ?? {}))
+          if (togetherBefore.line) state.repositoryOverview[closedId] = togetherBefore.line;
+        state.projects.splice(
+          0,
+          state.projects.length,
+          ...state.projects.filter((p) => p.id !== keptId),
+        );
+        delete state.repositoryOverview[keptId];
+      }
       const lines = (before?.lines ?? {}) as Record<
         string,
         NonNullable<ProjectCard["sharesRepositoryWith"]> | null
@@ -8379,7 +8591,14 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     // OJ-04, as `project.join`'s undoSentence.
     if (first?.name === "project.join") {
       const closed = ((before?.closed ?? []) as { name?: string }[]).map((c) => c.name ?? "");
-      sentence = joinUndoneSentence(closed);
+      const joinAfter = (Array.isArray(entry.after) ? entry.after[0] : entry.after) as {
+        together?: boolean;
+        oldStatusPr?: number | null;
+      } | null;
+      sentence =
+        joinAfter?.together === true && closed[0]
+          ? togetherUndoneSentence(closed[0], joinAfter.oldStatusPr ?? null)
+          : joinUndoneSentence(closed);
     }
     // As the daemon (U-061): a cancel is undone by reopening, a creation by cancelling.
     const after = (entry.after ?? {}) as {

@@ -400,3 +400,120 @@ describe("l4-github-carried, run L4", () => {
     expect(screen.getByTestId("active-project")).not.toHaveTextContent("Atlas");
   });
 });
+
+describe("w8-together, wave 8: Work together for a project already here (OJ-11, W8-join-1, -2)", () => {
+  const ELSEWHERE_LINE =
+    'org/atlas is also the Forerunner project "Kite club", which is not on this computer; another GitHub account worked on it on 20 Nov.';
+  const TOGETHER_LINE =
+    'This project\'s tasks, plan and cards move into "Kite club"; both Forerunners work on it.';
+
+  it("the Overview's line offers Work together first with its line; the dialog says what the press does and its one write on GitHub; the press sends project.join's together form (source ui) and lands on the project it became; Changes says what was closed and its Undo what stays closed", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.repositoryOverview.proj_atlas = {
+      kind: "elsewhere",
+      text: ELSEWHERE_LINE,
+      canWorkTogether: true,
+      togetherLine: TOGETHER_LINE,
+      canTakeOver: false,
+      takeOverLine: null,
+      details: null,
+    };
+    harness.daemon.state.oldStatusPr.proj_atlas = 4;
+    renderApp("/projects/proj_atlas/summary", harness);
+    const section = await screen.findByTestId("repository-elsewhere");
+    expect(within(section).getByTestId("repository-elsewhere-line")).toHaveTextContent(
+      ELSEWHERE_LINE,
+    );
+    expect(within(section).getByTestId("repository-work-together-line")).toHaveTextContent(
+      TOGETHER_LINE,
+    );
+    expect(within(section).queryByTestId("repository-take-over")).toBeNull();
+    await user.click(within(section).getByTestId("repository-work-together"));
+    const dialog = await screen.findByTestId("join-together-dialog");
+    expect(await within(dialog).findByTestId("join-together-sentence")).toHaveTextContent(
+      '"Atlas" becomes "Kite club", the project GitHub knows: its tasks, plan and cards move into it, and this Forerunner works on it together with the other one.',
+    );
+    expect(within(dialog).getByTestId("join-together-github")).toHaveTextContent(
+      'On GitHub only the old status pull request #4 of "Atlas" is closed, with one line saying why; nothing of the other Forerunner is touched.',
+    );
+    expect(dialog).toHaveTextContent(
+      '"Atlas" keeps its sessions, changes and spending to read; no budget changes.',
+    );
+    expect(dialog).toHaveTextContent("Changes has its Undo.");
+    await user.click(within(dialog).getByTestId("join-together-confirm"));
+    await waitFor(() =>
+      expect(postedCalls(harness, "/commands/execute").at(-1)?.body).toMatchObject({
+        commands: [
+          {
+            name: "project.join",
+            params: { keep: { together: true }, close: ["proj_atlas"] },
+          },
+        ],
+        source: "ui",
+        confirm: "tap",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByTestId("join-together-dialog")).toBeNull());
+    // It lands on the project it became, which says it is shared.
+    expect(await screen.findByTestId("repository-elsewhere-line")).toHaveTextContent(
+      "Shared on GitHub with another Forerunner: each keeps its own tasks.",
+    );
+    const row = harness.daemon.state.changes[0];
+    expect(row?.sentence).toBe(
+      '"Atlas" joined "Kite club", which this Forerunner works on together with another one; its old status pull request #4 is closed.',
+    );
+    const undone = await harness.client.undoChange(row?.id ?? "");
+    expect(undone.sentence).toBe(
+      '"Atlas" is its own project again; its old status pull request #4 stays closed on GitHub.',
+    );
+    expect(harness.daemon.state.repositoryOverview.proj_atlas?.canWorkTogether).toBe(true);
+  });
+
+  it("GitHub that does not answer is said in the dialog and keeps Work together disabled; nothing is sent", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.repositoryOverview.proj_atlas = {
+      kind: "elsewhere",
+      text: ELSEWHERE_LINE,
+      canWorkTogether: true,
+      togetherLine: TOGETHER_LINE,
+      canTakeOver: false,
+      takeOverLine: null,
+      details: null,
+    };
+    harness.daemon.state.togetherRefusal.proj_atlas =
+      "GitHub did not answer, so the project cannot be checked. Try again.";
+    renderApp("/projects/proj_atlas/summary", harness);
+    const section = await screen.findByTestId("repository-elsewhere");
+    await user.click(within(section).getByTestId("repository-work-together"));
+    const dialog = await screen.findByTestId("join-together-dialog");
+    expect(await within(dialog).findByTestId("join-refusal")).toHaveTextContent(
+      "GitHub did not answer, so the project cannot be checked. Try again.",
+    );
+    expect(within(dialog).getByTestId("join-together-confirm")).toBeDisabled();
+    expect(postedCalls(harness, "/commands/execute")).toEqual([]);
+  });
+});
+
+describe("w8-together, wave 8: the guide could not go out (W8a-left-22)", () => {
+  const LINE =
+    "The repository guide on GitHub was not updated: every branch this project may write its docs on holds someone else's pull request.";
+
+  it("the Overview says in one line why the repository guide was not updated, with no button, only while the daemon's card carries it", async () => {
+    const harness = createHarness();
+    harness.daemon.state.guideStopped.proj_atlas = true;
+    renderApp("/projects/proj_atlas/summary", harness);
+    const line = await screen.findByTestId("guide-stopped-line");
+    expect(line).toHaveTextContent(LINE);
+    expect(line.textContent).toBe(LINE);
+    expect(within(line).queryAllByRole("button")).toEqual([]);
+  });
+
+  it("no line when the guide's last run got through", async () => {
+    const harness = createHarness();
+    renderApp("/projects/proj_atlas/summary", harness);
+    await screen.findByTestId("summary-tab");
+    expect(screen.queryByTestId("guide-stopped-line")).toBeNull();
+  });
+});

@@ -1,3 +1,4 @@
+import { ForerunnerError } from "@forerunner/platform";
 import { joinRefusedHeldStart } from "@forerunner/runtime/daemon/join-words";
 import { keepStartPending } from "@forerunner/runtime/session/prepared-work";
 import { describe, expect, it } from "vitest";
@@ -281,7 +282,7 @@ describe("d1109-onerepo-join, run C: project.join (OJ-02, OJ-04, OJ-06, OJ-08)",
     } as never).find((s) => s.name === "project_join");
     expect(spec?.description).toBe(PROJECT_JOIN_DESCRIPTION);
     expect(PROJECT_JOIN_DESCRIPTION).toBe(
-      "Make one project of projects on this computer that work in the same repository or folder: keep is the project the person chose to keep, close the others. Their tasks, plan, cards and open pull requests move into the kept project; their sessions, changes and spending stay readable where they are, and no budget changes. Only when the person asks for it and names the project to keep; never choose it yourself.",
+      'Make one project of projects on this computer that work in the same repository or folder: keep is the project the person chose to keep, close the others. Their tasks, plan, cards and open pull requests move into the kept project; their sessions, changes and spending stay readable where they are, and no budget changes. Only when the person asks for it and names the project to keep; never choose it yourself. When the person asks to work together on a project whose repository is another Forerunner\'s project, keep is {"together": true} and close names that one project.',
     );
     const r = await w.executor.execute({
       name: "project.join",
@@ -521,5 +522,142 @@ describe("l4-chat-carried, run L4: a split asked for a closed project's task (C4
     expect((await w.store.task.mustGet(left.id)).title).toBe("Style the page");
     expect((await w.store.task.forProject(kite.id)).length).toBe(1);
     await w.store.close();
+  });
+});
+
+describe("w8-together, wave 8: project.join's together form (OJ-11)", () => {
+  const KITE_ID = "01a1a000-0000-7000-8000-00000000c3ab";
+  /** The together port as the daemon wires it, with GitHub's answer as the test gives it. */
+  function togetherWorld(w: World, facts: { name: string | null } | "unreadable") {
+    const closed: string[] = [];
+    w.ports.projectJoin = {
+      ...joinPort(w),
+      together: {
+        refusal: async () => null,
+        facts: async () => {
+          if (facts === "unreadable")
+            throw new ForerunnerError(
+              "validation",
+              "GitHub did not answer, so the project cannot be checked. Try again.",
+              { details: { cause: "github_unreadable" } },
+            );
+          return {
+            id: KITE_ID,
+            name: facts.name,
+            activeOn: null,
+            login: "bob",
+            revive: null,
+            untrusted: { source: "repo_file", origin: "repository:o/kite" },
+          };
+        },
+        closeOldStatus: async (p) => {
+          closed.push(p.id);
+          return 4;
+        },
+      },
+    };
+    return { closed };
+  }
+
+  it("from chat the together form is read back once with Yes and No, naming the repository's project as data; nothing moves and nothing is closed before the yes; the yes makes it", async () => {
+    const w = await world();
+    const { closed } = togetherWorld(w, { name: "Kite club" });
+    const site = await w.store.project.insert({
+      name: "Site",
+      goal: "A site",
+      repos: ["o/kite"],
+      settings: { members: [w.agent.id] },
+      author_human: w.human.id,
+    });
+    await w.store.task.insert({ project_id: site.id, title: "Home page", status: "ready" });
+    const chat = w.ctx({ actor: { kind: "agent", id: w.agent.id }, source: "chat" });
+    const r = await w.executor.execute({
+      name: "project.join",
+      params: { keep: { together: true }, close: ["Site"] },
+      ctx: chat,
+    });
+    expect(r.status).toBe("pending");
+    const pending = r as Extract<ExecuteResult, { status: "pending" }>;
+    expect(pending.card.ask).toBe(
+      'Work on "Kite club" together: move the tasks, plan and cards of "Site" into it? Changes has its Undo.',
+    );
+    // The name came from the repository: the read-back carries it as data.
+    expect(pending.card.untrusted).toEqual({ source: "repo_file", origin: "repository:o/kite" });
+    expect(closed).toEqual([]);
+    expect(await w.store.project.get(KITE_ID)).toBeFalsy();
+    const yes = await w.executor.confirm(pending.pendingId, {
+      kind: "yes",
+      by: { kind: "human", id: w.human.id },
+    });
+    expect(yes.status).toBe("done");
+    expect((yes as Extract<ExecuteResult, { status: "done" }>).sentence).toBe(
+      '"Site" joined "Kite club", which this Forerunner works on together with another one; its old status pull request #4 is closed.',
+    );
+    expect(closed).toEqual([site.id]);
+    const made = await w.store.project.mustGet(KITE_ID);
+    expect(made.name).toBe("Kite club");
+    expect(made.settings.together).toMatchObject({ name: "Kite club", login: "bob" });
+    expect(made.settings.joined_from).toEqual([site.id]);
+    expect((await w.store.task.forProject(KITE_ID)).map((t) => t.title)).toEqual(["Home page"]);
+    await w.store.close();
+  });
+
+  it("a marker name the scan flags names nothing: the together project takes the closing project's name with '(together)'; GitHub that does not answer refuses in words and moves nothing; two projects at once are refused", async () => {
+    const w = await world();
+    togetherWorld(w, { name: null });
+    const site = await w.store.project.insert({
+      name: "Site",
+      goal: "A site",
+      repos: ["o/kite"],
+      settings: { members: [w.agent.id] },
+      author_human: w.human.id,
+    });
+    const other = await w.store.project.insert({
+      name: "Other",
+      goal: "Other",
+      repos: ["o/kite"],
+      settings: { members: [w.agent.id] },
+      author_human: w.human.id,
+    });
+    const ui = w.ctx({ source: "ui" });
+    const two = await w.executor.execute({
+      name: "project.join",
+      params: { keep: { together: true }, close: [site.id, other.id] },
+      ctx: ui,
+      confirmation: { kind: "tap", by: { kind: "human", id: w.human.id } },
+    });
+    expect(two.status).toBe("refused");
+    expect((two as { reason?: string }).reason).toBe("Choose the one project to work on together.");
+    const done = await w.executor.execute({
+      name: "project.join",
+      params: { keep: { together: true }, close: [site.id] },
+      ctx: ui,
+      confirmation: { kind: "tap", by: { kind: "human", id: w.human.id } },
+    });
+    expect(done.status).toBe("done");
+    expect((await w.store.project.mustGet(KITE_ID)).name).toBe("Site (together)");
+    await w.store.close();
+
+    const w2 = await world();
+    togetherWorld(w2, "unreadable");
+    const site2 = await w2.store.project.insert({
+      name: "Site",
+      goal: "A site",
+      repos: ["o/kite"],
+      settings: { members: [w2.agent.id] },
+      author_human: w2.human.id,
+    });
+    const refused = await w2.executor.execute({
+      name: "project.join",
+      params: { keep: { together: true }, close: [site2.id] },
+      ctx: w2.ctx({ source: "ui" }),
+      confirmation: { kind: "tap", by: { kind: "human", id: w2.human.id } },
+    });
+    expect(refused.status).toBe("refused");
+    expect((refused as { reason?: string }).reason).toBe(
+      "GitHub did not answer, so the project cannot be checked. Try again.",
+    );
+    expect((await w2.store.project.mustGet(site2.id)).status).toBe("active");
+    await w2.store.close();
   });
 });

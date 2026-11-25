@@ -604,6 +604,11 @@ export interface DaemonClient {
    * (`POST /projects/:id/intake`, 202).
    */
   proposeIntake(projectId: string, body: { brief: string }): Promise<IntakeProposalView>;
+  /**
+   * w8-together (L4i-left-48): Add to it. `POST /projects/:id/intake` with `background: true`
+   * answers at once with the status (`drafting`); the plan card comes when the model is done.
+   */
+  proposeIntakeInBackground(projectId: string, body: { brief: string }): Promise<IntakeStatusView>;
   project(id: string, signal?: AbortSignal): Promise<ProjectCard>;
   projectSummary(id: string, signal?: AbortSignal): Promise<ProjectSummary>;
   /**
@@ -703,6 +708,11 @@ export interface DaemonClient {
     withIds?: readonly string[],
     signal?: AbortSignal,
   ): Promise<JoinPreviewView>;
+  /**
+   * `GET /projects/:id/join-preview?together=1` (w8-together, OJ-11): the together form of the
+   * dialog for a project whose repository is another Forerunner's project (GitHub read now).
+   */
+  togetherPreview(projectId: string, signal?: AbortSignal): Promise<JoinPreviewView>;
   kill(body: KillBody): Promise<KillResult>;
   resume(): Promise<KillResult>;
   /** `GET /desktop/status`: desktop control's state, with what the indicator shows (S.32). */
@@ -1119,6 +1129,8 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
       get(routePath("intakeStatus", { id }), IntakeStatusViewSchema, undefined, signal),
     retryIntake: (id) => post(routePath("intakeRetry", { id }), IntakeStatusViewSchema, {}),
     proposeIntake: (id, body) => post(routePath("intake", { id }), IntakeProposalViewSchema, body),
+    proposeIntakeInBackground: (id, body) =>
+      post(routePath("intake", { id }), IntakeStatusViewSchema, { ...body, background: true }),
     project: (id, signal) =>
       get(routePath("project", { id }), ProjectCardSchema, undefined, signal),
     projectSummary: (id, signal) =>
@@ -1207,6 +1219,13 @@ export function createClient(config: DaemonConfig, fetchImpl?: FetchLike): Daemo
         routePath("joinPreview", { id: projectId }),
         JoinPreviewViewSchema,
         { with: withIds?.length ? withIds.join(",") : undefined },
+        signal,
+      ),
+    togetherPreview: (projectId, signal) =>
+      get(
+        routePath("joinPreview", { id: projectId }),
+        JoinPreviewViewSchema,
+        { together: "1" },
         signal,
       ),
     kill: (body) => post(routePath("kill"), KillResult, body),

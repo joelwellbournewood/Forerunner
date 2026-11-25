@@ -188,7 +188,7 @@ import { planCredentialLine, startCredential } from "./credential-start.ts";
 import { decisionViews } from "./decision-views.ts";
 import { createDocsRoutes } from "./docs-routes.ts";
 import { heldDependency } from "./held-words.ts";
-import { joinPreview, sharesRepositoryWith } from "./join-preview.ts";
+import { joinPreview, sharesRepositoryWith, togetherPreview } from "./join-preview.ts";
 import { joinedIntoOf } from "./join-words.ts";
 import { buildModelSettingsView } from "./model-settings-view.ts";
 import { overBudgetView, oversizedView } from "./oversize-view.ts";
@@ -1220,6 +1220,16 @@ export function createDaemonApp(
   app.post("/projects/:id/intake", async (c) => {
     const project = await rt.store.project.mustGet(c.req.param("id"));
     const body = await parse(c, IntakeRequestBody);
+    // w8-together (L4i-left-48): Add to it answers at once; the plan is drafted in the
+    // background and the project page says "Drafting the plan..." until its card is filed.
+    if (body.background === true) {
+      const s = await rt.intake.proposeInBackground(
+        project.id,
+        body.brief !== undefined ? { brief: body.brief } : {},
+      );
+      rt.events.emit("project", { id: project.id });
+      return c.json(intakeStatusView(s), 202);
+    }
     const r = await rt.intake.propose(
       project.id,
       body.brief !== undefined ? { brief: body.brief } : {},
@@ -1279,6 +1289,9 @@ export function createDaemonApp(
   // OJ-05 (d1109-onerepo-join): the Make one project dialog's facts, read only.
   app.get("/projects/:id/join-preview", async (c) => {
     const project = await rt.store.project.mustGet(c.req.param("id"));
+    // w8-together (OJ-11): the together form, for a project already here whose repository is
+    // another Forerunner's project (GitHub read now; still nothing written).
+    if (c.req.query("together") === "1") return c.json(await togetherPreview(rt.joinDeps, project));
     const withIds = (c.req.query("with") ?? "")
       .split(",")
       .map((s) => s.trim())

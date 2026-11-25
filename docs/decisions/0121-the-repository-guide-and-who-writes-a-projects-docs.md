@@ -112,3 +112,53 @@ fallback), so Ada's Forerunner wrote onto Bob's pull request (L4i-left-2).
   same number in parallel pull requests; a date and a slug need no coordination.
 - **Refresh the guide at every settings change.** Not now: the session's end already reads the
   copy and the host; a settings change waits for it (one docs pull request either way).
+
+## Amendment 2026-11-24: an inherited branch marker proves nothing; a taken branch is passed over (w8-together, W8a-left-27, W8a-left-22)
+
+**Item 8, the branch marker (W8a-left-27).** Once a project's doc set merges, the default
+branch carries its `.forerunner/project.json`, so every branch cut from it carries the same
+file: a person's `fr/docs-scaffold` pull request, or another Forerunner's, then counted as this
+project's, and its scaffold and guide refresh pushed and commented onto it and its Docs tab
+listed its files as this project's. Item 8's branch-marker clause now reads: an unmarked docs
+pull request is this project's by its branch's own marker **only when that marker differs from
+the default branch's marker** (`branchMarkerNames` in `packages/runtime/src/loop/docs.ts`); one
+that only repeats the default branch's is nobody's (fails closed). Both callers of
+`isProjectDocsPr` that read a branch marker pass the default branch's marker beside it: the
+scaffold's `ours` (`scaffoldBranchFor`, read once the copy is fetched) and the Docs tab's
+`docsInPullRequests`. The recorded address and the hidden mark still make a pull request this
+project's whatever its marker. This is the suggested rule of the W8a-left-27 item; the session
+lead's choice between it and "only with the recorded address" was not found in the spec, so the
+suggested rule is built and named here for the lead to confirm. A branch with **no** open pull
+request whose marker names the project stays the project's own to replace with a lease (its
+merged scaffold branch carries the same marker as the default branch; D-L4-24 is unchanged).
+
+**The scaffold branch (W8a-left-22).** `scaffoldBranchFor` returned `fr/docs-scaffold` whenever
+that branch had an open pull request, the project's or not; the scaffold then stopped
+(`pull_request_open`) and the guide refresh only logged it, so every session's end tried again
+and AGENTS.md on GitHub kept stale facts. Now the branch that holds this project's own open
+scaffold pull request comes first, wherever it is in the list; else the first branch that is not
+on GitHub or is the project's own; a branch with an open pull request that is not this project's,
+`fr/docs-scaffold` too, is passed over like any other taken branch (nothing is pushed to it or
+commented on it). So a fact change gives exactly one docs pull request, on
+`fr/docs-scaffold-<name>` when another person holds `fr/docs-scaffold`, and a restart opens no
+second one. Only when every candidate is someone else's (`branches_taken`) is nothing written;
+the scaffold and the refresh record `summary_cache.docs.guide_stopped`, and the Overview says in
+one line, with no button: "The repository guide on GitHub was not updated: every branch this
+project may write its docs on holds someone else's pull request." (`ProjectCard.guideStopped`,
+`guideStoppedLine`). A later run that gets through, or a guide found current on the default
+branch, clears it. A take-over's Try again says 'blocked' only in that case now.
+
+A consequence for a pair of projects here on one repository (made before the one-repository
+rule): the second one's scaffold, which used to stop at the first one's `fr/docs-scaffold`, now
+opens its own docs pull request on its own branch. Make one project (ADR 0117) remains the way
+to have one.
+
+Tests: `apps/ui/test/two-installs.test.ts` 'w8-together, wave 8: join together' (http: Bob's
+unmarked `fr/docs-scaffold` pull request cut from a main with Ada's marker gets no write from
+Ada over a scaffold run, a guide refresh after a fact change and her restart; she opens exactly
+one docs pull request on `fr/docs-scaffold-kite-club`; her Overview lists Bob's without Merge;
+the Docs tab's source lists none of its files; and the every-branch-taken case with its line
+across a restart), `real-daemon.test.ts` and `onerepo-join.test.tsx` (the line through
+`GET /projects/:id` and on the Overview). Changed for the design: `docs-scaffold.test.ts`,
+`loop-docs.test.ts` (W15-01) and the w8-repo-guide L4i-left-2 cases, where a scaffold that used
+to stop at another's `fr/docs-scaffold` now opens its own docs pull request on its own branch.

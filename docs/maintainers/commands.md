@@ -430,6 +430,13 @@ Inbox and its test tasks pass.') have their own. The task commands (`task.transi
 they are read back for a yes whatever their risk, because the words were interpreted ("skip
 the LICENSE task") and the person should see which task it touches before it moves; the Tasks
 tab's buttons (source `ui`) act at once with Undo (`CommandExecutor.decideSteps`).
+`CommandDef.askFromChatWhen(params, ctx)` is the same rule for one call (w8-together,
+L4i-left-4; the session lead's L4h-left-1 rule of 2026-11-24): true makes this call
+`askedAs` from chat or voice. `task.create`'s is `taskWordsAreModels`: a new task whose title,
+outcome or acceptance criteria hold words that are not in the person's own line
+(`notesPersons`) is read back with its one-line question ('Add "Write the FAQ" to Help?') and
+added on the yes; one in the person's words, and chat's "add a task: ..." pattern, act at once
+with Undo, at every level (ADR 0119 amended 2026-11-24).
 
 **After a record, every change is read back (d1109-chat-guard, run C, ADR 0114, W15B-80).**
 `CommandContext.recordsRead` (append-only; the chat's `CommandTurn.recordsRead`, passed in by
@@ -621,7 +628,12 @@ among them.
   a third task of that title came without one. The kinds' words never overlap. `sameTitleTags`,
   `sameTitlePickers`, `pickSameTitled` and `pickWord` are exported for the chat's own task reads
   (run C, d1109-chat-recall CR-2); cases in `w15-chat.test.ts` and `conversation-memory.test.ts`
-  ("l3-small, run L3").
+  ("l3-small, run L3"). A move's read-back and its sentence say which one moved (w8-together,
+  L4i-left-20, live check 4's L4-money-215): `moveAsk` and `moveSentence` take the task with
+  `apart` (`namedForMove`/`apartWords`: its pull request when each of the group has its own,
+  else its age; never its state, which the move changes) and write '"Write the guide" (the older
+  one)'; a title no other task has is quoted alone, as before (case in `w15-chat.test.ts`
+  'w8-together, wave 8: a move names which of two same-titled tasks it moves').
 - **Money with two decimals (W15-44).** budget.set's sentences, read-backs, card values and its
   "already" refusal write amounts with `chfExact` (shared.ts), "from CHF 3.00 to CHF 12.00"
   (design §5 rule 7; before, `chf`'s whole francs, "from CHF 3 to CHF 12"). A session start's
@@ -684,13 +696,31 @@ run C").
   sentence names the tool that opens it (`project_switch`), so the offer chat makes names no
   command (l4-chat-answers, 2026-11-22, L4-creds-27: live check 4's chat told the person "open
   Site with a project switch"). The daemon's port
-  (`chatLinkCheck`) ends the answer with 'Open New project to work on it together.' when the
-  repository's project is not on this computer (chat has no together flag yet). Its run's
+  (`chatLinkCheck`) ends the answer with `CHAT_TOGETHER_HINT`, 'Say "work on it together" to
+  join it here.', when the repository's project is not on this computer (before w8-together:
+  'Open New project to work on it together.', when chat had no together flag). Its run's
   sentence names the project that was made (`createdOutcomeWords`): the port may make it under
   another name than the one typed (Work together: the repository's marker names it; a removed
   together row brought back keeps its own), so the Changes row reads 'Created the project Kite
   club and made it the active project.', and a name other than the one asked for came from the
   repository, so the outcome carries the untrusted mark (`repo_file`, `repository:<link>`).
+- **Work together from chat** (w8-together, W8-join-4, ADR 0117 amended 2026-11-24):
+  `project.create` takes `together: true` (`PROJECT_CREATE_TOGETHER_PARAM`, never a project
+  id: the app reads the project from the repository). Its risk is a function, medium with
+  `together` and low without (`maxRisk` medium), so chat reads it back once with
+  `togetherCreateAsk` ('Work on "Kite club" together: this Forerunner joins it as the same
+  project. Nothing on GitHub changes now.'); a marker name that reads as an instruction is
+  never quoted (`togetherTarget`: 'another Forerunner project'). Plan and run ask
+  `CommandPorts.repositoryUse.together(repos)` (GitHub read now: the daemon's
+  `chatTogetherOffer`, runtime.md), refused in words when the repository is not another
+  Forerunner's project or the port is missing ('Work together cannot be started from here.');
+  the run calls `repositoryUse.createTogether`, the dialog's creation with `together:
+  {project}`, writes nothing to GitHub, and its sentence `togetherCreatedSentence` ('Working on
+  "Kite club" together with the other Forerunner now. Undo.') carries the untrusted mark. The
+  definition's last sentence tells the model to call it again with `together: true` only when
+  the refusal says the repository is another Forerunner's and the person asks to work on it
+  together (tests: `packages/commands/test/onerepo-link.test.ts`, the real-daemon 'chat's Work
+  together' cases, injection case `record-013-marker-work-together`).
 - **A refusal keeps its details** (`executor.ts`, `refusal()`): the `ForerunnerError`'s
   `details` are on the refused result (`ExecuteResult.details`, the runtime's
   `CommandResultView.details`), and `details.untrusted` becomes the result's `untrusted`, so a
@@ -730,6 +760,15 @@ run C").
   press is the yes with `confirm: "tap"`), scope project, reversible. Its definition
   (`PROJECT_JOIN_DESCRIPTION`) tells the model to use it only when the person asks and names
   the project to keep; the test asserts it exactly.
+- **Together** (w8-together, W8-join-1/-2, OJ-11, ADR 0117 amended 2026-11-24): `keep` may be
+  `{together: true}` with one project in `close` whose repository is another Forerunner's
+  project (the Overview's Work together; the definition's last sentence). Plan and run read the
+  repository's project from GitHub (`CommandPorts.projectJoin.together`, the daemon's
+  `RepositoryUse.togetherJoinFacts`), never from the params; the run makes the together
+  project (or brings a removed together row of it back) in the same transaction as the moves,
+  after its only GitHub write, the close of the closing project's own old status pull request
+  (`StatusBoard.closeOwnStatusPullRequest`). Undo moves the work back and removes the together
+  project as a removed row; the pull request stays closed and the Undo sentence says so.
 - **Plan and run** ask `CommandPorts.projectJoin.refusal(keep, close)` (compose's port over
   `joinRefusal`, runtime.md) and refuse with its sentence; nothing is chosen by the model.
 - **The moves** (`moveWork`, one `store.transaction`): every task of the closed project (any

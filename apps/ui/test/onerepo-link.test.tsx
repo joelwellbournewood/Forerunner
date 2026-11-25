@@ -94,13 +94,42 @@ describe("d1109-onerepo-link, run C: the New project offer (OR-02, OR-15)", () =
       repo: "org/atlas",
     });
     await user.click(await within(dialog).findByTestId("offer-add"));
+    // w8-together (L4i-left-48): sent to be drafted in the background (answered at once).
     await waitFor(() =>
       expect(postedCalls(harness, "/projects/proj_atlas/intake")).toEqual([
-        expect.objectContaining({ body: { brief: "Add a shop page." } }),
+        expect.objectContaining({ body: { brief: "Add a shop page.", background: true } }),
       ]),
     );
     expect(await screen.findByTestId("project-header")).toHaveTextContent("Atlas");
-    expect(harness.daemon.state.intake.proj_atlas?.state).toBe("pending");
+    await waitFor(() => expect(harness.daemon.state.intake.proj_atlas?.state).toBe("pending"));
+  });
+
+  it("w8-together (L4i-left-48): Add to it lands on Atlas at once and its page says 'Drafting the plan…' until the plan card is filed; a second brief meanwhile is refused with the open-plan sentence", async () => {
+    const user = userEvent.setup();
+    const harness = createHarness();
+    harness.daemon.state.holdDrafting.proj_atlas = true;
+    renderApp("/", harness);
+    const dialog = await openDialog(user);
+    await fill(user, dialog, { name: "Shop", brief: "Add a shop page.", repo: "org/atlas" });
+    await user.click(await within(dialog).findByTestId("offer-add"));
+    expect(await screen.findByTestId("project-header")).toHaveTextContent("Atlas");
+    expect(
+      await screen.findByText(
+        "Drafting the plan from your brief… This usually takes about a minute, then it waits in your Inbox for you to approve.",
+      ),
+    ).toBeInTheDocument();
+    expect(harness.daemon.state.intake.proj_atlas?.state).toBe("drafting");
+    // The fake's daemon answer for a second brief while it drafts: the 409, never a failure.
+    const again = await harness.client
+      .proposeIntakeInBackground("proj_atlas", { brief: "Add a blog." })
+      .catch((e: unknown) => e as { status?: number; message?: string });
+    expect((again as { status?: number }).status).toBe(409);
+    expect((again as { message?: string }).message).toBe(
+      'A plan for "Atlas" is being drafted; answer it once it waits in your Inbox.',
+    );
+    expect(harness.daemon.state.intake.proj_atlas?.state).toBe("drafting");
+    harness.daemon.state.finishDrafting.proj_atlas?.();
+    await waitFor(() => expect(harness.daemon.state.intake.proj_atlas?.state).toBe("pending"));
   });
 
   it("a repository whose project is not on this computer: Work together first with its line, Take it over with its line; Work together makes the same project here", async () => {

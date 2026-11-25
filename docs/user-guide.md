@@ -185,6 +185,37 @@ Costs tab 'Spent in "Kite club" before it joined: CHF 3.20'. Chat answers about 
 what "Kite club" did before it joined. In chat, "make Site and Kite club one project, keep
 Site" is read back with Yes and No first; chat never chooses the project to keep for you.
 
+**When a project here is another Forerunner's project on GitHub.** A project made before the
+one-repository rule (or while GitHub did not answer) can use a repository that is already
+another person's Forerunner project. Its Overview says so ('o/kite is also the Forerunner
+project "Kite club", which is not on this computer.') and offers **Work together** first, with
+'This project's tasks, plan and cards move into "Kite club"; both Forerunners work on it.' The
+dialog reads GitHub again and says what the press does ('"Site" becomes "Kite club", the project
+GitHub knows: its tasks, plan and cards move into it, and this Forerunner works on it together
+with the other one.') and its one write on GitHub: 'On GitHub only the old status pull request
+#4 of "Site" is closed, with one line saying why; nothing of the other Forerunner is
+touched.' (or 'Nothing on GitHub changes now.'). **Work together** moves everything in one step; Changes has its **Undo** ('"Site"
+is its own project again.'), also after Forerunner starts again. When GitHub does not answer,
+the dialog and the press say 'GitHub did not answer, so the project cannot be checked. Try
+again.' and nothing moves. In chat, "work on o/kite together" is read back first: 'Work on "Kite
+club" together: this Forerunner joins it as the same project. Nothing on GitHub changes now.'
+with Yes and No. When your project's guide could not be updated on GitHub because every branch
+it may write its docs on holds someone else's pull request, the Overview says so in one line:
+'The repository guide on GitHub was not updated: every branch this project may write its docs on
+holds someone else's pull request.'
+
+**Add to it** (New project on a repository a project here uses) lands on that project at once;
+its page says 'Drafting the plan from your brief…' until the plan waits in your Inbox. A new
+brief for it meanwhile is answered 'A plan for "Site" is being drafted; answer it once it waits
+in your Inbox.' If Forerunner quits or closes before the plan is drafted, the page says so when
+you open it again ('Planning failed: planning was stopped before it finished.' after a Quit,
+'Planning failed: Forerunner closed before the plan from your brief was drafted.' after a crash),
+and **Try again** drafts it from the same brief. A plan that failed or waited for Claude is
+drafted again from the brief you gave with Add to it, not from the project's first brief.
+
+A new task you ask for in chat in your own words is added at once, with Undo; one whose title or
+description the chat wrote itself is read back first ('Add "Write the FAQ" to Help?').
+
 Making one project waits while something of either project is under way, and says what to do
 first: 'A session is working on "Kite club". Make one project when it ends.', 'The plan of
 "Kite club" waits for your answer. Answer it first.', 'A pull request of "Kite club" is being

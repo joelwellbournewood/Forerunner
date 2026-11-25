@@ -132,6 +132,21 @@ const noteParam = z.string().trim().max(2000).optional().describe(NOTE_PARAM_DES
  */
 const ownNote = (ctx: CommandContext, note: string | undefined): boolean => notesPersons(ctx, note);
 
+/**
+ * w8-together (L4i-left-4): a new task said in chat or voice whose title, outcome or acceptance
+ * criteria are words the model wrote (not in the person's own line, `notesPersons`). The
+ * person's own command (the Tasks tab, chat's patterns) is never asked about here.
+ */
+function taskWordsAreModels(
+  params: { title: string; outcome: string; acceptance_criteria: readonly string[] },
+  ctx: CommandContext,
+): boolean {
+  if (ctx.source !== "chat" && ctx.source !== "voice") return false;
+  return [params.title, params.outcome, ...params.acceptance_criteria]
+    .filter((t) => t.trim().length > 0)
+    .some((t) => !notesPersons(ctx, t));
+}
+
 /** The note a read-back shows when the model made it up ('Note for its next brief: "…"'). */
 function noteClause(ctx: CommandContext, note: string | undefined): string {
   const text = note?.trim();
@@ -586,12 +601,52 @@ function namesList(titles: readonly string[]): string {
 }
 
 /**
+ * The task a move's words name: its title, and (`apart`, `apartWords`) what tells it from the
+ * project's other tasks of that title.
+ */
+type MovedTask = Pick<TaskRow, "title"> &
+  Partial<Pick<TaskRow, "pr_url">> & { apart?: string | null };
+
+/**
+ * w8-together (L4i-left-20, live check 4's L4-money-215): a moved task by its title, and in
+ * brackets what tells it apart when another task of the project has that title ('"Write the
+ * guide" (the older one)'), so the read-back and the line after Yes say which one moved.
+ */
+function movedName(task: MovedTask): string {
+  return task.apart ? `${quote(task.title)} (${task.apart})` : quote(task.title);
+}
+
+/**
+ * What tells `task` apart from the project's other tasks of its title, in a move's read-back and
+ * sentence (L4i-left-20): its pull request when each of them has its own ("#17"), else its age
+ * ("the older one", "the first one"); never its state, which the move itself changes. The same
+ * words pick it again (`sameTitlePickers`). Null when no other task has its title.
+ */
+async function apartWords(ctx: CommandContext, task: TaskRow): Promise<string | null> {
+  const same = (await ctx.store.task.forProject(task.project_id)).filter(
+    (t) => sameTitle(t.title) === sameTitle(task.title),
+  );
+  if (same.length < 2) return null;
+  const byAge = oldestFirst(same);
+  const i = byAge.findIndex((t) => t.id === task.id);
+  if (i < 0) return null;
+  const prs = byAge.map(prNumberOf);
+  if (prs.every((n) => n !== null) && new Set(prs).size === prs.length) return `#${prs[i]}`;
+  return `the ${ageTag(i, byAge.length).word} one`;
+}
+
+/** The task with the words that tell it apart, for `moveAsk` and `moveSentence`. */
+async function namedForMove(ctx: CommandContext, task: TaskRow): Promise<TaskRow & MovedTask> {
+  return { ...task, apart: await apartWords(ctx, task) };
+}
+
+/**
  * A move as one question for the chat's read-back (design §3.9, §5 "Move dialog": 'Pause
  * "Create notes/todo.md"? No session runs it until you press Resume.'), with the button's
  * one-line consequence (design §3.5).
  */
 export function moveAsk(
-  task: Pick<TaskRow, "title"> & Partial<Pick<TaskRow, "pr_url">>,
+  task: MovedTask,
   from: TaskStatus,
   to: TaskStatus,
   stuck = 0,
@@ -603,7 +658,7 @@ export function moveAsk(
    */
   work?: CancelWorkKind | null,
 ): string {
-  const t = quote(task.title);
+  const t = movedName(task);
   if (to === "cancelled") {
     // As the row's Cancel dialog (L-10, `cancelWorkLine`) and the line after Yes
     // (`personMove`): what Yes does to a task whose run is going (C-38), whose review goes on
@@ -646,7 +701,7 @@ export const UNDO_CONFLICT_WORDS =
 
 /** What a person's move did, in one line (design §5): the task by name, no raw state. */
 export function moveSentence(
-  task: Pick<TaskRow, "title"> & Partial<Pick<TaskRow, "pr_url">>,
+  task: MovedTask,
   from: TaskStatus,
   to: TaskStatus,
   extra: {
@@ -668,7 +723,7 @@ export function moveSentence(
     kept?: string | null;
   } = {},
 ): string {
-  const t = quote(task.title);
+  const t = movedName(task);
   let s: string;
   if (to === "cancelled" && extra.work)
     s = `Cancelled ${t}: ${cancelledWorkWords(extra.work, extra.kept, prNumberOfUrl(task.pr_url))}`;
@@ -802,7 +857,8 @@ async function personMove(
       ...(redone.ids.length ? { redone_cards: redone.marks } : {}),
       ...(setAside ? { set_aside: true } : {}),
     },
-    sentence: moveSentence(task, from, moved.status, {
+    // L4i-left-20: the line after Yes says which of two same-titled tasks moved.
+    sentence: moveSentence(await namedForMove(ctx, task), from, moved.status, {
       withdrawn: withdrawn.length,
       noted: noteId !== null,
       notedByAgent: !ownNote(ctx, opts.note),
@@ -1014,9 +1070,12 @@ function createSentence(
   if (p.priority !== DEFAULT_TASK_PRIORITY) parts.push(`${p.priority} priority`);
   if (p.specialist === PERSON_SPECIALIST) parts.push("it asks you in the Inbox");
   else if (p.specialist) parts.push(`for the ${p.specialist}`);
-  const draft = p.status === "draft" ? " as a draft (no session picks it up)" : "";
-  return `Added ${quote(p.title)} to ${projectName}${draft}${parts.length ? `, ${parts.join(", ")}` : ""}.`;
+  return `Added ${quote(p.title)} to ${projectName}${draftWords(p)}${parts.length ? `, ${parts.join(", ")}` : ""}.`;
 }
+
+/** A draft's words in task.create's sentence and read-back; empty for a ready task. */
+const draftWords = (p: Pick<TaskCreateParams, "status">): string =>
+  p.status === "draft" ? " as a draft (no session picks it up)" : "";
 
 /** Dependencies named by id or by title, as ids of the project's tasks (unknown ones kept). */
 async function resolveDependencies(
@@ -1041,6 +1100,10 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
     "Add a task to a project, ready unless a draft is asked for (it joins the running session if it fits, else waits for the person's next Start): title, outcome, acceptance criteria, priority (low, medium or high; medium when not said), the tasks it waits for (titles), its review level (1 light review, the default; 2 full review: needs Docker; 3 full review and the person's sign-off) and who does it (a specialist, or 'person' for a question only the person can answer).",
   params: createParams,
   risk: "low",
+  // w8-together (L4i-left-4; the L4h-left-1 rule, session lead 2026-11-24): said in chat or
+  // voice, a task whose title and description are in the person's own words acts at once; one
+  // the model wrote (a title or an outcome the person never said) is read back first.
+  askFromChatWhen: (params, ctx) => taskWordsAreModels(params, ctx),
   scope: "project",
   reversible: true,
   undoStrategy: "cancel the created task",
@@ -1060,11 +1123,14 @@ export const taskCreate: CommandDef<TaskCreateParams> = {
       scope: "project",
       risk: "low",
       sentence: `${createSentence(params, project.name, beforeTitles)}${noFile}`,
-      // The one-line read-back when it waits for a yes (d1109-chat-guard: after a record).
+      // The one-line read-back when it waits for a yes (d1109-chat-guard: after a record;
+      // w8-together, L4i-left-4: a task the model worded). fixup-w8-together: a draft says so,
+      // as its sentence does, so the yes promises no work that no session picks up (the O.8
+      // hand-over of real work as a draft, closeout-conversation.test.ts).
       ask: `${
         beforeTitles.length
           ? `Add ${quote(params.title)} before ${namesList(beforeTitles)}?`
-          : `Add ${quote(params.title)} to ${project.name}?`
+          : `Add ${quote(params.title)} to ${project.name}${draftWords(params)}?`
       }${noFile}`,
       reversible: true,
       projectId: project.id,
@@ -1439,7 +1505,7 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
       newValue: statusWords(params.to),
       scope: "project",
       risk: params.to === "cancelled" || params.to === "done" ? "medium" : "low",
-      sentence: moveSentence(task, task.status, params.to),
+      sentence: moveSentence(await namedForMove(ctx, task), task.status, params.to),
       reversible: transitionUndoable(task.status, params.to),
       projectId: project.id,
       projectName: project.name,
@@ -1449,7 +1515,7 @@ export const taskTransition: CommandDef<TaskTransitionParams> = {
       ask: await withPreview(
         ctx,
         moveAsk(
-          task,
+          await namedForMove(ctx, task),
           task.status,
           params.to,
           params.to === "cancelled" ? (await waitingOn(ctx, task)).length : 0,
@@ -1809,6 +1875,8 @@ async function moveCard(
   params: { project?: string | undefined; task: string; note?: string | undefined },
 ) {
   const project = await ctx.store.project.mustGet(task.project_id);
+  // L4i-left-20: which of two same-titled tasks, in the read-back and the sentence.
+  const named = await namedForMove(ctx, task);
   return buildCard({
     command,
     what: `the task ${quote(task.title)}`,
@@ -1816,7 +1884,7 @@ async function moveCard(
     newValue: statusWords(to),
     scope: "project",
     risk: "low",
-    sentence: moveSentence(task, task.status, to, {
+    sentence: moveSentence(named, task.status, to, {
       noted: !!params.note?.trim(),
       notedByAgent: !ownNote(ctx, params.note),
     }),
@@ -1827,7 +1895,7 @@ async function moveCard(
     // L4-selftasks-120: a note the model made up is read back, so the yes covers it.
     ask: await withPreview(
       ctx,
-      `${moveAsk(task, task.status, to)}${noteClause(ctx, params.note)}`,
+      `${moveAsk(named, task.status, to)}${noteClause(ctx, params.note)}`,
       task,
       to,
     ),

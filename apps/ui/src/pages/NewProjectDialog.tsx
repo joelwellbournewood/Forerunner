@@ -163,7 +163,9 @@ export function NewProjectDialog({ open, onClose }: { open: boolean; onClose: ()
     setBusy(true);
     setError(null);
     try {
-      await client.proposeIntake(projectId, { brief: text });
+      // w8-together (L4i-left-48): answered at once; the project page says "Drafting the plan…"
+      // until the plan card is filed (before: 2-10 s on "Adding…" while the model planned).
+      await client.proposeIntakeInBackground(projectId, { brief: text });
       await land(projectId);
     } catch (err) {
       setError(describeError(err));

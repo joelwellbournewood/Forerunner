@@ -1412,7 +1412,9 @@ describe("d1109-chat-recall, run C: run L3's leftovers", () => {
     } as never);
     await w.clock.advance(60_000);
     w.reply([toolReply("task_create", { title: "Write the FAQ" }), textReply("Added.")]);
-    const res = await w.chat("the FAQ still needs doing, note that down for the work");
+    // fixup-w8-together (L4i-left-4): the title is the person's own words, so without the record
+    // it acts at once.
+    const res = await w.chat("we still need to write the FAQ, note that down for the work");
     const history = (w.provider.calls[0]?.request.messages ?? []).slice(0, -1);
     expect(history).toEqual([
       { role: "user", content: "what did the report say?" },

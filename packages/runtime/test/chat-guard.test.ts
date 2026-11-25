@@ -679,7 +679,8 @@ describe("d1109-chat-guard, run C: a change after a record is read back first (C
         textReply("Added.", { ttftMs: 0 }),
       ],
     });
-    const turn = await w.chat("we also need an FAQ page, put it on the list");
+    // fixup-w8-together (L4i-left-4): the title is the person's own words, so it acts at once.
+    const turn = await w.chat("we also need to write the FAQ, put it on the list");
     expect(turn.pendingConfirmation).toBeNull();
     expect(turn.actions.map((a) => a.kind)).toEqual(["task.create"]);
     const parsed = await w.chat("add a task: write the changelog");

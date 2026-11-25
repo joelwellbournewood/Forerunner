@@ -102,6 +102,24 @@ export function scaffoldLeftNoMarker(project: Pick<ProjectRow, "summary_cache">)
   return !(typeof d.pr_url === "string" && d.pr_url) || other;
 }
 
+/**
+ * W8a-left-22 (w8-together): the Overview's one line when the repository guide could not go out
+ * because every scaffold branch the project may write on holds someone else's pull request
+ * (`summary_cache.docs.guide_stopped`, recorded by the scaffold and the guide refresh).
+ */
+export const GUIDE_BRANCHES_TAKEN_LINE =
+  "The repository guide on GitHub was not updated: every branch this project may write its docs on holds someone else's pull request.";
+
+/** The guide line for the Overview, or null (no stop recorded, or the project is closed). */
+export function guideStoppedLine(
+  project: Pick<ProjectRow, "status" | "summary_cache" | "settings">,
+): string | null {
+  if (project.status === "archived") return null;
+  const docs = (project.summary_cache as JsonObject | null | undefined)?.docs;
+  if (!docs || typeof docs !== "object" || Array.isArray(docs)) return null;
+  return (docs as JsonObject).guide_stopped === "branches_taken" ? GUIDE_BRANCHES_TAKEN_LINE : null;
+}
+
 /** A project whose creation was undone (W15-36): archived, with its old name kept. */
 export function isRemovedProject(project: Pick<ProjectRow, "status" | "settings">): boolean {
   return project.status === "archived" && typeof settingsOf(project)[REMOVED_NAME_KEY] === "string";
@@ -228,6 +246,33 @@ export function togetherLine(e: Pick<Elsewhere, "name" | "ids">, withBrief: bool
   );
 }
 
+/**
+ * w8-together (OJ-11, W8-join-1): Work together's consequence line on the Overview of a project
+ * already here (at most 100 characters): its work moves into the repository's project.
+ */
+export function overviewTogetherLine(e: Pick<Elsewhere, "name" | "ids">): string {
+  return withNameFitted(
+    e,
+    (name) =>
+      `This project's tasks, plan and cards move into ${name}; both Forerunners work on it.`,
+  );
+}
+
+/** OJ-11: the repository names no project that is not on this computer (nothing to join). */
+export function nothingToWorkTogetherSentence(locator: string): string {
+  return `${locator} names no other Forerunner project now, so there is nothing to work on together.`;
+}
+
+/** OJ-11: the repository names several such projects, so none is the one to work on. */
+export function severalToWorkTogetherSentence(locator: string): string {
+  return `${locator} names more than one other Forerunner project, so it cannot be worked on together.`;
+}
+
+/** OJ-11: the repository's project is on this computer: Make one project is the way. */
+export function togetherHereSentence(locator: string, name: string): string {
+  return `${locator} is already the project "${name}" on this computer: make one project of the two instead.`;
+}
+
 /** Take it over's consequence line (at most 100 characters). */
 export function takeOverLine(e: Pick<Elsewhere, "name" | "ids">): string {
   return withNameFitted(
@@ -339,10 +384,11 @@ export function isLinkRefusalCause(cause: unknown): cause is LinkRefusalCause {
 }
 
 /**
- * The chat's last words on a repository whose project is not on this computer (OR-15's cut
- * line: project.create has no together flag yet, the New project dialog has Work together).
+ * The chat's last words on a repository whose project is not on this computer. w8-together
+ * (W8-join-4): project.create takes `together: true` now, so the hint says how to ask in chat
+ * (before: "Open New project to work on it together.", OR-15's cut line).
  */
-export const CHAT_TOGETHER_HINT = "Open New project to work on it together.";
+export const CHAT_TOGETHER_HINT = 'Say "work on it together" to join it here.';
 
 /**
  * OR-07: the Overview line of a project whose repository (this computer's copy of its default

@@ -103,6 +103,27 @@ export type HostWriteAction =
   | "issue.create"
   | "issue.update"
   | "issue.pin"
+  // w8-together (W8a-left-5): every other write the hosts can record has its own name, so a
+  // "this home wrote nothing" check sees it ('other' is only a route no host serves).
+  | "issue.label"
+  | "label"
+  | "comment.delete"
+  | "file.delete"
+  | "ref"
+  | "repo.update"
+  | "repo.delete"
+  | "pull_request.update_branch"
+  | "pull_request.review_comment"
+  | "check"
+  | "commit_status"
+  | "hook"
+  | "release"
+  | "release.asset"
+  | "projects.board"
+  | "projects.fields"
+  | "projects.item"
+  | "app.token"
+  | "graphql.mutation"
   | "other";
 
 /** One write a login made on the host. */
@@ -273,7 +294,12 @@ async function bareRepo(dir: string, name: string, seeded: boolean): Promise<str
   return bare;
 }
 
-const MEMORY_ACTIONS: Record<string, HostWriteAction> = {
+/**
+ * Every operation `MemoryGitHost` records as a write (its `wrote()` calls), by name (W8a-left-5:
+ * before, seven of them came out as 'other', which the "wrote nothing" checks left out; the
+ * harness test fails on an operation this map does not name).
+ */
+export const MEMORY_ACTIONS: Record<string, HostWriteAction> = {
   createRepo: "repo.create",
   putFile: "file",
   createPullRequest: "pull_request.create",
@@ -287,10 +313,51 @@ const MEMORY_ACTIONS: Record<string, HostWriteAction> = {
   // w8-issue-host: a comment edited in place and an issue pinned.
   updateIssueComment: "comment.update",
   pinIssue: "issue.pin",
+  // w8-together (W8a-left-5): releases and the Projects mirror's board, fields and items.
+  createRelease: "release",
+  uploadReleaseAsset: "release.asset",
+  ensureProject: "projects.board",
+  ensureFields: "projects.fields",
+  upsertItem: "projects.item",
+  setItemFields: "projects.item",
+  archiveItem: "projects.item",
 };
 
-/** A stand-in request as a write: the repository, the number and what it did. */
-function writeOfRequest(
+/** One stand-in route's action (its method and the path after `/repos/<o>/<r>`). */
+function repoRouteAction(method: string, rest: string): HostWriteAction {
+  const post = method === "POST";
+  const patch = method === "PATCH";
+  const del = method === "DELETE";
+  if (rest === "" && patch) return "repo.update";
+  if (rest === "" && del) return "repo.delete";
+  if (rest.startsWith("/contents/")) return del ? "file.delete" : "file";
+  if (rest.startsWith("/git/refs")) return "ref";
+  if (rest === "/pulls" && post) return "pull_request.create";
+  if (/^\/pulls\/\d+$/.test(rest) && patch) return "pull_request.update";
+  if (/^\/pulls\/\d+\/merge$/.test(rest)) return "pull_request.merge";
+  if (/^\/pulls\/\d+\/update-branch$/.test(rest)) return "pull_request.update_branch";
+  if (/^\/pulls\/\d+\/reviews/.test(rest)) return "review";
+  if (/^\/pulls\/\d+\/comments$/.test(rest)) return "pull_request.review_comment";
+  if (/^\/issues\/\d+\/comments$/.test(rest) && post) return "comment";
+  if (/^\/issues\/comments\/\d+$/.test(rest)) return del ? "comment.delete" : "comment.update";
+  if (rest === "/issues" && post) return "issue.create";
+  if (/^\/issues\/\d+$/.test(rest) && patch) return "issue.update";
+  if (/^\/issues\/\d+\/labels/.test(rest)) return "issue.label";
+  if (rest.startsWith("/labels")) return "label";
+  if (rest.startsWith("/check-runs")) return "check";
+  if (rest.startsWith("/statuses/")) return "commit_status";
+  if (rest.startsWith("/hooks")) return "hook";
+  if (/^\/releases\/(?:assets\/\d+|\d+\/assets)$/.test(rest)) return "release.asset";
+  if (rest.startsWith("/releases")) return "release";
+  if (rest === "/projects" && post) return "projects.board";
+  return "other";
+}
+
+/**
+ * A stand-in request as a write: the repository, the number and what it did. W8a-left-5: every
+ * write route the stand-in GitHub serves has a name (the harness test lists them all).
+ */
+export function writeOfRequest(
   login: string,
   method: string,
   path: string,
@@ -300,7 +367,7 @@ function writeOfRequest(
   if (path === "/graphql")
     return {
       login,
-      action: graphql?.operation === "StatusPinIssue" ? "issue.pin" : "other",
+      action: graphql?.operation === "StatusPinIssue" ? "issue.pin" : "graphql.mutation",
       op: `graphql ${graphql?.operation ?? "anonymous"}`,
       repo: "",
     };
@@ -313,25 +380,13 @@ function writeOfRequest(
     ? "push"
     : /^\/(user|orgs\/[^/]+)\/repos$/.test(path) && method === "POST"
       ? "repo.create"
-      : rest.startsWith("/contents/")
-        ? "file"
-        : rest === "/pulls" && method === "POST"
-          ? "pull_request.create"
-          : /^\/pulls\/\d+$/.test(rest) && method === "PATCH"
-            ? "pull_request.update"
-            : /^\/pulls\/\d+\/merge$/.test(rest)
-              ? "pull_request.merge"
-              : /^\/pulls\/\d+\/reviews/.test(rest)
-                ? "review"
-                : /^\/issues\/\d+\/comments$/.test(rest) && method === "POST"
-                  ? "comment"
-                  : /^\/issues\/comments\/\d+$/.test(rest)
-                    ? "comment.update"
-                    : rest === "/issues" && method === "POST"
-                      ? "issue.create"
-                      : /^\/issues\/\d+$/.test(rest) && method === "PATCH"
-                        ? "issue.update"
-                        : "other";
+      : repo
+        ? repoRouteAction(method, rest)
+        : /^\/projects\/(?:\d+|columns)/.test(path)
+          ? "projects.item"
+          : /^\/app\/installations\/\d+\/access_tokens$/.test(path)
+            ? "app.token"
+            : "other";
   return {
     login,
     action,
@@ -597,4 +652,35 @@ export async function composeTwo(opts: ComposeTwoOptions): Promise<TwoHomes> {
     removeHomes([work]);
     throw e;
   }
+}
+
+// --- Helpers appended by later areas (shared_files[0]: append only) ----------------------------
+
+/**
+ * w8-together: commits `files` on `branch` of the shared repository as an account neither home
+ * is (the memory host's setup account; the stand-in's own seed commit), so a test can set up what
+ * an earlier version left on GitHub without a write by either login.
+ */
+export async function seedBranch(
+  two: TwoHomes,
+  branch: string,
+  files: Record<string, string>,
+  message = "seed",
+): Promise<void> {
+  if (two.memory) {
+    for (const [path, content] of Object.entries(files))
+      await two.memory.putFile(two.repo, { path, content, message, branch });
+    return;
+  }
+  await (two.http as FakeGitHost).seedCommit(two.repo, files, message, branch);
+}
+
+/**
+ * w8-together: this computer's copy of the project's repository follows the default branch, as
+ * the git host watcher's read of its head makes it follow on a running daemon (the harness runs
+ * no services). Read-only for GitHub: it fetches, it pushes nothing.
+ */
+export async function followDefaultBranch(home: Home, projectId: string): Promise<void> {
+  const project = await home.rt.store.project.mustGet(projectId);
+  await home.rt.docs.refreshCopy(project);
 }

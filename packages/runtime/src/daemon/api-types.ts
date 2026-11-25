@@ -254,6 +254,13 @@ export const ProjectCard = z.object({
    */
   researchReads: z.string().optional(),
   /**
+   * w8-together (W8a-left-22): the repository guide could not go out because every scaffold
+   * branch the project may write on holds someone else's pull request ('The repository guide on
+   * GitHub was not updated: ...', `guideStoppedLine`); null otherwise. Absent on a card the
+   * state service serves.
+   */
+  guideStopped: z.string().nullable().optional(),
+  /**
    * d1109-onerepo-link (ADR 0117, OR-07): the Overview's line about the repository. `elsewhere`:
    * this computer's copy of the repository names a Forerunner project that is not on this
    * computer ('o/kite is also the Forerunner project "Kite club", which is not on this
@@ -265,6 +272,13 @@ export const ProjectCard = z.object({
     .object({
       kind: z.enum(["elsewhere", "together"]),
       text: z.string(),
+      /**
+       * w8-together (OJ-11): Work together on this project already here, before Take it over
+       * (the together form of the join's dialog, `?together=1`); absent on any other line.
+       */
+      canWorkTogether: z.boolean().optional(),
+      /** Work together's consequence line (at most 100 characters); absent without it. */
+      togetherLine: z.string().optional(),
       canTakeOver: z.boolean(),
       takeOverLine: z.string().nullable(),
       details: z.string().nullable(),
@@ -1831,6 +1845,13 @@ export const CreateProjectBody = z.object({
 /** `POST /projects/:id/intake`: an optional brief in place of the one kept at creation. */
 export const IntakeRequestBody = z.object({
   brief: z.string().optional(),
+  /**
+   * w8-together (L4i-left-48): answer at once with the intake's status (`drafting`, an
+   * `IntakeStatusView`) and draft the plan in the background, as `POST /projects` with
+   * `intake: true` does (Add to it). Without it the route answers once the plan is filed, as
+   * before (`IntakeProposalView`).
+   */
+  background: z.boolean().optional(),
 });
 
 /** The intake filed (or reused) its proposal; the inbox holds the request (`202`). */
@@ -3711,6 +3732,24 @@ export const JoinPreviewView = z.object({
   ),
   keepOnly: z.string().nullable(),
   keepOnlyLine: z.string().nullable(),
+  /**
+   * w8-together (OJ-11): the together form (`?together=1`), for a project already here whose
+   * repository is another Forerunner's project: the name it becomes (read from GitHub now), the
+   * press's one sentence, its one line on GitHub, what stays, and what holds it (GitHub not
+   * answering among them). Null on Make one project's form; absent from an older daemon.
+   */
+  together: z
+    .object({
+      /** The project it becomes (the screen lands there after the press); never shown. */
+      projectId: z.string().nullable(),
+      name: z.string().nullable(),
+      sentence: z.string().nullable(),
+      github: z.string().nullable(),
+      stays: z.string(),
+      refusal: z.string().nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 export type JoinPreviewView = z.infer<typeof JoinPreviewView>;
 

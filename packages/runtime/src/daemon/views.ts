@@ -67,6 +67,7 @@ import {
   planningStatusText,
   stopReasonOfHandoff,
 } from "../session/stop-words.ts";
+import { guideStoppedLine } from "../sources/repository-words.ts";
 import { waitingOf } from "../wiring/billing-pick.ts";
 import { StateLedgerStore } from "../wiring/billing-ports.ts";
 import { ANSWER_CARD_KEYS, isChatOnlyCard, optionLabel } from "../wiring/request-answers.ts";
@@ -339,6 +340,8 @@ export async function projectCard(
     repository,
     // 'sites': "Research reads: any public website" (the Overview's line).
     researchReads: researchReadsLine(webAccessOf(p.settings)),
+    // W8a-left-22: the guide could not go out (every scaffold branch is someone else's).
+    guideStopped: guideStoppedLine(p),
     // OR-07: the repository is also a Forerunner project that is not on this computer.
     ...(facts?.repositoryElsewhere
       ? { repositoryElsewhere: await facts.repositoryElsewhere(p).catch(() => null) }

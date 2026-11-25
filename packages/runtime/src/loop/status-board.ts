@@ -425,24 +425,36 @@ export class StatusBoard implements StatusBoardPort {
    * one of another project, an unmarked one or one this install has no record of is never touched.
    */
   async closeOwnStatusPullRequest(project: ProjectRow): Promise<{ closed: number | null }> {
-    const none = { closed: null };
-    if (isTogether(project)) return none;
+    const found = await this.findOwnStatusPullRequest(project);
+    if (!found) return { closed: null };
+    await found.host.commentOnPullRequest(found.repo, found.number, OLD_STATUS_PR_LINE);
+    await found.host.updatePullRequest(found.repo, found.number, { state: "closed" });
+    logger.info("old status pull request closed", { projectId: project.id, number: found.number });
+    return { closed: found.number };
+  }
+
+  /**
+   * w8-together (W8-join-2): the project's own open status pull request that
+   * `closeOwnStatusPullRequest` would close, read only (Work together's dialog names it before
+   * the press); null for none, and for a together project. Throws what the host throws.
+   */
+  async findOwnStatusPullRequest(
+    project: ProjectRow,
+  ): Promise<{ number: number; repo: RepoRef; host: GitHost } | null> {
+    if (isTogether(project)) return null;
     const repo = statusRepoOf(project);
     const host = repo ? await this.deps.host() : null;
-    if (!repo || !host) return none;
+    if (!repo || !host) return null;
     const recorded = await this.recordedStatusPrUrls(project.id);
-    if (!recorded.size) return none;
+    if (!recorded.size) return null;
     const open = await host.listPullRequests(repo, { state: "open" });
     for (const pr of open) {
       if (pr.head.ref !== "fr/status") continue;
       if (readForerunnerMarker(pr.body ?? "")?.project !== project.id) continue;
       if (!recorded.has(pr.htmlUrl)) continue;
-      await host.commentOnPullRequest(repo, pr.number, OLD_STATUS_PR_LINE);
-      await host.updatePullRequest(repo, pr.number, { state: "closed" });
-      logger.info("old status pull request closed", { projectId: project.id, number: pr.number });
-      return { closed: pr.number };
+      return { number: pr.number, repo, host };
     }
-    return none;
+    return null;
   }
 
   /** The status pull requests this install opened for the project (its sessions' records). */

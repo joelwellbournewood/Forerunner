@@ -227,14 +227,40 @@ export const projectSwitch: CommandDef<ProjectSwitchParams> = {
   },
 };
 
+/**
+ * w8-together (W8-join-4): `together`'s definition as the chat's model receives it. No id: the
+ * daemon reads the repository's project from GitHub at the read-back and again at the yes.
+ */
+export const PROJECT_CREATE_TOGETHER_PARAM =
+  "true to work on the repository together with the other Forerunner project it names, as the same project; only when the person asked to work on it together. Never a project id: the app reads the project from the repository.";
+
 const createParams = z.object({
   name: z.string().min(1).max(120),
   goal: z.string().default(""),
   repos: z.array(z.string()).default([]),
   /** Make it the active project. Default true. */
   switch: z.boolean().default(true),
+  together: z.literal(true).optional().describe(PROJECT_CREATE_TOGETHER_PARAM),
 });
 export type ProjectCreateParams = z.infer<typeof createParams>;
+
+/** The other Forerunner project in the read-back: its name, or words that quote none. */
+function togetherTarget(name: string | null): string {
+  return name ? `"${name}"` : "another Forerunner project";
+}
+
+/**
+ * W8-join-4: chat's Work together, read back once before anything is made. The name is the
+ * repository's (cleaned and scanned); one that reads as an instruction is never quoted.
+ */
+export function togetherCreateAsk(name: string | null): string {
+  return `Work on ${togetherTarget(name)} together: this Forerunner joins it as the same project. Nothing on GitHub changes now.`;
+}
+
+/** What chat's Work together did (Changes, the tool's answer): `target` already quoted. */
+export function togetherCreatedSentence(target: string): string {
+  return `Working on ${target} together with the other Forerunner now. Undo.`;
+}
 
 /** A name another project has, as the dashboard's create says it (one sentence, what to do). */
 function duplicateProjectWords(name: string): string {
@@ -272,17 +298,57 @@ function createdOutcomeWords(
  * project's name, and the model offers it instead of a second project.
  */
 export const PROJECT_CREATE_DESCRIPTION =
-  "Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead: the person can open it or add the new work to it, never a second project. To open it for the person, call project_switch.";
+  "Create a project with a name, a goal and optional repositories (a GitHub repository or a folder). One repository or folder is one project: when another project already uses the link, this is refused with that project's name; then offer that project instead: the person can open it or add the new work to it, never a second project. To open it for the person, call project_switch. When the refusal says the repository is another Forerunner's project and the person asks to work on it together, call this again with the same repositories and together true.";
+
+/**
+ * W8-join-4: Work together said in chat or voice. What it would join, read from GitHub now
+ * (`ports.repositoryUse.together`); refused in words when the daemon has no such port.
+ */
+async function togetherFacts(
+  params: ProjectCreateParams,
+  ctx: CommandContext,
+): Promise<{ name: string | null }> {
+  const read = ctx.ports.repositoryUse?.together;
+  if (!read || !ctx.ports.repositoryUse?.createTogether)
+    throw new ForerunnerError("validation", "Work together cannot be started from here.", {
+      details: { cause: "together_refused" },
+    });
+  return read(params.repos);
+}
 
 export const projectCreate: CommandDef<ProjectCreateParams> = {
   name: "project.create",
   description: PROJECT_CREATE_DESCRIPTION,
   params: createParams,
-  risk: "low",
+  // W8-join-4: Work together is read back once (medium): it joins another Forerunner's project.
+  risk: (params) => (params.together ? "medium" : "low"),
+  maxRisk: "medium",
   scope: "global",
   reversible: true,
   undoStrategy: "archive the created project and restore the previous active project",
   async plan(params, ctx) {
+    if (params.together) {
+      const facts = await togetherFacts(params, ctx);
+      const repo = params.repos[0];
+      return buildCard({
+        command: "project.create",
+        what: "the list of projects",
+        oldValue: "without it",
+        newValue: facts.name ?? "the repository's project",
+        scope: "global",
+        risk: "medium",
+        sentence: togetherCreatedSentence(togetherTarget(facts.name)),
+        reversible: true,
+        projectName: facts.name ?? params.name,
+        ask: togetherCreateAsk(facts.name),
+        // The name is the repository's text: data for the chat model (d1109-chat-guard).
+        ...(facts.name
+          ? {
+              untrusted: { source: "repo_file", ...(repo ? { origin: `repository:${repo}` } : {}) },
+            }
+          : {}),
+      });
+    }
     // d1109-onerepo-link: a link another project uses is refused here, before any read-back.
     await ctx.ports.repositoryUse?.check(params.repos);
     const existing = await ctx.store.project.byName(params.name);
@@ -305,10 +371,15 @@ export const projectCreate: CommandDef<ProjectCreateParams> = {
     });
   },
   async run(params, ctx) {
+    const createTogether = params.together ? ctx.ports.repositoryUse?.createTogether : undefined;
+    if (params.together && !createTogether) await togetherFacts(params, ctx);
     // d1109-onerepo-link: checked again at the run (a read-back's yes may come later); the
     // dialog's own creation (`createProject`) checks it itself, before anything is written.
-    if (!ctx.ports.createProject) await ctx.ports.repositoryUse?.check(params.repos);
-    const existing = await ctx.store.project.byName(params.name);
+    // W8-join-4: Work together's creation reads the repository's project again itself.
+    if (!ctx.ports.createProject && !createTogether)
+      await ctx.ports.repositoryUse?.check(params.repos);
+    // A together project takes the repository's name (or the typed one when that is taken).
+    const existing = createTogether ? null : await ctx.store.project.byName(params.name);
     if (existing) {
       throw new ForerunnerError("validation", duplicateProjectWords(existing.name), {
         details: { cause: "duplicate_name", projectId: existing.id },
@@ -317,23 +388,26 @@ export const projectCreate: CommandDef<ProjectCreateParams> = {
     const human = await ctx.store.human.mustGet(ctx.humanId);
     // W15-36: the New project dialog's creation is the daemon's own (`ports.createProject`: the
     // brief, the plan from it or the doc set), so one click is this one command and one row.
-    const project = ctx.ports.createProject
-      ? await ctx.ports.createProject({
-          name: params.name,
-          goal: params.goal,
-          repos: params.repos,
-        })
-      : await ctx.store.project.insert({
-          name: params.name,
-          goal: params.goal,
-          repos: params.repos,
-          autonomy_level: human.default_autonomy,
-          ...authorOf(ctx),
-        });
+    const project = createTogether
+      ? await createTogether({ name: params.name, goal: params.goal, repos: params.repos })
+      : ctx.ports.createProject
+        ? await ctx.ports.createProject({
+            name: params.name,
+            goal: params.goal,
+            repos: params.repos,
+          })
+        : await ctx.store.project.insert({
+            name: params.name,
+            goal: params.goal,
+            repos: params.repos,
+            autonomy_level: human.default_autonomy,
+            ...authorOf(ctx),
+          });
     // The standard doc set (spec G.5): the daemon's port scaffolds it as the dashboard's
     // create does; a port that fails never fails the creation (the daemon records the gap).
     try {
-      if (!ctx.ports.createProject) await ctx.ports.projectCreated?.(project.id);
+      // The dialog's creation (and Work together's) brings its own doc set step.
+      if (!ctx.ports.createProject && !createTogether) await ctx.ports.projectCreated?.(project.id);
     } catch (e) {
       log("commands").warn("project docs hook failed", {
         projectId: project.id,
@@ -361,7 +435,16 @@ export const projectCreate: CommandDef<ProjectCreateParams> = {
         active_project: params.switch ? project.id : previousActive,
         project_history: nextHistory,
       },
-      ...createdOutcomeWords(params, project),
+      ...(createTogether
+        ? {
+            // W8-join-4: the name is the repository's; data for the chat model.
+            sentence: togetherCreatedSentence(`"${project.name}"`),
+            untrusted: {
+              source: "repo_file" as const,
+              ...(project.repos[0] ? { origin: `repository:${project.repos[0]}` } : {}),
+            },
+          }
+        : createdOutcomeWords(params, project)),
       projectId: project.id,
       activeProjectId: params.switch ? project.id : undefined,
     };

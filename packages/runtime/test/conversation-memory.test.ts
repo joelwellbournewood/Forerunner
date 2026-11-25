@@ -816,7 +816,8 @@ describe("w15-chat, wave 15", () => {
     );
     expect(w.provider.calls).toHaveLength(0);
     const readBack = await w.chat("redo Write the guide #18");
-    expect(readBack.pendingConfirmation?.readback).toMatch(/^Redo "Write the guide"\?/);
+    // fixup-w8-together (L4i-left-20): the read-back says which of the two it redoes.
+    expect(readBack.pendingConfirmation?.readback).toBe('Redo "Write the guide" (#18)?');
     await w.chat("yes");
     expect((await w.store.task.mustGet(second.id)).status).toBe("ready");
     expect((await w.store.task.mustGet(first.id)).status).toBe("done");
@@ -965,6 +966,14 @@ describe("w15-tail, wave 15 run B: a card's words change nothing by themselves (
  * asked; and nothing checked the reply. What the model is sent and what the person gets back is
  * asserted, with the literal words.
  */
+/**
+ * fixup-w8-together (L4i-left-4): the person's line of the cases below that add "Check the links"
+ * names the task in the person's own words, so the model's call acts at once as these cases need
+ * (a task the model words itself is read back first; executor.test.ts' w8-together case). Before:
+ * "the links need a look, can you see to it?".
+ */
+const LINKS_LINE = "can you check the links? they need a look";
+
 describe("l3-chat-claims, run L3", () => {
   const ONLY = { key: "web_access", value: { mode: "only", only: ["developer.mozilla.org"] } };
   const ANY = { key: "web_access", value: { mode: "any" } };
@@ -1285,7 +1294,7 @@ describe("l3-chat-claims, run L3: siblings", () => {
         actionDetails: [{ kind: "task.transition", summary: `Paused "${title}". Undo.` }],
       } as never);
       await w.clock.advance(1000);
-      const res = await w.chat("the links need a look, can you see to it?");
+      const res = await w.chat(LINKS_LINE);
       expect(w.messages(0)[1]?.content, title).toBe(`Done.\n\nThe app did: Paused "${title}".`);
       const row = (await w.store.event.list(sessionId, 0, 500))
         .filter((e) => e.type === "chat.reply")
@@ -1427,7 +1436,7 @@ describe("l3-chat-claims, run L3: what the turn did", () => {
       textReply(SAY, { ttftMs: 0 }),
       textReply("ok", { ttftMs: 0 }),
     ]);
-    const res = await w.chat("the links need a look, can you see to it?");
+    const res = await w.chat(LINKS_LINE);
     expect(w.provider.calls).toHaveLength(3);
     expect(nudgeOf(w)).toEqual({ role: "user", content: [{ type: "text", text: NUDGE }] });
     expect(res.actions.map((a) => [a.kind, a.summary])).toEqual([["task.create", ADDED]]);
@@ -1445,7 +1454,7 @@ describe("l3-chat-claims, run L3: what the turn did", () => {
     // The next turn's history says the change once, as the app's line.
     await w.chat("thanks");
     expect(w.messages(3).slice(0, -1)).toEqual([
-      { role: "user", content: "the links need a look, can you see to it?" },
+      { role: "user", content: LINKS_LINE },
       { role: "assistant", content: `The app did: ${ADDED}` },
     ]);
     await w.store.close();
@@ -1458,7 +1467,7 @@ describe("l3-chat-claims, run L3: what the turn did", () => {
       toolReply("task_create", { title: "Check the links" }),
       textReply(`Added the task. ${SAY}`, { ttftMs: 0 }),
     ]);
-    const res = await w.chat("the links need a look, can you see to it?");
+    const res = await w.chat(LINKS_LINE);
     expect(w.provider.calls).toHaveLength(3);
     expect(res.actions.map((a) => a.summary)).toEqual([ADDED]);
     expect(res.reply).toBe(ADDED);

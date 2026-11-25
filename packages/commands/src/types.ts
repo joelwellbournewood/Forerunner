@@ -381,6 +381,18 @@ export interface CommandPorts {
    */
   repositoryUse?: {
     check(repos: readonly string[]): Promise<void>;
+    /**
+     * w8-together (W8-join-4): chat's Work together. What `project.create` with `together: true`
+     * would join, read from GitHub now (never from the model): the repository's one other
+     * Forerunner project's name as its marker gives it, cleaned and scanned (null when it has
+     * none or it reads as an instruction). Throws the link's refusal in words otherwise.
+     */
+    together?(repos: readonly string[]): Promise<{ name: string | null }>;
+    /**
+     * The together project made on the yes, through the dialog's own creation (the repository's
+     * id and name read from GitHub again at the run; a removed together row comes back).
+     */
+    createTogether?(params: { name: string; goal: string; repos: string[] }): Promise<ProjectRow>;
   };
   /**
    * d1109-onerepo-link (ADR 0117, OR-07): `repo.take_over` for a project whose repository names
@@ -464,6 +476,41 @@ export interface ProjectJoinPort {
    * project that is not the person's own); null when nothing holds the join.
    */
   refusal(keepId: string, closeIds: readonly string[]): Promise<string | null>;
+  /**
+   * w8-together (OJ-11, W8-join-1, -2): Work together for a project already here, whose
+   * repository is another Forerunner's project. Absent: the together form is refused.
+   */
+  together?: ProjectTogetherPort;
+}
+
+/** What `project.join`'s together form asks the daemon (`join-preview.ts`, `RepositoryUse`). */
+export interface ProjectTogetherPort {
+  /** Why it cannot be made now (gone, not the person's, running or waiting work), or null. */
+  refusal(projectId: string): Promise<string | null>;
+  /**
+   * The repository's project, read from GitHub now (never from the page or the model); throws a
+   * refusal in words when GitHub does not answer or the repository names no such project.
+   */
+  facts(projectId: string): Promise<ProjectTogetherFacts>;
+  /**
+   * W8-join-2 (D-W8-45): the join's one GitHub write: the project's own old status pull request,
+   * if an earlier version of this install opened one, is closed; its number, or null when there
+   * is none. Throws when GitHub does not answer (then nothing moves).
+   */
+  closeOldStatus(project: ProjectRow): Promise<number | null>;
+}
+
+/** The repository's project as `ProjectTogetherPort.facts` read it. */
+export interface ProjectTogetherFacts {
+  id: string;
+  /** Its name in the repository (cleaned and scanned), or null. */
+  name: string | null;
+  activeOn: string | null;
+  login: string | null;
+  /** A together project with that id removed here: the row that comes back. */
+  revive: ProjectRow | null;
+  /** The name is repository text: the card and the outcome carry it as data. */
+  untrusted: { source: "repo_file"; origin: string };
 }
 
 /** What `repo.take_over` takes, read from GitHub at the press (never from the model). */
@@ -622,6 +669,11 @@ export interface CommandDef<P = unknown> {
    * before it happens. The Tasks tab's buttons (source ui) act at once, with Undo.
    */
   askFromChat?: boolean;
+  /**
+   * w8-together (L4i-left-4): read back once in chat or voice when this says so for the call
+   * (`task.create`: when its title or description is the model's words, not the person's).
+   */
+  askFromChatWhen?(params: P, ctx: CommandContext): boolean;
   /** The highest risk a dynamic risk can reach; the tool spec and the command table use it. */
   maxRisk?: Risk;
   /**

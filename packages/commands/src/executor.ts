@@ -449,7 +449,16 @@ export class CommandExecutor {
       if (subjects.length) card.subjects = subjects;
     }
     await this.refuseClosedProject(def.name, card);
-    return { def, params, card, risk, ...(persons ? { persons: true } : {}) };
+    // L4i-left-4: a call whose words are the model's, not the person's, is read back first.
+    const asked = def.askFromChatWhen?.(params, ctx) === true;
+    return {
+      def,
+      params,
+      card,
+      risk,
+      ...(persons ? { persons: true } : {}),
+      ...(asked ? { askedAs: true } : {}),
+    };
   }
 
   /**
@@ -556,7 +565,8 @@ export class CommandExecutor {
       return "needs_yes";
     // d1109-selftasks-chat (ADR 0119 point 7): the agent's own fix of its task list at a level
     // that does not free it (Advisor, Assisted) asks first whatever the commands, a new task
-    // included (task.create acts at once when the person says it).
+    // included (task.create acts at once when the person says it: its title and description in
+    // the person's own words, L4i-left-4; the model's words are read back by the rule above).
     if (decision === "act" && ctx.planFix && !freesPlanFix(ctx)) return "needs_yes";
     return decision;
   }

@@ -206,12 +206,14 @@ export function docsPrMarker(project: Pick<ProjectRow, "id">): string {
  * pull request (another Forerunner's, a person's, an older version's) was written onto. That
  * fallback now only lists such a pull request, without Merge (`docsPrListing`). A status pull
  * request (`fr/status`) is no project's docs pull request any more (w8-status-write).
+ * W8a-left-27: the branch's marker counts only when it differs from the default branch's
+ * (`defaultMarker`, `branchMarkerNames`); one inherited from the default branch proves nothing.
  */
 export function isProjectDocsPr(
   project: Pick<ProjectRow, "id" | "name" | "settings"> &
     Partial<Pick<ProjectRow, "summary_cache">>,
   pr: { head: { ref: string }; body: string; htmlUrl?: string },
-  opts: { branchMarker?: string | null } = {},
+  opts: { branchMarker?: string | null; defaultMarker?: string | null } = {},
 ): boolean {
   // D9 (d1109-onerepo-link): a project worked on together with another Forerunner shares the
   // other's project id; every docs pull request that names it is the other Forerunner's.
@@ -237,10 +239,26 @@ export function isProjectDocsPr(
     if (marked) return ids.includes(marked);
     if (ids.some((id) => body.includes(scaffoldProjectLine({ id })))) return true;
     if (/Forerunner project \S+\./.test(body)) return false;
-    const named = opts.branchMarker?.toLowerCase();
-    return !!named && ids.some((id) => id.toLowerCase() === named);
+    return branchMarkerNames(ids, opts);
   }
   return false;
+}
+
+/**
+ * W8a-left-27 (w8-together; the suggested rule, the session lead's to confirm): a branch's own
+ * `.forerunner/project.json` is evidence that the branch is this project's only when it differs
+ * from the default branch's marker (`defaultMarker`). Once a project's marker is on the default
+ * branch, every branch cut from it carries the same file, a person's or another Forerunner's
+ * too, so an inherited marker proves nothing and the branch is nobody's (fails closed).
+ */
+export function branchMarkerNames(
+  ids: readonly string[],
+  opts: { branchMarker?: string | null; defaultMarker?: string | null },
+): boolean {
+  const named = opts.branchMarker?.toLowerCase();
+  if (!named) return false;
+  if (opts.defaultMarker && opts.defaultMarker.toLowerCase() === named) return false;
+  return ids.some((id) => id.toLowerCase() === named);
 }
 
 /**
@@ -893,6 +911,8 @@ export class ProjectDocs implements ProjectDocsPort {
       ...(outcome.marker ? { marker: outcome.marker } : {}),
       ...(outcome.firstCommit ? { first_commit: true } : {}),
       ...(guideKey ? { guide_key: guideKey } : {}),
+      // W8a-left-22: the guide (in the doc set) could not go out; the Overview's line.
+      ...(outcome.stopped === "branches_taken" ? { guide_stopped: "branches_taken" } : {}),
       scaffolded_at: this.deps.clock.nowIso(),
     });
     this.logger.info("standard docs scaffolded", {
@@ -923,12 +943,18 @@ export class ProjectDocs implements ProjectDocsPort {
     // written to or commented on. The branch's marker is read from GitHub's copy of the branch
     // once the copy is fetched (`scaffoldBranchFor`), before `checkout` asks.
     const branchMarkers = new Map<string, string | null>();
+    // W8a-left-27: the default branch's marker, read once the copy is fetched: a branch marker
+    // that only repeats it proves nothing.
+    const defaultMarker: { project: string | null } = { project: null };
     const ours = (pr: PullRequestInfo) =>
-      isProjectDocsPr(project, pr, { branchMarker: branchMarkers.get(pr.head.ref) ?? null });
+      isProjectDocsPr(project, pr, {
+        branchMarker: branchMarkers.get(pr.head.ref) ?? null,
+        defaultMarker: defaultMarker.project,
+      });
     const out = await this.checkout(
       project,
       target,
-      (git) => this.scaffoldBranchFor(project, target, git, ours, branchMarkers),
+      (git) => this.scaffoldBranchFor(project, target, git, ours, branchMarkers, defaultMarker),
       { ours, fresh: async (open) => !open },
     );
     const { git, dir } = out;
@@ -950,10 +976,15 @@ export class ProjectDocs implements ProjectDocsPort {
 
   /**
    * The branch the scaffold writes on (D-L4-24), or null when every candidate is someone else's:
-   * the first of `scaffoldBranchesOf` that holds this project's open scaffold pull request, is
-   * not on GitHub, or is this project's own (its marker names the project). `fr/docs-scaffold`
-   * with another project's open pull request is returned as it is: `checkout` names it
-   * `foreign` and nothing is written (W15-01).
+   * the one of `scaffoldBranchesOf` that holds this project's open scaffold pull request (an
+   * unmarked one counts only by W8a-left-27's rule, `branchMarkerNames`), else the first that is
+   * not on GitHub or is this project's own (its marker names the project, no pull request open
+   * on it). W8a-left-22: a branch with an open pull request that is not
+   * this project's, `fr/docs-scaffold` too, is passed over like any other taken branch, so a
+   * fact change still gives this project its one docs pull request on its own branch; nothing
+   * is pushed to or commented on the other pull request (W15-01). Before, `fr/docs-scaffold`
+   * with another's open pull request was returned as it was, the scaffold stopped there and
+   * every session's end tried again and stopped again.
    */
   private async scaffoldBranchFor(
     project: ProjectRow,
@@ -961,8 +992,15 @@ export class ProjectDocs implements ProjectDocsPort {
     git: GitOps,
     ours: (pr: PullRequestInfo) => boolean,
     branchMarkers: Map<string, string | null>,
+    defaultMarker: { project: string | null } = { project: null },
   ): Promise<string | null> {
     const ids = projectIdsOf(project).map((id) => id.toLowerCase());
+    defaultMarker.project =
+      parseInstallMarker(
+        (await git.fileAt(`origin/${target.base}`, INSTALL_MARKER_FILE).catch(() => null)) ?? "",
+      )?.project ?? null;
+    const seen: { branch: string; open: PullRequestInfo[]; marker: string | null; on: boolean }[] =
+      [];
     for (const branch of scaffoldBranchesOf(project)) {
       const open = await this.deps.host.listPullRequests(target.repo, {
         state: "open",
@@ -970,16 +1008,32 @@ export class ProjectDocs implements ProjectDocsPort {
       });
       // L4i-left-2: the branch's own marker, the evidence for an open pull request that names
       // no project (read before `ours` is asked about it).
-      const marker = (await git.hasRef(`origin/${branch}`))
-        ? parseInstallMarker((await git.fileAt(`origin/${branch}`, INSTALL_MARKER_FILE)) ?? "")
+      const on = await git.hasRef(`origin/${branch}`);
+      const marker = on
+        ? (parseInstallMarker((await git.fileAt(`origin/${branch}`, INSTALL_MARKER_FILE)) ?? "")
+            ?.project ?? null)
         : null;
-      branchMarkers.set(branch, marker?.project ?? null);
+      branchMarkers.set(branch, marker);
+      seen.push({ branch, open, marker, on });
+    }
+    // This project's own open scaffold pull request first, wherever it is: a branch freed
+    // earlier in the list never gets a second one (W8-guide-1: one docs pull request).
+    const mine = seen.find((s) => s.open.length > 0 && s.open.every(ours));
+    if (mine) return mine.branch;
+    for (const { branch, open, marker, on } of seen) {
       if (open.length) {
-        if (branch === DOCS_SCAFFOLD_BRANCH || open.every(ours)) return branch;
+        this.logger.info("a scaffold branch holds a pull request that is not this project's", {
+          projectId: project.id,
+          branch,
+        });
         continue;
       }
-      if (!(await git.hasRef(`origin/${branch}`))) return branch;
-      if (marker && ids.includes(marker.project.toLowerCase())) return branch;
+      if (!on) return branch;
+      // A branch with no open pull request whose marker names the project is its own (a merged
+      // or closed scaffold pull request's, D-L4-24): replaced from the default branch with a
+      // lease. Its marker may repeat the default branch's (this project's own merged docs put it
+      // there), so the W8a-left-27 rule is the pull requests' (`ours`), not this one's.
+      if (marker && ids.includes(marker.toLowerCase())) return branch;
       this.logger.info("a scaffold branch on the repository is not this project's: left as it is", {
         projectId: project.id,
         branch,
@@ -1322,7 +1376,9 @@ export class ProjectDocs implements ProjectDocsPort {
       defaultBranch: target.base,
     });
     if (existsSync(join(copy, ".git")) && guideIsCurrentIn(copy, facts)) {
-      await this.record(project, { ...docs, guide_key: guideKeyOf(facts) });
+      // The guide on the default branch is current: no "could not be updated" line any more.
+      const { guide_stopped: _stopped, ...current } = docs as Record<string, unknown>;
+      await this.record(project, { ...current, guide_key: guideKeyOf(facts) });
       return none;
     }
     // The intake's docs pull request carries the guide while it is open (`writeDocSet`).
@@ -1338,10 +1394,15 @@ export class ProjectDocs implements ProjectDocsPort {
     const changed =
       out.created.length + (out.updated?.length ?? 0) + (out.removed?.length ?? 0) > 0 ||
       (!!out.prUrl && out.prUrl !== this.recordedDocsPr(project));
+    // W8a-left-22: when every scaffold branch is someone else's the guide could not go out;
+    // the Overview says so in one line (`guideStoppedLine`) until a later run gets through.
+    const { guide_stopped: _was, ...kept } = ((await this.deps.store.project.get(project.id))
+      ?.summary_cache?.docs ?? {}) as Record<string, unknown>;
     await this.record(project, {
-      ...((await this.deps.store.project.get(project.id))?.summary_cache?.docs as object),
+      ...kept,
       ...(out.prUrl ? { pr_url: out.prUrl } : {}),
       ...(after ? { guide_key: after } : {}),
+      ...(out.stopped === "branches_taken" ? { guide_stopped: "branches_taken" } : {}),
       guide_at: this.deps.clock.nowIso(),
     });
     this.logger.info("repository guide checked", {
@@ -1389,12 +1450,17 @@ export class ProjectDocs implements ProjectDocsPort {
       const git = this.gitOf(dir, gitAuthFor(await resolveGitToken(this.deps.token), target.clone));
       await git.fetch();
       const out: DocInPullRequest[] = [];
+      // W8a-left-27: a branch marker that only repeats the default branch's proves nothing.
+      const defaultMarker =
+        parseInstallMarker(
+          (await git.fileAt(`origin/${target.base}`, INSTALL_MARKER_FILE).catch(() => null)) ?? "",
+        )?.project ?? null;
       for (const pr of prs) {
         if (!(await git.hasRef(`origin/${pr.head.ref}`))) continue;
         const branchMarker =
           parseInstallMarker((await git.fileAt(`origin/${pr.head.ref}`, INSTALL_MARKER_FILE)) ?? "")
             ?.project ?? null;
-        if (!isProjectDocsPr(project, pr, { branchMarker })) continue;
+        if (!isProjectDocsPr(project, pr, { branchMarker, defaultMarker })) continue;
         for (const path of await git.changedFiles(`origin/${target.base}`, `origin/${pr.head.ref}`))
           if (!out.some((d) => d.path === path))
             out.push({ path, number: pr.number, url: pr.htmlUrl });

@@ -25,9 +25,12 @@ import {
   isTogether,
   type LinkRefusalDetails,
   nothingToTakeOverSentence,
+  nothingToWorkTogetherSentence,
   otherHostSentence,
+  overviewTogetherLine,
   projectIdsOf,
   scaffoldLeftNoMarker,
+  severalToWorkTogetherSentence,
   TAKE_OVER_TRY_AGAIN_LINE,
   TAKE_OVER_UNDO_MERGED,
   TAKE_OVER_UNDO_OPEN,
@@ -41,7 +44,9 @@ import {
   takeOverDetails,
   takeOverLine,
   togetherFolderSentence,
+  togetherHereSentence,
   togetherLine,
+  togetherOf,
   tookOverNoPullRequestSentence,
   tookOverOf,
 } from "./repository-words.ts";
@@ -67,6 +72,13 @@ export const MAX_PROJECTS = 10_000;
 
 /** A project id as a marker names it (schema 1): a UUID. */
 const PROJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Forerunner's docs branches: the scaffold's (`fr/docs-scaffold`, or the project's own
+ * `fr/docs-scaffold-<project>` when that one is another's, L4-github-102) and an intake's doc
+ * set (`loop/docs.ts`).
+ */
+const DOCS_BRANCH = /^fr\/(?:docs-scaffold(?:-[\w-]+)?|intake-[^/]+-docs)$/;
 
 // ---------------------------------------------------------------------------------------------
 // The identity of a link
@@ -494,6 +506,12 @@ export interface RepositoryRead {
   marker: { project: string; name: string | null } | null;
   /** A file is there but is no marker this schema wrote. */
   markerUnreadable: boolean;
+  /**
+   * W8a-left-7 (w8-together): with no marker on the default branch, the marker at the head of the
+   * newest open docs pull request that carries a project's mark (the maker's doc set before it
+   * merges), when it names that same project; cleaned and scanned as the default branch's is.
+   */
+  headMarkers?: { project: string; name: string | null }[];
   /** Pull requests carrying a project mark (state 'all', most recently updated first, 100). */
   marked: MarkedPullRequest[];
   /** This install's GitHub login, or null when the host did not say. */
@@ -521,9 +539,16 @@ export async function readRepository(host: GitHost, ref: RepoRef): Promise<Repos
   }
   const prs = await host.listPullRequests(ref, { state: "all", sort: "updated" });
   const marked: MarkedPullRequest[] = [];
+  const headMarkers: { project: string; name: string | null }[] = [];
   for (const pr of prs.slice(0, 100)) {
     const ids = projectIdsNamedBy(pr);
     if (!ids.length) continue;
+    // W8a-left-7: the maker's docs pull request before it merges names the project too; its
+    // head's marker gives the name only when it names the id the pull request's mark names.
+    if (!file && headMarkers.length < 3 && pr.state === "open" && DOCS_BRANCH.test(pr.head.ref)) {
+      const found = await headMarkerOf(host, ref, pr, ids);
+      if (found) headMarkers.push(found);
+    }
     marked.push({
       number: pr.number,
       ids,
@@ -539,7 +564,34 @@ export async function readRepository(host: GitHost, ref: RepoRef): Promise<Repos
   } catch {
     login = null;
   }
-  return { marker, markerUnreadable, marked, login };
+  return { marker, markerUnreadable, headMarkers, marked, login };
+}
+
+/** The marker at a docs pull request's head when it names one of the pull request's ids. */
+async function headMarkerOf(
+  host: GitHost,
+  ref: RepoRef,
+  pr: Pick<PullRequestInfo, "head">,
+  ids: readonly string[],
+): Promise<{ project: string; name: string | null } | null> {
+  const file = await host.getFile(ref, INSTALL_MARKER_FILE, pr.head.ref).catch(() => null);
+  const parsed = file ? parseInstallMarker(file.content) : null;
+  if (!parsed || !PROJECT_ID.test(parsed.project)) return null;
+  const project = parsed.project.toLowerCase();
+  return ids.includes(project) ? { project, name: markerNameOf(parsed.name) } : null;
+}
+
+/**
+ * W8a-left-7 (w8-together): the name the repository gives the project `id`: its default branch's
+ * marker, else the marker at the head of its open docs pull request (the maker's doc set before
+ * it merges); null when neither names it, or the name is flagged. New project's Work together
+ * and the Overview's Work together both name the together project with it.
+ */
+export function repositoryNameOf(read: RepositoryRead, id: string): string | null {
+  if (read.marker?.project === id) return read.marker.name;
+  const head = read.headMarkers?.find((m) => m.project === id);
+  if (head) return head.name;
+  return null;
 }
 
 /** What the repository means for a new link on this computer. */
@@ -607,7 +659,7 @@ function elsewhereOf(read: RepositoryRead, ids: string[], nowMs: number): Elsewh
   const one = ids.length === 1;
   return {
     ids,
-    name: one && read.marker?.project === ids[0] ? (read.marker?.name ?? null) : null,
+    name: one && ids[0] ? repositoryNameOf(read, ids[0]) : null,
     lastActive: latest ? { at: latest.updatedAt, own: mine(latest.authorLogin) } : null,
     otherAccount: other ? other.updatedAt : null,
     canWorkTogether: one,
@@ -672,6 +724,52 @@ export async function chatLinkCheck(
       });
     throw e;
   }
+}
+
+/**
+ * w8-together (W8-join-4): chat's Work together. The repository's one other Forerunner project,
+ * read from GitHub now (never from the model): its id for the creation and its name for the
+ * read-back (the refusal's, cleaned and scanned: null when it has none or reads as an
+ * instruction). Every other answer is the link's refusal in words: a project here uses it,
+ * GitHub does not answer, it names no project or several, a folder.
+ */
+export async function chatTogetherOffer(
+  use: Pick<RepositoryUse, "check">,
+  repos: readonly string[],
+): Promise<{ id: string; name: string | null }> {
+  try {
+    // An id that matches none: the check answers with the offer it would make.
+    await use.check(repos, { together: { project: "" } });
+  } catch (e) {
+    if (
+      isLinkRefusal(e) &&
+      e.details.cause === "repository_used_elsewhere" &&
+      e.details.canWorkTogether &&
+      e.details.projects?.length === 1
+    )
+      return { id: e.details.projects[0] as string, name: e.details.projectName ?? null };
+    throw e;
+  }
+  throw linkRefusal(TOGETHER_UNREADABLE, { cause: "github_unreadable" });
+}
+
+/**
+ * w8-together (OJ-11): what Work together for a project already here joins, read from GitHub at
+ * the press (`RepositoryUse.togetherJoinFacts`).
+ */
+export interface TogetherJoinFacts {
+  /** The repository's project id: the together project's id. */
+  id: string;
+  /** The name the repository gives it (`repositoryNameOf`), cleaned and scanned; null if none. */
+  name: string | null;
+  activeOn: string | null;
+  login: string | null;
+  /** The repository as the person reads it: "o/kite". */
+  locator: string;
+  /** A together project with that id removed here: the row that comes back. */
+  revive: ProjectRow | null;
+  /** The name is repository text: data for chat (ADR 0114). */
+  untrusted: { source: "repo_file"; origin: string };
 }
 
 /** What a creation may go on with once the link is checked. */
@@ -744,6 +842,13 @@ function within<T>(work: Promise<T>, ms: number): Promise<T> {
 export interface RepositoryOverview {
   kind: "elsewhere" | "together";
   text: string;
+  /**
+   * w8-together (OJ-11): Work together on a project already here (the together form of Make one
+   * project's dialog); absent on any other line.
+   */
+  canWorkTogether?: boolean;
+  /** Work together's consequence line (at most 100 characters); absent without the button. */
+  togetherLine?: string;
   canTakeOver: boolean;
   /** Take it over's consequence line; null without the button. */
   takeOverLine: string | null;
@@ -766,13 +871,6 @@ export interface RepositoryOverview {
 const OVERVIEW_READ_MS = 5 * 60_000;
 /** The Overview never waits longer than this on GitHub: the line shows, the press checks. */
 const OVERVIEW_WAIT_MS = 4_000;
-
-/**
- * Forerunner's docs branches: the scaffold's (`fr/docs-scaffold`, or the project's own
- * `fr/docs-scaffold-<project>` when that one is another's, L4-github-102) and an intake's doc
- * set (`loop/docs.ts`).
- */
-const DOCS_BRANCH = /^fr\/(?:docs-scaffold(?:-[\w-]+)?|intake-[^/]+-docs)$/;
 
 function sameIds(a: readonly string[], b: readonly string[]): boolean {
   const x = [...new Set(a.map((s) => s.toLowerCase()))].sort();
@@ -1043,8 +1141,11 @@ export class RepositoryUse {
     if (own.has(id)) return null;
     const index = await this.index();
     // A project here (two on one repository made before the rule: d1109-onerepo-join's line),
-    // or one joined into or taken over by a project here, is not "not on this computer".
-    if (index.row(id) || index.knows(id)) return null;
+    // or one joined into or taken over by a project here, is not "not on this computer". A
+    // together project removed here is (w8-together): Work together brings that row back.
+    const row = index.row(id);
+    const removedTogether = !!row && isRemovedProject(row) && isTogether(row);
+    if (!removedTogether && (row || index.knows(id))) return null;
     const name = markerNameOf(parsed?.name);
     const read = await this.overviewRead(repo.key, repo.ref);
     const e: Elsewhere = read
@@ -1060,6 +1161,10 @@ export class RepositoryUse {
     return {
       kind: "elsewhere",
       text: alsoElsewhereSentence(repo.locator, e, await this.zone()),
+      // w8-together (OJ-11, W8-join-1): Work together first, also when another GitHub account
+      // works on it now (that is when it is the way); the press reads GitHub anew.
+      canWorkTogether: true,
+      togetherLine: overviewTogetherLine(e),
       canTakeOver: e.canTakeOver,
       takeOverLine: e.canTakeOver ? takeOverLine(e) : null,
       details: e.canTakeOver ? takeOverDetails(e) : null,
@@ -1137,6 +1242,92 @@ export class RepositoryUse {
             untrusted,
           });
         return { locator: repo.locator, projects: e.ids, name: e.name };
+      }
+    }
+  }
+
+  /**
+   * w8-together (OJ-11, W8-join-1): Work together for a project already here. The repository's
+   * own project is read from GitHub now, at the dialog and again at the press (never from the
+   * page or the model): its id and its name (`repositoryNameOf`), or a refusal in words when
+   * GitHub does not answer (nothing moves then), when the repository names no other project, names
+   * several, or names a project that is on this computer (Make one project is the way). A
+   * together project removed here comes back as that row (`revive`).
+   */
+  async togetherJoinFacts(projectId: string): Promise<TogetherJoinFacts> {
+    const project = await this.deps.store.project.mustGet(projectId);
+    const repo = this.repositoryOf(project);
+    if (!repo) throw linkRefusal(togetherFolderSentence(null), { cause: "together_refused" });
+    const host = await this.host();
+    let read: RepositoryRead | null = null;
+    if (host) read = await this.readRepo(host, repo.ref).catch(() => null);
+    if (!read) throw linkRefusal(TOGETHER_UNREADABLE, { cause: "github_unreadable" });
+    const now = this.deps.clock.now();
+    this.reads.set(repo.key, { at: now, read });
+    // The project's own marks (its earlier docs or status pull requests) name no other project:
+    // only the others count, and a marker that names this project leaves nothing to join.
+    const own = new Set(
+      [...projectIdsOf(project), ...(tookOverOf(project)?.projects ?? [])].map((id) =>
+        id.toLowerCase(),
+      ),
+    );
+    if (read.marker && own.has(read.marker.project))
+      throw linkRefusal(nothingToWorkTogetherSentence(repo.locator), {
+        cause: "together_refused",
+      });
+    const others: RepositoryRead = {
+      ...read,
+      marked: read.marked
+        .map((p) => ({ ...p, ids: p.ids.filter((id) => !own.has(id)) }))
+        .filter((p) => p.ids.length > 0),
+    };
+    const index = await this.index();
+    const verdict = verdictOf(others, index, now);
+    const untrusted = { source: "repo_file", origin: `repository:${repo.locator}` } as const;
+    switch (verdict.kind) {
+      case "free":
+      case "removed":
+        throw linkRefusal(nothingToWorkTogetherSentence(repo.locator), {
+          cause: "together_refused",
+        });
+      case "here":
+        if (verdict.project.id === project.id)
+          throw linkRefusal(nothingToWorkTogetherSentence(repo.locator), {
+            cause: "together_refused",
+          });
+        throw linkRefusal(togetherHereSentence(repo.locator, verdict.project.name), {
+          cause: "repository_in_use",
+          projectId: verdict.project.id,
+          projectName: verdict.project.name,
+        });
+      case "removed_together": {
+        const row = verdict.project;
+        return {
+          id: row.id,
+          name: repositoryNameOf(read, row.id) ?? markerNameOf(togetherOf(row)?.name),
+          activeOn: verdict.elsewhere.lastActive?.at ?? null,
+          login: read.login,
+          locator: repo.locator,
+          revive: row,
+          untrusted,
+        };
+      }
+      case "elsewhere": {
+        const e = verdict.elsewhere;
+        const id = e.ids[0];
+        if (!e.canWorkTogether || !id)
+          throw linkRefusal(severalToWorkTogetherSentence(repo.locator), {
+            cause: "together_refused",
+          });
+        return {
+          id,
+          name: e.name,
+          activeOn: e.lastActive?.at ?? null,
+          login: read.login,
+          locator: repo.locator,
+          revive: null,
+          untrusted,
+        };
       }
     }
   }

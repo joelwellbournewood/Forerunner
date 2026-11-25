@@ -1868,12 +1868,50 @@ or git failure is left for the next sync. `closeExpired()`, run at compose and b
 proposal, closes an intake session still `running` past its deadline as `failed` (a daemon
 that died during the call left it; the call cannot outlive its timeout), so the runner's
 one-session rule is never held by a dead call for longer than one planning timeout. Triggers:
-`POST /projects/:id/intake` (202 `IntakeProposalView`), `GET /projects/:id/intake`
+`POST /projects/:id/intake` (202 `IntakeProposalView`; with `background: true`, 202
+`IntakeStatusView`, below), `GET /projects/:id/intake`
 (`IntakeStatusView`: the latest request, its outcome, where the docs went, or why a
 background run or an apply failed; `drafting` while this daemon's background job runs), and
 `POST /projects` with `intake: true` (`enqueue`: the
 proposal is drafted in the background, the card answers at once, a failure lands on
 `summary_cache.intake`); the flag is off by default so nothing creates a model call unasked.
+**Add to it answers at once (w8-together, L4i-left-48, ADR 0117 amended 2026-11-24).**
+`POST /projects/:id/intake` with `background: true` (`IntakeRequestBody.background`, additive)
+runs `IntakeService.proposeInBackground`: refused as `propose` refuses (a removed project, no
+model `unavailable`, a new brief while a plan is open or being drafted: 409 `claim_conflict`
+with `openPlanSentence` or `draftingPlanSentence`, 'A plan for "Site" is being drafted; answer
+it once it waits in your Inbox.', `details.reason` `proposal_open` or `drafting`), else it
+starts `enqueue` with no await between its last check and the job's start and answers the
+status (`drafting`). The New project dialog's Add to it posts it, so the project page says
+"Drafting the plan…" at once. `enqueue` records no failure for a `claim_conflict` (an open plan
+is no failed planning). **One proposal per project at a time (L4i-left-65).** `propose` runs
+under `oneAtATime(projectId)`, a per-project promise chain over `proposeNow`, so the open-card
+check and the model call are one step: two first-plan requests at once make one call and one
+card (the second answers `reused`, or the 409 for a new brief). **A draft in the background
+survives a Quit (fixup-w8-together, review blocking 3).** Before, Add to it's brief lived only
+in the job: a Quit while it drafted left the page saying nothing (`none`), and a failed or
+waiting draft was drafted again from the project's first brief (`summary_cache.brief`). Now
+`enqueue` writes, for a draft from a brief (no `changes`, which the answered card keeps), the
+record `summary_cache.intake = { drafting_at, brief? }` before the planning call and before the
+copy of the repository (`draftRecord`: one store transaction, read again on a version conflict,
+never throws). A filed card (in `proposeNow`, whichever way it was asked) or an open card that
+stands for it removes `drafting_at` and `brief` (`draftEnded`); a failure or a credential wait
+keeps the `brief` beside `failed_at`/`error`/`wait` (`recordFailure`). `status` answers a
+record with `drafting_at` that no job of this daemon runs and no card filed after it as
+`failed` with `DRAFT_LOST_WORDS` ("Forerunner closed before the plan from your brief was
+drafted.", `session/intake-words.ts`): the banner reads 'Planning failed: Forerunner closed
+before the plan from your brief was drafted.' with Try again, and a project with no tasks gets
+the `planning_failed` line. That is the crash path (the process gone, the store closed before a
+failure could be written; also `rt.close()` in tests, which stops no run); the app's Quit
+(`POST /shutdown`, `kill.stop("all")`) stops the call first, so `enqueue` records the kill as
+'Planning was stopped before it finished.' with the brief kept, and Try again drafts from it
+the same way (bench walk of 2026-11-25, both paths). `retry` drafts from the record's `brief` when it has one (newer than
+any card, so it wins over an earlier card's changes), else as before; the wake after a
+credential wait goes through `retry`, so it drafts from that brief too. The same record covers a
+new project's plan (`POST /projects` with `intake: true`), whose Quit used to leave "No tasks
+yet". Cases: real-daemon 'a daemon closed while the plan of an Add to brief is drafted ...' and
+'an Add to brief whose plan failed, and a new project's plan cut off by a Quit ...';
+`credential-limits.test.ts` 'an Add to brief whose plan waits at a usage limit ...'.
 **A failed intake is visible and can be retried (U-046).** Before, a background intake that
 failed left no card and no error anywhere a person looked, and the Start dialog said a plan
 waited in the Inbox. The project page reads `GET /projects/:id/intake` and shows the draft,
@@ -7845,7 +7883,12 @@ no store, git host or file system, so the UI's fake daemon imports it).
 - **The check** (`RepositoryUse.check(repos, {takeOver, together, withBrief, except})`), run
   before anything is written by `createProjectRecord` (`POST /projects`, Sources' accept, the
   chat's port), by `project.create`'s plan and run (the commands' `repositoryUse` port,
-  `chatLinkCheck` adds 'Open New project to work on it together.' when Work together is open),
+  `chatLinkCheck` adds `CHAT_TOGETHER_HINT`, 'Say "work on it together" to join it here.',
+  when Work together is open; w8-together, W8-join-4: before, 'Open New project to work on it
+  together.'; chat's together create reads the repository's project with
+  `chatTogetherOffer(use, repos)` for the read-back and again at the yes, and compose's port
+  `createTogether` makes it with `createProjectRecord`'s together creation, nothing written to
+  GitHub),
   and `checkHere(repos, except)` (this computer only) by the Data tab's import before it clones.
   This computer first: a project here that uses the link is `repository_in_use` with its name.
   Then the repository (`readRepository`, the person's token on the configured host): the marker
@@ -7880,9 +7923,17 @@ no store, git host or file system, so the UI's fake daemon imports it).
   `tookOverLine`); the intake's doc set the same (`session/intake.ts`). The scaffold's branch
   (L4-github-102, D-L4-24, ADR 0117 amended 2026-11-23): `scaffoldBranchFor` takes the first of
   `scaffoldBranchesOf(project)` (`fr/docs-scaffold`, `fr/docs-scaffold-<name slug>`, that with
-  8 characters of the id) that holds this project's open scaffold pull request, is not on GitHub,
-  or is this project's own (its marker names the project); `fr/docs-scaffold` with another
-  project's open pull request stays `foreign` (W15-01, nothing written); null means no branch.
+  8 characters of the id) that holds this project's open scaffold pull request (looked for first
+  across all three, so a branch freed earlier in the list never gets a second one), else the
+  first that is not on GitHub or is this project's own (its marker names the project, no pull
+  request open on it); null means no branch. w8-together (W8a-left-22, ADR 0121 amended
+  2026-11-24): a branch whose open pull request is not this project's, `fr/docs-scaffold` too, is
+  passed over like any other taken branch (before, `fr/docs-scaffold` was returned as `foreign`
+  and the scaffold and every guide refresh stopped there); nothing is pushed to it or commented
+  on it (W15-01). When all three are taken (`stopped: "branches_taken"`) the scaffold and
+  `refreshGuide` record `summary_cache.docs.guide_stopped`; `guideStoppedLine`
+  (`sources/repository-words.ts`) gives `ProjectCard.guideStopped`, the Overview's one line
+  (`GUIDE_BRANCHES_TAKEN_LINE`); a run that gets through, or a guide found current, clears it.
   `checkout(project, target, pick, {ours, fresh: (open) => !open})` starts from the default branch
   whenever no pull request of this project is open, and the push replaces a branch already on
   GitHub with `--force-with-lease` (only the project's own; `GitOps.push` refuses the default
@@ -7979,6 +8030,26 @@ moves in `project.join` (commands.md).
   its counts (tasks open and done, open pull requests), spend so far in CHF, its budgets
   (`sessionBudgetWords`, `projectBudgetWords`), who merges (repository projects only) and
   Research reads; the moves line, the stays line and the setting that applies.
+- **Work together for a project already here** (w8-together, OJ-11, W8-join-1/-2, ADR 0117
+  amended 2026-11-24). `RepositoryUse.overviewOf` gives a project whose repository is another
+  Forerunner's project (made before the rule, or while GitHub did not answer)
+  `canWorkTogether` and `togetherLine` (at most 100 characters), Work together first and Take it
+  over after it, also when another account worked on it within 14 days.
+  `RepositoryUse.togetherJoinFacts(project)` (`TogetherJoinFacts`) reads the repository's
+  project from GitHub at the dialog (`GET /projects/:id/join-preview?together=1`) and again at
+  the press (compose's `projectJoin.together` port): its id, its name (`repositoryNameOf`: the
+  default branch's marker, else the marker at the head of the newest open docs pull request
+  that names that id, W8a-left-7), the locator, a removed together row of it, and a refusal in
+  words when GitHub does not answer, names no project, names several or names one here. The
+  dialog's lines are `togetherJoinSentence`, `togetherGithubLine` (only this project's own old
+  status pull request is closed, `StatusBoard.findOwnStatusPullRequest`, read only) and
+  `togetherNameFor` (the repository's name, or '<name> (together)' when a project here has it);
+  the change sentence `togetherJoinedSentence`, chat's `togetherJoinAsk`, the Undo's
+  `togetherUndoneSentence` (a closed pull request stays closed) and its refusal
+  `togetherUndoOwnWork`, all in `join-words.ts`. The one GitHub write is
+  `StatusBoard.closeOwnStatusPullRequest` before anything moves; nothing of the other Forerunner
+  is written to, commented on or closed (`apps/ui/test/two-installs.test.ts` 'w8-together, wave
+  8: join together' asserts `writesBy` per login).
 - **After a join**: the closed project is archived with `settings.joined_into {project, name,
   at}` (`joinedIntoOf`), the kept one has `settings.joined_from` (the index's keeper). Its card
   has `joinedInto` and the status line kind `joined` ('Joined into "Site" on 9 Nov.' with Open
@@ -10252,7 +10323,10 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   (`session/task-context.ts`) says a new decision is its own dated file.
 - **A docs pull request this install did not open is nobody's** (L4i-left-2): `isProjectDocsPr`
   takes the branch's own marker (`branchMarker`), read in `scaffoldInCopy` and
-  `docsInPullRequests`; `docsPrListing` gives `own`, `listed` (no Merge, "#N names no project,
+  `docsInPullRequests`, and beside it the default branch's (`defaultMarker`, W8a-left-27, ADR 0121
+  amended 2026-11-24): the branch marker counts only when it differs from the default branch's
+  (`branchMarkerNames`), since every branch cut from a main that carries the project's marker
+  carries it too; `docsPrListing` gives `own`, `listed` (no Merge, "#N names no project,
   so it is only listed here: open it on GitHub to see whose it is.") or nothing. A `listed` one
   is its own row kind in `GET /projects/:id/pull-requests` (`kind: "listed"`, titled "Docs pull
   request #N" by `listedDocsTitle`, fixup-w8-repo-guide): the Overview lists it under "Also open

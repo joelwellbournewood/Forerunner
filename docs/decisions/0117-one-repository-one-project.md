@@ -433,3 +433,74 @@ press still writes nothing (OR-15): the issue is opened at a task's start or a s
 The together Overview's Details line names the issue: "What the other Forerunner does shows in
 its comment on the status issue and its pull requests on GitHub. You merge yours; its person
 merges theirs.".
+
+## Amendment (2026-11-24, wave 8, w8-together): Work together for a project already here, from chat, and who merges
+
+**OJ-11 (run C decision 13, sent to wave 8; W8-join-1, -2).** A project here whose repository
+is another Forerunner's project (made before this ADR's rule, or while GitHub did not answer)
+gets **Work together** first on its Overview line, before Take it over, also when another
+GitHub account worked on it within 14 days (`RepositoryOverview.canWorkTogether`,
+`togetherLine`). The press is `project.join {keep: {together: true}, close: [Site]}`: the
+repository's project is read from GitHub at the dialog and again at the press
+(`RepositoryUse.togetherJoinFacts`; never from the page or the model), and in one store
+transaction the together project is made with the repository's id and name (or a removed
+together row of it comes back), with the closing project's settings, its work moved as Make one
+project moves it, and the closing project closed into it. The join's only GitHub write, before
+anything moves, is the close of the closing project's own old status pull request
+(`StatusBoard.closeOwnStatusPullRequest`, this install's record and mark); nothing of the other
+Forerunner is written to, commented on or closed. GitHub not answering refuses the dialog and the
+press in words and moves nothing. Undo (also after a restart) moves the work back and removes the
+together project as a removed row; the pull request stays closed and the Undo says so.
+W8a-left-7: the repository's name comes from the default branch's marker, else from the head of
+the open docs pull request that names the id (`repositoryNameOf`), so a together project made
+before the maker's docs pull request merged is named as GitHub names it.
+
+**Chat's Work together (W8-join-4; L4-chat-308's "later, wave 8").** `project.create` takes
+`together: true` with no id; medium risk with it, read back once: 'Work on "Kite club" together:
+this Forerunner joins it as the same project. Nothing on GitHub changes now.' with Yes and No.
+The daemon reads the repository's project for the read-back and again at the yes
+(`chatTogetherOffer`) and makes it with the dialog's creation; nothing is written to GitHub. A
+marker name that reads as an instruction is never quoted ('another Forerunner project'). The
+refusal of a plain create on such a repository now ends 'Say "work on it together" to join it
+here.' (before: 'Open New project to work on it together.').
+
+**Who merges on a together project (W8a-left-32's one-line decision).** A together project's
+screen keeps offering who merges (`merge_mode`): each Forerunner merges the pull requests it
+opens, so the person who works on it together chooses for their own pull requests, and the guide
+says only what the maker's Forerunner does (W8a-left-32, w8-shared-repo).
+
+**The scaffold on a shared repository (W8a-left-22, ADR 0121 amended the same day).** A second
+project of a pair here, whose scaffold used to stop at the first one's `fr/docs-scaffold`, now
+opens its own docs pull request on its own branch; Make one project stays the way to have one.
+
+**Add to it (L4i-left-48, -65).** `POST /projects/:id/intake` takes `background: true` (additive;
+the route's other callers keep their answer): the answer is the intake's status at once
+(`drafting`) and the plan is drafted in the background, as `POST /projects` with `intake: true`
+drafts it; the New project dialog's Add to it uses it, so the project page says "Drafting the
+plan…" at once. A new brief while a plan is open or being drafted is the 409 ('A plan for "Site"
+is being drafted; answer it once it waits in your Inbox.' while drafting) and is never recorded
+as a failed plan. One proposal per project runs at a time (`IntakeService.oneAtATime`), so two
+first-plan requests at once make one model call and one card.
+
+Tests: `apps/ui/test/two-installs.test.ts` 'w8-together, wave 8: join together',
+`apps/ui/test/real-daemon.test.ts` 'w8-together, wave 8' (the together join, chat's Work
+together, Add to it in the background), `apps/ui/test/onerepo-join.test.tsx` and
+`onerepo-link.test.tsx`, `packages/commands/test/project-join.test.ts` and `onerepo-link.test.ts`,
+injection case record-013.
+
+## Amendment (2026-11-25, wave 8, w8-together fix-up): a plan drafted in the background survives a Quit
+
+Add to it drafts the plan in the background, so its brief has to outlive the planning call
+(review of w8-together, blocking 3). Before, a Quit or a crash while it drafted left the page
+saying nothing (or an earlier failure), and Try again, or the draft once a Claude credential
+it waited for served again, drafted from the project's first brief. Now a draft from a brief
+in the background writes down when it started and the brief it was given before the planning
+call (`summary_cache.intake`), keeps the brief when it fails or waits, and drops both once a
+plan card is filed. After a restart a draft no daemon runs any more reads 'Planning failed:
+Forerunner closed before the plan from your brief was drafted.' with Try again (a Quit that
+stops the call first reads 'Planning failed: planning was stopped before it finished.', as
+before), and Try again drafts from that same brief. The same holds for a new project's plan
+(New project with a brief). Tests: `apps/ui/test/real-daemon.test.ts` 'a daemon closed while
+the plan of an Add to brief is drafted ...' and 'an Add to brief whose plan failed, and a new
+project's plan cut off by a Quit, ...'; `packages/runtime/test/credential-limits.test.ts` 'an
+Add to brief whose plan waits at a usage limit ...'.

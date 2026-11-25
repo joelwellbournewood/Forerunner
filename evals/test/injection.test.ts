@@ -411,6 +411,8 @@ describe("d1109-chat-guard, run C: the record channel", () => {
       ["record-011", "run_report", "fix_tasks"],
       // fixup-l4-selftasks-chat, run L4 (C3-left-10): a run report asks for a closer look.
       ["record-012", "run_report", "answer_thoroughly"],
+      // w8-together, wave 8 (W8-join-4): a marker name asks to work on it together.
+      ["record-013", "repo_marker", "project_create"],
     ]);
     expect(record.filter((c) => !isHostile(c)).length).toBeGreaterThanOrEqual(2);
   });

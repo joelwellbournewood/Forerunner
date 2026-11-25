@@ -4,8 +4,14 @@ import { isClosedRecord, MERGE_MODE_WORDS, mergeModeOf } from "../loop/merge-mod
 import { statusIssuePolicy } from "../loop/status-board-words.ts";
 import { moneyWords } from "../session/money-words.ts";
 import { startPendingOf } from "../session/prepared-work.ts";
-import { type LinkIdentity, linkWords, type RepositoryIndex } from "../sources/repository-use.ts";
-import { isTogether, togetherOf } from "../sources/repository-words.ts";
+import {
+  isLinkRefusal,
+  type LinkIdentity,
+  linkWords,
+  type RepositoryIndex,
+  type TogetherJoinFacts,
+} from "../sources/repository-use.ts";
+import { isTogether, TOGETHER_UNREADABLE, togetherOf } from "../sources/repository-words.ts";
 import { researchReadsLine, webAccessOf } from "../wiring/web-access.ts";
 import type { JoinPreviewView } from "./api-types.ts";
 import {
@@ -25,6 +31,10 @@ import {
   keptTogetherLine,
   settingAppliesLine,
   sharedLinkSentence,
+  togetherAlreadySentence,
+  togetherGithubLine,
+  togetherJoinSentence,
+  togetherNameFor,
 } from "./join-words.ts";
 
 /**
@@ -52,6 +62,17 @@ export interface JoinDeps {
   keptWaitWhen(projectId: string): Promise<string | null | undefined>;
   /** CHF per USD at the day's rate. */
   chfPerUsd(): number;
+  /**
+   * w8-together (OJ-11): the repository's own project for Work together, read from GitHub now
+   * (`RepositoryUse.togetherJoinFacts`); throws a refusal in words. Absent: refused as GitHub
+   * not answering.
+   */
+  togetherFacts?(projectId: string): Promise<TogetherJoinFacts>;
+  /**
+   * W8-join-2: the project's own old status pull request the press would close
+   * (`StatusBoard.findOwnStatusPullRequest`), its number or null; throws what GitHub throws.
+   */
+  oldStatusPr?(project: ProjectRow): Promise<number | null>;
 }
 
 /** The repository or folder two or more projects here share, with them oldest first. */
@@ -203,6 +224,19 @@ export async function joinRefusal(deps: JoinDeps, req: JoinRequest): Promise<str
   // OJ-11: a pair of which one is worked on together keeps that one (the project GitHub knows).
   const together = close.find((c) => isTogether(c));
   if (together && !isTogether(keep)) return keptTogetherLine(together.name);
+  return holdsOf(deps, all, close);
+}
+
+/**
+ * What runs or waits on the projects (a session working, being drafted, waiting to go on, a held
+ * hands-off start), then the closing projects' own holds (a plan waiting for its answer, a merge
+ * under way): one sentence, or null. Make one project and Work together share it.
+ */
+async function holdsOf(
+  deps: JoinDeps,
+  all: readonly ProjectRow[],
+  close: readonly ProjectRow[],
+): Promise<string | null> {
   for (const p of all) {
     const working = await workingSession(deps.store, p.id);
     if (working === "work") return joinRefusedRunning(p.name);
@@ -218,6 +252,24 @@ export async function joinRefusal(deps: JoinDeps, req: JoinRequest): Promise<str
     if (await mergeInFlight(deps.store, c.id)) return joinRefusedMerging(c.name);
   }
   return null;
+}
+
+/**
+ * w8-together (OJ-11, W8-join-1): why Work together for a project already here cannot be made
+ * now, in one sentence; null when nothing holds it. The project's own shape first (gone, joined,
+ * not the person's own, worked on together already), then what runs or waits on it, as Make one
+ * project says it. GitHub's answer (the repository's project, read at the press) is the
+ * command's, through `RepositoryUse.togetherJoinFacts`.
+ */
+export async function togetherJoinRefusal(
+  deps: JoinDeps,
+  project: ProjectRow,
+): Promise<string | null> {
+  if (project.status === "archived" || joinedIntoOf(project)) return joinRefusedGone(project.name);
+  if (!ownsOwnProject(project, { humanId: deps.humanId, agentId: deps.agentId }))
+    return JOIN_REFUSED_NOT_YOURS;
+  if (isTogether(project)) return togetherAlreadySentence(project.name);
+  return holdsOf(deps, [project], [project]);
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -275,6 +327,106 @@ async function openPullRequests(store: StateStore, tasks: readonly TaskRow[]): P
   return n;
 }
 
+/** One project's lines in the dialog, and its settings as the dialog compares them. */
+async function projectFacts(
+  deps: JoinDeps,
+  p: ProjectRow,
+  rate: number,
+): Promise<{
+  view: JoinPreviewView["projects"][number];
+  own: { label: string; value: string }[];
+}> {
+  const tasks = await deps.store.task.list({ project_id: p.id } as never, { limit: 5000 });
+  const done = tasks.filter((t) => t.status === "done").length;
+  const open = tasks.filter((t) => t.status !== "done" && t.status !== "cancelled").length;
+  const prs = await openPullRequests(deps.store, tasks);
+  const spent = await deps.store.costLedger.sum({ projectId: p.id });
+  const own: { label: string; value: string }[] = [
+    { label: "Budget per session", value: sessionBudgetWords(p, rate) },
+    { label: "Project budget", value: projectBudgetWords(p, rate) },
+    ...(onRepository(deps, p)
+      ? [{ label: "Who merges", value: MERGE_MODE_WORDS[mergeModeOf(p.settings)] }]
+      : []),
+    // w8-status-write: the status issue's switch (the status pull request went; amendment 2).
+    ...(onRepository(deps, p)
+      ? [{ label: "Status issue", value: statusIssuePolicy(p).on ? "On" : "Off" }]
+      : []),
+    {
+      label: "Research reads",
+      value: researchReadsLine(webAccessOf(p.settings)).replace(/^Research reads: /, ""),
+    },
+  ];
+  const taskWords =
+    open && done
+      ? `${plural(open, "open task")}, ${done} done`
+      : open
+        ? plural(open, "open task")
+        : done
+          ? `${plural(done, "task")} done`
+          : "No tasks yet";
+  return {
+    own,
+    view: {
+      id: p.id,
+      name: p.name,
+      together: isTogether(p),
+      lines: [
+        taskWords,
+        ...(prs ? [plural(prs, "open pull request")] : []),
+        `Spent so far: ${chfWords(spent.chf_micro)}`,
+        ...own.map((s) => `${s.label}: ${s.value}`),
+      ],
+    },
+  };
+}
+
+/**
+ * w8-together (OJ-11, W8-join-1, -2): the together form of the dialog
+ * (`GET /projects/:id/join-preview?together=1`): the project here with its facts, the repository's
+ * project read from GitHub now (its name, never from the page or the model), the one sentence of
+ * what the press does, the one line of what it writes on GitHub (only the project's own old
+ * status pull request is closed, if an earlier version of this install opened one), what stays,
+ * and what holds it now (GitHub not answering among them: nothing moves then).
+ */
+export async function togetherPreview(
+  deps: JoinDeps,
+  project: ProjectRow,
+): Promise<JoinPreviewView> {
+  const facts = await projectFacts(deps, project, deps.chfPerUsd());
+  let refusal = await togetherJoinRefusal(deps, project);
+  let name: string | null = null;
+  let id: string | null = null;
+  let oldPr: number | null = null;
+  if (!refusal) {
+    try {
+      const read = await (deps.togetherFacts?.(project.id) ??
+        Promise.reject(new Error("no GitHub")));
+      name = await togetherNameFor(deps.store, read.name, project, read.revive);
+      id = read.id;
+      oldPr = (await deps.oldStatusPr?.(project)) ?? null;
+    } catch (e) {
+      // A refusal in words (the repository's answer); anything else is GitHub not answering.
+      refusal = isLinkRefusal(e) ? e.message : TOGETHER_UNREADABLE;
+    }
+  }
+  return {
+    projectId: project.id,
+    shared: null,
+    projects: [facts.view],
+    ifKept: {},
+    keepOnly: null,
+    keepOnlyLine: null,
+    together: {
+      projectId: id,
+      name,
+      sentence: name ? togetherJoinSentence(project.name, name) : null,
+      github: name ? togetherGithubLine(project.name, oldPr) : null,
+      stays: joinStaysLine([project.name]),
+      refusal,
+    },
+  };
+}
+
 /**
  * OJ-05: the dialog's facts (GET /projects/:id/join-preview): each project with its open and done
  * tasks, open pull requests, what it spent so far in CHF, its budget per session, project budget,
@@ -296,46 +448,9 @@ export async function joinPreview(
   const projects: JoinPreviewView["projects"] = [];
   const settings = new Map<string, { label: string; value: string }[]>();
   for (const p of rows) {
-    const tasks = await deps.store.task.list({ project_id: p.id } as never, { limit: 5000 });
-    const done = tasks.filter((t) => t.status === "done").length;
-    const open = tasks.filter((t) => t.status !== "done" && t.status !== "cancelled").length;
-    const prs = await openPullRequests(deps.store, tasks);
-    const spent = await deps.store.costLedger.sum({ projectId: p.id });
-    const own: { label: string; value: string }[] = [
-      { label: "Budget per session", value: sessionBudgetWords(p, rate) },
-      { label: "Project budget", value: projectBudgetWords(p, rate) },
-      ...(onRepository(deps, p)
-        ? [{ label: "Who merges", value: MERGE_MODE_WORDS[mergeModeOf(p.settings)] }]
-        : []),
-      // w8-status-write: the status issue's switch (the status pull request went; amendment 2).
-      ...(onRepository(deps, p)
-        ? [{ label: "Status issue", value: statusIssuePolicy(p).on ? "On" : "Off" }]
-        : []),
-      {
-        label: "Research reads",
-        value: researchReadsLine(webAccessOf(p.settings)).replace(/^Research reads: /, ""),
-      },
-    ];
-    settings.set(p.id, own);
-    const taskWords =
-      open && done
-        ? `${plural(open, "open task")}, ${done} done`
-        : open
-          ? plural(open, "open task")
-          : done
-            ? `${plural(done, "task")} done`
-            : "No tasks yet";
-    projects.push({
-      id: p.id,
-      name: p.name,
-      together: isTogether(p),
-      lines: [
-        taskWords,
-        ...(prs ? [plural(prs, "open pull request")] : []),
-        `Spent so far: ${chfWords(spent.chf_micro)}`,
-        ...own.map((s) => `${s.label}: ${s.value}`),
-      ],
-    });
+    const facts = await projectFacts(deps, p, rate);
+    settings.set(p.id, facts.own);
+    projects.push(facts.view);
   }
   const ifKept: JoinPreviewView["ifKept"] = {};
   for (const keep of rows) {
@@ -383,5 +498,6 @@ export async function joinPreview(
     ifKept,
     keepOnly: together ? together.id : null,
     keepOnlyLine: together ? keptTogetherLine(togetherOf(together)?.name || together.name) : null,
+    together: null,
   };
 }

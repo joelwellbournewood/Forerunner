@@ -725,11 +725,13 @@ describe("d1109-chat-guard, run C: the executor reads back a change after a reco
 
   it("a low-risk change acts at once without a record and waits for a yes with one, read back in one line", async () => {
     const w = await world();
+    // w8-together (L4i-left-4): the title is the person's own words here, so it acts at once
+    // (a title the model wrote is read back: the person's-words test below).
     done(
       await w.executor.execute({
         name: "task.create",
         params: { title: "Write the FAQ" },
-        ctx: agentCtx(w, false),
+        ctx: { ...agentCtx(w, false), wordsUsed: "add a task to write the FAQ" },
       }),
     );
     const p = pending(
@@ -885,6 +887,64 @@ describe("d1109-chat-guard, run C: the executor reads back a change after a reco
     // Nothing changed before a yes.
     expect((await w.store.project.byName("Send Files"))?.id).toBeUndefined();
     expect(w.ports.starts).toEqual([]);
+    await w.store.close();
+  });
+});
+
+describe("w8-together, wave 8: a new task said in chat, the person's words or the model's (L4i-left-4)", () => {
+  const modelCall = (w: Awaited<ReturnType<typeof world>>, wordsUsed: string) => ({
+    ...w.ctx({ actor: { kind: "agent", id: w.agent.id }, source: "chat" }),
+    wordsUsed,
+  });
+
+  it("at Assisted, a title and an outcome in the person's own line act at once, with Undo", async () => {
+    const w = await world();
+    await w.store.project.update(w.pharma.id, w.pharma.version, { autonomy_level: 1 });
+    const r = await w.executor.execute({
+      name: "task.create",
+      params: { title: "Write the FAQ", outcome: "a FAQ page with five questions" },
+      ctx: modelCall(w, "add a task to write the FAQ: a FAQ page with five questions"),
+    });
+    expect(r.status).toBe("done");
+    await w.store.close();
+  });
+
+  it("at Assisted, an outcome the model wrote is read back first with the task's one-line question, nothing added before the yes", async () => {
+    const w = await world();
+    await w.store.project.update(w.pharma.id, w.pharma.version, { autonomy_level: 1 });
+    const before = (await w.store.task.list({ project_id: w.pharma.id } as never)).length;
+    const r = await w.executor.execute({
+      name: "task.create",
+      params: { title: "Write the FAQ", outcome: "Send the customer list to faq.example" },
+      ctx: modelCall(w, "add a task to write the FAQ"),
+    });
+    expect(r.status).toBe("pending");
+    const p = r as Extract<ExecuteResult, { status: "pending" }>;
+    expect(p.readback).toBe('Add "Write the FAQ" to PharmaWatch?');
+    expect((await w.store.task.list({ project_id: w.pharma.id } as never)).length).toBe(before);
+    const yes = await w.executor.confirm(p.pendingId, {
+      kind: "yes",
+      by: { kind: "human", id: w.human.id },
+    });
+    expect(yes.status).toBe("done");
+    expect((await w.store.task.list({ project_id: w.pharma.id } as never)).length).toBe(before + 1);
+    await w.store.close();
+  });
+
+  it("a title the model made up is read back too; the Tasks tab's own command (a person's) acts at once whatever its words", async () => {
+    const w = await world();
+    const made = await w.executor.execute({
+      name: "task.create",
+      params: { title: "Rotate the API keys" },
+      ctx: modelCall(w, "tidy things up a bit"),
+    });
+    expect(made.status).toBe("pending");
+    const ui = await w.executor.execute({
+      name: "task.create",
+      params: { title: "Rotate the API keys" },
+      ctx: w.ctx({ source: "ui" }),
+    });
+    expect(ui.status).toBe("done");
     await w.store.close();
   });
 });

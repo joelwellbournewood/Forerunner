@@ -211,13 +211,26 @@ describe("phase 7 gate: a UI change ships as an update both users install; a bro
       text: REQUEST,
       source: "text",
     });
-    expect(reply.pendingConfirmation).toBeNull(); // a task is low risk: it acts at once
+    // fixup-w8-together (L4i-left-4; ADR 0119, the L4h-left-1 rule of 2026-11-24): the task's
+    // title, outcome and criteria are the model's words, not J's, so the change is read back
+    // first in one line and nothing is filed before J's yes. Before the rule it acted at once.
     expect(reply.question).toBeNull();
-    expect(reply.actions).toEqual([
+    expect(reply.actions).toEqual([]);
+    expect(reply.pendingConfirmation?.readback).toBe(`Add "${TASK_TITLE}" to Forerunner?`);
+    expect(await w.store.task.forProject(w.project.id)).toHaveLength(0);
+    const yes = await agent.chat({
+      humanId: w.j.id,
+      agentId: w.alice.agent.id,
+      projectId: w.project.id,
+      text: "yes",
+      source: "text",
+    });
+    expect(yes.pendingConfirmation).toBeNull();
+    expect(yes.actions).toEqual([
       expect.objectContaining({ kind: "task.create", id: expect.any(String) }),
     ]);
-    expect(reply.actions[0]?.undoToken).toBeTruthy();
-    expect(reply.reply).toContain(TASK_TITLE);
+    expect(yes.actions[0]?.undoToken).toBeTruthy();
+    expect(yes.reply).toContain(TASK_TITLE);
     // One model call, on the text-chat rung, with the registry's command tools and nothing else.
     const chatCalls = w.provider.calls
       .slice(callsBefore)
@@ -243,17 +256,18 @@ describe("phase 7 gate: a UI change ships as an update both users install; a bro
       project_id: w.project.id,
       // The command was issued by the conversation agent on J's turn: since the security review
       // (security-command-actor.test.ts, ADR 0030 item 2) a model-issued registry command acts as
-      // the agent, so the task carries no author_human; J's authority is the chat turn itself.
-      author_human: null,
+      // the agent; the read-back's yes is J's own (l4-selftasks-chat, L4-selftasks-116: the yes
+      // runs as the person), so the task is J's (fixup-w8-together, L4i-left-4).
+      author_human: w.j.id,
     });
-    // d1109-selftasks-chat (SC-12): the row says the agent made it, in words, with no id and no
-    // channel (it read "created by agent <id> via chat").
-    expect(task.reason).toBe("Added by the agent");
+    // d1109-selftasks-chat (SC-12): the row says who made it, in words, with no id and no channel
+    // (it read "created by agent <id> via chat"): J's yes added it.
+    expect(task.reason).toBe("Added by you");
     // The change log row with the words used; the conversation's events; the tool's audit row.
     const log = await w.changeLog();
     expect(log).toHaveLength(1);
     expect(log[0]).toMatchObject({
-      id: reply.actions[0]?.id,
+      id: yes.actions[0]?.id,
       human_id: w.j.id,
       agent_id: w.alice.agent.id,
       project_id: w.project.id,
@@ -275,9 +289,12 @@ describe("phase 7 gate: a UI change ships as an update both users install; a bro
       text: REQUEST,
       source: "text",
     });
-    expect(chatEvents.find((e) => e.type === "chat.reply")?.payload).toMatchObject({
-      actions: ["task.create"],
-    });
+    // The read-back's reply filed nothing; the yes's reply carries the change.
+    const replies = chatEvents.filter((e) => e.type === "chat.reply");
+    expect(replies.map((e) => (e.payload as { actions?: string[] }).actions)).toEqual([
+      [],
+      ["task.create"],
+    ]);
     expect(chatEvents.find((e) => e.type === "change")?.payload).toMatchObject({
       changeLogId: log[0]?.id,
       commands: ["task.create"],
@@ -573,8 +590,12 @@ describe("phase 7 gate: a UI change ships as an update both users install; a bro
     expect(records[0]?.notification.title).toBe(`Rolled back to ${SHIPPED} (from ${BROKEN})`);
     expect(records[0]?.notification.body).toContain("did not pass its health check");
     expect(records[0]).toMatchObject({ urgency: "normal", outcome: "delivered" });
-    // No human request was opened or answered for any of it.
-    expect(await w.store.humanRequest.list({ kind: "approval" })).toHaveLength(0);
+    // No human request was opened or answered for any of it (fixup-w8-together, L4i-left-4: the
+    // one approval row is the first clause's chat read-back of the badge task, which J's yes
+    // answered before this build).
+    const approvals = await w.store.humanRequest.list({ kind: "approval" });
+    expect(approvals.filter((r) => r.created_at >= since)).toHaveLength(0);
+    expect(approvals.map((r) => r.why)).toEqual(["the tasks of Forerunner"]);
     expect(
       (await w.store.humanRequest.list({ author_agent: updates.UPDATE_REQUEST_AUTHOR })).every(
         (r) => r.answered_at === null,
