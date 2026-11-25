@@ -175,3 +175,12 @@ guide's facts) and CLAUDE.md (`@AGENTS.md`), and no docs/status.md; the session'
 the guide current and opens no docs pull request. The status of a repository project stays in
 the app by default (C-57); the optional `fr/status` branch is unchanged until the status issue
 (w8-status-write) replaces it.
+
+## Amendment (2026-11-24, w8-status-write)
+
+The status part (point 3, C-57's status pull request on `fr/status` and its setting) is
+superseded by ADR 0122: no status pull request any more; a repository project's
+`docs/status.md` is the app's; on GitHub the status is the project's pinned status issue, one
+comment per Forerunner, with no costs (the session's "Spent CHF x." note never reaches GitHub,
+R11). An earlier version's open status pull request of the project is closed by this install
+with one line.

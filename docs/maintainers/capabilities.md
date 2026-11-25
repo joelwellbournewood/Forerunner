@@ -1146,3 +1146,9 @@ leaves work unfinished; the repository guide (`renderGuidePart`) and the work-in
 sentence a task pull request's body and the critic's evidence carry when the task changed
 AGENTS.md or CLAUDE.md: "This changes AGENTS.md, the guide other people's agents follow in this
 repository: read it before merging." (W8-guide-6). Test: `pr-executor.test.ts` "W8-guide-6".
+
+w8-status-write, wave 8 (W8-write-2; D-W8-13, owner question 7 of 2026-11-02): the GitHub
+Projects mirror (`githost/projects-mirror.ts`) no longer creates or writes the `cost` field, and
+an item's body no longer says "Cost": no money reaches GitHub. `TaskMirrorExtras` has no cost
+any more and `itemFor` reads no ledger. A board an earlier version made keeps its old `cost`
+field (and the values in it) until the person deletes the field on GitHub.

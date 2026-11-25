@@ -88,39 +88,52 @@ describe("every setting is visible in Settings (U-060)", () => {
     );
   });
 
-  it("the status pull request: a repository project's row, off by default; On sends settings.set and the row reads on (C-57)", async () => {
+  it("w8-status-write (W8-write-7, -10): the status issue's switch: a repository project's row, on by default, says where the status is on GitHub and, on a public repository, who can read it; Off sends settings.set status_issue false and the row reads off with its sentence", async () => {
     // The daemon lists the row for a project on a host repository only (settings-view.ts).
     const user = userEvent.setup();
     const harness = createHarness();
+    harness.daemon.state.statusIssue.proj_atlas = {
+      sentence: "Status on GitHub: issue #12 (pinned)",
+      docsNote: "In the app; also on GitHub: issue #12",
+      public: true,
+    };
     renderApp("/settings", harness);
-    const row = await rowFor("project.status_pull_request");
+    const row = await rowFor("project.status_issue");
     expect(within(row).getByTestId("setting-scope")).toHaveTextContent("Atlas");
-    expect(within(row).getByTestId("setting-label")).toHaveTextContent("Status pull request");
-    expect(within(row).getByTestId("setting-value-cell")).toHaveTextContent("off");
+    expect(within(row).getByTestId("setting-label")).toHaveTextContent("Status issue on GitHub");
+    expect(within(row).getByTestId("setting-value-cell")).toHaveTextContent("on");
+    expect(row).toHaveTextContent(
+      "The status of Atlas on GitHub: this Forerunner's own comment on the project's pinned status issue, with no costs (off: it stays in the app, under Docs, Status). Status on GitHub: issue #12 (pinned). Everyone who can see this repository can read it.",
+    );
     const rows = await screen.findAllByTestId("setting-row");
-    expect(rows.filter((r) => r.dataset.key === "project.status_pull_request")).toHaveLength(1);
+    expect(rows.filter((r) => r.dataset.key === "project.status_issue")).toHaveLength(1);
+    // The status pull request went with it (amendment 2).
+    for (const r of rows) expect(r).not.toHaveTextContent("Status pull request");
     await user.click(within(row).getByTestId("setting-change"));
     const dialog = await screen.findByTestId("setting-dialog");
-    await user.selectOptions(within(dialog).getByTestId("setting-value"), "true");
+    await user.selectOptions(within(dialog).getByTestId("setting-value"), "false");
     await user.click(within(dialog).getByTestId("setting-apply"));
     await waitFor(() => expect(postedCalls(harness, "/commands/execute")).toHaveLength(1));
     expect(postedCalls(harness, "/commands/execute")[0]?.body).toMatchObject({
       commands: [
         {
           name: "settings.set",
-          params: { key: "status_pull_request", value: true, project: "proj_atlas" },
+          params: { key: "status_issue", value: false, project: "proj_atlas" },
         },
       ],
     });
     // The daemon's sentence: what the switch does, in words.
     expect(await within(dialog).findByTestId("command-done")).toHaveTextContent(
-      "each session's status goes to the repository as one pull request",
+      "this Forerunner writes no status issue or comment for the project; its status stays in the app (Docs, Status)",
     );
     await user.click(within(dialog).getByTestId("command-close"));
     await waitFor(async () =>
       expect(
-        within(await rowFor("project.status_pull_request")).getByTestId("setting-value-cell"),
-      ).toHaveTextContent("on"),
+        within(await rowFor("project.status_issue")).getByTestId("setting-value-cell"),
+      ).toHaveTextContent("off"),
+    );
+    expect(await rowFor("project.status_issue")).toHaveTextContent(
+      'Status stays in the app: the status issue is turned off for "Atlas" in Settings.',
     );
   });
 
@@ -336,9 +349,8 @@ describe("l3-small, run L3: Settings never makes a project's name a possessive (
 });
 
 describe("l4-github-link, run L4", () => {
-  it("L4-github-103: a project worked on together has no Status pull request row and no Change for it; Who merges stays (D9)", async () => {
-    // Live check 4: Settings offered the status pull request on a Work-together project and
-    // promised one that never opened.
+  it("w8-status-write (W8-write-6): a project worked on together has the Status issue on GitHub row too (its own comment on the shared issue); no Status pull request row anywhere; Who merges stays", async () => {
+    // Before (L4-github-103): the together project had no status at all on GitHub.
     const harness = createHarness();
     harness.daemon.state.repositoryOverview.proj_atlas = {
       kind: "together",
@@ -349,8 +361,12 @@ describe("l4-github-link, run L4", () => {
     };
     renderApp("/settings", harness);
     await rowFor("project.merge_mode");
+    const row = await rowFor("project.status_issue");
+    expect(within(row).getByTestId("setting-value-cell")).toHaveTextContent("on");
+    expect(row).toHaveTextContent(
+      "Status on GitHub: the status issue is written when a task starts or a session ends.",
+    );
     const rows = await screen.findAllByTestId("setting-row");
-    expect(rows.filter((r) => r.dataset.key === "project.status_pull_request")).toEqual([]);
     for (const r of rows) expect(r).not.toHaveTextContent("Status pull request");
   });
 });

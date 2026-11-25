@@ -311,7 +311,7 @@ describe("d1109-onerepo-link, run C: the Overview's line about the repository (O
       canTakeOver: false,
       takeOverLine: null,
       details:
-        "What the other Forerunner does shows in its pull requests on GitHub; each of you merges your own.",
+        "What the other Forerunner does shows in its comment on the status issue and its pull requests on GitHub. You merge yours; its person merges theirs.",
     };
     renderApp("/projects/proj_atlas/summary", harness);
     const section = await screen.findByTestId("repository-elsewhere");
@@ -321,7 +321,7 @@ describe("d1109-onerepo-link, run C: the Overview's line about the repository (O
     expect(within(section).queryByTestId("repository-take-over")).toBeNull();
     await user.click(within(section).getByTestId("repository-elsewhere-details-toggle"));
     expect(within(section).getByTestId("repository-elsewhere-details")).toHaveTextContent(
-      "What the other Forerunner does shows in its pull requests on GitHub; each of you merges your own.",
+      "What the other Forerunner does shows in its comment on the status issue and its pull requests on GitHub. You merge yours; its person merges theirs.",
     );
     delete harness.daemon.state.repositoryOverview.proj_atlas;
   });
@@ -519,7 +519,7 @@ describe("l4-github-link, run L4", () => {
     );
   });
 
-  it("L4-creds-23: Work together through the dialog, then Docs: each doc the project does not have says the other Forerunner writes it, with no missing mark", async () => {
+  it("L4-creds-23: Work together through the dialog, then Docs: each doc the project does not have says the other Forerunner writes it, with no missing mark; its Status row says where its status goes on GitHub (w8-status-write)", async () => {
     // The fake had no notWrittenHere: a together project's Docs was empty against it.
     const user = userEvent.setup();
     const harness = createHarness();
@@ -548,13 +548,33 @@ describe("l4-github-link, run L4", () => {
     const rows = await within(docs).findAllByTestId("doc-row");
     // W8-guide-1, -2: AGENTS.md and CLAUDE.md join the set (ADR 0121).
     expect(rows.length).toBe(10);
-    for (const row of rows) {
+    for (const row of rows.filter((r) => r.dataset.path !== "docs/status.md")) {
       expect(row).toHaveTextContent(
         'The other Forerunner of "Kite club" writes this doc on GitHub; this project does not write docs.',
       );
       expect(row).not.toHaveTextContent("missing");
       expect(row).not.toHaveTextContent("not written yet");
     }
+    // W8-write-6: the Status row is the project's own (its status issue on GitHub).
+    const status = rows.find((r) => r.dataset.path === "docs/status.md");
+    expect(status).toHaveTextContent(
+      "Status on GitHub: the status issue is written when a task starts or a session ends.",
+    );
+    expect(status).not.toHaveTextContent("The other Forerunner");
+    // W8a-left-4 (c): the tab's line says who keeps these docs, not "Kept by the agent".
+    expect(within(docs).getByTestId("docs-kept-by")).toHaveTextContent(
+      /^The other Forerunner keeps these docs on GitHub; this project keeps only its status\.$/,
+    );
+    expect(docs).not.toHaveTextContent("Kept by the agent");
+  });
+
+  it("W8a-left-4 (c): a project of its own keeps its line: its agent keeps the docs and the critic checks them on a full review", async () => {
+    const harness = createHarness();
+    renderApp("/projects/proj_beacon/docs", harness);
+    const docs = await screen.findByTestId("docs");
+    expect(within(docs).getByTestId("docs-kept-by")).toHaveTextContent(
+      /^Kept by the agent; on a task with a full review the critic also checks they match the work\.$/,
+    );
   });
 
   it("L4-creds-23: the Data tab's import of a repository another project uses shows the daemon's sentence and imports nothing", async () => {

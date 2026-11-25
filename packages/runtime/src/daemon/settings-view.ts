@@ -16,10 +16,14 @@ import type { HumanRow, JsonValue, ProjectRow } from "@forerunner/state";
 import type { z } from "zod";
 import { parseRepoRef } from "../loop/docs.ts";
 import { MERGE_MODE_SETTING, MERGE_MODE_WORDS, mergeModeOf } from "../loop/merge-mode.ts";
+import {
+  STATUS_ISSUE_SETTING,
+  statusIssuePolicy,
+  statusIssueRowWords,
+} from "../loop/status-board-words.ts";
 import { FAST_MODE_SETTING, fastModeDescription, fastModeOf } from "../models/fast-mode.ts";
 import { DEFAULT_CEILING, speedQualityOffsetOf } from "../models/ladder.ts";
 import { PUSH_UNFINISHED_SETTING, pushUnfinishedOf } from "../session/push-unfinished.ts";
-import { isTogether } from "../sources/repository-words.ts";
 import { WEB_ACCESS_ROW_WORDS, WEB_ACCESS_SETTING, webAccessOf } from "../wiring/web-access.ts";
 import type { Money, SettingView } from "./api-types.ts";
 import { money } from "./views.ts";
@@ -40,6 +44,11 @@ export interface SettingsViewInput {
    * names a proxy may still reach sites directly; a page read that fails says it for certain).
    */
   proxied?: boolean;
+  /**
+   * Where each project's status is on GitHub now (w8-status-write): the status board's sentence,
+   * and whether the repository is public (then Settings says who can read the issue).
+   */
+  statusIssue?: (project: ProjectRow) => { sentence: string | null; public: boolean | null } | null;
 }
 
 /** The page reader on a computer that reaches the internet only through a proxy ('sites'). */
@@ -314,16 +323,16 @@ export function settingsView(input: SettingsViewInput): Row[] {
               }),
             ]
           : []),
-        // L4-github-103 (D9): a project worked on together writes nothing to the repository,
-        // so it never has a status pull request and Settings offers none (as C-57 hides it for
-        // a linked folder); settings.set refuses it in words.
-        ...(onHostRepository(p) && !isTogether(p)
+        // w8-status-write (W8-write-10): the status issue's switch with where the status is now,
+        // in one sentence, on every project on a host repository, a together one too (it writes
+        // its own comment on the shared issue; amendment 1). It replaces the Status pull request.
+        ...(onHostRepository(p)
           ? [
               project({
-                key: "project.status_pull_request",
-                label: "Status pull request",
-                value: p.settings.status_pull_request === true,
-                description: `Each session's status of ${p.name} as one pull request on GitHub (off: it stays in the app, under Docs, Status)`,
+                key: `project.${STATUS_ISSUE_SETTING}`,
+                label: "Status issue on GitHub",
+                value: statusIssuePolicy(p).on,
+                description: statusIssueRowWords(p, input.statusIssue?.(p) ?? null),
                 risk: "low",
               }),
             ]

@@ -158,7 +158,9 @@ describe("d1109-onerepo-link, run C: two Forerunners on one repository (OR-15)",
         text: "Shared on GitHub with another Forerunner: each keeps its own tasks.",
         canTakeOver: false,
       });
-      // B's session status, with the status pull request on: kept in the app, nothing pushed.
+      // B's session status (with an earlier version's status pull request setting on): the
+      // app's, nothing pushed (w8-status-write: GitHub's copy is the status issue, which B
+      // writes once a task starts or a session ends, not at Work together, OR-15).
       const row = await b.rt.store.project.mustGet(kiteId);
       await b.rt.docs.writeSessionStatus({
         project: { ...row, settings: { ...row.settings, status_pull_request: true } },
@@ -182,7 +184,7 @@ describe("d1109-onerepo-link, run C: two Forerunners on one repository (OR-15)",
           String(d.path).endsWith("status.md"),
         );
       expect((await docsRow(b.call))?.note).toBe(
-        'Kept in the app: you work on "Kite club" together, so GitHub\'s copy is left as it is.',
+        "Status on GitHub: the status issue is written when a task starts or a session ends.",
       );
       // C2-left-13: a together project never writes docs, so a doc it does not have is not
       // "not written yet": the row says who writes it, with no missing mark.
@@ -206,7 +208,7 @@ describe("d1109-onerepo-link, run C: two Forerunners on one repository (OR-15)",
         kind: "together",
       });
       expect((await docsRow(b.call))?.note).toBe(
-        'Kept in the app: you work on "Kite club" together, so GitHub\'s copy is left as it is.',
+        "Status on GitHub: the status issue is written when a task starts or a session ends.",
       );
       expect((await b.call("GET", `/projects/${kiteId}/pull-requests`)).body.waiting).toEqual([]);
       await nothingWritten();

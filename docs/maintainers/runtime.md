@@ -4447,51 +4447,26 @@ findings) and skipped task titles with the session id, the end instant from the 
 a note (`stop reason <x>; spent $<n>`), and the four top sections come from the project's
 state in the store (the latest 15 done tasks, every task claimed, in progress or in review,
 every needs-human or failed one, the ready and draft ones highest priority first). **With a
-repository and the project setting `status_pull_request` off (the default since C-57, ADR 0106,
-`statusPullRequestOn`)** the update is written to the app's own folder
-`<projectsRoot>/<id>/app-status/docs/status.md` (`statusInAppDir`, no git, outcome `location:
-"app"`, the log line "…, kept in the app"), and this computer's copy of the repository
-(`<worktreeRoot>/<id>`, what `docsDirsFor` reads for the Docs and Files tabs and the chat's docs
-search) is cloned when missing, fetched and put on the default branch as the host has it
-(`refreshCopy`, nothing pushed; a failure is a warning, the status is written either way). The
-status pull request's write did that on its way; without it a project made from a brief had no
-copy at all and a merge on the host never reached the tabs (review of fix/decisions, 2026-11-02).
-Since merged-copy the copy also follows every merge and the watcher's read of the default
-branch, under one lock per copy (below, "This computer's copy follows every merge").
-`statusDocRoot(project)` names that folder once it
-holds the file, and the docs routes read `docs/status.md` from it first (`DocsRoutesDeps.statusDocRoot`,
-the note "kept in the app: no status pull request (Settings turns it on)"). `settings.set
-status_pull_request` (`SETTING_SPECS`, low risk, a `project.status_pull_request` row in
-`GET /settings` only for a project on a host repository, `parseRepoRef` of `repos[0]` and not an absolute path, since a linked local folder opens no pull request) turns the following on. With a
-repository and the setting on it is committed as `docs: status after the session started <time>` (W15-08: the
-session by its start time, `sessionWords`, never its id; since run L3 the file's own entry too:
-`writeSessionStatus` passes the session's `started_at` as the update's `startedAt`, so the entry
-reads `### Session started 2026-11-15 05:46 UTC`, and the runner's `note` says how it ended in
-the Sessions list's words, `endedStatusText` and the spend, "Done. Spent CHF 0.24." or "Ended: 1
-task needs you. Spent CHF 0.09."; before, GitHub's Files changed and the Docs tab showed `###
-2026-11-15 session <id>` and "Note: stop reason completed; spent CHF 0.09", live check 3,
-L3-github-6) on Forerunner's own status
-branch `fr/status` (`STATUS_BRANCH`) with one pull request at a time ("docs: project status",
-its body ending in the project's hidden mark `docsPrMarker`, `<!-- forerunner:pr project=<id> -->`):
-a later session adds its commit to the open PR and comments the entry on it; once the PR is
-merged or closed the branch starts again from the default branch (pushed with a lease) and a
-new PR opens. `fr/status` is one branch per repository, so two projects on one repository share
-it (W15-01, live check 2: the second project's session pushed into and commented on the first
-one's open status PR, and its Overview listed it with Merge): `checkout`'s `ours` makes an open
-PR on the branch that is not this project's (`isProjectStatusPr`: its mark names another
-project, or it has no mark while another project of this install is linked to the repository,
-`soleLinkedProject`) the branch's for now, so nothing is pushed or commented and the status
-goes to the app folder (`statusInApp`) with one info line "status pull request not written:
-another project's status pull request is open", and a file there (`STATUS_HELD_MARK`, the
-review's fix-up: B's Docs tab read "not written yet" while the app kept it) makes
-`statusDocRoot` give the Docs tab that copy first, as with the setting off, after a restart too;
-the project's next status written to its own pull request (or kept in the app with the setting
-off) removes the file; the scaffold (`scaffoldInCopy`) skips another
-project's open `fr/docs-scaffold` PR the same way. No per-project branch and no second PR: two
-would change one `docs/status.md` (owner question W15-112). It never goes on a task's branch (ADR 0106): the critic had accepted that branch,
-and the status commit pushed onto it after the review put a file the critic never saw into the
-reviewed PR (GitHub walk, 2026-11-02). A repository without `docs/status.md` gets it scaffolded
-in the same commit. Without a repository the file in the project's folder is updated and the
+repository** (w8-status-write, ADR 0122: the status pull request on `fr/status` went, with
+`STATUS_BRANCH`, the `status_pull_request` setting, `STATUS_HELD_MARK`, `isProjectStatusPr` and
+`statusHeld`; an earlier version's stored setting changes nothing) the update is written to the
+app's own folder `<projectsRoot>/<id>/app-status/docs/status.md` (`statusInApp`,
+`statusInAppDir`, no git, outcome `location: "app"`), together or not, and this computer's copy
+of the repository (`<worktreeRoot>/<id>`, what `docsDirsFor` reads for the Docs and Files tabs
+and the chat's docs search) is cloned when missing, fetched and put on the default branch as the
+host has it (`refreshCopy`, nothing pushed; a failure is a warning, the status is written either
+way): without it a project made from a brief had no copy at all and a merge on the host never
+reached the tabs (review of fix/decisions, 2026-11-02). Since merged-copy the copy also follows
+every merge and the watcher's read of the default branch, under one lock per copy (below, "This
+computer's copy follows every merge"). `statusDocRoot(project)` names that folder once it holds
+the file, and the docs routes read `docs/status.md` from it first (`DocsRoutesDeps.statusDocRoot`);
+the Status row's note is the status board's (`DocsRoutesDeps.statusNote`,
+`StatusBoard.words(...).docsNote`: "In the app; also on GitHub: issue #12", or why the status
+stays in the app; below, "The status issue"). The entry is named by when the session started
+(`### Session started 2026-11-15 05:46 UTC`, `sessionWords`, never its id) and the runner's
+`note` says how it ended and what it spent ("Done. Spent CHF 0.24."): the person's own record,
+in the app only (R11: before, with the status pull request on, the note was pushed to GitHub).
+Without a repository the file in the project's folder is updated and the
 session's work is committed with it (`statusInFolder`: "Did "<task>", …", after a `.gitignore`
 for caches when the folder has none; `commit` on the outcome; its body is "Committed by Forerunner
 at the end of the session started <YYYY-MM-DD HH:MM> UTC." by `sessionWords`, never the session's
@@ -10294,3 +10269,95 @@ and the signature through the daemon's tools). Test: `test/capabilities-wiring.t
   no status file), `person-questions-daemon.test.ts` (the card names the dated file),
   `loop-critic.test.ts` (drift without status or guide; the guide line in the evidence), and
   `apps/ui/test/two-installs.test.ts` "w8-repo-guide, wave 8" (two homes on the stand-in).
+
+## The status issue (w8-status-write, ADR 0122)
+
+The owner's status design of 2026-11-02 (D-W8-2): one pinned issue per project, one comment per
+Forerunner, no costs. `packages/runtime/src/loop/status-board.ts` (`StatusBoard`, the writer) and
+`status-board-words.ts` (every sentence, the renderers, `redactQuoted` and the comment's one
+parser `parseWriterComment`, which w8-status-read's reader uses).
+
+- **Wiring.** compose makes one `StatusBoard` beside `ProjectDocs` when this runtime can reach
+  GitHub (a saved token or an injected host) and is not the cloud runner
+  (`billing.runner: "cloud"`); `registerDevice` holds whenever it is wired, so a
+  `startServices: false` compose that can reach GitHub has its device row (the install id; the
+  writer key is `writerKeyOf(device id, K)`, 16 hex characters of SHA-256, never the id itself).
+  `rt.statusBoard`; `docs.statusIssueState = board.guideState` feeds the guide's status fact; its
+  `tell` is an Update (a `type: "info"` message to the person); its `onStateChange` refreshes the
+  guide (`docs.refreshGuide`) when the fact changed (the board notes it in its record at every
+  write). `close()` (Quit, the daemon's close) clears this install's Working on now lines, best
+  effort within 5 s, then stops every timer; a clear GitHub does not take waits as the pending
+  text. fixup-w8-status-write: the start and the close are the install's daemon's only
+  (`ComposeOptions.statusDaemon`, default `recoverSessions`, so the daemon): at start compose
+  calls `statusBoard.resumeAll()` once its device row is registered, so a text Quit or a lost
+  connection left waiting goes out with no screen asking (GitHub still out, the minute's retry
+  sends it later); a CLI one-shot (`startServices: false`, beside a running daemon) neither
+  resumes nor clears (`close({ clearWorking: false })`), so it never takes the daemon's live
+  lines off GitHub. The two-home harness composes its homes with `statusDaemon: true`.
+- **The runner's hooks** (`SessionRunnerDeps.statusBoard`, `StatusBoardPort`, never awaited):
+  `taskStarted(projectId, task)` at the task's `task.started` (Working on now: the title, the
+  files its text names by `extractPathHints`, since and until = since + 90 min; it may open the
+  issue), `taskBoundary(projectId)` at each turn of the task loop (a task that ended leaves the
+  line), `sessionEnded(projectId, { endedAt, done, next })` after the docs status write (the Last
+  session line, then the body; titles only, never the spend; it may open the issue).
+- **The record.** `<projectsRoot>/<id>/status-issue.json` (`STATUS_BOARD_FILE`, written through a
+  temporary file and a rename): the issue's number and pin, this writer's comment id, the text it
+  last sent (`sent`, what the tamper rule compares with) and when, the one `pending` text that
+  waits for GitHub, the login, the place (`on`, `not_yet`, `waiting`, `issues_off`,
+  `no_permission`, `other_project`, `closed`) with its repository and the marker's name, whether
+  the repository is public, the Working on now lines, the Last session, when the person was told
+  (`told.changed`, `told.deleted`), the body's last rebuild, `oldPrChecked` and the guide's fact.
+  A restart reads it the same way; no migration.
+- **A write** (`flush`, one at a time per project, coalesced): the switch off
+  (`statusIssuePolicy`, `settings.status_issue === false`) writes nothing; the draft text is
+  rendered from the store (the Working on now lines whose tasks are still claimed, running or
+  in review; Waiting for Merge from the project's merge records that are not merged; Paused from
+  needs-human tasks whose last run paused at a budget, with its handoff and kept checks) and,
+  when its content (the header line aside) is the one last sent and nothing waits, nothing is
+  read or sent. Else: the repository (`hasIssues` false: issues off), the login, the default
+  branch's `.forerunner/project.json` (it names another project: `other_project`, nothing
+  written, D-W8-45), this install's old status pull request closed once
+  (`closeOwnStatusPullRequest`: open on `fr/status`, its mark names the project, and a
+  `docs.status_written` event of one of the project's sessions records its address), the issue
+  (`issueOf`: the stored number, then the lowest open issue carrying the marker of K, then the
+  title of an issue with no marker (one keyed to another project never), each opened by someone
+  with write access; with `create` it opens one, labelled, then
+  closes its own with "Closed: #N is this project's status issue." when a lower one appeared at
+  the same time; it pins, reading "pinned" for one that is), a closed issue stops the writes
+  (never reopened), this writer's comment (`ownComment`: by its stored id and login, else by
+  login and writer key; one by another login with this writer key is never its own), a comment
+  whose body differs from the text last sent was changed on GitHub (the person is told once; the
+  writer's text goes back), and the text is sent (`commentOnIssue` once, `updateIssueComment`
+  after). A refusal: `issues_off`, `no_permission` (also a refused token); a 404 (`missing`) is
+  read again with the same host first (`whyMissing`, W8a-left-3: GitHub answers 404 for a deleted
+  comment or issue and for a private repository the token no longer sees alike): the repository
+  not readable, or everything readable while the write was refused, is `no_permission` (no
+  timer; the next task, session or screen tries again); the stored issue or this writer's
+  comment gone means one more write now (the comment written again; a deleted issue by
+  W8-write-8's rule); anything else waits (`waiting`, retried after a minute and whenever
+  Settings or the Docs tab asks, `words`). The old status pull request is looked for again at the
+  next write when GitHub did not answer the look (`oldPrChecked` is set only once it answered).
+  Waiting for Merge leaves out a pull request closed on GitHub (`isClosedRecord`).
+- **The body** is rebuilt from the comments that pass `writerFilter` (D-W8-37: a valid marker for
+  K, the header naming the comment's author, the author's write access by `getRepoPermission`,
+  failing closed) at most once per `bodyIntervalMs` (30 s; `FORERUNNER_STATUS_BODY_MS`), each
+  writer's parsed lines redacted again between `<!-- forerunner:status-quote -->` markers; read
+  again with the ETag and rebuilt once more when a comment changed meanwhile.
+- **The words** (`status-board-words.ts`): `statusPlaceSentence` (Settings' row, after
+  `statusIssueRowWords`, which ends each of its parts with a full stop; "Everyone who can see
+  this repository can read it." on a public one),
+  `docsStatusNote` (the Docs tab), `commentChangedUpdate`, `issueDeletedUpdate`,
+  `OLD_STATUS_PR_LINE`, `STATUS_ISSUE_EFFECT` (the setting's card; the UI's fake daemon imports
+  it). Every quoted text passes `redactQuoted` (money figures, email addresses, an @mention's @),
+  and `holdsPrivateText` is the tests' check; the hidden markers are the one place an id stands
+  (`isMarkerLine`).
+- Tests: `test/status-board.test.ts` (the renderers, the property over 400 draws, the writer on
+  one MemoryGitHost with two logins: one issue, two comments, the race, GitHub off, issues off, no
+  permission, three pins, another project's marker, the switch, tamper, the filter, the old pull
+  request, Working on now, Paused, a deleted issue; fixup-w8-status-write: Quit's clear and no
+  write after it, a one-shot's close, the start's resume and the retry, a token that lost access,
+  a comment deleted between the read and the edit, a closed pull request, another project's
+  title, the old pull request looked for again), `test/docs-scaffold.test.ts` (the composed
+  runner), `test/loop-docs.test.ts` (no status pull request), and the two-home cases in
+  `apps/ui/test/two-installs.test.ts` ('w8-status-write, wave 8'; Quit while a task runs, with
+  GitHub out and with it answering, through `home.quit()` and `home.start()`).

@@ -1,9 +1,4 @@
-import {
-  type GitHost,
-  type PullRequestInfo,
-  type RepoRef,
-  readForerunnerMarker,
-} from "@forerunner/capabilities";
+import type { GitHost, PullRequestInfo, RepoRef } from "@forerunner/capabilities";
 import { ACCEPTED_WITHOUT_REVIEW } from "@forerunner/critic";
 import { errorMessage, ForerunnerError, isAbsolute, log, redact } from "@forerunner/platform";
 import type { MergeRecordRow, ProjectRow, StateStore, TaskRow } from "@forerunner/state";
@@ -13,7 +8,6 @@ import {
   isScaffoldBranch,
   ownsUnmarkedDocs,
   parseRepoRef,
-  STATUS_BRANCH,
 } from "../loop/docs.ts";
 import { buildsOnSentence, parsePullUrl, type ReviewedPrMerge, rulesBlock } from "../loop/merge.ts";
 import {
@@ -25,7 +19,6 @@ import {
 } from "../loop/merge-mode.ts";
 import type { TaskTakeOut } from "../loop/take-out.ts";
 import { ACCEPTED_AT_SIGNOFF } from "../session/findings.ts";
-import { isTogether } from "../sources/repository-words.ts";
 import type {
   ProjectPullRequestsView,
   ProjectPullRequestView,
@@ -34,30 +27,12 @@ import type {
   PullRequestMergeAnswer,
   PullRequestPreviewAnswer,
 } from "./api-types.ts";
-import { joinedFromOf } from "./join-words.ts";
 import {
   closeFailedSentence,
   closeNotCancelledSentence,
   closeNotOpenSentence,
   pullRequestClosedSentence,
 } from "./pull-request-close-words.ts";
-
-/**
- * L4-github-113 (ADR 0117 point 3, amended 2026-11-23): an open status pull request on
- * `fr/status` whose hidden mark names a project joined into this one: after Make one project it
- * is this project's, listed as its docs row with Open and Merge whatever this project's own
- * Status pull request setting is (the dialog said the pull requests move). The status writer
- * (`loop/docs.ts`) still writes there only once the kept project's setting is on. Its own mark,
- * an unmarked one and another project's are never listed here.
- */
-export function isJoinedStatusPr(
-  project: Pick<ProjectRow, "id" | "settings">,
-  pr: { head: { ref: string }; body: string },
-): boolean {
-  if (pr.head.ref !== STATUS_BRANCH || isTogether(project)) return false;
-  const marked = readForerunnerMarker(pr.body)?.project;
-  return !!marked && marked !== project.id && joinedFromOf(project).includes(marked);
-}
 
 /**
  * Where a repository project's work is, for the person (core-experience design §3.4 "Your
@@ -102,7 +77,6 @@ export function projectRepository(
  * `fr/docs-scaffold-<name>` (L4-github-102), and that is the standard set too, not a plan's.
  */
 function docsTitle(branch: string): string {
-  if (branch === STATUS_BRANCH) return "Project status (docs/status.md)";
   if (isScaffoldBranch(branch)) return "The project's standard docs";
   return "The project's docs from the plan";
 }
@@ -534,9 +508,10 @@ export class ProjectPullRequests {
         // project's open status PR as this one's, with Merge (live check 2). L4i-left-2: one that
         // names no project while this is the one project here linked to the repository is
         // listed as information only, never with Merge (it may be another Forerunner's).
-        const listing = isJoinedStatusPr(project, pr)
-          ? "own"
-          : docsPrListing(project, pr, { soleLinked });
+        // w8-status-write: a status pull request (`fr/status`) is no docs branch any more; one of
+        // a project joined into this one is not listed either (the status board closes this
+        // install's own, `closeOwnStatusPullRequest`).
+        const listing = docsPrListing(project, pr, { soleLinked });
         if (!listing) continue;
         if (listing === "listed") {
           // Its own kind, which the Overview lists apart under "Also open on GitHub" (never under

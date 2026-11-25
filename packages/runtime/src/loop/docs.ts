@@ -43,6 +43,7 @@ import {
   renderGuidePart,
   type ScaffoldResult,
   STATUS_DOC,
+  type StatusIssueState,
   type StatusLists,
   type StatusUpdate,
   scaffoldDocs,
@@ -78,20 +79,19 @@ import type {
 /**
  * The PM keeps the standard project doc set current (spec G.5; ADR 0058). The eight docs
  * live in the project's repository: at project creation the missing ones are scaffolded on
- * a branch and opened as a pull request, and at session end the runner's status update is
- * committed to `docs/status.md` on Forerunner's own status branch (`STATUS_BRANCH`) with one
- * pull request at a time. Never on a task's pull request branch (ADR 0106): the critic had
- * accepted that branch, and a status commit pushed onto it after the review put a file the
- * critic never saw into a reviewed PR (GitHub walk, 2026-11-02). The default branch is never
+ * a branch and opened as a pull request. At session end the runner's status update is the
+ * app's (`statusInApp`, `docs/status.md` in `<projectsRoot>/<project id>/app-status`); on GitHub
+ * the status is the project's status issue (w8-status-write, `status-board.ts`, ADR 0122): the
+ * status pull request on `fr/status` went (amendment 2), and nothing writes `docs/status.md` to a
+ * repository. Never on a task's pull request branch (ADR 0106). The default branch is never
  * pushed, except for the first commit of an empty repository (`ensureBaseBranch`, ADR 0106):
  * the doc set goes in as that commit. An existing file is never overwritten (`scaffoldDocs`
  * skips what is there, whatever the branch already carries). The scaffold also writes the
  * install marker `.forerunner/project.json` (spec A.4, ADR 0056) beside the set, never over
  * another project's. After each write the docs clone is back on the default branch, so the
  * Docs tab, the Files tab and the chat read what is merged, and `docsInPullRequests` names the
- * docs still waiting in a pull request; with the status pull request off (C-57) the session's
- * end still clones or fetches that copy and puts it on the default branch (`refreshCopy`),
- * pushing nothing. A project without a repository keeps the set under
+ * docs still waiting in a pull request; the session's end clones or fetches that copy and puts
+ * it on the default branch (`refreshCopy`, in `statusInApp`), pushing nothing. A project without a repository keeps the set under
  * `<projectsRoot>/<project id>/workspace`, where the session's work is committed with the
  * status update at session end. The critic's drift check (`checkDocDrift`) reads the same files.
  *
@@ -116,34 +116,11 @@ export const PREVIEWS_DIR = "previews";
 /** The preview's record beside its folder: which pull request, and whether it merged cleanly. */
 const PREVIEW_RECORD = "preview.json";
 
-/** Forerunner's branch for `docs/status.md` in a repository: one pull request at a time. */
-export const STATUS_BRANCH = "fr/status";
-
 /**
- * The project setting that sends each session's status update to the repository as a pull
- * request (C-57, ADR 0106 point 3, the session lead's default): off unless the person turns it
- * on (`settings.set status_pull_request`); off, a repository project's `docs/status.md` stays in
- * the app (`STATUS_IN_APP_DIR`), read by the Docs tab, and no status pull request is opened.
+ * `<projectsRoot>/<project id>/app-status`: where a repository project's status is (C-57; since
+ * w8-status-write always: GitHub's copy is the status issue, never a file in the repository).
  */
-export const STATUS_PR_SETTING = "status_pull_request";
-
-/** Whether the project sends its status update to its repository as a pull request (C-57). */
-export function statusPullRequestOn(project: Pick<ProjectRow, "settings">): boolean {
-  return project.settings?.[STATUS_PR_SETTING] === true;
-}
-
-/** `<projectsRoot>/<project id>/app-status`: where a repository project's status stays (C-57). */
 export const STATUS_IN_APP_DIR = "app-status";
-
-/**
- * W15-01 fix-up: a file in `STATUS_IN_APP_DIR` that says the project's last status stayed in
- * the app because another project's status pull request was open on `fr/status`, although its
- * own status pull request is on. While it is there, the Docs tab reads `docs/status.md` from
- * the app (`statusDocRoot`), as with the setting off; the project's next status written to its
- * own pull request (or kept in the app with the setting off) removes it. A file, so a restart
- * reads it the same way.
- */
-export const STATUS_HELD_MARK = ".held-by-another-status-pr";
 
 /**
  * Whether `branch` is one of the scaffold's branches: `fr/docs-scaffold`, or the project's own
@@ -184,11 +161,13 @@ export function docsPullRequestNamesProject(
   return !!out.prUrl && out.marker?.status !== "other_project";
 }
 
-/** The branches Forerunner keeps the project's docs on (scaffold, the intake's set, status). */
+/**
+ * The branches Forerunner keeps the project's docs on (the scaffold, the intake's set). The
+ * status branch `fr/status` is none any more (w8-status-write): an old status pull request is
+ * never listed, and the status board closes this install's own (`closeOwnStatusPullRequest`).
+ */
 export function isDocsBranch(branch: string): boolean {
-  return (
-    isScaffoldBranch(branch) || branch === STATUS_BRANCH || /^fr\/intake-[^/]+-docs$/.test(branch)
-  );
+  return isScaffoldBranch(branch) || /^fr\/intake-[^/]+-docs$/.test(branch);
 }
 
 /**
@@ -201,7 +180,7 @@ export function scaffoldProjectLine(project: Pick<ProjectRow, "id">): string {
   return `Forerunner project ${project.id}.`;
 }
 
-/** The hidden mark of a project's docs pull request (status, scaffold): the project's id. */
+/** The hidden mark of a project's docs pull request (the scaffold's): the project's id. */
 export function docsPrMarker(project: Pick<ProjectRow, "id">): string {
   return forerunnerMarker({ project: project.id });
 }
@@ -225,10 +204,8 @@ export function docsPrMarker(project: Pick<ProjectRow, "id">): string {
  * Before, "this project is the only one on this install linked to the repository" made it this
  * project's, and another Forerunner's project is never on this install, so any unmarked scaffold
  * pull request (another Forerunner's, a person's, an older version's) was written onto. That
- * fallback now only lists such a pull request, without Merge (`docsPrListing`). A status PR is
- * this project's only by its mark here (the status writer keeps its own rule until wave 8's
- * status issue replaces it). The status PR counts only while the project's status pull request
- * is on (C-57).
+ * fallback now only lists such a pull request, without Merge (`docsPrListing`). A status pull
+ * request (`fr/status`) is no project's docs pull request any more (w8-status-write).
  */
 export function isProjectDocsPr(
   project: Pick<ProjectRow, "id" | "name" | "settings"> &
@@ -242,7 +219,6 @@ export function isProjectDocsPr(
   // A project joined into this one (d1109-onerepo-join) counts as this one.
   const ids = projectIdsOf(project);
   const ref = pr.head.ref;
-  if (ref === STATUS_BRANCH) return statusPullRequestOn(project) && isProjectStatusPr(project, pr);
   const intake = /^fr\/intake-(.+)-docs$/.exec(ref);
   if (intake) {
     // L4-github-111: the intake's pull request names its project in its hidden mark (its branch
@@ -278,9 +254,8 @@ function namesAProject(pr: { body: string }): boolean {
 
 /**
  * L4i-left-2: how the project's Pull requests list shows one of the repository's docs pull
- * requests: `own` with Merge (`isProjectDocsPr`, or a status PR of a project joined into this
- * one is decided by the caller), `listed` as information only, without Merge (a scaffold or
- * status pull request that names no project while this project is the one on this install
+ * requests: `own` with Merge (`isProjectDocsPr`), `listed` as information only, without Merge (a
+ * scaffold pull request that names no project while this project is the one on this install
  * linked to the repository, `soleLinked`: before, the list offered Merge on it), or null (not
  * listed: another project's, or with two projects linked here neither's).
  */
@@ -292,27 +267,7 @@ export function docsPrListing(
 ): "own" | "listed" | null {
   if (isProjectDocsPr(project, pr)) return "own";
   if (isTogether(project) || !opts.soleLinked || namesAProject(pr)) return null;
-  const ref = pr.head.ref;
-  if (ref === STATUS_BRANCH) return statusPullRequestOn(project) ? "listed" : null;
-  return isScaffoldBranch(ref) ? "listed" : null;
-}
-
-/**
- * Whether the open status pull request on `fr/status` is this project's (W15-01), whatever its
- * setting: its hidden mark names it (or a project joined into it), or it names no project and
- * this project owns the repository's unmarked docs pull requests (`ownsUnmarkedDocs`: an earlier
- * version's PR). One with another project's mark, or an unmarked one while it is not the one
- * owner, is never written to, commented on or listed. A together project owns none (D9).
- */
-export function isProjectStatusPr(
-  project: Pick<ProjectRow, "id" | "settings">,
-  pr: { body: string },
-  opts: { soleLinked?: boolean } = {},
-): boolean {
-  if (isTogether(project)) return false;
-  const marked = readForerunnerMarker(pr.body)?.project;
-  if (marked) return projectIdsOf(project).includes(marked);
-  return opts.soleLinked === true;
+  return isScaffoldBranch(pr.head.ref) ? "listed" : null;
 }
 
 /**
@@ -325,8 +280,9 @@ export function isProjectStatusPr(
  * project too), and this computer's copy's marker (`copyMarker`, read as a file) names no other
  * project. Fails closed: an index that cannot be read owns nothing.
  *
- * L4i-left-2 (wave 8): read only to list such a pull request as information (`docsPrListing`)
- * and by the status writer until the status issue replaces it (w8-status-write); the scaffold,
+ * L4i-left-2 (wave 8): read only to list such a pull request as information (`docsPrListing`;
+ * the status writer that also read it went with the status pull request, w8-status-write); the
+ * scaffold,
  * Try again, the take-over's rebuild and the Docs tab never take an unmarked pull request as
  * this project's by it (another Forerunner's project is never on this install, so every project
  * here was "the only one").
@@ -557,6 +513,12 @@ export { gitAuthFor };
 export class ProjectDocs implements ProjectDocsPort {
   private readonly logger = log("project-docs");
 
+  /**
+   * The status issue's state for the guide (w8-status-write, D-W8-44): the status board sets it
+   * at compose (`StatusBoard.guideState`); unset, the guide reads the Settings switch alone.
+   */
+  statusIssueState: ((project: Pick<ProjectRow, "settings">) => StatusIssueState) | undefined;
+
   constructor(private readonly deps: ProjectDocsDeps) {}
 
   /** `<projectsRoot>/<project id>/workspace`: the doc set of a project without a repository. */
@@ -570,19 +532,14 @@ export class ProjectDocs implements ProjectDocsPort {
   }
 
   /**
-   * Where the Docs tab reads `docs/status.md` first (C-57): the app's copy of a repository
-   * project whose status pull request is off, once a session wrote it, or (W15-01 fix-up) whose
-   * last status stayed in the app because another project's status pull request was open
-   * (`STATUS_HELD_MARK`); null otherwise (the repository's, as merged, or the project's folder).
-   * Before, the second project's Docs tab read "not written yet" while its status was kept.
+   * Where the Docs tab reads `docs/status.md` first (C-57, w8-status-write): the app's copy of a
+   * repository project's status, once a session wrote it; null otherwise (a project's folder).
+   * GitHub's copy of the status is the status issue, never a file in the repository.
    */
   statusDocRoot(project: ProjectRow): string | null {
     if (!parseRepoRef(project.repos[0] ?? "") || isAbsolute(project.repos[0] ?? "")) return null;
     const dir = this.statusInAppDir(project.id);
-    if (!existsSync(join(dir, fromPosix(STATUS_DOC)))) return null;
-    // D9: a together project's status is always the app's (it writes none to the repository).
-    if (!statusPullRequestOn(project) || isTogether(project)) return dir;
-    return existsSync(join(dir, STATUS_HELD_MARK)) ? dir : null;
+    return existsSync(join(dir, fromPosix(STATUS_DOC))) ? dir : null;
   }
 
   /**
@@ -620,36 +577,6 @@ export class ProjectDocs implements ProjectDocsPort {
       return readFileSync(join(this.copyDir(projectId), fromPosix(INSTALL_MARKER_FILE)), "utf8");
     } catch {
       return null;
-    }
-  }
-
-  /** W15-01 through the index: whether the repository's unmarked docs pull requests are its. */
-  private ownsUnmarked(project: ProjectRow, repo: RepoRef): Promise<boolean> {
-    return ownsUnmarkedDocs(this.deps.store, project, repo, this.copyMarker(project.id));
-  }
-
-  /**
-   * OR-09 (L3-github-5): why the project's status was last kept in the app although its status
-   * pull request is on: the open status pull request that held it, by its number and the
-   * project its mark names (null for an unmarked one); null when nothing held it.
-   */
-  statusHeld(project: ProjectRow): { prNumber: number | null; projectId: string | null } | null {
-    if (!statusPullRequestOn(project)) return null;
-    let text: string;
-    try {
-      text = readFileSync(join(this.statusInAppDir(project.id), STATUS_HELD_MARK), "utf8");
-    } catch {
-      return null;
-    }
-    try {
-      const o = JSON.parse(text) as { pr?: unknown; project?: unknown };
-      return {
-        prNumber: typeof o.pr === "number" ? o.pr : null,
-        projectId: typeof o.project === "string" ? o.project : null,
-      };
-    } catch {
-      // A mark an earlier version wrote: held, by whom is not known.
-      return { prNumber: null, projectId: null };
     }
   }
 
@@ -925,7 +852,11 @@ export class ProjectDocs implements ProjectDocsPort {
         // W8-guide-1: a project kept in a folder gets its guide too (no GitHub part).
         const res = await scaffoldDocs(dir, {
           ...info,
-          guide: guideFactsOf(project, { dir, defaultBranch: null }),
+          guide: guideFactsOf(project, {
+            statusIssue: this.statusIssueState,
+            dir,
+            defaultBranch: null,
+          }),
         });
         const marker = await this.mark(project, dir);
         outcome = {
@@ -1118,7 +1049,11 @@ export class ProjectDocs implements ProjectDocsPort {
     // W8-guide-1: the guide rendered from its facts (this copy's checks, the default branch).
     const res = await scaffoldDocs(dir, {
       ...info,
-      guide: guideFactsOf(project, { dir, defaultBranch: target.base }),
+      guide: guideFactsOf(project, {
+        statusIssue: this.statusIssueState,
+        dir,
+        defaultBranch: target.base,
+      }),
     });
     const marker = await this.mark(project, dir);
     const written = [
@@ -1251,120 +1186,37 @@ export class ProjectDocs implements ProjectDocsPort {
     };
     const target = await this.deps.repoFor(project);
     if (!target) return this.statusInFolder(project, session, update);
-    // C-57: unless the person turned the status pull request on, a repository project's status
-    // stays in the app: one PR to merge after every session was noise, even for one task.
-    // D9: a project worked on together writes nothing to the repository: its status stays in
-    // the app, whatever the setting (the repository's docs are the other Forerunner's).
-    if (!statusPullRequestOn(project) || isTogether(project))
-      return this.statusInApp(project, update);
-    // Forerunner's own status branch, never a task's: the critic accepted the task's branch,
-    // and a commit after the review would put a file it never saw into the reviewed PR. Under
-    // the copy's lock (merged-copy): a refresh never moves the clone off the branch mid-write.
-    const branch = STATUS_BRANCH;
-    // W15-01: `fr/status` is one branch per repository, so another project on the same
-    // repository may have its status pull request open there; that one is never written to or
-    // commented on (live check 2: a second project's session pushed its status into the first
-    // project's PR). Its own is told by the hidden mark, or an unmarked one by being the one
-    // project linked (an earlier version's PR). One PR at a time (owner question W15-112).
-    const soleLinked = await this.ownsUnmarked(project, target.repo);
-    const written = await this.withCopy(project.id, async () => {
-      const { git, dir, existingPr, foreign } = await this.checkout(project, target, branch, {
-        // A status PR that was merged or closed: the branch starts again from the default one.
-        fresh: async (open) => !open,
-        ours: (pr) => isProjectStatusPr(project, pr, { soleLinked }),
-      });
-      if (foreign) {
-        await this.settle(git, dir, target);
-        return { foreign, commit: null, prUrl: null, res: null };
-      }
-      const res = await writeStatusUpdate(dir, update);
-      // The session by when it started, never its id (W15-08: no ids in what a person reads).
-      const named = sessionWords(session.started_at ?? session.created_at);
-      const commit = await git.commitAll(`docs: status after ${named}`);
-      let prUrl = existingPr?.htmlUrl ?? null;
-      if (commit.committed) {
-        // The branch is Forerunner's alone; without an open PR it was started again from the
-        // default branch, so the host's old copy (a merged or closed PR's) is replaced.
-        await git.push(branch, { force: !existingPr, defaultBranch: target.base });
-        const body = `Status update of ${named}:\n\n- Done: ${line(update.done)}\n- In flight: ${line(update.inFlight)}\n- Blocked: ${line(update.blocked)}\n- Next: ${line(update.next)}`;
-        if (existingPr) {
-          await this.deps.host.commentOnPullRequest(target.repo, existingPr.number, body);
-        } else {
-          const pr = await this.deps.host.createPullRequest(target.repo, {
-            title: "docs: project status",
-            body: `${body}\n\nForerunner keeps docs/status.md on this branch and adds each session's update to this pull request until it is merged. Opened by Forerunner.\n\n${docsPrMarker(project)}`,
-            head: branch,
-            base: target.base,
-          });
-          prUrl = pr.htmlUrl;
-        }
-      }
-      await this.settle(git, dir, target);
-      return { foreign: null, commit, prUrl, res };
-    });
-    const { foreign, commit, prUrl, res } = written;
-    if (foreign || !commit || !res) {
-      // Its status stays in the app this time (C-57's place for it); the next session's end
-      // tries the pull request again.
-      this.logger.info(
-        "status pull request not written: another project's status pull request is open",
-        { projectId: project.id, branch, prUrl: foreign?.htmlUrl ?? null },
-      );
-      return this.statusInApp(project, update, { refresh: false, held: foreign });
-    }
-    // Its own status pull request has it again: the app's copy is no longer read first.
-    rmSync(join(this.statusInAppDir(project.id), STATUS_HELD_MARK), { force: true });
-    this.logger.info("status update written", {
-      projectId: project.id,
-      sessionId: session.id,
-      branch,
-      prUrl,
-      committed: commit.committed,
-    });
-    return { location: "repo", branch, prUrl, path: STATUS_DOC, created: res.created };
+    // w8-status-write (the owner's design: "No docs/status.md in repositories"; amendment 2):
+    // a repository project's status is the app's, together or not; GitHub's copy is the status
+    // issue (`status-board.ts`), which the runner tells separately. The status pull request on
+    // `fr/status` went: before, with it on, the session's note ("... Spent CHF x.") was pushed
+    // to GitHub (R11) and a second project could write into the first one's pull request.
+    return this.statusInApp(project, update);
   }
 
   /**
    * A repository project's status kept in the app (`STATUS_IN_APP_DIR`, C-57), where the Docs
-   * tab reads it: its status pull request is off, or another project's is open on `fr/status`
-   * (W15-01, `held`: marked so with `STATUS_HELD_MARK`). `refresh`: the copy is refreshed here
-   * too (nothing pushed).
+   * tab reads it. The copy of the repository is refreshed here too (nothing pushed).
    */
   private async statusInApp(
     project: ProjectRow,
     update: StatusUpdate,
-    opts: { refresh?: boolean; held?: Pick<PullRequestInfo, "number" | "body"> | null } = {},
   ): Promise<SessionStatusOutcome> {
     const dir = this.statusInAppDir(project.id);
     mkdirSync(dir, { recursive: true });
     const res = await writeStatusUpdate(dir, update);
-    const mark = join(dir, STATUS_HELD_MARK);
-    // OR-09: which pull request held it and the project its mark names (null: unmarked), so the
-    // Docs row says why, after a restart too.
-    if (opts.held)
-      writeFileSync(
-        mark,
-        `${JSON.stringify({
-          pr: opts.held.number,
-          project: readForerunnerMarker(opts.held.body)?.project ?? null,
-        })}\n`,
-        "utf8",
-      );
-    else rmSync(mark, { force: true });
     // The status write was also what kept this computer's copy of the repository current;
     // without it a project made from a brief had no copy at all (its Docs tab said README.md
     // was missing, its Files tab "Nothing written yet") and a merge never showed (review of
     // fix/decisions, 2026-11-02). The copy is refreshed here, with nothing pushed.
-    if (opts.refresh !== false) {
-      try {
-        await this.refreshCopy(project);
-      } catch (e) {
-        // The status is in the app either way; the copy is read as it was.
-        this.logger.warn("this computer's copy of the repository not refreshed", {
-          projectId: project.id,
-          error: errorMessage(e),
-        });
-      }
+    try {
+      await this.refreshCopy(project);
+    } catch (e) {
+      // The status is in the app either way; the copy is read as it was.
+      this.logger.warn("this computer's copy of the repository not refreshed", {
+        projectId: project.id,
+        error: errorMessage(e),
+      });
     }
     return { location: "app", dir, path: res.path, created: res.created };
   }
@@ -1446,7 +1298,11 @@ export class ProjectDocs implements ProjectDocsPort {
     if (!target) {
       const dir = this.workspaceDir(project.id);
       if (!existsSync(dir)) return none;
-      const facts = guideFactsOf(project, { dir, defaultBranch: null });
+      const facts = guideFactsOf(project, {
+        statusIssue: this.statusIssueState,
+        dir,
+        defaultBranch: null,
+      });
       if (guideIsCurrentIn(dir, facts)) return none;
       const res = await scaffoldDocs(dir, {
         name: project.name,
@@ -1460,7 +1316,11 @@ export class ProjectDocs implements ProjectDocsPort {
     const copy = this.copyDir(project.id);
     // The facts the guide last went out with: unchanged, nothing to read or write.
     if (docs.guide_key === this.guideKeyIn(project, target.base)) return none;
-    const facts = guideFactsOf(project, { dir: copy, defaultBranch: target.base });
+    const facts = guideFactsOf(project, {
+      statusIssue: this.statusIssueState,
+      dir: copy,
+      defaultBranch: target.base,
+    });
     if (existsSync(join(copy, ".git")) && guideIsCurrentIn(copy, facts)) {
       await this.record(project, { ...docs, guide_key: guideKeyOf(facts) });
       return none;
@@ -1495,7 +1355,11 @@ export class ProjectDocs implements ProjectDocsPort {
   /** The key of the guide's facts as this computer's copy (on `base`) gives them now. */
   private guideKeyIn(project: ProjectRow, base: string): string {
     return guideKeyOf(
-      guideFactsOf(project, { dir: this.copyDir(project.id), defaultBranch: base }),
+      guideFactsOf(project, {
+        statusIssue: this.statusIssueState,
+        dir: this.copyDir(project.id),
+        defaultBranch: base,
+      }),
     );
   }
 
@@ -1605,7 +1469,11 @@ export class ProjectDocs implements ProjectDocsPort {
           name: project.name,
           goal: project.goal,
           repos: project.repos,
-          guide: guideFactsOf(project, { dir: scratch, defaultBranch: target.base }),
+          guide: guideFactsOf(project, {
+            statusIssue: this.statusIssueState,
+            dir: scratch,
+            defaultBranch: target.base,
+          }),
         });
         const marker = await this.mark(project, scratch);
         first = { created: res.created, marker };
@@ -1844,10 +1712,6 @@ export class ProjectDocs implements ProjectDocsPort {
       });
     }
   }
-}
-
-function line(items: string[]): string {
-  return items.length ? items.join("; ") : "none";
 }
 
 /**

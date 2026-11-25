@@ -6,6 +6,7 @@ import { join } from "@forerunner/platform";
 import type { JsonObject, ProjectRow } from "@forerunner/state";
 import { mergeModeOf } from "./merge-mode.ts";
 import { PROJECT_SCRIPTS } from "./project-checks.ts";
+import { statusIssuePolicy } from "./status-board-words.ts";
 
 /**
  * The repository guide's facts (W8-guide-1, ADR 0121; the owner's decision of 2026-11-02:
@@ -21,14 +22,19 @@ import { PROJECT_SCRIPTS } from "./project-checks.ts";
  */
 
 /**
- * Where the project's status is, for the guide (D-W8-44). The one place the status issue's
- * state comes in: `on` until w8-status-write's `statusIssuePolicy` lands, which then answers
- * `switched_off` (its switch in Settings) or `issues_off` (issues turned off on the repository)
- * and asks for a re-render when it changes (`ProjectDocs.refreshGuide`). The issue's number is
- * never a fact, so its creation changes nothing in the guide.
+ * Where the project's status is, for the guide (D-W8-44): the one place the status issue's state
+ * comes in. `switched_off` when the project's status issue is turned off in Settings
+ * (`statusIssuePolicy`), else what the status board last found (`issues_off` when the repository
+ * has issues turned off), else `on`. A change of it gives a new guide, which the next docs pull
+ * request carries (the board asks for it at once, `ProjectDocs.refreshGuide`). The issue's number
+ * is never a fact, so its creation changes nothing in the guide.
  */
-export function guideStatusIssueState(_project: Pick<ProjectRow, "settings">): StatusIssueState {
-  return "on";
+export function guideStatusIssueState(
+  project: Pick<ProjectRow, "settings">,
+  board?: (project: Pick<ProjectRow, "settings">) => StatusIssueState,
+): StatusIssueState {
+  if (!statusIssuePolicy(project).on) return "switched_off";
+  return board?.(project) ?? "on";
 }
 
 /** The project's `settings.checks` commands as one line each (`argv` joined by spaces). */
@@ -81,7 +87,12 @@ export function guideKeyOf(facts: GuideFacts): string {
  */
 export function guideFactsOf(
   project: Pick<ProjectRow, "name" | "goal" | "settings">,
-  opts: { dir: string | null; defaultBranch: string | null },
+  opts: {
+    dir: string | null;
+    defaultBranch: string | null;
+    /** The status board's state of the project's issue (w8-status-write); absent: on. */
+    statusIssue?: (project: Pick<ProjectRow, "settings">) => StatusIssueState;
+  },
 ): GuideFacts {
   return {
     name: project.name,
@@ -92,7 +103,7 @@ export function guideFactsOf(
         : {
             defaultBranch: opts.defaultBranch,
             mergedBy: mergeModeOf(project.settings),
-            statusIssue: guideStatusIssueState(project),
+            statusIssue: guideStatusIssueState(project, opts.statusIssue),
           },
     checks: [...new Set([...settingsChecks(project.settings), ...packageChecks(opts.dir)])],
     unfinishedWork: UNFINISHED_WORK_RULES,

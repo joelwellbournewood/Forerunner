@@ -148,6 +148,7 @@ import {
 } from "../loop/memory.ts";
 import { MERGE_PR_TOOL, ReviewedPrMerge } from "../loop/merge.ts";
 import { RepoCreator, RepoProposals } from "../loop/repo-create.ts";
+import { StatusBoard } from "../loop/status-board.ts";
 import { TaskTakeOut } from "../loop/take-out.ts";
 import { evidenceRootOf, keepOnlyThisTry, type TryItPort } from "../loop/try-it.ts";
 import { LoopEvalRunner } from "../models/eval-runner.ts";
@@ -569,6 +570,14 @@ export interface ComposeOptions {
    * daemon whose sessions are live and must not end them).
    */
   recoverSessions?: boolean;
+  /**
+   * The install's one live process for its status comments (w8-status-write, ADR 0122): at start
+   * it sends the status text a stopped daemon left waiting for GitHub (`StatusBoard.resumeAll`),
+   * and its close (Quit) clears this install's Working on now lines. Default: `recoverSessions`
+   * (the daemon); a CLI one-shot composes beside a running daemon whose lines are live and
+   * leaves both alone. A test that composes a daemon without its services passes true.
+   */
+  statusDaemon?: boolean;
   /**
    * Notification channel seams (tests): the OS tools the desktop and Signal channels run, the
    * fetch the Telegram channel uses, the platform, and the agent mailbox the email channel
@@ -1087,6 +1096,12 @@ export interface RuntimeApp {
    * session end.
    */
   docs: ProjectDocs;
+  /**
+   * The status issue (w8-status-write, ADR 0122): this install's comment on each project's
+   * pinned status issue, the body rebuilt from the writers' comments, the old status pull
+   * request closed (`closeOwnStatusPullRequest`, the one GitHub write w8-together's join makes).
+   */
+  statusBoard: StatusBoard;
   /**
    * The merge of a reviewed PR after an accepting review (spec J.9, ADR 0062): one `merge_pr`
    * call through the daemon's hooks; the project's merge mode or the person's Merge decides, no
@@ -2798,6 +2813,54 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     token: githubTokenNow,
     identity: gitIdentity,
   });
+  // w8-status-write (ADR 0122; the owner's status design of 2026-11-02): one pinned status issue
+  // per project, this install's own comment on it. The writer is this runtime's device row (made
+  // further down: `registerDevice` holds whenever the board is wired) and the token's login; it
+  // writes only with the configured host and a saved token (an injected host stands for one).
+  // It is wired when this runtime can reach GitHub (a saved token, or a host a test injects),
+  // except on the cloud runner (`billing.runner: "cloud"`), whose runner row is its own writer
+  // and which writes no status comment yet.
+  const statusBoardWired =
+    opts.billing?.runner !== "cloud" && (opts.gitHost !== undefined || !!ghToken);
+  const statusDaemon = opts.statusDaemon ?? opts.recoverSessions ?? opts.startServices !== false;
+  const guideRefreshes = new Set<Promise<unknown>>();
+  const statusBoard = new StatusBoard({
+    store,
+    clock,
+    host: async () =>
+      statusBoardWired && (opts.gitHost || (await githubTokenNow())) ? gitHost : null,
+    writerId: () => remoteDevice?.id ?? null,
+    agentName: async () => (await store.agent.get(principal.id))?.name ?? principal.name,
+    projectsRoot: dataAssets.projectsRoot,
+    tell: async (projectId, body) => {
+      await store.message.send({
+        from_agent_id: principal.id,
+        to_human_id: human.id,
+        project_id: projectId,
+        type: "info",
+        body,
+        requires_ack: false,
+        author_agent: principal.id,
+      });
+      events.emit("inbox", {});
+    },
+    // D-W8-44: the status issue's state is one of the guide's facts; a change refreshes it.
+    onStateChange: (projectId) => {
+      const p = (async () => {
+        const project = await store.project.get(projectId);
+        if (project) await docs.refreshGuide(project);
+      })().catch((e: unknown) =>
+        logger.warn("repository guide not refreshed", { projectId, error: errorMessage(e) }),
+      );
+      guideRefreshes.add(p);
+      void p.finally(() => guideRefreshes.delete(p));
+    },
+    ...(env.FORERUNNER_STATUS_BODY_MS?.trim()
+      ? { bodyIntervalMs: Math.max(0, Number(env.FORERUNNER_STATUS_BODY_MS) || 0) }
+      : {}),
+  });
+  docs.statusIssueState = (project) =>
+    statusBoard.guideState(project as Pick<ProjectRow, "id" | "settings">);
   // merged-copy (ADR 0113, the owner's decision of 2026-11-02): this computer's copy of a
   // repository project follows every merge, so Files, Open folder and the chat's docs search
   // show the merged work: after each merge the app makes or hears of (`merge.onMerged`, below),
@@ -3077,6 +3140,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     critic,
     memory,
     docs,
+    statusBoard,
     // The merge of an accepted task, after its branch was checked against what it builds on
     // (dependent-branches): work that went away while it was reviewed voids the review.
     merge: dependentBranches.mergePort(merge),
@@ -6014,7 +6078,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   // watcher and the heartbeat still need remote control. The cloud runner composes without
   // services or the option and keeps its own `runner` row. The identity file under the
   // config dir keeps the row stable across restarts.
-  const registerDevice = services || remoteEnabled || opts.remote?.enabled === true;
+  // w8-status-write (W8-write-3): also whenever the status board is wired, so every runtime that
+  // writes a status comment (a one-shot and the tests' homes too) has its install id.
+  const registerDevice =
+    services || remoteEnabled || opts.remote?.enabled === true || statusBoardWired;
   if (registerDevice) {
     // The install's wrapping key: created in the vault on first use and registered on the
     // device row, so a peer can wrap a shared secret to this install.
@@ -6254,6 +6321,14 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
   presence?.start();
   remoteWatcher?.start();
   githostWatcher?.start();
+  // w8-status-write (ADR 0122 point 5, "it updates when GitHub answers"): a status text a
+  // stopped daemon left waiting (Quit or a lost connection) goes out now, with no screen asking;
+  // GitHub still out, the board's retry timer sends it once it answers. Not awaited past the
+  // store's read: GitHub's answer never holds the start.
+  if (statusBoardWired && statusDaemon)
+    await statusBoard.resumeAll().catch((e: unknown) => {
+      logger.warn("waiting status texts not resumed", { error: errorMessage(e) });
+    });
   // Answers given on another device (the phone, the web approvals) land in the shared state
   // and reach no route of this daemon: the approvals poll applies them within
   // `approvalsPollMs`, the way the remote watcher picks up the phone's commands. Only where
@@ -6452,6 +6527,7 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
     memory,
     privateMemory: privateStore,
     docs,
+    statusBoard,
     merge,
     dependentBranches,
     pullRequests,
@@ -6548,6 +6624,10 @@ export async function composeRuntime(opts: ComposeOptions = {}): Promise<Runtime
       await specialistApprovals.settled();
       remoteWatcher?.stop();
       githostWatcher?.stop();
+      // w8-status-write: Quit clears this install's Working on now lines, best effort; then
+      // nothing of the writer runs.
+      await statusBoard.close({ clearWorking: statusDaemon });
+      await Promise.allSettled([...guideRefreshes]);
       // A Merge pressed in the app finishes its call before the store closes (merge-in-app);
       // the records of the merges not started yet stay queued for the next start.
       await pullRequests.idle();

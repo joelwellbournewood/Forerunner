@@ -107,6 +107,12 @@ import {
   pullRequestClosedSentence,
 } from "@forerunner/runtime/daemon/pull-request-close-words";
 import { reviewPartUsdMicro } from "@forerunner/runtime/estimates/model";
+import {
+  STATUS_ISSUE_EFFECT,
+  STATUS_NOT_YET_SENTENCE,
+  statusIssueRowWords,
+  statusSwitchedOffSentence,
+} from "@forerunner/runtime/loop/status-board-words";
 import { openPlanSentence } from "@forerunner/runtime/session/intake-words";
 import {
   type Elsewhere,
@@ -127,7 +133,6 @@ import {
   takeOverRetryOpenedSentence,
   togetherDocNote,
   togetherLine,
-  togetherStatusPullRequestSentence,
   tookOverSentence,
 } from "@forerunner/runtime/sources/repository-words";
 
@@ -663,6 +668,15 @@ export interface FakeDaemonState {
    * removes it (its Undo puts it back); a test sets it.
    */
   repositoryOverview: Record<string, NonNullable<ProjectCard["repositoryElsewhere"]>>;
+  /**
+   * w8-status-write: per project id, where its status is on GitHub, as the daemon's status
+   * board says it (`StatusBoard.words`): Settings' sentence under the switch, the Docs tab's
+   * Status note, and whether the repository is public. Absent: nothing written yet. A test sets it.
+   */
+  statusIssue: Record<
+    string,
+    { sentence: string | null; docsNote: string | null; public: boolean | null }
+  >;
   /**
    * OR-07: why a `repo.take_over` row's Undo would not work now, as the daemon's
    * `RepositoryUse.takeOverUndoBlocked` says it (`TAKE_OVER_UNDO_OPEN`, `_MERGED`,
@@ -1577,6 +1591,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     intake: {},
     repositoryElsewhere: {},
     repositoryOverview: {},
+    statusIssue: {},
     takeOverUndoBlocked: null,
     takeOverRetryFails: {},
     sharedRepository: {},
@@ -1914,6 +1929,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     state.intake = {};
     state.repositoryElsewhere = {};
     state.repositoryOverview = {};
+    state.statusIssue = {};
     state.takeOverUndoBlocked = null;
     state.sharedRepository = {};
     state.joinPreviews = {};
@@ -5631,8 +5647,8 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
       const slot = settingSlot(leaf, s.scope === "project" ? s.scopeId : null);
       return slot in state.settingValues ? { ...s, value: state.settingValues[slot] } : s;
     });
-    // Like the daemon (settings-view.ts, C-57): a Status pull request row for each project on a
-    // host repository (not a folder on this computer), off unless the person turned it on.
+    // Like the daemon (settings-view.ts, w8-status-write): a Status issue on GitHub row for each
+    // project on a host repository (not a folder on this computer), on unless turned off.
     for (const p of state.projects) {
       const first = p.repos?.[0]?.trim() ?? "";
       if (!/^[\w.-]+\/[\w.-]+$/.test(first)) continue;
@@ -5646,18 +5662,26 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
         description: `You press Merge (each accepted task's pull request waits for your Merge on the Overview of ${p.name}), or merge automatically after review (Forerunner merges it once the critic accepted it)`,
         risk: "medium",
       });
-      // l4-github-link, run L4 (L4-github-103, D9): a project worked on together has no status
-      // pull request, so no row (settings-view.ts).
-      if (state.repositoryOverview[p.id]?.kind !== "together")
-        rows.push({
-          key: "project.status_pull_request",
-          label: "Status pull request",
-          scope: "project",
-          scopeId: p.id,
-          value: state.settingValues[settingSlot("status_pull_request", p.id)] === true,
-          description: `Each session's status of ${p.name} as one pull request on GitHub (off: it stays in the app, under Docs, Status)`,
-          risk: "low",
-        });
+      // w8-status-write (W8-write-10): the status issue's switch, a together project's too, with
+      // where the status is now in the daemon's words (`statusIssueRowWords`).
+      const on = state.settingValues[settingSlot("status_issue", p.id)] !== false;
+      rows.push({
+        key: "project.status_issue",
+        label: "Status issue on GitHub",
+        scope: "project",
+        scopeId: p.id,
+        value: on,
+        description: statusIssueRowWords(
+          { name: p.name, settings: on ? {} : { status_issue: false } },
+          on
+            ? (state.statusIssue[p.id] ?? { sentence: STATUS_NOT_YET_SENTENCE, public: null })
+            : {
+                sentence: statusSwitchedOffSentence(p.name),
+                public: null,
+              },
+        ),
+        risk: "low",
+      });
     }
     // Like the daemon (settings-view.ts, 'sites'): "Web pages research may read" per project.
     for (const p of state.projects)
@@ -6781,7 +6805,7 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     speed_quality_offset: "low",
     small_project_mode: "low",
     fast_mode: "medium",
-    status_pull_request: "low",
+    status_issue: "low",
     // merge-in-app: medium, as SETTING_SPECS.merge_mode (turning automatic merges on asks a yes).
     merge_mode: "medium",
     critic_ceiling: "medium",
@@ -6824,16 +6848,11 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     after_review: mergeModeEffect("after_review"),
   };
   /** The yes/no keys (`z.boolean()` in SETTING_SPECS): "on" or "off", off until set (W15B-16). */
-  const BOOLEAN_KEYS = new Set([
-    "small_project_mode",
-    "voice_alerts",
-    "status_pull_request",
-    "start_by_itself",
-  ]);
+  const BOOLEAN_KEYS = new Set(["small_project_mode", "voice_alerts", "start_by_itself"]);
   const PROJECT_KEYS = new Set([
     "start_by_itself",
     "small_project_mode",
-    "status_pull_request",
+    "status_issue",
     "merge_mode",
     "critic_ceiling",
     "session_reserve_share",
@@ -7515,22 +7534,19 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
           },
         };
       }
-      if (key === "status_pull_request" && project && typeof params.value === "boolean") {
-        // The daemon's card for this key (`SETTING_SPECS.status_pull_request`, C-57): on/off,
+      if (key === "status_issue" && project && typeof params.value === "boolean") {
+        // The daemon's card for this key (`SETTING_SPECS.status_issue`, w8-status-write): on/off,
         // and what the new value does, in the card and the sentence; the same value is refused.
         const value = params.value;
         const slot = settingSlot(key, project.id);
-        const before = state.settingValues[slot] === true;
+        const before = state.settingValues[slot] !== false;
         const onOff = (v: boolean) => (v ? "on" : "off");
-        const what = `the status pull request for ${project.name}`;
-        // l4-github-link, run L4 (L4-github-103): refused on a together project, as the daemon.
-        if (value && state.repositoryOverview[project.id]?.kind === "together")
-          return refuse(togetherStatusPullRequestSentence(project.name));
+        const what = `the status issue on GitHub for ${project.name}`;
         if (before === value)
-          return refuse(`The status pull request for ${project.name} is already ${onOff(before)}.`);
-        const effect = value
-          ? "each session's status goes to the repository as one pull request, docs: project status, which you merge when you like"
-          : "each session's status stays in the app (Docs, Status); no status pull request is opened";
+          return refuse(
+            `The status issue on GitHub for ${project.name} is already ${onOff(before)}.`,
+          );
+        const effect = value ? STATUS_ISSUE_EFFECT.on : STATUS_ISSUE_EFFECT.off;
         return {
           name,
           params,
@@ -9427,21 +9443,38 @@ export function createFakeDaemon(options: FakeDaemonOptions = {}) {
     }
     const rows = state.docs[id];
     // As the daemon (C2-left-13, L4-creds-23): a together project writes no docs, so each doc it
-    // does not have says who writes it (notWrittenHere), never "not written yet".
+    // does not have says who writes it (notWrittenHere), never "not written yet"; its Status row
+    // is its own (w8-status-write): where its status is on GitHub.
     const project = state.projects.find((p) => p.id === id);
     if (!rows && project && state.repositoryOverview[id]?.kind === "together")
       return c.json(
-        DOCS.map((d) => ({
-          path: d.path,
-          title: d.title,
-          exists: false,
-          sizeBytes: 0,
-          updatedAt: null,
-          drift: false,
-          note: togetherDocNote(project.name),
-          notWrittenHere: true,
-        })),
+        DOCS.map((d) =>
+          d.path === "docs/status.md"
+            ? {
+                path: d.path,
+                title: d.title,
+                exists: false,
+                sizeBytes: 0,
+                updatedAt: null,
+                drift: false,
+                note: state.statusIssue[id]?.docsNote ?? STATUS_NOT_YET_SENTENCE,
+              }
+            : {
+                path: d.path,
+                title: d.title,
+                exists: false,
+                sizeBytes: 0,
+                updatedAt: null,
+                drift: false,
+                note: togetherDocNote(project.name),
+                notWrittenHere: true,
+              },
+        ),
       );
+    // w8-status-write: a seeded status note is the Status row's (the daemon's status board).
+    const note = state.statusIssue[id]?.docsNote;
+    if (rows && note)
+      return c.json(rows.map((r) => (r.path === "docs/status.md" ? { ...r, note } : r)));
     return c.json(rows ?? []);
   });
   app.get("/projects/:id/docs/:path", (c) => {

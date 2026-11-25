@@ -124,6 +124,20 @@ export function registerIssueRoutes(app: HostApp, ctx: RouteContext): void {
     return c.json(store.issueJson(repo, issue), 201);
   });
 
+  // W8a-left-2 (w8-status-write): the repository-wide comment list is registered before
+  // `/issues/:number`, which Hono would otherwise match first (and answer 404 for "comments").
+  app.get("/repos/:owner/:repo/issues/comments", (c) => {
+    const repo = requireRepo(c, store, "issues", "read");
+    issuesOn(repo);
+    const comments = [...repo.comments.values()].sort((a, b) => a.id - b.id);
+    return c.json(
+      paginate(
+        c,
+        comments.map((cm) => store.commentJson(repo, cm)),
+      ),
+    );
+  });
+
   app.get("/repos/:owner/:repo/issues/:number", (c) => {
     const { repo, issue } = issueRepo(c, "read");
     issuesOn(repo, issue);
@@ -236,18 +250,6 @@ export function registerIssueRoutes(app: HostApp, ctx: RouteContext): void {
       login,
     );
     return c.json(store.commentJson(repo, comment), 201);
-  });
-
-  app.get("/repos/:owner/:repo/issues/comments", (c) => {
-    const repo = requireRepo(c, store, "issues", "read");
-    issuesOn(repo);
-    const comments = [...repo.comments.values()].sort((a, b) => a.id - b.id);
-    return c.json(
-      paginate(
-        c,
-        comments.map((cm) => store.commentJson(repo, cm)),
-      ),
-    );
   });
 
   app.get("/repos/:owner/:repo/issues/comments/:id", (c) => {

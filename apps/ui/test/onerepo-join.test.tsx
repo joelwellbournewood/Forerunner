@@ -50,7 +50,7 @@ const PREVIEW: JoinPreviewView = {
       stays: '"Beacon" keeps its sessions, changes and spending to read; no budget changes.',
       settings: [
         'Who merges: the setting of "Atlas" applies to the moved work: merge automatically after review.',
-        'Status pull request: the setting of "Atlas" applies to the moved work: off.',
+        'Status issue: the setting of "Atlas" applies to the moved work: on.',
       ],
       refusal: null,
     },
@@ -103,8 +103,8 @@ describe("d1109-onerepo-join, run C: Make one project on the Overview (OJ-01, OJ
         .map((e) => e.textContent),
     ).toEqual([
       'Who merges: the setting of "Atlas" applies to the moved work: merge automatically after review.',
-      // L4-github-113: the status pull request's setting is named too.
-      'Status pull request: the setting of "Atlas" applies to the moved work: off.',
+      // w8-status-write: the status issue's switch is named (the status pull request went).
+      'Status issue: the setting of "Atlas" applies to the moved work: on.',
     ]);
     expect(within(dialog).getByTestId("join-confirm")).toBeEnabled();
     await user.click(within(dialog).getByTestId("join-confirm"));

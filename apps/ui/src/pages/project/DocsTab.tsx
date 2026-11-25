@@ -1,3 +1,4 @@
+import { TOGETHER_DOCS_KEPT_BY } from "@forerunner/runtime/sources/repository-words";
 import { useState } from "react";
 import type { ProjectCard } from "../../api/client.ts";
 import { ExternalLink } from "../../components/ExternalLink.tsx";
@@ -42,6 +43,12 @@ export function DocsTab({ projectId, project }: { projectId: string; project?: P
       ? project.repositoryElsewhere
       : null;
   const repositoryLine = outcome?.text ?? null;
+  // W8a-left-4 (c): a together project's docs are the other Forerunner's (its rows say so);
+  // only its status is its own.
+  const keptBy =
+    project?.repositoryElsewhere?.kind === "together"
+      ? TOGETHER_DOCS_KEPT_BY
+      : "Kept by the agent; on a task with a full review the critic also checks they match the work.";
 
   return (
     <div className="space-y-3" data-testid="docs">
@@ -73,9 +80,8 @@ export function DocsTab({ projectId, project }: { projectId: string; project?: P
             {drifted} drifted
           </Badge>
         ) : null}
-        <span className="text-xs text-neutral-500">
-          Kept by the agent; on a task with a full review the critic also checks they match the
-          work.
+        <span className="text-xs text-neutral-500" data-testid="docs-kept-by">
+          {keptBy}
         </span>
         <Button variant="ghost" className="ml-auto" onClick={docs.reload}>
           Refresh

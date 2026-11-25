@@ -3495,3 +3495,19 @@ Tests: `testenv/test/githost.test.ts` "w8-issue-host, wave 8: issues off, ETags,
 permission read and GraphQL pins"; the contract on both stand-ins in
 `packages/capabilities/test/githost-issues.test.ts`; the two-home case in
 `apps/ui/test/two-installs.test.ts` ("w8-issue-host, wave 8: issue host").
+
+w8-status-write, wave 8 (W8a-left-2): the stand-in registers `GET /repos/:o/:r/issues/comments`
+(the repository's every issue comment, oldest first) before `GET /issues/:number`, which Hono
+matched first (it answered 404); `repoJson`'s `permissions.admin` (and `maintain`) is the token
+owner's role on the repository (`roleOf`: admin, maintain) and no longer true for any
+collaborator with push access and a repo-scoped classic token. Contract cases in
+`testenv/test/githost.test.ts` ('w8-status-write, wave 8'). The two-person journey's step 9 now
+checks one status issue with one comment by each home (no money, no raw device id) and step 13
+starts a task of Bob's while his GitHub is cut and reads his Docs tab ("Status on GitHub: last
+updated ...; it updates when GitHub answers."); `one-status-issue` and `status-words-offline`
+lost their `known` mark and `two-status-comments` is new (19 of 31 pass on this code, 12 known,
+no other failure). `one-status-issue` counts open issues titled "Forerunner status: Team site"
+with no `pull_request` (W8a-left-19, fixup-w8-status-write): when both homes open the issue in
+the same second the higher number is closed with one line, and that closed copy is the rule
+working, not a second issue; its detail line prints the open count, the closed copies and the
+issues on the host.

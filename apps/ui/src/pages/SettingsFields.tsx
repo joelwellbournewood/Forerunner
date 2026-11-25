@@ -68,7 +68,7 @@ export const SETTING_LABELS: Record<string, string> = {
   session_reserve_share: "Review reserve",
   handover: "Monthly handover test",
   fast_mode: "Opus fast mode",
-  status_pull_request: "Status pull request",
+  status_issue: "Status issue on GitHub",
   merge_mode: "Who merges accepted work",
   push_unfinished_work: "Push unfinished work to GitHub",
   start_by_itself: "When work is ready",
@@ -186,9 +186,11 @@ export function describeSetting(s: Pick<SettingView, "key" | "value">): string |
     case "voice_alerts":
     case "small_project_mode":
     case "fast_mode":
-    case "status_pull_request":
     case "push_unfinished_work":
       return v === true ? "on" : "off";
+    // w8-status-write: on unless turned off.
+    case "status_issue":
+      return v === false ? "off" : "on";
     case "notify_channel":
       return option(NOTIFY_CHANNELS);
     case "merge_mode":
@@ -379,7 +381,7 @@ export function structuredCommand(s: SettingView): StructuredCommand | null {
       );
     case "small_project_mode":
     case "fast_mode":
-    case "status_pull_request":
+    case "status_issue":
     case "push_unfinished_work":
       return select(leaf, ON_OFF, asBool, boolInitial, projectParam);
     case "merge_mode":

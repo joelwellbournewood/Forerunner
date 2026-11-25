@@ -420,3 +420,16 @@ listed nowhere after the join when the kept project's own Status pull request se
 3. **The take-over's rebuild (C4L-2) keeps main's newer files (L4i-left-14).** A file the
    default branch changed after the scaffold branch left it (another Forerunner's merged docs)
    keeps the default branch's version; only what the branch alone changed is carried over.
+
+## Amendment (2026-11-24, w8-status-write): the status issue across Forerunners
+
+A together project shares the project id K, so it writes its own comment on issue K ("Forerunner
+status: <project>", ADR 0122), never a second issue; "Kept in the app: you work on ... together,
+so GitHub's copy is left as it is." is gone. A project here that is not together, on a
+repository whose default-branch marker names another project, writes no issue and no comment
+(D-W8-45): its status stays in the app with "Status stays in the app: o/kite is the Forerunner
+project "Kite club"; Work together on the Overview shares its status issue.". The Work together
+press still writes nothing (OR-15): the issue is opened at a task's start or a session's end.
+The together Overview's Details line names the issue: "What the other Forerunner does shows in
+its comment on the status issue and its pull requests on GitHub. You merge yours; its person
+merges theirs.".

@@ -350,13 +350,33 @@ async function main() {
       }),
     });
 
-    // 9 The status issue.
-    const issues = await github("/repos/team/shared/issues?state=all");
+    // 9 The status issue (w8-status-write): one pinned issue, one comment per install. The
+    // host lists pull requests in /issues too, so only entries without pull_request count.
+    // Only open ones count (W8a-left-19): two first writes at once leave the higher number
+    // closed with one line, and that closed copy is the rule working, not a second issue.
+    const issues = (await github("/repos/team/shared/issues?state=all")).filter(
+      (i) => !i.pull_request,
+    );
+    const titled = issues.filter((i) => i.title === `Forerunner status: ${PROJECT}`);
+    const statusIssues = titled.filter((i) => i.state === "open");
     check(
       "one-status-issue",
-      issues.filter((i) => i.title === `Forerunner status: ${PROJECT}` && !i.pull_request)
-        .length === 1,
-      `${issues.length} issues on the host`,
+      statusIssues.length === 1,
+      `${statusIssues.length} open status issues (${titled.length - statusIssues.length} closed) of ${issues.length} issues on the host`,
+    );
+    const statusComments = statusIssues.length
+      ? await github(`/repos/team/shared/issues/${statusIssues[0].number}/comments`)
+      : [];
+    const commentAuthors = statusComments.map((c) => c.user?.login).sort();
+    const devices = [];
+    for (const name of [A, B]) devices.push((await api(name, "GET", "/me")).desktopDeviceId);
+    const privateText = statusComments.filter(
+      (c) => /CHF|USD|Spent/.test(c.body) || devices.some((d) => d && String(c.body).includes(d)),
+    );
+    check(
+      "two-status-comments",
+      commentAuthors.join(",") === "ada,bob" && privateText.length === 0,
+      `comments by ${commentAuthors.join(", ") || "nobody"}; ${privateText.length} with money or an id`,
     );
     result.steps.push({ n: 9 });
 
@@ -386,7 +406,20 @@ async function main() {
       off.status === 0 && reads("bob") === bobBefore && reads("ada") > adaBefore,
       `${off.stdout.trim()} bob +${reads("bob") - bobBefore}, ada +${reads("ada") - adaBefore}`,
     );
-    const bobOffline = await screens(two, "13-github-off", { bob: `/projects/${projectId}` });
+    // w8-status-write: a task of Bob's starts while GitHub is cut, so his status write waits;
+    // his Docs tab says where the status is in one sentence.
+    const bobAgent = (await api(B, "GET", "/agents"))[0]?.id;
+    await api(B, "POST", `/projects/${encodeURIComponent(projectId)}/tasks`, {
+      title: "Write the offline note in offline.md",
+      outcome: "offline.md holds one line",
+      riskTier: 1,
+      specialist: "coder",
+    }).catch(() => null);
+    await api(B, "POST", "/sessions", { agentId: bobAgent, projectId }).catch(() => null);
+    await sessionsDone(B, projectId);
+    const bobOffline = await screens(two, "13-github-off", {
+      bob: `/projects/${projectId}/docs`,
+    });
     const bobText = fs.readFileSync(
       path.join(
         bob.steps,

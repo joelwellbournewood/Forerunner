@@ -9,10 +9,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   docsPrListing,
   isProjectDocsPr,
-  isProjectStatusPr,
   ownsUnmarkedDocs,
   ProjectDocs,
-  STATUS_BRANCH,
   WORKSPACE_DIR,
 } from "../src/loop/docs.ts";
 import type { SessionStatusUpdate } from "../src/loop/ports.ts";
@@ -27,13 +25,18 @@ import {
 
 /**
  * The PM keeps `docs/status.md` current (spec G.5): at session end the runner writes what was
- * done, blocked and next with the session id and the date from the Clock. With a repository
- * the update goes on Forerunner's own status branch and its one pull request, never on a
- * task's reviewed pull request (ADR 0106); the default branch is never pushed, except for the
- * first commit of an empty repository. Without a repository it lands in the project's folder,
- * committed with the session's work. A failure never fails the session.
+ * done, blocked and next, named by when the session started. With a repository the status is
+ * the app's (w8-status-write, ADR 0122: GitHub's copy is the status issue, the status pull
+ * request on fr/status went); the default branch is never pushed, except for the first commit
+ * of an empty repository. Without a repository it lands in the project's folder, committed with
+ * the session's work. A failure never fails the session.
  */
 const identity = { name: "Forerunner", email: "agent@example.test" };
+/**
+ * The status branch an earlier version kept docs/status.md on (w8-status-write: the status pull
+ * request went with the status issue; nothing writes this branch any more).
+ */
+const OLD_STATUS_BRANCH = "fr/status";
 const REPO = { owner: "o", name: "sample" };
 const roots: string[] = [];
 
@@ -119,11 +122,11 @@ function prExecutor(
 }
 
 describe("project docs at session end (spec G.5)", () => {
-  it("the status update goes on Forerunner's status branch and pull request, never on the task's reviewed one: scaffolded first, with the task done, the session id and the date; main untouched (GitHub walk, 2026-11-02)", async () => {
+  it("w8-status-write (amendment 2): a repository project's status is the app's, also with an earlier version's status pull request setting on: no status pull request, no fr/status branch, nothing on the task's reviewed one, main untouched; the note stays the app's", async () => {
     const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
     await w.store.project.patch(w.project, {
       repos: ["o/sample"],
-      // C-57: the status pull request is off unless the person turns it on.
+      // The setting an earlier version stored: it changes nothing now.
       settings: { status_pull_request: true },
     });
     const { root, bare } = await bareRepo();
@@ -133,70 +136,51 @@ describe("project docs at session end (spec G.5)", () => {
       w.runner(prExecutor(w, root, bare, host, "fr/add-clamp"), { docs }),
     );
     expect(result.completed).toEqual([task.id]);
-    // Before: the status commit was pushed onto fr/add-clamp after the critic accepted it, so
-    // the reviewed PR held a file the critic never saw. Now: the task's PR holds only its work.
+    // The task's PR holds only its work (ADR 0106); the guide's docs pull request opens (W8-guide-1).
     const prs = await host.listPullRequests(REPO, { state: "open" });
-    // W8-guide-1 (ADR 0121): the repository had no guide, so the session's end opens the one
-    // docs pull request that brings it (after the status write).
-    expect(prs.map((p) => p.head.ref)).toEqual(["fr/add-clamp", STATUS_BRANCH, "fr/docs-scaffold"]);
+    expect(prs.map((p) => p.head.ref)).toEqual(["fr/add-clamp", "fr/docs-scaffold"]);
     expect(await show(bare, "fr/add-clamp", STATUS_DOC)).toBeNull();
-    expect(await show(bare, "fr/add-clamp", "AGENTS.md")).toBeNull();
-    expect(await show(bare, "fr/docs-scaffold", "AGENTS.md")).toContain(
-      `This repository is the Forerunner project "${(await w.store.project.mustGet(w.project)).name}".`,
+    expect(await show(bare, OLD_STATUS_BRANCH, STATUS_DOC)).toBeNull();
+    expect(await show(bare, "fr/docs-scaffold", STATUS_DOC)).toBeNull();
+    expect(await show(bare, "fr/add-clamp", "src/x.ts")).toBe("export const x = 1;\n");
+    expect(await show(bare, "main", STATUS_DOC)).toBeNull();
+    expect(await show(bare, "main", "README.md")).toBe("# sample\n");
+    const project = await w.store.project.mustGet(w.project);
+    const status = await readFile(
+      join(docs.statusDocRoot(project) ?? "", fromPosix(STATUS_DOC)),
+      "utf8",
     );
-    const status = await show(bare, STATUS_BRANCH, STATUS_DOC);
-    expect(status).not.toBeNull();
     expect(status).toContain("maintained-by: forerunner");
     expect(status).toContain(await startedHeading(w, result.sessionId));
     expect(status).not.toContain(result.sessionId);
-    expect(status).toContain("- Done: Add clamp");
     expect(status).toMatch(/## Done\n\n- Add clamp\n/);
-    // The ledger's CHF for USD 0.30 (U-074); how it ended in words (L3-github-6).
+    // The spend is the person's own record, in the app only (R11: never on GitHub).
     expect(status).toContain("- Note: Done. Spent CHF 0.24.");
-    expect(await show(bare, "fr/add-clamp", "src/x.ts")).toBe("export const x = 1;\n");
-    expect(await show(bare, STATUS_BRANCH, "src/x.ts")).toBeNull();
-    expect(await show(bare, "main", STATUS_DOC)).toBeNull();
-    expect(await show(bare, "main", "README.md")).toBe("# sample\n");
-    const ev = w.events.find((e) => e.type === "docs.status_written");
-    expect(ev?.payload).toMatchObject({
-      location: "repo",
-      branch: STATUS_BRANCH,
+    expect(w.events.find((e) => e.type === "docs.status_written")?.payload).toMatchObject({
+      location: "app",
       path: STATUS_DOC,
       created: true,
-      prUrl: prs[1]?.htmlUrl,
     });
     const session = await w.store.session.mustGet(result.sessionId);
-    expect((session.handoff as { docs: unknown }).docs).toMatchObject({
-      location: "repo",
-      branch: STATUS_BRANCH,
-    });
+    expect((session.handoff as { docs: unknown }).docs).toMatchObject({ location: "app" });
     await w.close();
   });
 
-  it("a session that opened no pull request files the status PR, listing blocked work and the project's open tasks; the next session adds to the same PR", async () => {
+  it("a session that opened no pull request keeps its status in the app, listing blocked work and the project's open tasks; the next session adds its entry there; no status pull request (w8-status-write)", async () => {
     const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
-    await w.store.project.patch(w.project, {
-      repos: ["o/sample"],
-      settings: { status_pull_request: true },
-    });
+    await w.store.project.patch(w.project, { repos: ["o/sample"] });
     const { root, bare } = await bareRepo();
     const { host, docs } = await docsFor(w, root, bare);
     const task = await w.addTask("Deploy to staging", { risk_tier: 1 });
     const later = await w.addTask("Write the runbook", { status: "draft" });
     const result = await w.start(w.runner(doneExecutor(w, { outcome: "needs_human" }), { docs }));
     expect(result.needsHuman).toEqual([task.id]);
-    const branch = STATUS_BRANCH;
-    // W8-guide-1: beside the status PR, the one docs pull request that brings the guide.
+    // W8-guide-1: the one docs pull request that brings the guide, and no status pull request.
     const prs = await host.listPullRequests(REPO, { state: "open" });
-    expect(prs.map((p) => p.head.ref)).toEqual([branch, "fr/docs-scaffold"]);
-    expect(prs[0]).toMatchObject({ head: { ref: branch }, base: { ref: "main" } });
-    expect(prs[0]?.title).toBe("docs: project status");
-    // W15-08: the session by when it started, never its id.
-    expect(prs[0]?.body).toMatch(
-      /^Status update of the session started \d{4}-\d\d-\d\d \d\d:\d\d UTC:/,
-    );
-    expect(prs[0]?.body).not.toContain(result.sessionId);
-    const status = await show(bare, branch, STATUS_DOC);
+    expect(prs.map((p) => p.head.ref)).toEqual(["fr/docs-scaffold"]);
+    const file = () =>
+      readFile(join(docs.statusInAppDir(w.project), fromPosix(STATUS_DOC)), "utf8");
+    const status = await file();
     expect(status).toContain(await startedHeading(w, result.sessionId));
     expect(status).toContain("- Blocked: Deploy to staging");
     expect(status).toContain("- Note: Ended: 1 task needs you. Spent CHF");
@@ -206,36 +190,26 @@ describe("project docs at session end (spec G.5)", () => {
     expect(later.status).toBe("draft");
     expect(await show(bare, "main", STATUS_DOC)).toBeNull();
     expect(w.events.find((e) => e.type === "docs.status_written")?.payload).toMatchObject({
-      location: "repo",
-      branch,
-      prUrl: prs[0]?.htmlUrl,
+      location: "app",
     });
-    // A second session adds its entry to the same branch and pull request (one status PR at
-    // a time, not one per session for the person to merge).
     const second = await w.addTask("Add retries", { risk_tier: 0 });
     const again = await w.start(w.runner(doneExecutor(w, { checksPassed: true }), { docs }));
     expect(again.completed).toEqual([second.id]);
-    const twice = await show(bare, STATUS_BRANCH, STATUS_DOC);
-    // Two entries, each named by when its session started (they may share the minute).
+    const twice = await file();
     expect(twice).toContain(await startedHeading(w, again.sessionId));
     expect(twice).toContain(await startedHeading(w, result.sessionId));
-    expect(twice?.match(/^### Session started /gm)).toHaveLength(2);
+    expect(twice.match(/^### Session started /gm)).toHaveLength(2);
     expect(twice).not.toContain(again.sessionId);
     expect(twice).toMatch(/## Done\n\n- Add retries\n/);
-    // Nothing in the guide's facts changed: no second docs pull request (W8-guide-1).
+    // Nothing in the guide's facts changed: no second docs pull request, no status one.
     expect((await host.listPullRequests(REPO, { state: "open" })).map((p) => p.head.ref)).toEqual([
-      branch,
       "fr/docs-scaffold",
     ]);
-    const comments = (await host.listPullRequestComments(REPO, prs[0]?.number ?? 0))
-      .map((c) => c.body)
-      .join("\n");
-    expect(comments).toMatch(/Status update of the session started \d{4}-\d\d-\d\d \d\d:\d\d UTC:/);
-    expect(comments).not.toContain(again.sessionId);
+    expect(await show(bare, OLD_STATUS_BRANCH, STATUS_DOC)).toBeNull();
     await w.close();
   });
 
-  it("by default a repository project's status stays in the app: no status pull request, the Docs tab reads it (C-57)", async () => {
+  it("a repository project's status stays in the app: no status pull request, the Docs tab reads it (C-57, w8-status-write)", async () => {
     // Before: every session of a repository project left a status PR for the person to merge,
     // even for a one-task project.
     const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
@@ -252,7 +226,7 @@ describe("project docs at session end (spec G.5)", () => {
       "fr/add-clamp",
       "fr/docs-scaffold",
     ]);
-    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toBeNull();
+    expect(await show(bare, OLD_STATUS_BRANCH, STATUS_DOC)).toBeNull();
     const dir = docs.statusDocRoot(await w.store.project.mustGet(w.project));
     expect(dir).toBe(docs.statusInAppDir(project.id));
     const text = await readFile(join(dir ?? "", fromPosix(STATUS_DOC)), "utf8");
@@ -262,15 +236,14 @@ describe("project docs at session end (spec G.5)", () => {
       location: "app",
       path: STATUS_DOC,
     });
-    // Turned on, the next session opens the status pull request.
+    // w8-status-write: the setting an earlier version stored changes nothing: still the app's.
     await w.store.project.patch(w.project, { settings: { status_pull_request: true } });
-    expect(docs.statusDocRoot(await w.store.project.mustGet(w.project))).toBeNull();
+    expect(docs.statusDocRoot(await w.store.project.mustGet(w.project))).toBe(dir);
     await w.addTask("Add retries", { risk_tier: 0 });
     await w.start(w.runner(doneExecutor(w, { checksPassed: true }), { docs }));
     expect((await host.listPullRequests(REPO, { state: "open" })).map((p) => p.head.ref)).toEqual([
       "fr/add-clamp",
       "fr/docs-scaffold",
-      STATUS_BRANCH,
     ]);
     await w.close();
   });
@@ -300,7 +273,7 @@ describe("project docs at session end (spec G.5)", () => {
     expect(await readFile(join(clone, "notes.md"), "utf8")).toBe("# notes\n");
     expect(await new GitOps({ cwd: clone, identity }).currentBranch()).toBe("main");
     // Nothing went to the host: no status branch.
-    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toBeNull();
+    expect(await show(bare, OLD_STATUS_BRANCH, STATUS_DOC)).toBeNull();
     await w.close();
   });
 
@@ -392,7 +365,7 @@ describe("project docs at session end (spec G.5)", () => {
     await w.close();
   });
 
-  it("an empty repository gets the doc set as its first commit on main, with no pull request; the status PR then starts from it (GitHub walk, 2026-11-02)", async () => {
+  it("an empty repository gets the doc set as its first commit on main, with no pull request; the session's end opens none either (GitHub walk, 2026-11-02; w8-status-write)", async () => {
     // Before: the scaffold failed at project creation ("'origin/main' is not a commit"), only
     // in the daemon log, and the status update failed the same way at every session end.
     const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
@@ -424,14 +397,12 @@ describe("project docs at session end (spec G.5)", () => {
     await w.addTask("Add clamp", { risk_tier: 1 });
     const result = await w.start(w.runner(doneExecutor(w), { docs }));
     expect(result.completed).toHaveLength(1);
-    const prs = await host.listPullRequests(REPO, { state: "open" });
-    expect(prs.map((p) => p.head.ref)).toEqual([STATUS_BRANCH]);
-    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toContain(
-      await startedHeading(w, result.sessionId),
-    );
-    // Back on main after the write: the status waits in its PR, main is unchanged. W8-guide-1,
-    // -2: the first commit brought the guide and no docs/status.md, so the session's end opens
-    // no docs pull request.
+    expect(await host.listPullRequests(REPO, { state: "open" })).toEqual([]);
+    expect(
+      await readFile(join(docs.statusInAppDir(w.project), fromPosix(STATUS_DOC)), "utf8"),
+    ).toContain(await startedHeading(w, result.sessionId));
+    // Main is unchanged. W8-guide-1, -2: the first commit brought the guide and no
+    // docs/status.md, so the session's end opens no docs pull request.
     expect(await show(bare, "main", STATUS_DOC)).toBeNull();
     expect(await show(bare, "main", "CLAUDE.md")).toBe("@AGENTS.md\n");
     expect(await show(bare, "main", "AGENTS.md")).toContain(
@@ -522,23 +493,12 @@ describe("project docs at session end (spec G.5)", () => {
 });
 
 describe("this computer's copy: one lock per copy, and its Local only folder (merged-copy, ADR 0113)", () => {
-  const update = (sessionId: string): SessionStatusUpdate => ({
-    sessionId,
-    endedAt: "2026-11-03T09:00:00.000Z",
-    done: ["Add clamp"],
-    inFlight: [],
-    blocked: [],
-    next: [],
-  });
-
   it("the watcher's refresh while a docs write has the copy on its branch waits for it; both finish and the copy ends on the default branch", async () => {
-    // Before: the refresh ran git in the same clone at once (fetch, checkout main) while the
-    // status write had it on fr/status between its commit and its pull request.
+    // Before: the refresh ran git in the same clone at once (fetch, checkout main) while a docs
+    // write had it on its branch between its commit and its pull request. (w8-status-write: the
+    // docs write here is the scaffold's; the status write, which pushed nothing since, went.)
     const w = await loopWorld();
-    const project = await w.store.project.patch(w.project, {
-      repos: ["o/sample"],
-      settings: { status_pull_request: true },
-    });
+    const project = await w.store.project.patch(w.project, { repos: ["o/sample"] });
     const { root, bare } = await bareRepo();
     const { host, docs } = await docsFor(w, root, bare);
     const clone = join(root, "worktrees", w.project);
@@ -557,14 +517,12 @@ describe("this computer's copy: one lock per copy, and its Local only folder (me
       return create(...args);
     };
     const order: string[] = [];
-    const write = docs
-      .writeSessionStatus({ project, session: { id: "s-1" } as SessionRow, update: update("s-1") })
-      .then((r) => {
-        order.push("write");
-        return r;
-      });
+    const write = docs.scaffoldProject(project).then((r) => {
+      order.push("write");
+      return r;
+    });
     await atGate;
-    expect(await new GitOps({ cwd: clone, identity }).currentBranch()).toBe(STATUS_BRANCH);
+    expect(await new GitOps({ cwd: clone, identity }).currentBranch()).toBe("fr/docs-scaffold");
     // The person merges something on the host meanwhile; the watcher's refresh comes.
     const seed = new GitOps({ cwd: join(root, "seed"), identity });
     writeFileSync(join(root, "seed", "notes.md"), "# notes\n");
@@ -581,15 +539,13 @@ describe("this computer's copy: one lock per copy, and its Local only folder (me
       new Promise<string>((r) => setTimeout(() => r("waiting"), 1500)),
     ]);
     expect(early).toBe("waiting");
-    expect(await new GitOps({ cwd: clone, identity }).currentBranch()).toBe(STATUS_BRANCH);
+    expect(await new GitOps({ cwd: clone, identity }).currentBranch()).toBe("fr/docs-scaffold");
     release();
     const [written, refreshed] = await Promise.all([write, refresh]);
     expect(order).toEqual(["write", "refresh"]);
-    expect(written).toMatchObject({ location: "repo", branch: STATUS_BRANCH });
+    expect(written.prUrl).not.toBeNull();
     expect(refreshed).toEqual({ refreshed: true });
-    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toContain(
-      "### Session ended 2026-11-03 09:00 UTC\n",
-    );
+    expect(await show(bare, "fr/docs-scaffold", "AGENTS.md")).toContain(project.name);
     const git = new GitOps({ cwd: clone, identity });
     expect(await git.currentBranch()).toBe("main");
     expect(await readFile(join(clone, "notes.md"), "utf8")).toBe("# notes\n");
@@ -599,10 +555,7 @@ describe("this computer's copy: one lock per copy, and its Local only folder (me
 
   it("the copy has a Local only folder git never sees, which a refresh and a docs write keep; the Files tab gets its line", async () => {
     const w = await loopWorld();
-    const project = await w.store.project.patch(w.project, {
-      repos: ["o/sample"],
-      settings: { status_pull_request: true },
-    });
+    const project = await w.store.project.patch(w.project, { repos: ["o/sample"] });
     const { root, bare } = await bareRepo();
     const { docs } = await docsFor(w, root, bare);
     expect(docs.copyView(project)).toEqual({ updatedAt: null, localOnly: null });
@@ -617,26 +570,22 @@ describe("this computer's copy: one lock per copy, and its Local only folder (me
     writeFileSync(join(local, "notes.txt"), "mine\n");
     const git = new GitOps({ cwd: clone, identity });
     expect((await git.status()).files).toEqual([]);
-    // A docs write (commit on fr/status, push, pull request) and a refresh keep it, and the
-    // write's commit does not carry it.
-    await docs.writeSessionStatus({
-      project,
-      session: { id: "s-2" } as SessionRow,
-      update: update("s-2"),
-    });
+    // A docs write (the scaffold's commit on fr/docs-scaffold, push, pull request) and a refresh
+    // keep it, and the write's commit does not carry it.
+    await docs.scaffoldProject(project);
     await docs.refreshCopy(project);
     expect(await readFile(join(local, "notes.txt"), "utf8")).toBe("mine\n");
-    const onStatus = await run([
+    const onBranch = await run([
       "git",
       "--git-dir",
       bare,
       "ls-tree",
       "-r",
       "--name-only",
-      STATUS_BRANCH,
+      "fr/docs-scaffold",
     ]);
-    expect(onStatus.stdout).not.toContain("Local only");
-    expect(onStatus.stdout).toContain(STATUS_DOC);
+    expect(onBranch.stdout).not.toContain("Local only");
+    expect(onBranch.stdout).toContain("AGENTS.md");
     await w.close();
   });
 
@@ -896,10 +845,7 @@ describe("this computer's copy: one lock per copy, and its Local only folder (me
 
   it("a docs write whose branch starts from a default branch that now tracks the person's Local only file keeps it (review of merged-copy)", async () => {
     const w = await loopWorld();
-    const project = await w.store.project.patch(w.project, {
-      repos: ["o/sample"],
-      settings: { status_pull_request: true },
-    });
+    const project = await w.store.project.patch(w.project, { repos: ["o/sample"] });
     const { root, bare } = await bareRepo();
     const { docs } = await docsFor(w, root, bare);
     await docs.refreshCopy(project);
@@ -911,19 +857,13 @@ describe("this computer's copy: one lock per copy, and its Local only folder (me
     writeFileSync(join(root, "seed", "Local only", "notes.txt"), "the team's shared note\n");
     await seed.commitAll("the team's Local only");
     await seed.push("main");
-    // No refresh in between: the status write's own checkout of fr/status meets it first.
-    await docs.writeSessionStatus({
-      project,
-      session: { id: "s-3" } as SessionRow,
-      update: update("s-3"),
-    });
-    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toContain(
-      "### Session ended 2026-11-03 09:00 UTC\n",
-    );
-    expect(await show(bare, STATUS_BRANCH, "Local only/notes.txt")).toBe(
+    // No refresh in between: the scaffold's own checkout of its branch meets it first.
+    await docs.scaffoldProject(project);
+    expect(await show(bare, "fr/docs-scaffold", "AGENTS.md")).toContain(project.name);
+    expect(await show(bare, "fr/docs-scaffold", "Local only/notes.txt")).toBe(
       "the team's shared note\n",
     );
-    expect(await show(bare, STATUS_BRANCH, "Local only/notes (yours).txt")).toBeNull();
+    expect(await show(bare, "fr/docs-scaffold", "Local only/notes (yours).txt")).toBeNull();
     expect(await new GitOps({ cwd: clone, identity }).currentBranch()).toBe("main");
     expect(await readFile(join(local, "notes.txt"), "utf8")).toBe("the team's shared note\n");
     expect(await readFile(join(local, "notes (yours).txt"), "utf8")).toBe("mine\n");
@@ -1011,7 +951,7 @@ describe("w15-merge, wave 15", () => {
   const headOf = async (bare: string, ref: string) =>
     (await run(["git", "--git-dir", bare, "rev-parse", ref])).stdout.trim();
 
-  /** A second project of this install linked to the same repository, its status PR on too. */
+  /** A second project of this install linked to the same repository. */
   async function secondProject(w: LoopWorld, name = "Second"): Promise<ProjectRow> {
     return w.store.project.insert({
       name,
@@ -1023,112 +963,51 @@ describe("w15-merge, wave 15", () => {
       autonomy_level: 2,
       summary_cache: {},
       data_assets: [],
-      settings: { status_pull_request: true },
+      settings: {},
       small_project_mode: false,
       active: true,
     });
   }
 
-  it("a project never writes into, comments on or lists another project's open status pull request; its status stays in the app; once that one is gone it opens its own (W15-01)", async () => {
+  it("w8-status-write (W8-write-5): an open status pull request on fr/status, another project's or an unmarked one an earlier version opened, is never written to, commented on or listed; every project's status stays in the app", async () => {
     const w = await loopWorld();
     const { root, bare } = await bareRepo();
     const { host, docs } = await docsFor(w, root, bare);
-    const a = await w.store.project.patch(w.project, {
-      repos: ["o/sample"],
-      settings: { status_pull_request: true },
-    });
+    const a = await w.store.project.patch(w.project, { repos: ["o/sample"] });
     const b = await secondProject(w);
-    const fromA = await docs.writeSessionStatus({
-      project: a,
-      session: session("s-a"),
-      update: update("s-a"),
-    });
-    expect(fromA).toMatchObject({ location: "repo", branch: STATUS_BRANCH });
-    const [prA] = await host.listPullRequests(REPO, { state: "open", head: STATUS_BRANCH });
-    expect(prA?.body).toContain(`<!-- forerunner:pr project=${a.id} -->`);
-    const headA = await headOf(bare, STATUS_BRANCH);
-    const commentsA = (await host.listPullRequestComments(REPO, prA?.number ?? 0)).length;
-    const statusA = await show(bare, STATUS_BRANCH, STATUS_DOC);
-
-    // B's session ends while A's status pull request is open.
-    const fromB = await docs.writeSessionStatus({
-      project: b,
-      session: session("s-b"),
-      update: update("s-b"),
-    });
-    expect(fromB.location).toBe("app");
-    expect(await headOf(bare, STATUS_BRANCH)).toBe(headA);
-    expect(await show(bare, STATUS_BRANCH, STATUS_DOC)).toBe(statusA);
-    expect((await host.listPullRequestComments(REPO, prA?.number ?? 0)).length).toBe(commentsA);
-    expect(await host.listPullRequests(REPO, { state: "open" })).toHaveLength(1);
-    expect(existsSync(join(docs.statusInAppDir(b.id), fromPosix(STATUS_DOC)))).toBe(true);
-    // Each project names only its own docs pull request as where its docs wait.
-    expect(await docs.docsInPullRequests(b)).toEqual([]);
-    expect((await docs.docsInPullRequests(a)).map((d) => d.number)).toEqual([prA?.number]);
-    // A's next session adds to its own pull request, as before.
-    await docs.writeSessionStatus({
-      project: a,
-      session: session("s-a2", LATER),
-      update: update("s-a2"),
-    });
-    expect((await host.listPullRequestComments(REPO, prA?.number ?? 0)).length).toBe(commentsA + 1);
-    // A's pull request closed: B's next status opens B's own, with B's mark.
-    await host.updatePullRequest(REPO, prA?.number ?? 0, { state: "closed" });
-    const again = await docs.writeSessionStatus({
-      project: b,
-      session: session("s-b2"),
-      update: update("s-b2"),
-    });
-    expect(again).toMatchObject({ location: "repo", branch: STATUS_BRANCH });
-    const [prB] = await host.listPullRequests(REPO, { state: "open", head: STATUS_BRANCH });
-    expect(prB?.body).toContain(`<!-- forerunner:pr project=${b.id} -->`);
-    await w.close();
-  });
-
-  it("a status pull request without the mark (opened by an earlier version) is a project's only while it is the one project on this install linked to the repository (W15-01)", async () => {
-    const w = await loopWorld();
-    const { root, bare } = await bareRepo();
-    const { host, docs } = await docsFor(w, root, bare);
-    const a = await w.store.project.patch(w.project, {
-      repos: ["o/sample"],
-      settings: { status_pull_request: true },
-    });
-    // The earlier version's status pull request: its branch and a body with no mark.
+    // Two earlier versions' status pull requests, one at a time on fr/status: A's (marked), then
+    // an unmarked one.
     const seed = new GitOps({ cwd: join(root, "seed"), identity });
-    await seed.createBranch(STATUS_BRANCH, "origin/main");
+    await seed.createBranch(OLD_STATUS_BRANCH, "origin/main");
     await mkdir(join(root, "seed", "docs"), { recursive: true });
     writeFileSync(join(root, "seed", "docs", "status.md"), "# Status\n\nold\n");
     await seed.commitAll("docs: status after session s-0");
-    await seed.push(STATUS_BRANCH, { defaultBranch: "main" });
-    const legacy = await host.createPullRequest(REPO, {
-      title: "docs: project status",
-      body: "Status update of session s-0 (2026-11-01):\n\nOpened by Forerunner.",
-      head: STATUS_BRANCH,
-      base: "main",
-    });
-    const head0 = await headOf(bare, STATUS_BRANCH);
-    // Two projects linked: neither writes to it or lists it.
-    const b = await secondProject(w);
-    for (const p of [a, b]) {
-      const out = await docs.writeSessionStatus({
-        project: p,
-        session: session(`s-${p.name}`),
-        update: update(`s-${p.name}`),
+    await seed.push(OLD_STATUS_BRANCH, { defaultBranch: "main" });
+    for (const body of [
+      `Status update.\n\n<!-- forerunner:pr project=${a.id} -->`,
+      "Status update of session s-0 (2026-11-01):\n\nOpened by Forerunner.",
+    ]) {
+      const pr = await host.createPullRequest(REPO, {
+        title: "docs: project status",
+        body,
+        head: OLD_STATUS_BRANCH,
+        base: "main",
       });
-      expect(out.location, p.name).toBe("app");
-      expect(await docs.docsInPullRequests(p)).toEqual([]);
+      const head0 = await headOf(bare, OLD_STATUS_BRANCH);
+      for (const p of [a, b]) {
+        const out = await docs.writeSessionStatus({
+          project: p,
+          session: session(`s-${p.name}`),
+          update: update(`s-${p.name}`),
+        });
+        expect(out.location, p.name).toBe("app");
+        expect(existsSync(join(docs.statusInAppDir(p.id), fromPosix(STATUS_DOC)))).toBe(true);
+        expect(await docs.docsInPullRequests(p)).toEqual([]);
+      }
+      expect(await headOf(bare, OLD_STATUS_BRANCH)).toBe(head0);
+      expect(await host.listPullRequestComments(REPO, pr.number)).toEqual([]);
+      await host.updatePullRequest(REPO, pr.number, { state: "closed" });
     }
-    expect(await headOf(bare, STATUS_BRANCH)).toBe(head0);
-    expect(await host.listPullRequestComments(REPO, legacy.number)).toEqual([]);
-    // One linked (the other project moved to another repository): it is that project's.
-    await w.store.project.patch(b.id, { repos: ["o/elsewhere"] });
-    const out = await docs.writeSessionStatus({
-      project: a,
-      session: session("s-a"),
-      update: update("s-a"),
-    });
-    expect(out).toMatchObject({ location: "repo", prUrl: legacy.htmlUrl });
-    expect(await host.listPullRequestComments(REPO, legacy.number)).toHaveLength(1);
     await w.close();
   });
 
@@ -1161,14 +1040,11 @@ describe("w15-merge, wave 15", () => {
     await w.close();
   }, 60_000);
 
-  it("the status pull request and its commit name the session by when it started, never by an id (W15-08)", async () => {
+  it("the app's status names the session by when it started, never by an id (W15-08)", async () => {
     const w = await loopWorld();
     const { root, bare } = await bareRepo();
-    const { host, docs } = await docsFor(w, root, bare);
-    const a = await w.store.project.patch(w.project, {
-      repos: ["o/sample"],
-      settings: { status_pull_request: true },
-    });
+    const { docs } = await docsFor(w, root, bare);
+    const a = await w.store.project.patch(w.project, { repos: ["o/sample"] });
     const id = "0196f1f2-8a7b-7c3d-9e4f-0a1b2c3d4e5f";
     const next = "0196f1f2-8a7b-7c3d-9e4f-0a1b2c3d4e60";
     await docs.writeSessionStatus({ project: a, session: session(id), update: update(id) });
@@ -1177,32 +1053,18 @@ describe("w15-merge, wave 15", () => {
       session: session(next, LATER),
       update: update(next),
     });
-    const [pr] = await host.listPullRequests(REPO, { state: "open", head: STATUS_BRANCH });
-    const visible = (s: string) => s.replace(/<!--[\s\S]*?-->/g, "");
-    expect(visible(pr?.body ?? "")).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
-    expect(pr?.body).toContain("the session started 2026-11-09 04:12 UTC");
-    const comments = await host.listPullRequestComments(REPO, pr?.number ?? 0);
-    expect(comments).toHaveLength(1);
-    for (const c of comments) expect(visible(c.body)).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
-    const subjects = (
-      await run(["git", "--git-dir", bare, "log", "--format=%B", `main..${STATUS_BRANCH}`])
-    ).stdout;
-    expect(subjects).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
-    expect(subjects).toContain("docs: status after the session started 2026-11-09 04:12 UTC");
+    const text = await readFile(join(docs.statusInAppDir(a.id), fromPosix(STATUS_DOC)), "utf8");
+    expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
+    expect(text).toContain("### Session started 2026-11-09 04:12 UTC\n");
+    expect(text).toContain("### Session started 2026-11-09 05:20 UTC\n");
     await w.close();
   }, 60_000);
 
-  it("the status a project keeps in the app while another project's status pull request is open is where its Docs tab reads docs/status.md, after a restart too; once its own status pull request is written, the app's copy is no longer read first (W15-01 fix-up)", async () => {
-    // The review's bench walk: B's session kept its status in the app, but B's Docs tab read
-    // "docs/status.md missing / not written yet" (statusDocRoot was null whenever the status
-    // pull request was on), although the guide says B keeps its status under Docs.
+  it("the Docs tab reads every repository project's docs/status.md from the app, after a restart too (W15-01 fix-up, w8-status-write)", async () => {
     const w = await loopWorld();
     const { root, bare } = await bareRepo();
-    const { host, docs } = await docsFor(w, root, bare);
-    const a = await w.store.project.patch(w.project, {
-      repos: ["o/sample"],
-      settings: { status_pull_request: true },
-    });
+    const { docs } = await docsFor(w, root, bare);
+    const a = await w.store.project.patch(w.project, { repos: ["o/sample"] });
     const b = await secondProject(w);
     await docs.writeSessionStatus({ project: a, session: session("s-a"), update: update("s-a") });
     const fromB = await docs.writeSessionStatus({
@@ -1213,26 +1075,13 @@ describe("w15-merge, wave 15", () => {
     expect(fromB.location).toBe("app");
     const appDir = docs.statusInAppDir(b.id);
     expect(docs.statusDocRoot(b)).toBe(appDir);
+    expect(docs.statusDocRoot(a)).toBe(docs.statusInAppDir(a.id));
     expect(await readFile(join(appDir, fromPosix(STATUS_DOC)), "utf8")).toContain(
       "Write B's notes",
     );
-    // A's Docs tab still reads its status from where it was before (its pull request).
-    expect(docs.statusDocRoot(a)).toBeNull();
     // The daemon starts again: what was kept is read the same way.
     const { docs: again } = await docsFor(w, root, bare);
     expect(again.statusDocRoot(b)).toBe(appDir);
-    // A's pull request is closed; B's next session writes its own status pull request, and its
-    // Docs tab reads docs/status.md from the repository again, as with no other project.
-    const [prA] = await host.listPullRequests(REPO, { state: "open", head: STATUS_BRANCH });
-    await host.updatePullRequest(REPO, prA?.number ?? 0, { state: "closed" });
-    const own = await again.writeSessionStatus({
-      project: b,
-      session: session("s-b2"),
-      update: update("s-b2"),
-    });
-    expect(own.location).toBe("repo");
-    expect(again.statusDocRoot(b)).toBeNull();
-    expect(docs.statusDocRoot(b)).toBeNull();
     await w.close();
   });
 
@@ -1267,12 +1116,9 @@ describe("w15-merge, wave 15", () => {
 describe("l3-small, run L3: the status file names the session by its start, in words (L3-github-6)", () => {
   const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/i;
 
-  it("the status pull request's docs/status.md has no id: 'Session started <when> UTC' and 'Done. Spent CHF 0.24.'", async () => {
+  it("the app's docs/status.md has no id: 'Session started <when> UTC' and 'Done. Spent CHF 0.24.'", async () => {
     const w = await loopWorld({ replies: [submitReply({ grade: 91 }), closingReply()] });
-    await w.store.project.patch(w.project, {
-      repos: ["o/sample"],
-      settings: { status_pull_request: true },
-    });
+    await w.store.project.patch(w.project, { repos: ["o/sample"] });
     const { root, bare } = await bareRepo();
     const { host, docs } = await docsFor(w, root, bare);
     await w.addTask("Add clamp", { risk_tier: 1 });
@@ -1281,12 +1127,17 @@ describe("l3-small, run L3: the status file names the session by its start, in w
     );
     const started = (await w.store.session.mustGet(result.sessionId)).started_at ?? "";
     const when = `${started.slice(0, 10)} ${started.slice(11, 16)} UTC`;
-    const status = (await show(bare, STATUS_BRANCH, STATUS_DOC)) ?? "";
+    const status = await readFile(
+      join(docs.statusInAppDir(w.project), fromPosix(STATUS_DOC)),
+      "utf8",
+    );
     expect(status).toContain(`## Sessions\n\n### Session started ${when}\n`);
     expect(status).toContain("- Note: Done. Spent CHF 0.24.\n");
     expect(status).not.toContain(result.sessionId);
     expect(status).not.toMatch(UUID);
     expect(status).not.toContain("stop reason");
+    // R11: the spend is never on GitHub.
+    expect(await show(bare, OLD_STATUS_BRANCH, STATUS_DOC)).toBeNull();
     await w.close();
   }, 60_000);
 
@@ -1388,7 +1239,7 @@ describe("d1109-onerepo-link, run C: W15-01's ownership through the one index; a
     ({
       id: A,
       name: "Kite club",
-      settings: { status_pull_request: true },
+      settings: {},
       summary_cache: {},
       repos: ["o/kite"],
       status: "active",
@@ -1397,7 +1248,7 @@ describe("d1109-onerepo-link, run C: W15-01's ownership through the one index; a
 
   it("a together project takes no docs pull request that names its id: the intake branch, the hidden mark, the L-16 line, an unmarked one", () => {
     const together = project({
-      settings: { status_pull_request: true, together: { name: "Kite club", at: "x" } },
+      settings: { together: { name: "Kite club", at: "x" } },
     });
     const cases = [
       { head: { ref: `fr/intake-${A}-docs` }, body: "" },
@@ -1410,16 +1261,16 @@ describe("d1109-onerepo-link, run C: W15-01's ownership through the one index; a
       expect(isProjectDocsPr(together, pr), pr.head.ref).toBe(false);
       expect(docsPrListing(together, pr, { soleLinked: true }), pr.head.ref).toBeNull();
     }
-    // w8-repo-guide (L4i-left-2): for any other project, what names it is its own; an unmarked
-    // status pull request is never its own for a write, only listed while it is the one
-    // project here (before, `soleLinked` made it its own, with Merge and the status written in).
-    for (const pr of cases.slice(0, 4))
+    // w8-repo-guide (L4i-left-2): for any other project, what names it is its own.
+    // w8-status-write (W8-write-5): a status pull request on fr/status is no project's docs pull
+    // request any more, marked or not, and is never listed (the status board closes this
+    // install's own; nothing is written to one).
+    for (const pr of cases.slice(0, 3))
       expect(isProjectDocsPr(project(), pr), pr.head.ref).toBe(true);
-    const unmarked = cases[4] as (typeof cases)[number];
-    expect(isProjectDocsPr(project(), unmarked)).toBe(false);
-    expect(docsPrListing(project(), unmarked, { soleLinked: true })).toBe("listed");
-    expect(docsPrListing(project(), unmarked, { soleLinked: false })).toBeNull();
-    expect(isProjectStatusPr(together, { body: marker(A) }, { soleLinked: true })).toBe(false);
+    for (const pr of cases.slice(3)) {
+      expect(isProjectDocsPr(project(), pr), pr.body).toBe(false);
+      expect(docsPrListing(project(), pr, { soleLinked: true }), pr.body).toBeNull();
+    }
   });
 
   it("w8-repo-guide (L4i-left-2): an unmarked scaffold pull request is this project's only by its record or its branch's own marker naming the project itself; a taken-over id does not count; with only `soleLinked` it is listed without being its own", () => {
@@ -1442,10 +1293,17 @@ describe("d1109-onerepo-link, run C: W15-01's ownership through the one index; a
   });
 
   it("a project joined into another (joined_from) counts as the kept one: its marks and intake branch are the kept project's", () => {
-    const kept = project({ settings: { status_pull_request: true, joined_from: [B] } });
+    const kept = project({ settings: { joined_from: [B] } });
     expect(isProjectDocsPr(kept, { head: { ref: `fr/intake-${B}-docs` }, body: "" })).toBe(true);
-    expect(isProjectStatusPr(kept, { body: marker(B) })).toBe(true);
-    expect(isProjectStatusPr(project(), { body: marker(B) })).toBe(false);
+    expect(
+      isProjectDocsPr(kept, { head: { ref: "fr/docs-scaffold" }, body: `docs\n\n${marker(B)}` }),
+    ).toBe(true);
+    expect(
+      isProjectDocsPr(project(), {
+        head: { ref: "fr/docs-scaffold" },
+        body: `docs\n\n${marker(B)}`,
+      }),
+    ).toBe(false);
   });
 
   it("an unmarked docs pull request is a project's only when it is the one project here using the repository and this computer's copy names no other project; a pair is neither's; a together project is never sole", async () => {

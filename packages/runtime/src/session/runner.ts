@@ -64,6 +64,7 @@ import {
   type TaskReviewOutcome,
 } from "../loop/ports.ts";
 import { isCodeChange } from "../loop/project-checks.ts";
+import type { StatusBoardPort } from "../loop/status-board.ts";
 import { isSandboxNotReady } from "../sandbox/readiness.ts";
 import type { SchemaSyncPort } from "../update/sync.ts";
 import { decisionSentence, plainRows } from "../wiring/state-ports.ts";
@@ -863,6 +864,13 @@ export interface SessionRunnerDeps {
    * check is the only reminder.
    */
   docs?: ProjectDocsPort;
+  /**
+   * The status issue (w8-status-write, ADR 0122): told when a task starts, at each task boundary
+   * (a task that ended leaves Working on now) and when the session ends (its Last session line).
+   * Nothing waits on it: the writer sends to GitHub on its own, and a failure only logs there.
+   * The session's spend never goes to it (the endedNote stays the app's).
+   */
+  statusBoard?: StatusBoardPort;
   /**
    * The merge of a reviewed pull request (spec J.9, ADR 0062): after an accepting review the
    * task's PR goes through the `merge_pr` tool behind the hooks; level 3 merges, below it the
@@ -2562,6 +2570,8 @@ export class SessionRunner {
         };
         for (;;) {
           if (controller.signal.aborted) throw new ForerunnerError("killed", "session stopped");
+          // w8-status-write: the task boundary; a task that ended leaves Working on now.
+          if (project) this.deps.statusBoard?.taskBoundary(project.id);
           budget.checkWallClock(clock.now());
           // d1109-selftasks-run: the task boundary; after a change the session plans again.
           if (await checkTaskList()) {
@@ -2775,6 +2785,8 @@ export class SessionRunner {
               ...(again ? { again: true } : {}),
               ...(previous && previous !== specialist ? { handedFrom: previous } : {}),
             });
+            // w8-status-write: its Working on now line on the status issue (not awaited).
+            if (project) this.deps.statusBoard?.taskStarted(project.id, task);
           };
           runningTask = { id: task.id, title: task.title };
           // The claim is renewed every sixth of its TTL for as long as the task runs: a
@@ -4215,6 +4227,18 @@ export class SessionRunner {
           });
         }
       }
+    }
+    // w8-status-write (the owner's status design: "summary rewritten after each session"): the
+    // Last session line of this install's comment on the status issue, and the body rebuilt. The
+    // titles only, never the spend (the endedNote above is the app's record and stays there).
+    if (project && plan && stopReason !== "plan_awaiting_approval" && this.deps.statusBoard) {
+      const items = plan.items;
+      const titleOf = (id: string) => items.find((i) => i.taskId === id)?.title ?? null;
+      this.deps.statusBoard.sessionEnded(project.id, {
+        endedAt: clock.nowIso(),
+        done: completed.map(titleOf).filter((t): t is string => !!t),
+        next: endState.readyNow.map((t) => t.title),
+      });
     }
     // What the re-check before these writes read (spec E.4): ids and kinds, never the words
     // (another agent's message is data); `stopped_by` is the stop or pause this session ended
